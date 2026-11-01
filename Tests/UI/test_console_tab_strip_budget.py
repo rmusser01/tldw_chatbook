@@ -227,9 +227,7 @@ async def test_max_length_session_label_keeps_its_ellipsis() -> None:
     app = StyledTabStripHost()
     async with app.run_test(size=(120, 24)) as pilot:
         surface = app.query_one(ConsoleSessionSurface)
-        session = ConsoleChatSession(
-            title="summarize the UX review plan", id="s1"
-        )
+        session = ConsoleChatSession(title="summarize the UX review plan", id="s1")
         await surface.sync_sessions(sessions=[session], active_session_id="s1")
         await pilot.pause(0.2)
 

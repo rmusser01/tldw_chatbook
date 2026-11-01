@@ -1,0 +1,210 @@
+--- Tests/UI/test_console_ask_user_typed_answers.py
++++ Tests/UI/test_console_ask_user_typed_answers.py
+@@ -28,8 +28,18 @@
+ 
+ def _answers():
+     return [
+-        {"question": "Which DB?", "selected": ["Postgres"], "other_text": None, "unanswered": False},
+-        {"question": "Regions?", "selected": [], "other_text": None, "unanswered": True},
++        {
++            "question": "Which DB?",
++            "selected": ["Postgres"],
++            "other_text": None,
++            "unanswered": False,
++        },
++        {
++            "question": "Regions?",
++            "selected": [],
++            "other_text": None,
++            "unanswered": True,
++        },
+     ]
+ 
+ 
+@@ -42,7 +52,9 @@
+ def _screen(card, *, image=None, launch=None, controller=None):
+     cleared = []
+     return SimpleNamespace(
+-        _console_chat_controller=controller if controller is not None else _controller(),
++        _console_chat_controller=controller
++        if controller is not None
++        else _controller(),
+         query=lambda selector: [card] if card is not None else [],
+         _console_pending_image_attachment=lambda: image,
+         _retrieval=SimpleNamespace(_pending_launch=lambda: launch),
+@@ -54,13 +66,25 @@
+ def test_typed_text_fills_every_unanswered_question_and_resolves_the_round():
+     card = _Card(_answers())
+     screen = _screen(card)
+-    assert ChatScreen._answer_pending_question_with_draft(screen, "  apac only  ") is True
++    assert (
++        ChatScreen._answer_pending_question_with_draft(screen, "  apac only  ") is True
++    )
+     screen._console_chat_controller.resolve_pending_question.assert_called_once()
+     answers, kwargs = screen._console_chat_controller.resolve_pending_question.call_args
+     assert kwargs == {"request_id": "round-1"}
+     assert answers[0] == [
+-        {"question": "Which DB?", "selected": ["Postgres"], "other_text": None, "unanswered": False},
+-        {"question": "Regions?", "selected": [], "other_text": "apac only", "unanswered": False},
++        {
++            "question": "Which DB?",
++            "selected": ["Postgres"],
++            "other_text": None,
++            "unanswered": False,
++        },
++        {
++            "question": "Regions?",
++            "selected": [],
++            "other_text": "apac only",
++            "unanswered": False,
++        },
+     ]
+     assert card.cleared is True and screen._cleared == [True]
+ 
+@@ -76,7 +100,15 @@
+         {"card": _Card(_answers()), "controller": None},
+         {"card": _Card(_answers(), session_id="other-session")},
+     ],
+-    ids=["no-card", "hidden-card", "no-round-id", "staged-attachment", "staged-rag", "no-controller", "stale-card-for-another-session"],
++    ids=[
++        "no-card",
++        "hidden-card",
++        "no-round-id",
++        "staged-attachment",
++        "staged-rag",
++        "no-controller",
++        "stale-card-for-another-session",
++    ],
+ )
+ def test_no_interception_without_a_live_card_or_with_staged_context(kwargs):
+     kwargs = dict(kwargs)
+@@ -135,8 +167,8 @@
+         _retrieval=SimpleNamespace(_pending_launch=lambda: None),
+         _clear_console_composer_draft=lambda: composer.clear_draft(),
+     )
+-    screen._answer_pending_question_with_draft = (
+-        lambda draft: ChatScreen._answer_pending_question_with_draft(screen, draft)
++    screen._answer_pending_question_with_draft = lambda draft: (
++        ChatScreen._answer_pending_question_with_draft(screen, draft)
+     )
+     assert await ChatScreen._send_console_message_from_visible_action(screen) is False
+     assert dispatched == []
+@@ -180,8 +212,8 @@
+         _retrieval=SimpleNamespace(_pending_launch=lambda: None),
+         _clear_console_composer_draft=lambda: composer.clear_draft(),
+     )
+-    screen._answer_pending_question_with_draft = (
+-        lambda draft: ChatScreen._answer_pending_question_with_draft(screen, draft)
++    screen._answer_pending_question_with_draft = lambda draft: (
++        ChatScreen._answer_pending_question_with_draft(screen, draft)
+     )
+     assert await ChatScreen._send_console_message_from_visible_action(screen) is True
+     assert dispatched == ["hello"]
+@@ -201,13 +233,28 @@
+ 
+ def test_typed_text_is_cleaned_and_bounded_like_the_cards_other_box():
+     screen = _screen(_Card(_answers()))
+-    assert ChatScreen._answer_pending_question_with_draft(screen, "  a\nb\x07 " + "x" * 600) is True
++    assert (
++        ChatScreen._answer_pending_question_with_draft(
++            screen, "  a\nb\x07 " + "x" * 600
++        )
++        is True
++    )
+     (answers,), _ = screen._console_chat_controller.resolve_pending_question.call_args
+-    assert answers[1]["other_text"].startswith("a b x") and len(answers[1]["other_text"]) == 500
++    assert (
++        answers[1]["other_text"].startswith("a b x")
++        and len(answers[1]["other_text"]) == 500
++    )
+ 
+ 
+ def test_malformed_card_answers_leave_the_draft_and_card_in_place():
+-    bad = [{"question": "q", "selected": "not-a-list", "other_text": None, "unanswered": True}]
++    bad = [
++        {
++            "question": "q",
++            "selected": "not-a-list",
++            "other_text": None,
++            "unanswered": True,
++        }
++    ]
+     card = _Card(bad)
+     screen = _screen(card)
+     assert ChatScreen._answer_pending_question_with_draft(screen, "text") is False
+@@ -243,13 +290,29 @@
+             yield ChatTaskCards(id="chat-task-cards")
+ 
+     questions = [
+-        {"question": "Which DB?", "header": "DB", "multiSelect": False,
+-         "options": [{"label": "Postgres", "description": ""}, {"label": "SQLite", "description": ""}]},
+-        {"question": "Regions?", "header": "Region", "multiSelect": True,
+-         "options": [{"label": "eu", "description": ""}, {"label": "us", "description": ""}]},
++        {
++            "question": "Which DB?",
++            "header": "DB",
++            "multiSelect": False,
++            "options": [
++                {"label": "Postgres", "description": ""},
++                {"label": "SQLite", "description": ""},
++            ],
++        },
++        {
++            "question": "Regions?",
++            "header": "Region",
++            "multiSelect": True,
++            "options": [
++                {"label": "eu", "description": ""},
++                {"label": "us", "description": ""},
++            ],
++        },
+     ]
+     app = _Harness()
+-    controller = ConsoleChatController(store=persisted_console_store(), provider_gateway=object())
++    controller = ConsoleChatController(
++        store=persisted_console_store(), provider_gateway=object()
++    )
+     session = controller.new_session(title="s")
+     box = {}
+     try:
+@@ -262,7 +325,9 @@
+             )
+             thread = threading.Thread(
+                 target=lambda: box.update(
+-                    result=controller.request_user_questions(questions, session_id=session.id)
++                    result=controller.request_user_questions(
++                        questions, session_id=session.id
++                    )
+                 )
+             )
+             thread.start()
+@@ -300,10 +365,13 @@
+                 _retrieval=SimpleNamespace(_pending_launch=lambda: None),
+                 _clear_console_composer_draft=lambda: composer.clear_draft(),
+             )
+-            screen._answer_pending_question_with_draft = (
+-                lambda draft: ChatScreen._answer_pending_question_with_draft(screen, draft)
++            screen._answer_pending_question_with_draft = lambda draft: (
++                ChatScreen._answer_pending_question_with_draft(screen, draft)
++            )
++            assert (
++                await ChatScreen._send_console_message_from_visible_action(screen)
++                is False
+             )
+-            assert await ChatScreen._send_console_message_from_visible_action(screen) is False
+             assert dispatched == [], "the draft was an answer, not a turn"
+             # The worker's teardown marshals its card re-derive through
+             # `call_from_thread`, which needs THIS loop: wait asynchronously.
+@@ -313,7 +381,10 @@
+                     break
+             thread.join(timeout=5)
+             assert box["result"]["answered"] is True
+-            assert [a["other_text"] for a in box["result"]["answers"]] == ["apac only", "apac only"]
++            assert [a["other_text"] for a in box["result"]["answers"]] == [
++                "apac only",
++                "apac only",
++            ]
+             assert composer.draft_text() == ""
+             await pilot.pause()
+             assert card.display is False
+

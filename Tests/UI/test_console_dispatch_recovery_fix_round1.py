@@ -6,6 +6,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from textual.widgets import Button, Static
 
 from Tests.Chat.test_console_dispatch_queue_recovery import (
@@ -13,7 +15,6 @@ from Tests.Chat.test_console_dispatch_queue_recovery import (
     _destination,
     _truth,
 )
-from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
@@ -74,9 +75,10 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
             runtime_active=True,
         )
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store.set_session_draft(session.id, "must remain blocked")
         composer.load_draft("must remain blocked")
 
-        # A healthy checkpoint does not expose recovery or engage its send fence.
+        # A healthy accepted turn permits queue admission and has no recovery UI.
         store.begin_ephemeral_dispatch(
             session.id,
             assistant_message_id=assistant.id,
@@ -89,7 +91,7 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
         )
         send = composer.query_one("#console-send-message", Button)
         assert region.display is False
-        assert store.dispatch_recovery_blocks_submission(session.id) is False
+        assert send.disabled is False
 
         # A delivery-unknown owner is visible even though the queue is empty.
         store.mark_dispatch_recovery_needed(session.id, assistant.id)

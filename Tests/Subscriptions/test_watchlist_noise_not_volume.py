@@ -42,9 +42,7 @@ def test_default_selectors_strip_noise_but_not_cookie_recipes():
         '<time datetime="2026-07-29">Release date 2026-07-29</time>'
         "<p>real content</p>"
     )
-    out = ContentExtractor.extract_text_from_html(
-        html, list(DEFAULT_IGNORE_SELECTORS)
-    )
+    out = ContentExtractor.extract_text_from_html(html, list(DEFAULT_IGNORE_SELECTORS))
     for noise in ("We use cookies", "BUY NOW", "123 views", "12:01"):
         assert noise not in out
     assert "Best cookie recipe" in out
@@ -114,11 +112,13 @@ def test_fingerprint_normalizes_a_null_method_to_the_branch_actually_taken():
     """
     from tldw_chatbook.Subscriptions.noise_defaults import extraction_fingerprint
 
-    assert extraction_fingerprint(".ad", None) == extraction_fingerprint(".ad", "raw"), (
-        "a NULL method extracts the raw body, exactly like an explicit 'raw'"
-    )
+    assert extraction_fingerprint(".ad", None) == extraction_fingerprint(
+        ".ad", "raw"
+    ), "a NULL method extracts the raw body, exactly like an explicit 'raw'"
     assert extraction_fingerprint(".ad", "") == extraction_fingerprint(".ad", "raw")
-    assert extraction_fingerprint(".ad", None) != extraction_fingerprint(".ad", "auto"), (
+    assert extraction_fingerprint(".ad", None) != extraction_fingerprint(
+        ".ad", "auto"
+    ), (
         "'auto' strips the selectors from parsed HTML and a NULL does not -- "
         "these two must never compare as the same extraction"
     )
@@ -273,8 +273,7 @@ async def test_a_bad_selector_line_does_not_abort_the_whole_check(monkeypatch):
     first = await _check(service, source_id)
     assert first["status"] == "completed", first
     assert _dispositions(first) == _counts(baseline=1), (
-        "an unparseable ignore rule must not fail the very first check: "
-        f"{first}"
+        f"an unparseable ignore rule must not fail the very first check: {first}"
     )
 
     second = await _check(service, source_id)
@@ -350,7 +349,9 @@ def test_migration_moves_thresholds_and_prefills_empty_selectors():
     assert rows["u1"]["ignore_selectors"] == default_ignore_selectors_text()
     assert rows["u2"]["ignore_selectors"] == ".mine"  # preserved, not clobbered
     assert rows["u2"]["change_threshold"] == 0.0  # still moved
-    assert rows["u3"]["ignore_selectors"] == default_ignore_selectors_text()  # TRIM branch
+    assert (
+        rows["u3"]["ignore_selectors"] == default_ignore_selectors_text()
+    )  # TRIM branch
     assert rows["u3"]["change_threshold"] == 0.0
     assert rows["f1"]["ignore_selectors"] in (None, "")  # feed untouched
     assert rows["f1"]["change_threshold"] == 0.1  # feed untouched
@@ -569,13 +570,8 @@ def test_disposition_count_keys_are_bound_to_the_real_constants():
         (monitoring_engine.DISPOSITION_ERROR, None),
         (monitoring_engine.DISPOSITION_SKIPPED_IN_FLIGHT, None),
     }
-    assert (
-        mapping[(monitoring_engine.DISPOSITION_ERROR, None)] == "error"
-    )
-    assert (
-        mapping[(monitoring_engine.DISPOSITION_SKIPPED_IN_FLIGHT, None)]
-        == "skipped"
-    )
+    assert mapping[(monitoring_engine.DISPOSITION_ERROR, None)] == "error"
+    assert mapping[(monitoring_engine.DISPOSITION_SKIPPED_IN_FLIGHT, None)] == "skipped"
     assert mapping[(monitoring_engine.DISPOSITION_CHANGED, None)] == "changed"
     assert mapping[(monitoring_engine.DISPOSITION_UNCHANGED, None)] == "unchanged"
     assert (
@@ -1280,7 +1276,9 @@ async def test_url_list_aggregates_disposition_counts(monkeypatch):
     """
     page_a_before = "<html><body><p>Alpha service is at version 1.0.</p></body></html>"
     page_a_after = "<html><body><p>Alpha service is at version 2.0.</p></body></html>"
-    page_b = "<html><body><p>Beta service has not been touched in months.</p></body></html>"
+    page_b = (
+        "<html><body><p>Beta service has not been touched in months.</p></body></html>"
+    )
 
     db, service, source_id = await _url_source(
         monkeypatch,

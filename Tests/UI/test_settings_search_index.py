@@ -67,7 +67,14 @@ NON_SETTING_CONTROLS: frozenset[tuple[str, str]] = frozenset(
         ("advanced-config", "settings-advanced-config-editor"),
         # Search boxes filter content; they are not settings.
         ("internal-prompts", "internal-prompts-search"),
-        ("providers-models", "settings-provider-search"),
+        # TASK-33007.2, rewritten on purpose: the Provider control
+        # (settings-provider-search) is now the indexed field, and the Select
+        # it drives is a hidden adapter holding the provider key.
+        ("providers-models", "settings-provider-value"),
+        # TASK-33007.3: likewise the Default model picker's field
+        # (model-search-picker-input) is indexed as Model, and the Input
+        # behind it is a hidden adapter holding the model id.
+        ("providers-models", "settings-model-value"),
         # Transient discovery output picker, not a persisted setting.
         ("providers-models", "settings-discovered-models-list"),
         # Manual-provider entry is the fallback leg of the already-indexed
@@ -80,13 +87,14 @@ NON_SETTING_CONTROLS: frozenset[tuple[str, str]] = frozenset(
         # actions, not settings.
         ("providers-models", "settings-provider-api-key-clear"),
         ("providers-models", "settings-model-context-window-reset"),
+        # TASK-33007.2: the Key check row's test action (t), not a setting.
+        ("providers-models", "settings-test-provider"),
         # "Use Official OpenAI" preset button: a one-shot action that fills
         # the adjacent (indexed) Base URL field -- an action, not a setting.
         ("speech-tts", "settings-speech-openai-official-preset"),
         # TASK-32948 Task 7: the picker's theme-name filter box narrows the
-        # visible list; same pattern as internal-prompts-search /
-        # settings-provider-search above -- it filters content, it is not
-        # itself a persisted setting.
+        # visible list; same pattern as internal-prompts-search above -- it
+        # filters content, it is not itself a persisted setting.
         ("theme", "settings-theme-filter"),
     }
 )
@@ -167,9 +175,7 @@ def _is_labeled_row_toggle_button(widget: Button) -> bool:
     row = _enclosing_input_row(widget)
     if row is None:
         return False
-    if not any(
-        "settings-input-label" in child.classes for child in row.query(Static)
-    ):
+    if not any("settings-input-label" in child.classes for child in row.query(Static)):
         return False
     interactive = [
         child
@@ -211,8 +217,7 @@ async def test_every_rendered_setting_is_in_the_search_index(hook_file):
             }
             for widget in body.query("*"):
                 is_setting = isinstance(widget, VALUE_WIDGET_TYPES) or (
-                    isinstance(widget, Button)
-                    and _is_labeled_row_toggle_button(widget)
+                    isinstance(widget, Button) and _is_labeled_row_toggle_button(widget)
                 )
                 if not is_setting:
                     continue
@@ -246,12 +251,9 @@ async def test_every_rendered_setting_is_in_the_search_index(hook_file):
                         if fid == widget_id
                     }
                     if not any(
-                        rendered in label or label in rendered
-                        for label in labels
+                        rendered in label or label in rendered for label in labels
                     ):
-                        label_drift.append(
-                            (category_value, widget_id, rendered)
-                        )
+                        label_drift.append((category_value, widget_id, rendered))
 
     for category_value, minimum in PER_CATEGORY_MIN_SETTINGS.items():
         assert category_value not in HARNESS_BLIND_CATEGORIES

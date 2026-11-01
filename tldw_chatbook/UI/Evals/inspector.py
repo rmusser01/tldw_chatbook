@@ -63,7 +63,12 @@ from ...config import LOCAL_PROVIDERS
 from ...Evals.character_probe.models import ProbeSet
 from ...Evals.character_probe.storage import load_character_bench, load_probe_set
 from ...Evals.word_bench import analysis
-from ...Evals.word_bench.models import BenchConfig, CellCapture, CellError, PreflightResult
+from ...Evals.word_bench.models import (
+    BenchConfig,
+    CellCapture,
+    CellError,
+    PreflightResult,
+)
 from ...Evals.word_bench.storage import load_bench
 from .evals_state import EvalsViewModel
 from .results_grid import degenerate_canary_text, render_probe_reading, render_token
@@ -82,6 +87,27 @@ _LOCAL_PROVIDER_NAMES = {name.lower() for name in LOCAL_PROVIDERS}
 #: explicitly-labelled placeholder used only to render a human-scale
 #: duration, not a measurement.
 _ASSUMED_SECONDS_PER_CALL = 0.4
+
+#: task-1911: the CHARACTER-probe estimate's own rate, deliberately NOT
+#: ``_ASSUMED_SECONDS_PER_CALL`` above. That constant was measured against
+#: a word bench's single-token logprob probe -- one HTTP round trip whose
+#: generation cost is one token. A character-probe call is a GENERATION:
+#: it asks the target to emit up to ``CharacterProbeConfig.max_tokens`` of
+#: free text (default 512), so reusing the logprob-probe rate understated
+#: run length by roughly an order of magnitude -- an estimate off by that
+#: much defeats the "cost is shown before running" rule it exists to
+#: serve.
+#:
+#: Provenance: an explicitly-labelled placeholder in the same sense as
+#: ``_ASSUMED_SECONDS_PER_CALL`` (no provider is called from here), scaled
+#: per generated TOKEN because that is the axis a generation call's cost
+#: actually varies on: ~20 tokens/second, a conservative round figure for
+#: a small model generating on a local llama.cpp server on consumer
+#: hardware. Multiplied by the bench's own ``max_tokens``, so a user who
+#: lowers ``max_tokens`` in the character-bench editor sees the estimate
+#: fall with it. The word bench's own estimate keeps the constant above,
+#: unchanged.
+_CHARACTER_ASSUMED_SECONDS_PER_TOKEN = 0.05
 
 #: State -> (problem, next action). Mirrors the design spec's Preflight
 #: table (`2026-07-25-evals-console-rebuild-design.md`); an unlisted state
@@ -185,7 +211,10 @@ def _recovery_callout_text(target_label: str, result: PreflightResult) -> str:
         return degenerate_canary_text([target_label])
     problem, next_action = _BLOCKED_COPY.get(
         result.state,
-        (result.detail or "could not be confirmed ready.", "Review this target's configuration."),
+        (
+            result.detail or "could not be confirmed ready.",
+            "Review this target's configuration.",
+        ),
     )
     return (
         f"Owner: {target_label}'s configured provider.\n"
@@ -350,7 +379,9 @@ class EvalsInspector(Vertical):
 
         yield Static("Readiness", classes="destination-section evals-pane-title")
         if not config.target_ids:
-            yield Static("No targets configured yet.", id="evals-inspector-readiness-empty")
+            yield Static(
+                "No targets configured yet.", id="evals-inspector-readiness-empty"
+            )
 
         providers: list[str] = []
         # Index-derived widget ids, not target_id-derived -- same fix, same
@@ -366,7 +397,9 @@ class EvalsInspector(Vertical):
                 providers.append(str(model.get("provider") or ""))
 
             result = preflight.get(target_id)
-            status_text = result.status_label if result is not None else "Not yet checked"
+            status_text = (
+                result.status_label if result is not None else "Not yet checked"
+            )
             yield Static(
                 f"{target_label}: {status_text}",
                 id=f"evals-inspector-target-{index}",
@@ -432,10 +465,10 @@ class EvalsInspector(Vertical):
             # local) is simply unknown, not confirmed local. Any
             # unresolvable target makes the whole cost line unknown, not
             # just the deleted target's own row.
-            cost_text = (
-                "cost unknown — one or more targets could not be resolved"
-            )
-        elif providers and any(not _is_local_provider(provider) for provider in providers):
+            cost_text = "cost unknown — one or more targets could not be resolved"
+        elif providers and any(
+            not _is_local_provider(provider) for provider in providers
+        ):
             cost_text = (
                 "One or more targets are paid providers; this workbench does not "
                 "estimate cost yet."
@@ -509,9 +542,7 @@ class CharacterBenchEstimate(Vertical):
         try:
             config = load_character_bench(db, self._bench_id)
             probe_set = (
-                load_probe_set(db, config.probe_set_id)
-                if config.probe_set_id
-                else None
+                load_probe_set(db, config.probe_set_id) if config.probe_set_id else None
             )
         except Exception:
             # Mirrors `EvalsInspector.compose`'s own broad catch and its
@@ -556,7 +587,32 @@ class CharacterBenchEstimate(Vertical):
             len(config.target_ids),
             config.samples_per_cell,
         )
-        duration = _format_estimate_duration(call_count * _ASSUMED_SECONDS_PER_CALL)
+        if call_count == 0:
+            # task-1913 AC1: ONE honesty rule across both zero-count
+            # states. A missing probe set refuses to print an estimate
+            # (the branch above); a draft with no characters picked (or
+            # no targets -- neither editable here, both created empty on
+            # purpose) must refuse too, not print "0 calls · ~00:00" as
+            # if that were a real estimate of a runnable bench. Names the
+            # fixable state the same way the probe-set branch does, and
+            # reuses that branch's empty-state id: the two are mutually
+            # exclusive early returns, so the id is never ambiguous.
+            yield Static(
+                "Nothing to estimate yet — this bench has no characters "
+                "or no targets picked.",
+                id="evals-inspector-readiness-empty",
+            )
+            return
+        # task-1911: generation-based rate, NOT the word bench's
+        # logprob-probe `_ASSUMED_SECONDS_PER_CALL` -- see
+        # `_CHARACTER_ASSUMED_SECONDS_PER_TOKEN`'s own provenance note.
+        # `max(config.max_tokens, 1)`: `max_tokens` is floored at 1 by the
+        # editor and the engine, so this guard is defensive only (a
+        # hand-edited 0 must not zero the whole duration).
+        per_call_seconds = (
+            max(config.max_tokens, 1) * _CHARACTER_ASSUMED_SECONDS_PER_TOKEN
+        )
+        duration = _format_estimate_duration(call_count * per_call_seconds)
         yield Static(
             f"{call_count} calls · {duration}",
             id="evals-inspector-estimate-calls",
@@ -595,12 +651,9 @@ class EvalsCellInspector(Vertical):
     """
 
     def compose(self) -> ComposeResult:
+        yield Static("Focused cell", classes="destination-section evals-pane-title")
         yield Static(
-            "Focused cell", classes="destination-section evals-pane-title"
-        )
-        yield Static(
-            "Focus a cell in the grid to see its full top-K and probe "
-            "table here.",
+            "Focus a cell in the grid to see its full top-K and probe table here.",
             id="evals-cell-inspector-body",
             markup=False,
         )

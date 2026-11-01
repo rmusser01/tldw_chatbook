@@ -1,0 +1,51 @@
+# Chatbook Buddy task closeout — 2026-10-11
+
+TASK-21236 now serializes controller injection/clear with the existing construction lock. A mounted Roleplay journey opens Manage Buddy from saved disabled preferences and preserves disabled state. Its negative control fails when explicit management stops ensuring a controller.
+
+The unchanged startup import guards exposed eager artwork-attribution imports. Those imports now occur inside the existing validation/archive-reading functions; feature, digest, lineage and hostile-input validation remain intact. Startup fixtures retain their admitted bootstrap profile.
+
+The affected round trips exposed an inherited activation refusal: full review validation requested the profile directory while a transaction held only database authority. Directory/capacity preflight stays before the SQL operation, including after character file preparation. Source, staged bytes, UUID, actor revision and visual authority still revalidate inside Character and Persona commits. Buddy conversion keeps its source guard both before insertion and after writes. Removing the inner guard causes the new pre-insert assertion to fail; source bytes were restored afterwards.
+
+Local Persona views now always contain policy_rules under ADR-079. Actor Pack projection previously rejected that known field, even when empty. The repair carries rules through the existing Persona format, validates every rule with the existing strict schema, and preserves them through reviewed copy/import and re-export. Malformed fields and coercible permission values are rejected; local portrait/identity fields remain excluded. The existing review displays the carried actor fields.
+
+## Verification
+
+On the repaired working tree based on a3c47c6c72d885db2af0971515ddcdcb6cee78fa, the three activation/conversion/policy modules passed 104 cases. The final setter/startup/import-closure/management/attribution/lineage gate passed 26 cases. Across both runs, 129 unique test identities passed, with no failures, errors or skips. The setter RED, disabled-management mutation, policy RED and conversion source-guard mutation all failed at their intended assertions. Independent review found no actionable issues.
+
+The [retained receipt](artifacts/buddy-closeout-20261011/verification.json) includes commands, Python/runtime identity, exact case identities, source and raw-result hashes, failure excerpts and static results. Ruff introduced zero per-file diagnostic counts compared with the exact pinned base; ten touched files pass formatting. Existing app_service_wiring formatting debt remains unchanged. Compilation and whitespace checks pass. Production Bandit has the same two baseline findings and no errors or introduced findings. Black is absent; existing Ruff formatting was used. Final evidence review found one added import-order diagnostic hidden by aggregate counts; removing its blank line leaves the Python AST unchanged. The receipt distinguishes tested and published bytes, and all three startup guards pass again on the final source.
+
+## Accepted historical UAT
+
+TASK-31585 closes against the requester-approved revised criterion: verified merged repairs and accepted native/local human voice evidence retain their original source attribution. The [acceptance closeout](artifacts/buddy-uat-20261003/acceptance-closeout-20261011.json) preserves the former criterion, requester decision and nine verified original hashes. Exact historical native revision/exit and full human microphone/playback OpenAI realtime remain coverage limits. No accepted UAT or provider/audio run was repeated.
+
+ADR required: no. Existing ADR-074, ADR-079, ADR-126 and ADR-139 govern these routine repairs. No storage, provider, runtime authority or dependency contract changed. Full suites were not run and normal user profiles were preserved.
+
+## CI pre-import follow-up
+
+The current-head GitHub performance run exposed an adjacent exact-count ratchet: restoring Buddy laziness moved the Persona_Visual parent package from boot into the screen pass, making it 559 modules against 558. Under ADR-097, the existing character-generation controller and runner now import only when that action requests them, after its existing override. Runtime callers, gateway selection, annotations and both generation actions remain unchanged. No budget constant or snapshot was raised.
+
+The unchanged budget and existing generation suites pass 22 cases: 558/558 modules and 417835/425347 lines of code, with the recorded zero-module-headroom warning. Two legacy config-admission failures reproduced before the screen import move; their original function/class bodies remain unchanged and their modules now keep their admitted private bootstrap profile. The final six-case gate rechecks both mounted Buddy journeys and three startup guards, plus a direct default-controller constructor/override self-check without invoking a gateway or provider. All six pass with terminal exit 0.
+
+Across the retained runs, 151 unique repository tests and the constructor check pass. The receipt preserves both earlier tested and final source sets, the CI RED, fixture controls and exact follow-up results. Follow-up Ruff has 216 current and 216 baseline diagnostics with zero introduced per-file counts; Bandit has the same six baseline findings, no introduced finding or scan error. Compilation and whitespace pass. Existing full-screen formatting debt is preserved. Independent review finds no actionable import/caller issue; normal GitHub CI must evaluate the published candidate before merge. Existing ADR-097 also applies; no new ADR.
+
+## CI fixture follow-up
+
+The current-head PR Fast Lane exposed a skeletal Console teardown fixture that bypasses `TldwCli.__init__` and injects Buddy without its constructor-owned lock. The caller inventory found the same omission in the Actor Pack refresh fixture. Both fail first with the missing lock. Supply the existing `threading.Lock` before each injection, retaining the locked production setter and every original assertion.
+
+The adjacent Actor Pack shutdown skeleton also omits the existing synchronous raw CLI owner/task and empty meeting owner. Its original function and production teardown are unchanged from head `66065147`. The admitted cohort reaches these missing fields; the repaired fixture supplies a synchronous no-op owner, its task slot and `None` for the unstarted meeting owner. The original Actor Pack ordering assertion remains intact. A separate standalone attempt failed during profile setup with `raw_source_selection_changed` and is excluded from defect attribution. Both intermediate results are retained accurately.
+
+The final targeted fixture, Actor Pack ownership, publication and startup gate passes **10/10**, with no failures, errors or skips. Whole-module AST comparison preserves the original code apart from these exact constructor prerequisites and the standard-library import. Scoped Ruff remains 12/12 in the Console module and 0/0 in Actor Pack ownership; Bandit remains 462/462 and 12/12, with no new findings or analysis errors. Actor Pack formatting, compilation and whitespace pass; existing Console formatting debt is unchanged.
+
+Across the retained successful runs, **158 unique repository tests and the constructor check** pass. The receipt retains source hashes, the actual CI failure, both missing-lock REDs, admitted cohort controls, the excluded setup refusal and final results. An unrelated unchanged Library navigation test timed out in UI shard 2. Its two focused cases pass, and the real unchanged-head shard retry passes 235/235 in 349.51 seconds. The cause remains unproven; no Library source or assertion changed. Fresh protected CI remains required for the fixture publication. Accepted provider, native and human voice UAT is preserved.
+
+## Library test handoff follow-up
+
+UI shard 2 repeated the unchanged Library folder timeout on head `ac8f1d83`, so the earlier unchanged-head retry did not settle the issue. The aggregate derived-artifacts failure only reports this failed UI gate. A normal observer and controlled sibling root-response ordering both pass; neither establishes an application request or epoch defect. The first faulty observer raised while reading an unavailable diagnostic attribute and is excluded.
+
+A controlled real `LibraryNotesCanvas.recompose()` pauses the existing list's native Textual prune handler for 100 ms. The original helper still finds the exact `folder-1` row while that row is mounted, pruning and hidden. Its `Button.press()` sends no event, no folder handler runs, expanded IDs stay empty and the original 30-second note-list assertion fails. This proves susceptibility to an actual removal window; the failed CI run did not capture that window, so its exact schedule remains unobserved.
+
+The helper now uses one `await pilot.pause()` after exact-folder readiness, then its existing fresh domain query and press. This follows the house selector helper's settling step while preserving the delayed-root test's proof that Unfiled is not VSync readiness. All original function bodies, assertions and timeout constants are unchanged apart from this single await; application source is untouched.
+
+The same controlled removal run passes **1/1** in 12.436 seconds: the fresh row is visible and no longer pruning, its event is accepted, the folder handler expands it and both real child slices finish fresh. Both original real SQLite/filesystem Delete/Undo journeys pass **2/2** in 16.768 seconds. Ruff stays 0/0, Bandit 16/16 with no introduced finding or scan error, and formatting, compilation and whitespace pass. The receipt retains the exact control source, byte-preserving compressed raw events/logs/XML and complete source/result hashes.
+
+Across retained runs, **160 unique repository tests and the constructor check** pass. Independent code and final evidence reviews found no actionable issue; all retained hashes, results, assertions and aggregate counts were verified. Fresh protected CI remains required before merge. Existing Library ownership applies; no new ADR or authority boundary is needed. Accepted native/provider/voice UAT was preserved.

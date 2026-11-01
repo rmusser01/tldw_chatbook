@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  N    I   Conversation reader
+  a    t      Read    Info
+  v    e      Resume conversation
+       m      Use as source
+       s     This conversation is not in this workspace. Pressing this adds
+             it to the active workspace first, and you can undo that.
+--->          Archive conversation
+              Link to workspace
+
+     --->  Conversations (12) · Thesis: chapter 2 structure · Release notes
+           draft v1.0 · Loaded Thesis: chapter 2 structure · 40 of 40
+           messages · complete.
+--->
+           ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+           ▊ Find in complete transcript…                                   ▎
+           ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▇▇
+
+             Find previous     Find next
+
+  F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

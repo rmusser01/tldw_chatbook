@@ -15,6 +15,11 @@ agent runs, prompts, and library ingest jobs — keep each step as a module-leve
 SQL constant and run it from their own migration method. No `media_*.sql` has
 ever existed here.
 
+Evals (`Evals_DB.py`, versioned by `PRAGMA user_version`) is outside those
+eight and follows the second group: its steps run from `_migrate_schema`. Its
+v5-to-v6 step drops a column from five tables only where `table_info` still
+shows it, which a static script cannot express.
+
 That is a scope statement, not a backlog item, and it is written down because
 reviewers keep reading "add `<db>_v<n>_to_v<n+1>.sql`" as repo-wide and filing
 the media DB's inline steps as a violation (twice on TASK-21126 and
@@ -33,7 +38,21 @@ packaging derivation in step 3 with it.
 1. Bump `_CURRENT_SCHEMA_VERSION` in the owning DB module.
 2. Add `<db>_v<n>_to_v<n+1>_<what>.sql` here **and** the
    `_migrate_from_v<n>_to_v<n+1>` step that runs it.
-3. Packaging: **nothing to do** (TASK-19860). `pyproject.toml` matches
+3. **Migration log lines name the database by `db_sha256=<fingerprint>`,
+   never by its path.** A migration runs on the first boot after an upgrade,
+   at the default log level, for every user — and a default-profile database
+   path contains the OS username, so an INFO line interpolating
+   `self.db_path_str` (the V46→V47 pair's original shape, TASK-21246, fixed
+   by PR #2190) publishes the username to every log sink. The treatment:
+   interpolate `self._db_diagnostic_ref` (`content_fingerprint` of the path —
+   stable per database, no path disclosure) as `db_sha256=...`, and log
+   exception payloads as `exception_type={type(exc).__name__}` only. This is
+   not just convention: `scripts/check_persistent_diagnostic_inventory.py`
+   treats any `*_path_str`/path-shaped value reaching a logger call as a
+   path-privacy candidate, and a new one fails preflight and the
+   derived-artifacts job — reintroducing a raw path at INFO goes red the
+   same commit.
+4. Packaging: **nothing to do** (TASK-19860). `pyproject.toml` matches
    `migrations/*.sql` and `MANIFEST.in` does `recursive-include
    tldw_chatbook/DB/migrations *.sql`, so a new script ships the moment it
    lands. Do not re-introduce a per-file list, and do not add a fifth one.
@@ -49,12 +68,26 @@ packaging derivation in step 3 with it.
    start. Both checkers now *derive* the requirement (from the `.sql` files in
    the checkout, and from the `.sql` names the artifact's own
    `ChaChaNotes_DB.py` opens) and assert it against the built wheel and sdist.
-4. **If the migration contains `CREATE TABLE`, add every new table name to
+5. **If the migration contains `CREATE TABLE`, add every new table name to
    `VALID_TABLES['chachanotes']` in `DB/sql_validation.py`, in the same
    commit.** See below — this is the step that keeps getting missed.
-5. **If it contains `CREATE INDEX`, add the index to
+6. **If it contains `CREATE INDEX`, add the index to
    `EXPECTED_CHACHANOTES_INDEXES` in `Tests/ChaChaNotesDB/test_index_census.py`.**
-6. Run `./scripts/preflight.sh`. It checks 4 and reports exactly what to paste.
+7. Run `./scripts/preflight.sh`. It checks 5 and reports exactly what to paste.
+8. **Requalify the backup/restore policy for the new version.** The recovery
+   layer pins each store's current version and an exact copy of its schema, and
+   refuses to back up or restore a database that does not match
+   (`unsupported_schema_version`). For ChaChaNotes that is three places:
+   the version and catalog in `DB/recovery_core_schema.py` (capture the catalog
+   from a fresh constructor; do not edit it by hand), the stamp check in
+   `DB/recovery_operations.py`, and the one in
+   `Backup_Recovery/sqlite_validation.py`. Preflight does not check this:
+   run `Tests/Backup_Recovery/test_core_owners.py`, where
+   `test_schema_policy_matches_installed_store` fails until they agree. A store
+   that declares a restore-time migration (Evals, Prompts, agent runs) also
+   needs that step permitted by the restore sandbox's authorizer and a test
+   that migrates a real older database; the v76 step shipped without any of
+   this and Qodo, not a test run, caught it (PR #3002).
 
 ## Editing a migration that has already shipped (TASK-22225)
 

@@ -24,6 +24,7 @@ flipping the default made nine other suites need it too.
 import dataclasses
 import json
 import subprocess
+import sqlite3
 import threading
 import time
 from collections import Counter
@@ -87,6 +88,8 @@ from Tests.Agents.conftest import (
     pin_max_live_subagents,
     pin_turn_scoped_children,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class _NoopWorkspaceExecutor:
@@ -190,9 +193,46 @@ def _todo_provider(workspace, store: SessionTodoStore) -> LocalToolProvider:
     )
 
 
+_owned_fleet_services: dict[AgentRunsDB, list[AgentService]] = {}
+
+
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    database = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    _owned_fleet_services[database] = []
+    try:
+        yield database
+    finally:
+        try:
+            # Released providers still need their exact native producers to retire.
+            for service in _owned_fleet_services.pop(database):
+                join_fleet_children(service)
+        finally:
+            connection = getattr(database._thread_local, "conn", None)
+            database.close()
+            if connection is not None:
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    connection.execute("SELECT 1")
+            assert not database._maintenance_participant.connections
+
+
+@pytest.fixture()
+def reopen_db(db):
+    databases = []
+
+    def create(*, client_id):
+        database = AgentRunsDB(db.db_path, client_id=client_id)
+        databases.append(database)
+        return database
+
+    yield create
+    for database in reversed(databases):
+        connection = getattr(database._thread_local, "conn", None)
+        database.close()
+        if connection is not None:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                connection.execute("SELECT 1")
+        assert not database._maintenance_participant.connections
 
 
 def make_fleet_service(
@@ -235,6 +275,9 @@ def make_fleet_service(
         run_log_writer=run_log_writer,
         worktree_repo_authority=worktree_repo_authority,
     )
+    owned = _owned_fleet_services.get(db)
+    if owned is not None:
+        owned.append(service)
     return service, chat, coordinator
 
 
@@ -1077,9 +1120,7 @@ def test_a_straggler_outlives_its_turn_by_default(db):
         assert child["parent_run_id"] == run_id
     finally:
         release.set()
-        _wait_until(
-            coordinator.all_finished, "the released child never finished"
-        )
+        _wait_until(coordinator.all_finished, "the released child never finished")
 
 
 def test_a_survivor_persists_a_real_terminal_status_after_its_turn(db):
@@ -1300,9 +1341,7 @@ def test_the_kill_switch_decides_the_same_childs_fate(
     finally:
         release.set()
         if outlive:
-            _wait_until(
-                coordinator.all_finished, "the released child never finished"
-            )
+            _wait_until(coordinator.all_finished, "the released child never finished")
 
 
 def test_a_survivor_is_out_of_reach_of_the_next_turns_settle(db):
@@ -1346,9 +1385,7 @@ def test_a_survivor_is_out_of_reach_of_the_next_turns_settle(db):
         assert _child_row(db)["status"] == RUN_RUNNING
     finally:
         release.set()
-        _wait_until(
-            coordinator.all_finished, "the released child never finished"
-        )
+        _wait_until(coordinator.all_finished, "the released child never finished")
     assert _child_row(db)["status"] == RUN_DONE
 
 
@@ -1543,9 +1580,7 @@ def test_coerce_max_live_subagents(configured, expected):
     ],
 )
 def test_coerce_subagents_outlive_turn(configured, expected):
-    assert (
-        agent_service._coerce_subagents_outlive_turn(configured) is expected
-    )
+    assert agent_service._coerce_subagents_outlive_turn(configured) is expected
 
 
 def test_children_outlive_their_turn_by_default():
@@ -1740,9 +1775,7 @@ def test_a_threaded_childs_other_budget_fields_still_inherit_the_parents(db):
     assert child["budget"]["max_tool_call_seconds"] == 45.0
 
 
-def test_an_inline_childs_budget_still_clamps_to_the_parents_remainder(
-    db, monkeypatch
-):
+def test_an_inline_childs_budget_still_clamps_to_the_parents_remainder(db, monkeypatch):
     """PR3a-1 Task 5 review, Defect 1 (Major, blocking) -- the regression
     this pins.
 
@@ -1909,10 +1942,7 @@ def test_live_children_are_capped_across_turns(db, monkeypatch):
         )
         assert outcome_1.status == RUN_DONE
         _wait_until(
-            lambda: len(
-                [h for h in fleet.snapshot() if h.status == RUN_RUNNING]
-            )
-            == 2,
+            lambda: len([h for h in fleet.snapshot() if h.status == RUN_RUNNING]) == 2,
             "turn 1's 2 children never both started running",
         )
 
@@ -1965,11 +1995,11 @@ def test_live_children_are_capped_across_turns(db, monkeypatch):
             if not [h for h in fleet.snapshot() if h.status == RUN_RUNNING]:
                 break
             time.sleep(0.02)
+        join_fleet_children(service_1)
+        join_fleet_children(service_2)
 
 
-def test_a_later_turns_settle_does_not_reach_an_earlier_turns_survivor(
-    db, monkeypatch
-):
+def test_a_later_turns_settle_does_not_reach_an_earlier_turns_survivor(db, monkeypatch):
     """PR3a-1 Task 6a regression guard for `_settle_fleet`'s
     `mine = list(self._fleet_cancels)` scoping (Task 2), which a
     long-lived coordinator makes load-bearing rather than merely
@@ -2047,15 +2077,10 @@ def test_a_later_turns_settle_does_not_reach_an_earlier_turns_survivor(
         )
         assert outcome_1.status == RUN_DONE
         _wait_until(
-            lambda: len(
-                [h for h in fleet.snapshot() if h.status == RUN_RUNNING]
-            )
-            == 1,
+            lambda: len([h for h in fleet.snapshot() if h.status == RUN_RUNNING]) == 1,
             "turn 1's child never started running",
         )
-        survivor = next(
-            h for h in fleet.snapshot() if h.status == RUN_RUNNING
-        )
+        survivor = next(h for h in fleet.snapshot() if h.status == RUN_RUNNING)
         # Turn 1's own service still holds the survivor's cancel Event --
         # this is exactly what the bridge keeps a finished run's service
         # for, and what turn 2 must not touch.
@@ -2071,15 +2096,12 @@ def test_a_later_turns_settle_does_not_reach_an_earlier_turns_survivor(
         assert outcome_2.status == RUN_DONE
         # Turn 2 really did settle: its own child is terminal, waited for
         # inside its own turn the phase-2 way.
-        turn_2_child = next(
-            h for h in fleet.snapshot() if h.task == "turn 2 child"
-        )
+        turn_2_child = next(h for h in fleet.snapshot() if h.task == "turn 2 child")
         assert turn_2_child.status == RUN_DONE, turn_2_child
 
         # ... and turn 1's survivor is untouched by ALL of it.
         assert not cancel_event.is_set(), (
-            "turn 2's settle cancelled turn 1's survivor -- `mine` "
-            "scoping lost"
+            "turn 2's settle cancelled turn 1's survivor -- `mine` scoping lost"
         )
         after = fleet.get(survivor.handle_id)
         assert after is not None and after.status == RUN_RUNNING, after
@@ -2099,6 +2121,8 @@ def test_a_later_turns_settle_does_not_reach_an_earlier_turns_survivor(
         assert fleet.get(survivor.handle_id).result == "released"
     finally:
         released.set()
+        join_fleet_children(service_1)
+        join_fleet_children(service_2)
 
 
 def test_only_the_service_that_spawned_a_child_can_cancel_it(db, monkeypatch):
@@ -2129,8 +2153,7 @@ def test_only_the_service_that_spawned_a_child_can_cancel_it(db, monkeypatch):
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
     chat = FleetChat(
-        [fence(SPAWN_TOOL_NAME, {"task": "survivor"}), "turn 1 done"]
-        + ["turn 2 done"],
+        [fence(SPAWN_TOOL_NAME, {"task": "survivor"}), "turn 1 done"] + ["turn 2 done"],
         {"survivor": [blocked_child]},
         allow_unconsumed=True,
     )
@@ -2149,15 +2172,10 @@ def test_only_the_service_that_spawned_a_child_can_cancel_it(db, monkeypatch):
             api_endpoint="llama_cpp",
         )
         _wait_until(
-            lambda: len(
-                [h for h in fleet.snapshot() if h.status == RUN_RUNNING]
-            )
-            == 1,
+            lambda: len([h for h in fleet.snapshot() if h.status == RUN_RUNNING]) == 1,
             "turn 1's child never started running",
         )
-        survivor = next(
-            h for h in fleet.snapshot() if h.status == RUN_RUNNING
-        )
+        survivor = next(h for h in fleet.snapshot() if h.status == RUN_RUNNING)
         service_2.run_turn(
             conversation_id="c",
             messages=[{"role": "user", "content": "go 2"}],
@@ -2167,8 +2185,7 @@ def test_only_the_service_that_spawned_a_child_can_cancel_it(db, monkeypatch):
 
         # Turn 2's service SEES it ...
         assert any(
-            h.handle_id == survivor.handle_id
-            for h in service_2.fleet_snapshot()
+            h.handle_id == survivor.handle_id for h in service_2.fleet_snapshot()
         )
         # ... does not own it ...
         assert service_2.live_subagent_handles() == []
@@ -2188,6 +2205,8 @@ def test_only_the_service_that_spawned_a_child_can_cancel_it(db, monkeypatch):
             lambda: fleet.get(survivor.handle_id).status != RUN_RUNNING,
             "the cancelled survivor never unwound",
         )
+        join_fleet_children(service_1)
+        join_fleet_children(service_2)
 
 
 def test_check_agents_shows_an_earlier_turns_survivor_in_its_own_section(
@@ -2240,10 +2259,7 @@ def test_check_agents_shows_an_earlier_turns_survivor_in_its_own_section(
             api_endpoint="llama_cpp",
         )
         _wait_until(
-            lambda: len(
-                [h for h in fleet.snapshot() if h.status == RUN_RUNNING]
-            )
-            == 1,
+            lambda: len([h for h in fleet.snapshot() if h.status == RUN_RUNNING]) == 1,
             "turn 1's child never started running",
         )
         run_id_2, _outcome_2 = service_2.run_turn(
@@ -2260,6 +2276,8 @@ def test_check_agents_shows_an_earlier_turns_survivor_in_its_own_section(
         assert "long job" in rendered, rendered
     finally:
         released.set()
+        join_fleet_children(service_1)
+        join_fleet_children(service_2)
 
 
 def test_config_above_one_builds_a_fleet_and_threads_spawns(db, monkeypatch):
@@ -2538,9 +2556,7 @@ def test_wait_agents_with_no_children_says_so(db):
 # -- cancellation and the wall-clock bound --------------------------------
 
 
-def test_wait_agents_cancellation_stops_children_and_ends_the_run(
-    db, monkeypatch
-):
+def test_wait_agents_cancellation_stops_children_and_ends_the_run(db, monkeypatch):
     """User cancellation around a wait propagates -- UNDER THE KILL SWITCH.
 
     The child keeps calling a tool (with varying arguments, so the cycle
@@ -2596,9 +2612,7 @@ def test_wait_agents_cancellation_stops_children_and_ends_the_run(
     assert child["status"] == RUN_CANCELLED
 
 
-def test_cancelling_and_abandoning_a_child_revokes_its_approval_cards(
-    db, monkeypatch
-):
+def test_cancelling_and_abandoning_a_child_revokes_its_approval_cards(db, monkeypatch):
     """PR2a Task 7: a stopped child's pending approval card is revoked.
 
     The approval wait lives on the child's own per-call daemon thread, so
@@ -2718,12 +2732,15 @@ def test_cancel_subagent_revokes_approval_cards_mid_run(db):
     result: dict = {}
 
     def do_run():
-        result["outcome"] = service.run_turn(
-            conversation_id="c",
-            messages=[{"role": "user", "content": "go"}],
-            config=cfg,
-            api_endpoint="llama_cpp",
-        )
+        try:
+            result["outcome"] = service.run_turn(
+                conversation_id="c",
+                messages=[{"role": "user", "content": "go"}],
+                config=cfg,
+                api_endpoint="llama_cpp",
+            )
+        finally:
+            db.close()
 
     runner = threading.Thread(target=do_run, name="test-cancel-subagent-run")
     runner.start()
@@ -2766,9 +2783,7 @@ def test_cancel_subagent_revokes_approval_cards_mid_run(db):
     )
     child = db.get_run(handle.run_id)
     assert child["status"] == RUN_CANCELLED
-    assert any(
-        step["kind"] == "agent_run_cancelled" for step in child["steps"]
-    )
+    assert any(step["kind"] == "agent_run_cancelled" for step in child["steps"])
     path = db.db_path
     db.close()
     reopened = AgentRunsDB(path, client_id="cancel-reload")
@@ -2864,9 +2879,7 @@ def test_finished_children_record_their_measured_token_spend_on_the_handle(db):
     assert handle.total_tokens > 0
 
 
-def test_wait_agents_is_bounded_by_the_runs_remaining_wall_clock(
-    db, monkeypatch
-):
+def test_wait_agents_is_bounded_by_the_runs_remaining_wall_clock(db, monkeypatch):
     """A wedged child must not hold wait_agents past the run's budget.
 
     Pinned turn-scoped (PR3a-1 Task 2) so the tail assertions -- every
@@ -3286,9 +3299,10 @@ def test_thread_start_and_persistent_terminal_failure_reconciles_on_reopen(
     repaired = reopened.get_run(child["id"])
     assert repaired["status"] == RUN_ERROR
     assert repaired["result"] is None
-    assert len(
-        [step for step in repaired["steps"] if step["kind"] == "capture_failed"]
-    ) == 2
+    assert (
+        len([step for step in repaired["steps"] if step["kind"] == "capture_failed"])
+        == 2
+    )
     reopened.close()
 
 
@@ -3343,9 +3357,7 @@ def test_thread_start_refusal_survives_atomic_and_status_fallback_failure(
     assert any(step["kind"] == "capture_failed" for step in child["steps"])
 
 
-def test_a_settled_child_is_settled_before_the_manifest_is_written(
-    db, monkeypatch
-):
+def test_a_settled_child_is_settled_before_the_manifest_is_written(db, monkeypatch):
     """The ordering constraint, asserted AT manifest time.
 
     Whatever the turn still settles must be finished before
@@ -3432,9 +3444,7 @@ def test_a_survivor_does_not_cost_the_turn_its_manifest(db):
         assert not coordinator.all_finished()
     finally:
         release.set()
-        _wait_until(
-            coordinator.all_finished, "the released child never finished"
-        )
+        _wait_until(coordinator.all_finished, "the released child never finished")
 
 
 def test_failed_child_is_reported_in_wait_result(db):
@@ -4075,10 +4085,9 @@ def test_isolated_spawn_without_authority_refuses_and_plain_sibling_runs(
         assert outcome.status == RUN_DONE
         join_fleet_children(service)
         results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
-        assert any(
-            "source_authority_unavailable" in result
-            for result in results
-        ), results
+        assert any("source_authority_unavailable" in result for result in results), (
+            results
+        )
         assert chat.child_calls.get("iso task") is None
         assert chat.child_calls["plain task"]
         assert coordinator.live_count() == 0
@@ -4157,7 +4166,9 @@ def test_isolated_child_writes_only_to_selected_repository_worktree(
             agent_worktree.discard_agent_worktree(git_repo, created)
 
 
-def test_worktree_creation_is_durable_until_exact_execution_owner_drains(db, git_repo):
+def test_worktree_creation_is_durable_until_exact_execution_owner_drains(
+    db, reopen_db, git_repo
+):
     """The created checkout stays held until its real owner physically drains."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
 
@@ -4199,7 +4210,7 @@ def test_worktree_creation_is_durable_until_exact_execution_owner_drains(db, git
     refusal = service._admit_agent_worktree(handle, run_id, owner)
     assert refusal is None
     created = service._agent_worktrees[handle.handle_id]
-    reopened = AgentRunsDB(db.db_path, client_id="reopened")
+    reopened = reopen_db(client_id="reopened")
     record = AgentWorktreeRepository(reopened).get_for_conversation(run_id, "c")
     assert record is not None
     assert record["writer_state"] == "held"
@@ -4290,7 +4301,9 @@ def test_drain_callback_closes_only_connection_created_on_callback_thread(
     agent_worktree.discard_agent_worktree(git_repo, created)
 
 
-def test_logical_tool_timeout_stays_held_until_physical_worker_finishes(db, git_repo):
+def test_logical_tool_timeout_stays_held_until_physical_worker_finishes(
+    db, reopen_db, git_repo
+):
     """Terminal status cannot drain a timed-out operation still executing."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
 
@@ -4335,9 +4348,7 @@ def test_logical_tool_timeout_stays_held_until_physical_worker_finishes(db, git_
     assert not result.ok and "timed out" in str(result.error)
     db.set_status(run_id, RUN_ERROR, result="timed out")
     owner.finish_root()
-    repository = AgentWorktreeRepository(
-        AgentRunsDB(db.db_path, client_id="reopened-timeout")
-    )
+    repository = AgentWorktreeRepository(reopen_db(client_id="reopened-timeout"))
     assert repository.get_for_conversation(run_id, "c")["writer_state"] == "held"
     release.set()
     _wait_until(
@@ -4403,7 +4414,7 @@ def test_failed_record_insertion_retains_checkout_and_never_routes(
     agent_worktree.discard_agent_worktree(git_repo, created)
 
 
-def test_real_child_creation_is_durable_before_its_first_write(db, git_repo):
+def test_real_child_creation_is_durable_before_its_first_write(db, reopen_db, git_repo):
     """A gated child is durably held before its first provider tool call."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
 
@@ -4448,7 +4459,7 @@ def test_real_child_creation_is_durable_before_its_first_write(db, git_repo):
         )
         assert outcome.status == RUN_DONE
         child = _child_row(db)
-        reopened = AgentRunsDB(db.db_path, client_id="reopened-gated")
+        reopened = reopen_db(client_id="reopened-gated")
         repository = AgentWorktreeRepository(reopened)
         record = repository.get_for_conversation(child["id"], "c")
         assert record is not None and record["writer_state"] == "held"
@@ -4470,7 +4481,9 @@ def test_real_child_creation_is_durable_before_its_first_write(db, git_repo):
             agent_worktree.discard_agent_worktree(git_repo, created)
 
 
-def test_cleanup_unproven_stays_uncertain_after_exact_owner_drains(db, git_repo):
+def test_cleanup_unproven_stays_uncertain_after_exact_owner_drains(
+    db, reopen_db, git_repo
+):
     """Provider cleanup refusal durably poisons its admitted child owner."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Tools.workspace_tool_executor import WorkspaceToolExecutionError
@@ -4522,7 +4535,7 @@ def test_cleanup_unproven_stays_uncertain_after_exact_owner_drains(db, git_repo)
     with use_run_id(run_id):
         result = provider.invoke("local:fs_read", {"path": "note.txt"})
     assert not result.ok
-    reopened = AgentRunsDB(db.db_path, client_id="reopened-uncertain")
+    reopened = reopen_db(client_id="reopened-uncertain")
     repository = AgentWorktreeRepository(reopened)
     assert repository.get_for_conversation(run_id, "c")["writer_state"] == "uncertain"
 
@@ -4626,7 +4639,7 @@ def test_post_create_authority_drift_retains_created_checkout(db, git_repo):
 
 
 def test_provider_admission_failure_retains_real_created_checkout(
-    db, git_repo, monkeypatch
+    db, reopen_db, git_repo, monkeypatch
 ):
     """A provider routing failure preserves the created checkout and branch."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
@@ -4677,7 +4690,7 @@ def test_provider_admission_failure_retains_real_created_checkout(
         assert _git(git_repo, "branch", "--list", created.branch).strip()
         assert provider._agent_roots == {}
         child = _child_row(db)
-        reopened = AgentRunsDB(db.db_path, client_id="reopened-admit-failure")
+        reopened = reopen_db(client_id="reopened-admit-failure")
         record = AgentWorktreeRepository(reopened).get_for_conversation(
             child["id"], "c"
         )
@@ -4693,7 +4706,7 @@ def test_provider_admission_failure_retains_real_created_checkout(
 
 
 def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
-    db, git_repo, monkeypatch
+    db, reopen_db, git_repo, monkeypatch
 ):
     """A failed fleet thread start retains Git work while removing its route."""
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
@@ -4751,7 +4764,7 @@ def test_worktree_thread_start_failure_retains_checkout_and_retires_routing(
         assert provider._agent_roots == {}
         assert coordinator.all_finished()
         child = _child_row(db)
-        reopened = AgentRunsDB(db.db_path, client_id="reopened-start-failure")
+        reopened = reopen_db(client_id="reopened-start-failure")
         record = AgentWorktreeRepository(reopened).get_for_conversation(
             child["id"], "c"
         )
@@ -4803,7 +4816,12 @@ def test_worktree_tools_refuse_before_preview_confirmation_or_mutation(
     results = _tool_results(db.get_run(run_id), MERGE_AGENT_WORKTREE_TOOL_NAME)
     results += _tool_results(db.get_run(run_id), DISCARD_AGENT_WORKTREE_TOOL_NAME)
     assert len(results) == 2
-    assert all("source_authority_unavailable" in result or "Tool not permitted" in result or "Unknown tool" in result for result in results), results
+    assert all(
+        "source_authority_unavailable" in result
+        or "Tool not permitted" in result
+        or "Unknown tool" in result
+        for result in results
+    ), results
     assert confirm_calls == []
 
 
@@ -4868,8 +4886,7 @@ def test_isolated_spawn_refuses_unknown_isolation_value(db, git_repo):
     assert outcome.status == RUN_DONE
     results = _tool_results(db.get_run(run_id), SPAWN_TOOL_NAME)
     assert results and all(
-        'unknown isolation "sandbox"' in r and "invalid_isolation" in r
-        for r in results
+        'unknown isolation "sandbox"' in r and "invalid_isolation" in r for r in results
     ), results
     # No child was created -- the refusal costs no spawn slot, and no
     # child silently shared the tree.
@@ -5003,7 +5020,7 @@ def test_confirmed_current_turn_worktree_uses_real_drained_child(
         "applied" if action == "apply" else "discarded_cleanup_pending"
     )
     assert created.worktree_path.is_dir()
-    assert (git_repo / 'child.txt').exists() is (action == 'apply')
+    assert (git_repo / "child.txt").exists() is (action == "apply")
 
 
 @pytest.mark.parametrize("run_id", [None, "", "../outside", "a" * 129])

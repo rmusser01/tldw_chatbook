@@ -1,0 +1,1109 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="10" skipped="0" tests="11" time="13.568" timestamp="2026-10-04T15:11:57.565940-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_restriction_identity_is_captured_for_aliases_and_memory_peers[False]" time="1.026"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_restriction_identity_is_c0/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_restriction_identity_is_c0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x112cefda0&gt;
+memory = False
+
+    @pytest.mark.parametrize("memory", [False, True])
+    def test_restriction_identity_is_captured_for_aliases_and_memory_peers(tmp_path, monkeypatch, memory):
+        """Cleanup and admission keep the same key when filesystem observation fails."""
+        from pathlib import Path
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+        from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
+    
+        db = AgentRunsDB(":memory:" if memory else tmp_path / "identity.sqlite", client_id="identity")
+        other = AgentRunsDB(":memory:" if memory else tmp_path / "other.sqlite", client_id="other")
+        peer = None
+        ledger = db.automatic_work
+        ledger.recover(current_owner_id="owner")
+        root, _ = source_run(db)
+        other_root, _ = source_run(other)
+        if memory:
+            sibling = AutomaticWorkLedger(db)
+            assert ledger._restriction_database().startswith("memory:")
+            assert ledger._restriction_database() != other.automatic_work._restriction_database()
+        else:
+            alias = tmp_path / "alias"
+            alias.symlink_to(tmp_path, target_is_directory=True)
+&gt;           peer = AgentRunsDB(alias / db.db_path.name, client_id="alias", reconcile_on_init=False)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/DB/test_automatic_chat_starts.py:772: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1831: in _connect_registered_sqlite
+    directory_result = verify_trusted_directory(
+tldw_chatbook/Utils/private_paths.py:2104: in verify_trusted_directory
+    current_fd, symlink_hops = _follow_trusted_symlink(
+tldw_chatbook/Utils/private_paths.py:353: in _follow_trusted_symlink
+    target = _read_trusted_symlink(current_fd, component, selected, exc, traversed)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent_fd = 22, component = 'alias'
+selected = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_restriction_identity_is_c0/alias')
+exc = NotADirectoryError(20, 'Not a directory')
+traversed = ['private', 'tmp', 'pr2995-task15-fix1', 'red', 'test_restriction_identity_is_c0']
+
+    def _read_trusted_symlink(
+        parent_fd: int,
+        component: str,
+        selected: Path,
+        exc: OSError,
+        traversed: list[str],
+    ) -&gt; str:
+        """Return a trusted symlink component's target, or re-raise the open error.
+    
+        Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
+        never re-derived from a path string that an attacker could repoint between
+        the two calls. Refusals carry the component as `offender_path` (plus its
+        lstat detail when the link itself was the problem) so symlink rejections
+        name their blocker like every other refusal (task-32900).
+        """
+    
+        offender = _offender_path(traversed, component)
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        try:
+            link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
+&gt;           raise _private_path_error_from_oserror(
+                selected,
+                exc,
+                offender_path=offender,
+                offender_detail=_describe_stat(link_stat),
+                offender_mode=_offender_mode(link_stat),
+            ) from None
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_restriction_identity_is_c0/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]
+
+tldw_chatbook/Utils/private_paths.py:263: PrivatePathError</failure></testcase><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_restriction_identity_is_captured_for_aliases_and_memory_peers[True]" time="0.014" /><testcase classname="Tests.DB.test_automatic_chat_starts" name="test_initial_restriction_identity_failure_refuses_automatic_authority" time="0.273"><failure message="Failed: DID NOT RAISE &lt;class 'OSError'&gt;">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_initial_restriction_ident0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1128e3980&gt;
+
+    def test_initial_restriction_identity_failure_refuses_automatic_authority(tmp_path, monkeypatch):
+        """A failed initial canonical key must not produce an authority-capable ledger."""
+        from pathlib import Path
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        db = AgentRunsDB(tmp_path / "uncertain.sqlite", client_id="identity")
+        resolve = Path.resolve
+        def fail_resolution(path, *args, **kwargs):
+            if path == db.db_path:
+                raise OSError("private initial identity failure")
+            return resolve(path, *args, **kwargs)
+        monkeypatch.setattr(Path, "resolve", fail_resolution)
+        try:
+&gt;           with pytest.raises(OSError):
+                 ^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE &lt;class 'OSError'&gt;
+
+Tests/DB/test_automatic_chat_starts.py:817: Failed</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-canonical_resolution]" time="1.421"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a0/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1128e1970&gt;
+failure = 'canonical_resolution', worker = 'commit', replacement = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+&gt;       peer = AgentRunsDB(alias / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_chat_start.py:3736: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1831: in _connect_registered_sqlite
+    directory_result = verify_trusted_directory(
+tldw_chatbook/Utils/private_paths.py:2104: in verify_trusted_directory
+    current_fd, symlink_hops = _follow_trusted_symlink(
+tldw_chatbook/Utils/private_paths.py:353: in _follow_trusted_symlink
+    target = _read_trusted_symlink(current_fd, component, selected, exc, traversed)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent_fd = 35, component = 'alias'
+selected = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a0/alias')
+exc = NotADirectoryError(20, 'Not a directory')
+traversed = ['private', 'tmp', 'pr2995-task15-fix1', 'red', 'test_persistent_registration_a0']
+
+    def _read_trusted_symlink(
+        parent_fd: int,
+        component: str,
+        selected: Path,
+        exc: OSError,
+        traversed: list[str],
+    ) -&gt; str:
+        """Return a trusted symlink component's target, or re-raise the open error.
+    
+        Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
+        never re-derived from a path string that an attacker could repoint between
+        the two calls. Refusals carry the component as `offender_path` (plus its
+        lstat detail when the link itself was the problem) so symlink rejections
+        name their blocker like every other refusal (task-32900).
+        """
+    
+        offender = _offender_path(traversed, component)
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        try:
+            link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
+&gt;           raise _private_path_error_from_oserror(
+                selected,
+                exc,
+                offender_path=offender,
+                offender_detail=_describe_stat(link_stat),
+                offender_mode=_offender_mode(link_stat),
+            ) from None
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a0/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]
+
+tldw_chatbook/Utils/private_paths.py:263: PrivatePathError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-persistent_registration]" time="1.253"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a1/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1113514f0&gt;
+failure = 'persistent_registration', worker = 'commit', replacement = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+&gt;       peer = AgentRunsDB(alias / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_chat_start.py:3736: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1831: in _connect_registered_sqlite
+    directory_result = verify_trusted_directory(
+tldw_chatbook/Utils/private_paths.py:2104: in verify_trusted_directory
+    current_fd, symlink_hops = _follow_trusted_symlink(
+tldw_chatbook/Utils/private_paths.py:353: in _follow_trusted_symlink
+    target = _read_trusted_symlink(current_fd, component, selected, exc, traversed)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent_fd = 42, component = 'alias'
+selected = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a1/alias')
+exc = NotADirectoryError(20, 'Not a directory')
+traversed = ['private', 'tmp', 'pr2995-task15-fix1', 'red', 'test_persistent_registration_a1']
+
+    def _read_trusted_symlink(
+        parent_fd: int,
+        component: str,
+        selected: Path,
+        exc: OSError,
+        traversed: list[str],
+    ) -&gt; str:
+        """Return a trusted symlink component's target, or re-raise the open error.
+    
+        Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
+        never re-derived from a path string that an attacker could repoint between
+        the two calls. Refusals carry the component as `offender_path` (plus its
+        lstat detail when the link itself was the problem) so symlink rejections
+        name their blocker like every other refusal (task-32900).
+        """
+    
+        offender = _offender_path(traversed, component)
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        try:
+            link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
+&gt;           raise _private_path_error_from_oserror(
+                selected,
+                exc,
+                offender_path=offender,
+                offender_detail=_describe_stat(link_stat),
+                offender_mode=_offender_mode(link_stat),
+            ) from None
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a1/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]
+
+tldw_chatbook/Utils/private_paths.py:263: PrivatePathError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-canonical_resolution]" time="1.094"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a2/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a2')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11234f860&gt;
+failure = 'canonical_resolution', worker = 'provider', replacement = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+&gt;       peer = AgentRunsDB(alias / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_chat_start.py:3736: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1831: in _connect_registered_sqlite
+    directory_result = verify_trusted_directory(
+tldw_chatbook/Utils/private_paths.py:2104: in verify_trusted_directory
+    current_fd, symlink_hops = _follow_trusted_symlink(
+tldw_chatbook/Utils/private_paths.py:353: in _follow_trusted_symlink
+    target = _read_trusted_symlink(current_fd, component, selected, exc, traversed)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent_fd = 49, component = 'alias'
+selected = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a2/alias')
+exc = NotADirectoryError(20, 'Not a directory')
+traversed = ['private', 'tmp', 'pr2995-task15-fix1', 'red', 'test_persistent_registration_a2']
+
+    def _read_trusted_symlink(
+        parent_fd: int,
+        component: str,
+        selected: Path,
+        exc: OSError,
+        traversed: list[str],
+    ) -&gt; str:
+        """Return a trusted symlink component's target, or re-raise the open error.
+    
+        Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
+        never re-derived from a path string that an attacker could repoint between
+        the two calls. Refusals carry the component as `offender_path` (plus its
+        lstat detail when the link itself was the problem) so symlink rejections
+        name their blocker like every other refusal (task-32900).
+        """
+    
+        offender = _offender_path(traversed, component)
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        try:
+            link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
+&gt;           raise _private_path_error_from_oserror(
+                selected,
+                exc,
+                offender_path=offender,
+                offender_detail=_describe_stat(link_stat),
+                offender_mode=_offender_mode(link_stat),
+            ) from None
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a2/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]
+
+tldw_chatbook/Utils/private_paths.py:263: PrivatePathError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-persistent_registration]" time="1.080"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a3/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a3')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110d4b7d0&gt;
+failure = 'persistent_registration', worker = 'provider', replacement = False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+&gt;       peer = AgentRunsDB(alias / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_chat_start.py:3736: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1831: in _connect_registered_sqlite
+    directory_result = verify_trusted_directory(
+tldw_chatbook/Utils/private_paths.py:2104: in verify_trusted_directory
+    current_fd, symlink_hops = _follow_trusted_symlink(
+tldw_chatbook/Utils/private_paths.py:353: in _follow_trusted_symlink
+    target = _read_trusted_symlink(current_fd, component, selected, exc, traversed)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent_fd = 56, component = 'alias'
+selected = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a3/alias')
+exc = NotADirectoryError(20, 'Not a directory')
+traversed = ['private', 'tmp', 'pr2995-task15-fix1', 'red', 'test_persistent_registration_a3']
+
+    def _read_trusted_symlink(
+        parent_fd: int,
+        component: str,
+        selected: Path,
+        exc: OSError,
+        traversed: list[str],
+    ) -&gt; str:
+        """Return a trusted symlink component's target, or re-raise the open error.
+    
+        Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
+        never re-derived from a path string that an attacker could repoint between
+        the two calls. Refusals carry the component as `offender_path` (plus its
+        lstat detail when the link itself was the problem) so symlink rejections
+        name their blocker like every other refusal (task-32900).
+        """
+    
+        offender = _offender_path(traversed, component)
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        try:
+            link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
+&gt;           raise _private_path_error_from_oserror(
+                selected,
+                exc,
+                offender_path=offender,
+                offender_detail=_describe_stat(link_stat),
+                offender_mode=_offender_mode(link_stat),
+            ) from None
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a3/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]
+
+tldw_chatbook/Utils/private_paths.py:263: PrivatePathError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-canonical_resolution]" time="1.041"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a4/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a4')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x111350530&gt;
+failure = 'canonical_resolution', worker = 'commit', replacement = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+&gt;       peer = AgentRunsDB(alias / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_chat_start.py:3736: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1831: in _connect_registered_sqlite
+    directory_result = verify_trusted_directory(
+tldw_chatbook/Utils/private_paths.py:2104: in verify_trusted_directory
+    current_fd, symlink_hops = _follow_trusted_symlink(
+tldw_chatbook/Utils/private_paths.py:353: in _follow_trusted_symlink
+    target = _read_trusted_symlink(current_fd, component, selected, exc, traversed)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent_fd = 63, component = 'alias'
+selected = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a4/alias')
+exc = NotADirectoryError(20, 'Not a directory')
+traversed = ['private', 'tmp', 'pr2995-task15-fix1', 'red', 'test_persistent_registration_a4']
+
+    def _read_trusted_symlink(
+        parent_fd: int,
+        component: str,
+        selected: Path,
+        exc: OSError,
+        traversed: list[str],
+    ) -&gt; str:
+        """Return a trusted symlink component's target, or re-raise the open error.
+    
+        Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
+        never re-derived from a path string that an attacker could repoint between
+        the two calls. Refusals carry the component as `offender_path` (plus its
+        lstat detail when the link itself was the problem) so symlink rejections
+        name their blocker like every other refusal (task-32900).
+        """
+    
+        offender = _offender_path(traversed, component)
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        try:
+            link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
+&gt;           raise _private_path_error_from_oserror(
+                selected,
+                exc,
+                offender_path=offender,
+                offender_detail=_describe_stat(link_stat),
+                offender_mode=_offender_mode(link_stat),
+            ) from None
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a4/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]
+
+tldw_chatbook/Utils/private_paths.py:263: PrivatePathError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-persistent_registration]" time="1.077"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a5/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a5')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11225acf0&gt;
+failure = 'persistent_registration', worker = 'commit', replacement = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+&gt;       peer = AgentRunsDB(alias / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_chat_start.py:3736: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1831: in _connect_registered_sqlite
+    directory_result = verify_trusted_directory(
+tldw_chatbook/Utils/private_paths.py:2104: in verify_trusted_directory
+    current_fd, symlink_hops = _follow_trusted_symlink(
+tldw_chatbook/Utils/private_paths.py:353: in _follow_trusted_symlink
+    target = _read_trusted_symlink(current_fd, component, selected, exc, traversed)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent_fd = 70, component = 'alias'
+selected = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a5/alias')
+exc = NotADirectoryError(20, 'Not a directory')
+traversed = ['private', 'tmp', 'pr2995-task15-fix1', 'red', 'test_persistent_registration_a5']
+
+    def _read_trusted_symlink(
+        parent_fd: int,
+        component: str,
+        selected: Path,
+        exc: OSError,
+        traversed: list[str],
+    ) -&gt; str:
+        """Return a trusted symlink component's target, or re-raise the open error.
+    
+        Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
+        never re-derived from a path string that an attacker could repoint between
+        the two calls. Refusals carry the component as `offender_path` (plus its
+        lstat detail when the link itself was the problem) so symlink rejections
+        name their blocker like every other refusal (task-32900).
+        """
+    
+        offender = _offender_path(traversed, component)
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        try:
+            link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
+&gt;           raise _private_path_error_from_oserror(
+                selected,
+                exc,
+                offender_path=offender,
+                offender_detail=_describe_stat(link_stat),
+                offender_mode=_offender_mode(link_stat),
+            ) from None
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a5/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]
+
+tldw_chatbook/Utils/private_paths.py:263: PrivatePathError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-canonical_resolution]" time="1.192"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a6/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a6')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110e8b8f0&gt;
+failure = 'canonical_resolution', worker = 'provider', replacement = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+&gt;       peer = AgentRunsDB(alias / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_chat_start.py:3736: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1831: in _connect_registered_sqlite
+    directory_result = verify_trusted_directory(
+tldw_chatbook/Utils/private_paths.py:2104: in verify_trusted_directory
+    current_fd, symlink_hops = _follow_trusted_symlink(
+tldw_chatbook/Utils/private_paths.py:353: in _follow_trusted_symlink
+    target = _read_trusted_symlink(current_fd, component, selected, exc, traversed)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent_fd = 77, component = 'alias'
+selected = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a6/alias')
+exc = NotADirectoryError(20, 'Not a directory')
+traversed = ['private', 'tmp', 'pr2995-task15-fix1', 'red', 'test_persistent_registration_a6']
+
+    def _read_trusted_symlink(
+        parent_fd: int,
+        component: str,
+        selected: Path,
+        exc: OSError,
+        traversed: list[str],
+    ) -&gt; str:
+        """Return a trusted symlink component's target, or re-raise the open error.
+    
+        Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
+        never re-derived from a path string that an attacker could repoint between
+        the two calls. Refusals carry the component as `offender_path` (plus its
+        lstat detail when the link itself was the problem) so symlink rejections
+        name their blocker like every other refusal (task-32900).
+        """
+    
+        offender = _offender_path(traversed, component)
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        try:
+            link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
+&gt;           raise _private_path_error_from_oserror(
+                selected,
+                exc,
+                offender_path=offender,
+                offender_detail=_describe_stat(link_stat),
+                offender_mode=_offender_mode(link_stat),
+            ) from None
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a6/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]
+
+tldw_chatbook/Utils/private_paths.py:263: PrivatePathError</failure></testcase><testcase classname="Tests.Chat.test_console_chat_start" name="test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-persistent_registration]" time="1.190"><failure message="tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a7/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]">tmp_path = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a7')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110ec7a10&gt;
+failure = 'persistent_registration', worker = 'provider', replacement = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["canonical_resolution", "persistent_registration"])
+    @pytest.mark.parametrize("worker", ["commit", "provider"])
+    @pytest.mark.parametrize("replacement", [False, True])
+    async def test_persistent_registration_and_settlement_failure_retains_native_denial(
+        tmp_path, monkeypatch, failure, worker, replacement
+    ):
+        """Drained accepted work remains charged and denied despite both cleanup faults."""
+        import asyncio
+        from copy import copy
+        from pathlib import Path
+        from threading import Event
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        controller, store, runs, source, target, chain, request = await _native_start_rig(tmp_path)
+        ledger = runs.automatic_work
+        owner = controller.fleet_wake.runtime_owner_id
+        ledger.recover(current_owner_id=owner)
+        unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+        alias = tmp_path / "alias"
+        alias.symlink_to(tmp_path, target_is_directory=True)
+&gt;       peer = AgentRunsDB(alias / runs.db_path.name, client_id="peer", reconcile_on_init=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_chat_start.py:3736: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/AgentRuns_DB.py:333: in __init__
+    super().__init__(db_path, client_id)
+tldw_chatbook/DB/base_db.py:973: in __init__
+    self._initialize_schema()
+tldw_chatbook/DB/AgentRuns_DB.py:502: in _initialize_schema
+    with self.connection() as conn:
+         ^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:436: in counted
+    with function(repository, *args, **kwargs) as native:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:447: in connection
+    yield self._held_connection()
+          ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:432: in _held_connection
+    conn = self._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/participants.py:586: in accessed
+    return function(repository, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/AgentRuns_DB.py:361: in _get_connection
+    conn = super()._get_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/base_db.py:1006: in _get_connection
+    conn = connect_private_sqlite("db.base", self.db_path_str)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1933: in connect_private_sqlite
+    return _connect_registered_sqlite(
+tldw_chatbook/DB/private_sqlite.py:1611: in admitted
+    connection = function(owner_id, database, **kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/DB/private_sqlite.py:1831: in _connect_registered_sqlite
+    directory_result = verify_trusted_directory(
+tldw_chatbook/Utils/private_paths.py:2104: in verify_trusted_directory
+    current_fd, symlink_hops = _follow_trusted_symlink(
+tldw_chatbook/Utils/private_paths.py:353: in _follow_trusted_symlink
+    target = _read_trusted_symlink(current_fd, component, selected, exc, traversed)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+parent_fd = 84, component = 'alias'
+selected = PosixPath('/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a7/alias')
+exc = NotADirectoryError(20, 'Not a directory')
+traversed = ['private', 'tmp', 'pr2995-task15-fix1', 'red', 'test_persistent_registration_a7']
+
+    def _read_trusted_symlink(
+        parent_fd: int,
+        component: str,
+        selected: Path,
+        exc: OSError,
+        traversed: list[str],
+    ) -&gt; str:
+        """Return a trusted symlink component's target, or re-raise the open error.
+    
+        Both the `lstat` and the `readlink` go through `dir_fd`, so the component is
+        never re-derived from a path string that an attacker could repoint between
+        the two calls. Refusals carry the component as `offender_path` (plus its
+        lstat detail when the link itself was the problem) so symlink rejections
+        name their blocker like every other refusal (task-32900).
+        """
+    
+        offender = _offender_path(traversed, component)
+        if exc.errno not in {errno.ELOOP, errno.ENOTDIR}:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        try:
+            link_stat = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+        except OSError:
+            raise _private_path_error_from_oserror(
+                selected, exc, offender_path=offender
+            ) from None
+        if not stat.S_ISLNK(link_stat.st_mode) or not _trusted_symlink(link_stat):
+&gt;           raise _private_path_error_from_oserror(
+                selected,
+                exc,
+                offender_path=offender,
+                offender_detail=_describe_stat(link_stat),
+                offender_mode=_offender_mode(link_stat),
+            ) from None
+E           tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a7/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]
+
+tldw_chatbook/Utils/private_paths.py:263: PrivatePathError</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,123 @@
+Finding 3: a clean covering parity run, 2026-10-04 13:07-14:04.
+This is a covering run, not the full suite (the plan's Global Constraints ask for
+covering tests + preflight).
+
+## Files
+The Task 6 covering list (70 files: every test naming a touched id, copy or CSS rule, the
+category sweep, field guide, scoped updates and governance), unchanged, plus
+Tests/UI/test_settings_advanced_disclosures.py at the fix (the file does not exist at
+base). Tests/Architecture ran serially in Task 6 (../verification.txt §6); the fix
+touches only _settings.tcss selectors, the two generated bundles and the new test.
+
+## Run
+Base d9b73fc412 and fix 1db0f78198 (Task 6 code + finding 4's CSS fix) at the same time,
+each: pytest -p <admission plugin> -p no:randomly -p no:cacheprovider -n 6 --dist loadfile
+--timeout=900 -o tmp_path_retention_policy=none --junitxml ..., env -i scratch profile,
+PYTHONPATH=<that tree>. 12 workers in all on 18 cores. This session ran nothing else
+during the run (the Task 6 run had shared the machine with a third suite, 14 workers).
+Other sessions on the machine are outside this session's control: the 1-minute load
+average, sampled each minute (57 samples), ran 3.5-38.6, mean 15.5, peak 38.6 at 13:35.
+At 13:39 every running pytest process was one of these two runs. Both sides ran at the
+same moments, so they saw the same load.
+
+## pytest last lines
+base: 248 failed, 4121 passed, 66 warnings in 3409.23s (0:56:49)
+fix:  245 failed, 4134 passed, 66 warnings in 3399.16s (0:56:39)
+(fix: +10 tests = the new file, 10 passed. Base 248/4121 is the same count as the
+Task 6 run's base.)
+
+## Failure names, compared from the junit files
+base 248, fix 245, shared 242.
+head-only (3):
+  + Tests.UI.test_focus_mode.TestNavigationVetoKeepsFocus::test_flush_veto_keeps_focus_state_synchronized
+  + Tests.UI.test_library_shell::test_library_shell_blank_note_autosaved_then_emptied_still_gcs_on_back
+  + Tests.UI.test_library_shell::test_library_shell_export_choose_destination_pushes_file_save_dialog_with_sanitized_name
+base-only (6):
+  - Tests.UI.test_destination_visual_parity_correction::test_operational_destinations_use_timing_or_procedure_workbench[schedules-#scheduling-sync-status-#scheduling-workbench-panes0-actions0]
+  - Tests.UI.test_library_shell::test_library_note_editor_back_restores_exact_wide_browse_context
+  - Tests.UI.test_library_shell::test_library_shell_blank_title_save_round_trip_agrees_with_the_row
+  - Tests.UI.test_product_maturity_phase1_first_run::test_clean_first_run_home_survives_supported_terminal_sizes[size0]
+  - Tests.UI.test_product_maturity_phase1_first_run::test_clean_first_run_home_survives_supported_terminal_sizes[size1]
+  - Tests.UI.test_product_maturity_phase1_first_run::test_clean_first_run_launches_home_and_exposes_setup_orientation
+
+## Head-only names re-run alone, twice per side, serially, each run with its own --basetemp
+(A first attempt ran the two sides at once on pytest's shared default basetemp; base
+run 2 lost its tmp directory to the other process, FileNotFoundError at setup. It was
+discarded and re-run as below.) The run also includes
+test_library_starter_production_geometry_and_focus_order, whose message changed between
+the covering runs (below).
+
+                                                                    base 1/2      fix 1/2
+  test_focus_mode::...::test_flush_veto_keeps_focus_state_synchronized  FAIL/FAIL     FAIL/FAIL
+     (same message on all four: assert False is True, the app's focus flag; it passed in
+      the base covering run, so it depends on what ran before it in the worker)
+  test_library_shell::..._blank_note_autosaved_then_emptied_still_gcs   FAIL/FAIL     FAIL/FAIL
+     (same message on all four: "A session-blank note that was autosaved with content ...")
+  test_library_shell::..._export_choose_destination_..._sanitized_name  pass/pass     pass/pass
+  test_library_shell::test_library_starter_production_geometry_and_focus_order[size0/size1]
+                                                                    FAIL/FAIL     FAIL/FAIL
+     (three different messages, each seen on both sides: assert (0 > 0);
+      'library-rail-collapse' == 'library-open-chunking-lab'; NoMatches
+      '#library-row-ingest-import-media')
+  None of these files touches Settings; the fix changes only Settings CSS.
+
+## Shared failures whose first message line differs (lessons-testing-evidence,
+## "Matching failure names at base and head does not mean matching failures")
+  shared failures 242; first message line differs for 13
+     Tests.UI.test_console_session_settings::test_console_inspector_hosts_staged_context_above_source_readiness
+       base: AssertionError: assert ConsoleInspectorSection(id='console-agent-section-subagents', classes='console-inspector-section h-auto') is ConsoleStagedContextTray(id='console-staged-context-tra
+       fix:  AssertionError: assert ConsoleInspectorSection(id='console-agent-section-subagents', classes='h-auto console-inspector-section') is ConsoleStagedContextTray(id='console-staged-context-tra
+     Tests.UI.test_console_session_settings::test_mounted_console_unmount_times_out_hung_refresh_and_repairs_on_resume
+       base: assert 0.5536917499848641 < 0.5
+       fix:  assert 0.6072541659814306 < 0.5
+     Tests.UI.test_console_session_settings::test_roleplay_writer_startup_failure_releases_fork_transition[constructor]
+       base: AssertionError: assert {'30cfb832-84...12764e840': 1} == {}
+       fix:  AssertionError: assert {'dbbc5336-6f...222100664': 1} == {}
+     Tests.UI.test_console_session_settings::test_roleplay_writer_startup_failure_releases_fork_transition[start]
+       base: AssertionError: assert {'61a68108-65...2070eb305': 1} == {}
+       fix:  AssertionError: assert {'3026746e-ba...66120a504': 1} == {}
+     Tests.UI.test_library_shell::test_library_shell_media_viewer_inplace_large_document_latency_and_parse_proxy
+       base: assert [4827252640, 4907347952] == [4907347952]
+       fix:  assert [4924756320, 4933098704] == [4933098704]
+     Tests.UI.test_library_shell::test_library_starter_production_geometry_and_focus_order[size0]
+       base: AssertionError: assert 'library-rail-collapse' == 'library-open-chunking-lab'
+       fix:  textual.css.query.NoMatches: No nodes match '#library-row-ingest-import-media' on LibraryScreen(classes='shell-header-normal')
+     Tests.UI.test_library_shell::test_library_starter_production_geometry_and_focus_order[size1]
+       base: AssertionError: assert 'library-rail-collapse' == 'library-open-chunking-lab'
+       fix:  textual.css.query.NoMatches: No nodes match '#library-row-ingest-import-media' on LibraryScreen(classes='shell-header-normal')
+     Tests.UI.test_settings_model_catalog_save_journeys::test_catalog_checkbox_labels_are_fully_painted[size1-textual-dark]
+       base: AssertionError: ('settings-mc-write-nebius', Region(x=77, y=19, width=19, height=1), Region(x=43, y=19, width=44, height=1))
+       fix:  AssertionError: ('settings-mc-write-moonshot', Region(x=68, y=19, width=23, height=1), Region(x=40, y=19, width=50, height=1))
+     Tests.UI.test_settings_model_catalog_save_journeys::test_catalog_checkbox_labels_are_fully_painted[size1-textual-light]
+       base: AssertionError: ('settings-mc-write-nebius', Region(x=77, y=19, width=19, height=1), Region(x=43, y=19, width=44, height=1))
+       fix:  AssertionError: ('settings-mc-write-moonshot', Region(x=68, y=19, width=23, height=1), Region(x=40, y=19, width=50, height=1))
+     Tests.UI.test_settings_model_catalog_save_journeys::test_catalog_checkbox_labels_are_fully_painted[size2-textual-dark]
+       base: AssertionError: ('settings-mc-auto-nebius', '▐X▌ Nebius Token Factory: ref…')
+       fix:  AssertionError: ('settings-mc-auto-nebius', '▐X▌ Nebius Token Factory: refresh O…')
+     Tests.UI.test_settings_model_catalog_save_journeys::test_catalog_checkbox_labels_are_fully_painted[size2-textual-light]
+       base: AssertionError: ('settings-mc-auto-nebius', '▐X▌ Nebius Token Factory: ref…')
+       fix:  AssertionError: ('settings-mc-auto-nebius', '▐X▌ Nebius Token Factory: refresh O…')
+     Tests.UI.test_settings_speech_tts_panel::test_realtime_semantic_mode_deletes_the_server_vad_keys
+       base: TypeError: _PanelHarness(title='_PanelHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark'}) compose() method returned an invalid result; test_realtime_semantic_mode_deletes_
+       fix:  TypeError: _PanelHarness(title='_PanelHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'}) compose() method returned an invalid result; test_realtime_semantic_mode_deletes_
+     Tests.UI.test_settings_speech_tts_panel::test_realtime_unsupported_configured_provider_is_not_silently_rewritten
+       base: TypeError: _PanelHarness(title='_PanelHarness', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark'}) compose() method returned an invalid result; test_realtime_unsupported_configured
+       fix:  TypeError: _PanelHarness(title='_PanelHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'}) compose() method returned an invalid result; test_realtime_unsupported_configured
+  Reading them:
+  - test_console_session_settings x4, test_library_shell media latency, the two
+    test_settings_speech_tts_panel cases: object ids, uuids, timings and set ordering
+    only; the same assertion on both sides.
+  - test_library_starter_production_geometry_and_focus_order: flaky on both sides (above).
+  - test_settings_model_catalog_save_journeys::test_catalog_checkbox_labels_are_fully_painted
+    [size1 = 120x35, size2 = 80x24]: red at base, and still red. At 120x35 the first
+    clipped label moves from Nebius's "save to config" box to Moonshot's, because each
+    label now ends in its On/Off word (Task 6 ruling R17, reported in the Task 6 report's
+    concerns and the review's Minor 4). At 80x24 both sides clip Nebius's refresh label;
+    the fix paints more of it ("...: refresh O…" against base's "...: ref…") because the
+    card's checkboxes lost their box. Full-screen sizes (170x48 parameter) pass on both.
+
+## R22 offender lists (test_component_pattern_governance.py, in this run)
+Both ratchets fail on both sides with identical offender lists, the same as R22's:
+  dimension literals: components/_agentic_terminal.tcss: 1, components/_settings_splash_theme.tcss: 2,
+                      features/_workflows.tcss: 11
+  python style:       Widgets/Library/library_skill_work_pane.py:170: assignment width (static)

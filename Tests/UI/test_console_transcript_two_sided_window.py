@@ -34,7 +34,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_turn_grouping import project_thinking_activities
-from tldw_chatbook.Chat.thinking_blocks import DisplayableThinkingBlock, ThinkingEnvelope
+from tldw_chatbook.Chat.thinking_blocks import (
+    DisplayableThinkingBlock,
+    ThinkingEnvelope,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
@@ -268,9 +271,7 @@ async def test_far_jump_then_scrolling_down_walks_back_to_the_tail():
         await _settle(pilot)
 
         transcript.select_message("m10")
-        assert await _wait_for(
-            pilot, lambda: "m10" in _mounted_message_ids(transcript)
-        )
+        assert await _wait_for(pilot, lambda: "m10" in _mounted_message_ids(transcript))
         await _settle(pilot)
         assert "m499" not in _mounted_message_ids(transcript)
 
@@ -427,9 +428,9 @@ async def test_kill_switch_keeps_the_one_sided_ceiling_and_full_reveals():
         transcript = app.query_one(ConsoleTranscript)
         transcript.set_messages(history)
         await transcript.refresh_messages()
-        assert await _wait_for(
-            pilot, lambda: bool(transcript._pruned_message_ids)
-        ), "the watermarks must still prune with windowing disabled"
+        assert await _wait_for(pilot, lambda: bool(transcript._pruned_message_ids)), (
+            "the watermarks must still prune with windowing disabled"
+        )
         await _settle(pilot)
 
         first_before = _mounted_message_ids(transcript)[0]
@@ -749,9 +750,7 @@ async def test_far_jump_lands_with_the_target_as_the_first_mounted_row():
         await _settle(pilot)
 
         transcript.select_message("m10")
-        assert await _wait_for(
-            pilot, lambda: "m10" in _mounted_message_ids(transcript)
-        )
+        assert await _wait_for(pilot, lambda: "m10" in _mounted_message_ids(transcript))
         await _settle(pilot)
 
         mounted = _mounted_message_ids(transcript)

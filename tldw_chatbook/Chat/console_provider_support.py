@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.provider_readiness import (
 )
 from tldw_chatbook.model_capabilities import (
     anthropic_model_rejects_fixed_thinking_budget,
+    deepseek_model_supports_reasoning_effort,
     moonshot_model_supports_reasoning_effort,
     zai_model_supports_reasoning_effort,
 )
@@ -78,6 +79,17 @@ class ConsoleProviderCatalogEntry:
     requires_api_key: bool
     uses_direct_llama_path: bool = False
 
+    @property
+    def setup_facts(self):  # -> ProviderSetupFacts (lazy: avoids an import cycle)
+        """What setup needs to know: locality, key URL, base URL, ports (SF5).
+
+        Settings and first-run setup read these from this one shared record
+        (TASK-34100.6); ``Chat/provider_setup_facts.py`` owns the values.
+        """
+        from tldw_chatbook.Chat.provider_setup_facts import provider_setup_facts
+
+        return provider_setup_facts(self.readiness_key)
+
 
 # ADR-066: per-execution-key wire formats for Console thinking controls.
 # Level = reasoning_effort; budget = thinking_budget_tokens.
@@ -101,6 +113,8 @@ _LLAMA_CPP_THINKING_KEYS = frozenset(
     {"llama_cpp", "local_llamacpp", "local_llamafile", "local-llm"}
 )
 _VLLM_THINKING_KEYS = frozenset({"vllm", "local_vllm"})
+_STRATA_THINKING_KEYS = frozenset({"strata", "polystrata"})
+_STRATA_EFFORTS = frozenset({"none", "low", "medium", "high"})
 _CUSTOM_OPENAI_THINKING_KEYS = CUSTOM_OPENAI_EXECUTION_KEYS
 # MLX-LM: template-kwargs shape pending live verification of mlx_lm.server
 # support; if unsupported this row degrades to drop-and-log.
@@ -117,8 +131,9 @@ _LOCAL_REASONING_EXECUTION_KEYS = (
     | _VLLM_THINKING_KEYS
     | _CUSTOM_OPENAI_THINKING_KEYS
     | _TEMPLATE_KWARGS_THINKING_KEYS
+    | _STRATA_THINKING_KEYS
 )
-_LOCAL_BUDGET_EXECUTION_KEYS = _LLAMA_CPP_THINKING_KEYS
+_LOCAL_BUDGET_EXECUTION_KEYS = _LLAMA_CPP_THINKING_KEYS | _STRATA_THINKING_KEYS
 _LOCAL_DROPPED_CONTROLS = frozenset(
     {"reasoning_summary", "verbosity", "thinking_effort"}
 )
@@ -179,27 +194,31 @@ class ModelConfigField:
 
 
 #: The one field table: every editor's label, help and range for each field
-#: (Alt+M popover, Conversation settings, Settings model defaults and Console
-#: Behavior fallbacks). Labels stay within the modal's 23-cell label column.
+#: (Alt+M popover, Chat settings, Settings model defaults and Console
+#: Behavior fallbacks). Labels stay within the modal's 23-cell label column;
+#: a model field's help stays within 44 cells, so Settings rows show it
+#: whole at 211x44 (Model defaults has 60; Console Behavior 44, after its
+#: 32-cell control column and the help's own one-cell gap from its Source
+#: word).
 MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
     field.name: field
     for field in (
         ModelConfigField(
             "temperature",
             "Temperature",
-            "How varied replies are: lower is focused, higher is more varied.",
+            "Lower stays focused; higher is more varied.",
             "0.0 to 2.0",
         ),
         ModelConfigField(
             "top_p",
             "Top P",
-            "Sample only from the likeliest tokens whose chances add up to P.",
+            "Use only top tokens whose chances sum to P.",
             "0.0 to 1.0",
         ),
         ModelConfigField(
             "min_p",
             "Min P",
-            "Skip tokens far less likely than the top choice.",
+            "Skip tokens far less likely than the top.",
             "0.0 to 1.0",
         ),
         ModelConfigField(
@@ -211,37 +230,37 @@ MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
         ModelConfigField(
             "max_tokens",
             "Max tokens",
-            "Longest reply the model may write, in tokens.",
+            "Longest reply the model may give, in tokens.",
             "whole number, 1 or more",
         ),
         ModelConfigField(
             "seed",
             "Seed",
-            "Fixed number that makes replies repeatable where the provider allows it.",
+            "Same number, same reply, where supported.",
             "whole number, 0 or more",
         ),
         ModelConfigField(
             "presence_penalty",
             "Presence penalty",
-            "Higher values push the model toward new topics.",
+            "Higher pushes the model toward new topics.",
             "-2.0 to 2.0",
         ),
         ModelConfigField(
             "frequency_penalty",
             "Frequency penalty",
-            "Higher values make the model repeat the same words less.",
+            "Higher makes the model repeat words less.",
             "-2.0 to 2.0",
         ),
         ModelConfigField(
             "reasoning_effort",
             "Reasoning effort",
-            "How much a reasoning model thinks before it answers.",
+            "How much a reasoning model thinks first.",
             "a level from the list",
         ),
         ModelConfigField(
             "reasoning_summary",
             "Reasoning summary",
-            "How much of its reasoning the model summarizes for you.",
+            "How much of its reasoning the model sums up.",
             "auto, concise, detailed or none",
         ),
         ModelConfigField(
@@ -253,13 +272,13 @@ MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
         ModelConfigField(
             "thinking_effort",
             "Thinking",
-            "How much extended thinking the model does before it answers.",
+            "How much extended thinking comes first.",
             "off, low, medium, high, xhigh or max",
         ),
         ModelConfigField(
             "thinking_budget_tokens",
             "Thinking budget",
-            "Tokens reserved for thinking when Thinking is on.",
+            "Tokens reserved for Thinking when it is on.",
             "whole number, 1,024 or more",
         ),
         ModelConfigField(
@@ -357,6 +376,8 @@ def _capability_generation_fields(
 
     provider_key = provider_config_key(provider or "")
     supported = set(GENERATION_FIELD_REQUEST_KEYS) - _PROVIDER_GATED_GENERATION_FIELDS
+    if provider_key == "deepseek" and deepseek_model_supports_reasoning_effort(model):
+        supported.add("reasoning_effort")
     if provider_key == "moonshot" and moonshot_model_supports_reasoning_effort(model):
         supported.add("reasoning_effort")
     if provider_key == "zai" and zai_model_supports_reasoning_effort(model):
@@ -371,6 +392,11 @@ def _capability_generation_fields(
     if build_local_thinking_payload_fields(execution_key, "low", None):
         supported.add("reasoning_effort")
     if _engine_reasoning_effort_support(execution_key, model) == "supported":
+        supported.add("reasoning_effort")
+    engine_record = RECORDS_BY_KEY.get(execution_key or "")
+    if engine_record is not None and engine_record.engine_driven and engine_record.reasoning_effort:
+        # A preset that sends reasoning effort (Fireworks): the draft rebase
+        # must carry the user's level to the request.
         supported.add("reasoning_effort")
     if execution_key in _LOCAL_BUDGET_EXECUTION_KEYS:
         supported.add("thinking_budget_tokens")
@@ -407,8 +433,10 @@ def reasoning_effort_values_sent(
 
     A local strict-template request drops a level its chat template rejects
     ("minimal" on llama.cpp) with only a debug log, so an editor offering it
-    would save a value that is never sent (TASK-33002.1). Every other
-    provider keeps ``values`` unchanged.
+    would save a value that is never sent (TASK-33002.1). An engine preset
+    with ``reasoning_effort_values`` (Fireworks) keeps the levels it sends,
+    after its ``reasoning_effort_map`` (Fireworks sends "minimal" as "low").
+    Every other provider keeps ``values`` unchanged.
 
     Args:
         provider: Provider identity, config key or ``custom-ep`` id.
@@ -421,12 +449,41 @@ def reasoning_effort_values_sent(
     execution_key = resolve_console_provider_identity(
         provider_config_key(_registry_family_provider(provider, app_config))
     ).execution_key
+    engine_record = RECORDS_BY_KEY.get(execution_key or "")
+    if engine_record is not None and engine_record.reasoning_effort_values is not None:
+        mapped = engine_record.reasoning_effort_map
+        return tuple(
+            value for value in values
+            if mapped.get(value, value) in engine_record.reasoning_effort_values
+        )
     if not build_local_thinking_payload_fields(execution_key, "low", None):
         return values
     return tuple(
         value
         for value in values
         if build_local_thinking_payload_fields(execution_key, value, None)
+    )
+
+
+def provider_request_keys(
+    provider: str | None, app_config: Mapping[str, object] | None = None
+) -> Mapping[str, str] | None:
+    """Return the ``PROVIDER_PARAM_MAP`` entry a request for ``provider`` uses.
+
+    Args:
+        provider: Provider identity, config key or ``custom-ep`` id.
+        app_config: Config holding the ADR-146 endpoint registry.
+
+    Returns:
+        The entry, or ``None`` when no request map decides the provider's
+        fields: local_onnx and local_transformers have none, nor a chat
+        handler (TASK-33006.11).
+    """
+    from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
+
+    provider_key = provider_config_key(_registry_family_provider(provider, app_config))
+    return PROVIDER_PARAM_MAP.get(
+        resolve_console_provider_identity(provider_key).execution_key
     )
 
 
@@ -455,13 +512,9 @@ def supported_generation_fields(
         Names of the supported fields, drawn from
         ``GENERATION_FIELD_REQUEST_KEYS``.
     """
-    from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
-
     provider_key = provider_config_key(_registry_family_provider(provider, app_config))
     capable = _capability_generation_fields(provider_key, model)
-    request_keys = PROVIDER_PARAM_MAP.get(
-        resolve_console_provider_identity(provider_key).execution_key
-    )
+    request_keys = provider_request_keys(provider, app_config)
     if request_keys is None:
         return capable
     return frozenset(
@@ -475,6 +528,7 @@ def console_generation_control_support(
     provider: str,
     model: str | None,
     control: ConsoleGenerationControl,
+    app_config: Mapping[str, object] | None = None,
 ) -> ConsoleControlSupport:
     """Return existing authoritative support for one generation control.
 
@@ -487,11 +541,16 @@ def console_generation_control_support(
         provider: Provider selected by the Console draft.
         model: Optional selected model identifier.
         control: Generation control whose support should be projected.
+        app_config: Config holding the ADR-146 endpoint registry. With it, a
+            ``custom-ep`` id is decided as its entry's family, the way
+            ``supported_generation_fields`` and the gateway decide it.
 
     Returns:
         ``supported``, ``unsupported``, or ``unknown`` for the exact draft.
     """
-    identity = resolve_console_provider_identity(provider)
+    identity = resolve_console_provider_identity(
+        _registry_family_provider(provider, app_config)
+    )
     execution_key = identity.execution_key
     readiness_key = identity.readiness_key
 
@@ -529,6 +588,13 @@ def console_generation_control_support(
         if anthropic_model_rejects_fixed_thinking_budget(model):
             return "unsupported" if control == "thinking_budget_tokens" else "supported"
         return "unknown"
+
+    if readiness_key == "deepseek" and control == "reasoning_effort":
+        return (
+            "supported"
+            if deepseek_model_supports_reasoning_effort(model)
+            else "unsupported"
+        )
 
     if readiness_key == "moonshot":
         return (
@@ -568,7 +634,13 @@ def build_local_thinking_payload_fields(
         else None
     )
     fields: dict[str, Any] = {}
-    if key in _LLAMA_CPP_THINKING_KEYS or key in _TEMPLATE_KWARGS_THINKING_KEYS:
+    if key in _STRATA_THINKING_KEYS:
+        # Strata parses these itself; no llama.cpp template kwargs are needed.
+        if effort in _STRATA_EFFORTS:
+            fields["reasoning_effort"] = effort
+        if budget is not None:
+            fields["reasoning_budget_tokens"] = budget
+    elif key in _LLAMA_CPP_THINKING_KEYS or key in _TEMPLATE_KWARGS_THINKING_KEYS:
         if effort is not None:
             if effort in _TEMPLATE_SAFE_EFFORTS:
                 template_kwargs: dict[str, Any] = {"reasoning_effort": effort}

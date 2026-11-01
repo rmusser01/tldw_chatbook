@@ -1,0 +1,97 @@
+[
+  {
+    "id": "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[absent]",
+    "status": "failed",
+    "message": "AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'"
+  },
+  {
+    "id": "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[present]",
+    "status": "failed",
+    "message": "AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'"
+  },
+  {
+    "id": "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[foreign_attempt]",
+    "status": "failed",
+    "message": "sqlite3.IntegrityError: chat start identity is immutable"
+  },
+  {
+    "id": "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[stale_runtime]",
+    "status": "failed",
+    "message": "AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'"
+  },
+  {
+    "id": "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[missing_runtime]",
+    "status": "failed",
+    "message": "AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'"
+  },
+  {
+    "id": "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[exit_failure]",
+    "status": "failed",
+    "message": "AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_failed_preparation_with_no_attempt_clears_only_its_restriction[False-False]",
+    "status": "failed",
+    "message": "AssertionError: assert ('review_requ..._unconfirmed') == ('not_started...start_failed')\n  \n  At index 0 diff: 'review_required' != 'not_started'\n  Use -v to get more diff"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_failed_preparation_with_no_attempt_clears_only_its_restriction[False-True]",
+    "status": "failed",
+    "message": "AssertionError: assert [OSError('pri...ity failure')] == [None]\n  \n  At index 0 diff: OSError('private identity failure') != None\n  Use -v to get more diff"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_failed_preparation_with_no_attempt_clears_only_its_restriction[True-False]",
+    "status": "failed",
+    "message": "AssertionError: assert ('review_requ..._unconfirmed') == ('not_started...start_failed')\n  \n  At index 0 diff: 'review_required' != 'not_started'\n  Use -v to get more diff"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_failed_preparation_with_no_attempt_clears_only_its_restriction[True-True]",
+    "status": "failed",
+    "message": "AssertionError: assert [OSError('pri...ity failure')] == [None]\n  \n  At index 0 diff: OSError('private identity failure') != None\n  Use -v to get more diff"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_preparation_exception_reconciles_persisted_authority_conservatively[prepared]",
+    "status": "passed",
+    "message": null
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_preparation_exception_reconciles_persisted_authority_conservatively[accepted]",
+    "status": "passed",
+    "message": null
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_preparation_exception_reconciles_persisted_authority_conservatively[observation_failure]",
+    "status": "passed",
+    "message": null
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_preparation_exception_reconciles_persisted_authority_conservatively[missing_runtime]",
+    "status": "passed",
+    "message": null
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_preparation_exception_reconciles_persisted_authority_conservatively[stale_runtime]",
+    "status": "passed",
+    "message": null
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[commit-first]",
+    "status": "failed",
+    "message": "AssertionError: assert not True\n +  where True = <built-in method done of _asyncio.Task object at 0x10c0996c0>()\n +    where <built-in method done of _asyncio.Task object at 0x10c0996c0> = <Task finished name='Task-74' coro=<ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364> exception=OSError('private registration failure')>.done\n +      where <Task finished name='Task-74' coro=<ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364> exception=OSError('private registration failure')> = <tldw_chatbook.Chat.console_chat_start.AgentChatStartAuthorization object at 0x10c1bd370>.task"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[commit-second]",
+    "status": "failed",
+    "message": "AssertionError: assert [OSError('pri...ion failure')] == [None]\n  \n  At index 0 diff: OSError('private registration failure') != None\n  Use -v to get more diff"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[provider-first]",
+    "status": "failed",
+    "message": "AssertionError: assert not True\n +  where True = <built-in method done of _asyncio.Task object at 0x10c099fc0>()\n +    where <built-in method done of _asyncio.Task object at 0x10c099fc0> = <Task finished name='Task-89' coro=<ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364> exception=OSError('private registration failure')>.done\n +      where <Task finished name='Task-89' coro=<ConsoleChatStartCoordinator._run() done, defined at /Users/macbook-dev/.codex/work...t-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py:364> exception=OSError('private registration failure')> = <tldw_chatbook.Chat.console_chat_start.AgentChatStartAuthorization object at 0x10c1bcda0>.task"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_restriction_registration_failure_still_drains_exact_native_owners[provider-second]",
+    "status": "failed",
+    "message": "AssertionError: assert [OSError('pri...ion failure')] == [None]\n  \n  At index 0 diff: OSError('private registration failure') != None\n  Use -v to get more diff"
+  }
+]

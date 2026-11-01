@@ -167,8 +167,7 @@ class SpeechCatalogMixin:
             if (
                 not callable(saved_revision)
                 or not callable(configuration_revision)
-                or saved_revision(fingerprint.provider_id)
-                != fingerprint.saved_revision
+                or saved_revision(fingerprint.provider_id) != fingerprint.saved_revision
                 or configuration_revision(fingerprint.provider_id)
                 != fingerprint.saved_revision
             ):
@@ -996,10 +995,9 @@ class SpeechCatalogMixin:
                         else None
                     )
                 else:
-                    selected_model = (
-                        self._seeded_axis_value("tts-model-select", provider_id)
-                        or LEGACY_DEFAULT_MODELS.get(provider_id)
-                    )
+                    selected_model = self._seeded_axis_value(
+                        "tts-model-select", provider_id
+                    ) or LEGACY_DEFAULT_MODELS.get(provider_id)
             selected_voice = snapshot.get("voice_id")
             if selected_voice is None:
                 if provider_id == AUDIO_CPP_PROVIDER_ID:
@@ -1014,10 +1012,9 @@ class SpeechCatalogMixin:
                         else None
                     )
                 else:
-                    selected_voice = (
-                        self._seeded_axis_value("tts-voice-select", provider_id)
-                        or LEGACY_DEFAULT_VOICES.get(provider_id)
-                    )
+                    selected_voice = self._seeded_axis_value(
+                        "tts-voice-select", provider_id
+                    ) or LEGACY_DEFAULT_VOICES.get(provider_id)
             selected_format = snapshot.get("response_format")
             if selected_format is None:
                 selected_format = self._cli_setting("app_tts", "default_format", None)
@@ -1042,9 +1039,7 @@ class SpeechCatalogMixin:
                         "tts-model-select", provider_id
                     ) or LEGACY_DEFAULT_MODELS.get(provider_id)
                 catalog_voice_ids = {
-                    voice
-                    for model in catalog.models
-                    for voice in model.voices
+                    voice for model in catalog.models for voice in model.voices
                 }
                 if (
                     isinstance(selected_voice, str)
@@ -1805,10 +1800,7 @@ class SpeechCatalogMixin:
             )
             return
         artifact = getattr(state, "artifact", None)
-        if (
-            type(artifact) is STTSPlaygroundResultProjection
-            and artifact.path.exists()
-        ):
+        if type(artifact) is STTSPlaygroundResultProjection and artifact.path.exists():
             self._store_delivered_artifact(artifact, announce=False)
         active_operation_id = getattr(state, "active_operation_id", None)
         if getattr(state, "generation_active", False) and isinstance(

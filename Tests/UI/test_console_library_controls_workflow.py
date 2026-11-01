@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from textual.app import ComposeResult
+from textual import events
+from textual.app import App, ComposeResult
+from textual.command import CommandPalette
+from textual.keys import _character_to_key
 from textual.widgets import RadioButton, Static
 
 from Tests.UI.app_factory import _build_test_app
@@ -23,7 +26,16 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.UI.Workbench import WorkbenchActionRequested
+from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+    ConsoleCharacterOption,
+)
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+    ACTION_LIBRARY_ACCESS,
+    ConsoleComposerMenuModal,
+    build_composer_menu_entries,
+)
 from tldw_chatbook.Widgets.Console.console_library_access_modal import (
     ConsoleLibraryAccessModal,
     ConsoleLibraryPolicySaveOutcome,
@@ -31,7 +43,17 @@ from tldw_chatbook.Widgets.Console.console_library_access_modal import (
 from tldw_chatbook.Widgets.Console.console_library_search_modal import (
     ConsoleLibrarySearchModal,
 )
-from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleStatusChips
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleStatusChips,
+    ConsoleStatusText,
+)
+from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
+    ConsoleSystemPromptModal,
+)
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _snapshot(
@@ -47,8 +69,11 @@ class _ChipApp(ConsolidatedCSSApp):
         self.snapshot = snapshot
 
     def compose(self) -> ComposeResult:
+        # The id the Console composes it with (chat_screen.py), which the
+        # test below queries by.
         yield ConsoleStatusChips(
-            ConsoleControlState.from_values(library_policy=self.snapshot)
+            ConsoleControlState.from_values(library_policy=self.snapshot),
+            id="console-status-chips",
         )
 
 
@@ -56,14 +81,26 @@ class _ChipApp(ConsolidatedCSSApp):
 @pytest.mark.parametrize(
     ("auto", "assistant", "label"),
     (
-        (ConsoleAutoRetrieve.NEVER, ConsoleAssistantLibraryAccess.BLOCKED,
-         "Library · Auto off · Agent blocked"),
-        (ConsoleAutoRetrieve.NEVER, ConsoleAssistantLibraryAccess.ALLOWED,
-         "Library · Auto off · Agent allowed"),
-        (ConsoleAutoRetrieve.AUTOMATIC, ConsoleAssistantLibraryAccess.BLOCKED,
-         "Library · Auto on · Agent blocked"),
-        (ConsoleAutoRetrieve.AUTOMATIC, ConsoleAssistantLibraryAccess.ALLOWED,
-         "Library · Auto on · Agent allowed"),
+        (
+            ConsoleAutoRetrieve.NEVER,
+            ConsoleAssistantLibraryAccess.BLOCKED,
+            "Library · Auto off · Agent access off",
+        ),
+        (
+            ConsoleAutoRetrieve.NEVER,
+            ConsoleAssistantLibraryAccess.ALLOWED,
+            "Library · Auto off · Agent access on",
+        ),
+        (
+            ConsoleAutoRetrieve.AUTOMATIC,
+            ConsoleAssistantLibraryAccess.BLOCKED,
+            "Library · Auto on · Agent access off",
+        ),
+        (
+            ConsoleAutoRetrieve.AUTOMATIC,
+            ConsoleAssistantLibraryAccess.ALLOWED,
+            "Library · Auto on · Agent access on",
+        ),
     ),
 )
 async def test_four_policy_states_render_exactly_and_open_independent_axes(
@@ -75,8 +112,22 @@ async def test_four_policy_states_render_exactly_and_open_independent_axes(
     app = _ChipApp(snapshot)
 
     async with app.run_test(size=(120, 35)) as pilot:
-        chip = app.query_one("#console-library-chip")
-        assert str(chip.render()) == label
+        await pilot.pause()
+        # TASK-35160 follow-up: the Library policy readout LEFT the status
+        # line (honestly: the four-state label is no longer rendered on the
+        # strip). Its exact-label contract lives on the control state -- the
+        # readout's renderer seam -- and the strip's former click route is
+        # the composer menu's "Library access..." entry, which opens the
+        # same two-axis editor the modal assertions below exercise.
+        strip = app.query_one("#console-status-chips", ConsoleStatusChips)
+        line = strip.query_one("#console-status-text", ConsoleStatusText)
+        assert "Library" not in str(line.render())
+        assert (
+            ConsoleControlState.from_values(library_policy=snapshot).rag_label
+            == label
+        )
+        menu_labels = [entry.label for entry in build_composer_menu_entries()]
+        assert "Library access…" in menu_labels
 
         async def save(candidate) -> ConsoleLibraryPolicySaveOutcome:
             return ConsoleLibraryPolicySaveOutcome("saved", snapshot, "Saved.")
@@ -110,7 +161,9 @@ async def test_four_policy_states_render_exactly_and_open_independent_axes(
 
 
 @pytest.mark.asyncio
-async def test_manual_search_is_available_with_safe_defaults_and_preserves_draft() -> None:
+async def test_manual_search_is_available_with_safe_defaults_and_preserves_draft() -> (
+    None
+):
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -120,7 +173,7 @@ async def test_manual_search_is_available_with_safe_defaults_and_preserves_draft
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-command-input")
         assert ConsoleControlState.from_values().rag_label == (
-            "Library · Auto off · Agent blocked"
+            "Library · Auto off · Agent access off"
         )
         console.query_one(ConsoleComposerBar).load_draft(draft)
 
@@ -131,3 +184,265 @@ async def test_manual_search_is_available_with_safe_defaults_and_preserves_draft
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsoleLibrarySearchModal)
         assert modal._query == draft
+
+
+def _status_line(console) -> ConsoleStatusText:
+    return console.query_one("#console-status-text", ConsoleStatusText)
+
+
+def _send_key_burst(host, keys: str) -> None:
+    """Deliver ``keys`` the way a terminal delivers typed text: one burst.
+
+    Every key is queued before any is handled, so each one reaches the
+    focused status line before the dialog its first activation opens is on
+    screen. ``pilot.press`` cannot model this: it waits for the app between
+    keys.
+    """
+    for char in keys:
+        host._driver.send_message(events.Key(_character_to_key(char), char))
+
+
+def _library_access_modals(host) -> list[ConsoleLibraryAccessModal]:
+    return [
+        screen
+        for screen in host.screen_stack
+        if isinstance(screen, ConsoleLibraryAccessModal)
+    ]
+
+
+def _dialogs_over(host, console) -> list:
+    """Every screen stacked above the Console, bottom first."""
+    return host.screen_stack[host.screen_stack.index(console) + 1 :]
+
+
+async def _settle(pilot, rounds: int = 20) -> None:
+    """Let queued requests, their off-thread reads and their pushes finish."""
+    for _ in range(rounds):
+        await pilot.pause(0.02)
+
+
+@pytest.mark.asyncio
+async def test_a_burst_of_library_access_requests_opens_one_dialog() -> None:
+    """TASK-34720: one Library access dialog however many requests arrive.
+
+    Every request used to push its own dialog: on the old Library chip a
+    burst of Space/Enter stacked identical dialogs, and Save and Cancel on
+    the top one revealed the next. The status line's Library segment has
+    since moved to the composer menu's "Library access..." entry (TASK-35160
+    follow-up); the opener keeps the rule for every request that reaches it
+    before the first dialog is on screen. Four arrive here back to back.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-text")
+
+        for _ in range(4):
+            console._handle_console_composer_menu_choice(ACTION_LIBRARY_ACCESS)
+        await _settle(pilot, rounds=4)
+
+        modals = _library_access_modals(host)
+        assert len(modals) == 1, f"stacked {len(modals)} Library access dialogs"
+        assert host.screen_stack[-1] is modals[0]
+
+        await pilot.click("#library-access-cancel")
+        await _settle(pilot, rounds=4)
+        assert host.screen_stack[-1] is console
+        assert _library_access_modals(host) == []
+
+        # The refusal lasts only while a dialog covers the Console.
+        console._handle_console_composer_menu_choice(ACTION_LIBRARY_ACCESS)
+        await _settle(pilot, rounds=4)
+        assert len(_library_access_modals(host)) == 1
+        assert isinstance(host.screen_stack[-1], ConsoleLibraryAccessModal)
+
+
+@pytest.mark.asyncio
+async def test_a_sentence_typed_on_the_status_line_does_not_crash_the_console() -> (
+    None
+):
+    """TASK-34720: the live crash's input, end to end on the real ChatScreen.
+
+    Closing a dialog opened from the status line hands focus back to the
+    line, its cursor still on the segment that opened the dialog, so a user
+    who goes on typing types onto that segment. Each space and the Enter
+    activate it. Live, a sentence typed that way (then on the Library chip)
+    pushed one dialog per space and per Enter, 21 here. Textual paints every
+    translucent modal over the one beneath it, one nested render per stacked
+    screen (about 20 Python frames each, measured), so the app passed
+    Python's recursion limit and exited with RecursionError in
+    ``Compositor.render_strips``. The System prompt segment is used because
+    its editor opens from a worker, so every queued activation starts one
+    before the first has pushed. Headless, the 21-dialog stack overflows
+    only on some runs (it renders from a shallower Python stack), so the
+    stack itself is what this pins: the depth that crashed can no longer be
+    built.
+
+    TASK-33622.3 (ADR-031 refinement 2026-10-27) changed where that sentence
+    goes: its first letter, which the line has no use for, moves focus to
+    the composer, so the rest of it -- spaces included -- is typed into the
+    draft and never activates the segment. Bursts of the activation keys
+    themselves stay pinned by the one-dialog-per-burst cases below.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-text")
+        line = _status_line(console)
+        line.focus()
+        await pilot.pause()
+        for _ in range(len(line.visible_segments)):
+            if line._cursor_name == "system-prompt":
+                break
+            await pilot.press("right")
+        assert host.focused is line
+        assert line._cursor_name == "system-prompt"
+
+        sentence = (
+            "What do my notes say about the project plan and the next steps "
+            "for it? Reply in one short sentence please."
+        )
+        _send_key_burst(host, sentence)
+        await _settle(pilot)
+
+        # A crashed app has already exited: its error is the failure to report.
+        assert host._exception is None, repr(host._exception)
+        assert host.is_running
+        dialogs = _dialogs_over(host, console)
+        assert dialogs == [], (
+            f"stacked {len(dialogs)} dialogs: "
+            f"{[type(screen).__name__ for screen in dialogs]}"
+        )
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        assert composer.draft_text() == sentence
+        assert composer.draft_has_focus
+
+
+#: Every status-line segment whose activation opens a dialog over the
+#: Console. Each Enter/Space/click posts one request, so all of them stacked
+#: under a burst the way the Library chip did (TASK-34720). Run, Sources and
+#: Tools reveal the Inspector rail, Approvals moves focus and Temporary runs
+#: an exclusive save worker: none of them pushes a screen, so they are not
+#: listed. Provider and Model open Switch model, whose opener has refused a
+#: covered Console since TASK-33008.3.
+_DIALOG_SEGMENTS = ("provider", "model", "system-prompt", "assistant", "scope", "cost")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("segment", _DIALOG_SEGMENTS)
+async def test_a_burst_of_segment_activations_opens_one_dialog(
+    segment: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-34720: one dialog per burst, from every dialog-opening segment.
+
+    Four requests are posted from the status line back to back -- exactly
+    what four queued Enter/Space keys on that segment post -- before the
+    Console handles the first. Each used to push its own dialog. The Scope
+    and Cost segments are hidden until there is a scope or a cost, but their
+    requests reach the same handlers, so they are posted all the same.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-text")
+        if segment == "assistant":
+            # The picker opens only when a character card exists; seed one
+            # at the read seam instead of writing a card into the profile.
+            monkeypatch.setattr(
+                console._character,
+                "_console_character_picker_options",
+                lambda: (ConsoleCharacterOption(character_id=7, name="Ada"),),
+            )
+        line = _status_line(console)
+        request = ConsoleStatusText.SEGMENT_MESSAGES[segment]
+
+        for _ in range(4):
+            line.post_message(request())
+        await _settle(pilot)
+
+        dialogs = _dialogs_over(host, console)
+        assert len(dialogs) == 1, (
+            f"{segment} stacked {len(dialogs)} dialogs: "
+            f"{[type(screen).__name__ for screen in dialogs]}"
+        )
+
+        # The refusal lasts only while a dialog covers the Console.
+        await host.pop_screen()
+        await _settle(pilot, rounds=5)
+        assert host.screen_stack[-1] is console
+        line.post_message(request())
+        await _settle(pilot)
+        reopened = _dialogs_over(host, console)
+        assert [type(screen) for screen in reopened] == [type(dialogs[0])]
+
+
+# ---------------------------------------------------------------------------
+# Single, deliberate opens still work (TASK-34720 review follow-up).
+#
+# The one-dialog rule refuses a request that finds anything over the Console.
+# The routes below reach an opener from another screen -- a menu's dismiss
+# callback, a palette command -- and work only because Textual pops that
+# screen before it runs the follow-up. These pin that ordering: if it ever
+# changed, the rule would silently swallow every open from these routes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_one_click_on_the_composer_menus_library_access_opens_the_dialog() -> (
+    None
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-composer-menu")
+
+        await pilot.click("#console-composer-menu")
+        await _settle(pilot, rounds=4)
+        assert isinstance(host.screen_stack[-1], ConsoleComposerMenuModal)
+
+        await pilot.click(f"#console-composer-menu-{ACTION_LIBRARY_ACCESS}")
+        await _settle(pilot, rounds=4)
+
+        dialogs = _dialogs_over(host, console)
+        assert [type(screen) for screen in dialogs] == [ConsoleLibraryAccessModal]
+
+
+class _PaletteConsoleHarness(ConsoleHarness):
+    """The Console harness with the Console's palette commands registered."""
+
+    COMMANDS = App.COMMANDS | {ConsoleCommandProvider}
+
+
+@pytest.mark.asyncio
+async def test_the_palettes_edit_system_prompt_command_opens_the_editor() -> None:
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = _PaletteConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-status-text")
+
+        await pilot.press("ctrl+p")
+        await _settle(pilot, rounds=4)
+        assert isinstance(host.screen_stack[-1], CommandPalette)
+        for character in "edit system prompt":
+            await pilot.press(character)
+        await _settle(pilot, rounds=10)
+        await pilot.press("enter")
+        await _settle(pilot)
+
+        dialogs = _dialogs_over(host, console)
+        assert [type(screen) for screen in dialogs] == [ConsoleSystemPromptModal]

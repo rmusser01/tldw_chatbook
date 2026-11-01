@@ -1,0 +1,29 @@
+{
+  "files": 155,
+  "bytes": 15402800,
+  "known_local_credential_values_compared": 2,
+  "known_matches": 0,
+  "public_literal_classification": [
+    {
+      "path": "tldw_chatbook/config.py",
+      "constant": "TLDW_API_PLACEHOLDER_AUTH_TOKEN",
+      "source_sha256": "f0a3e152dc150ce88861e368be701be1cffd93a61fb7c56d2291587d474b8cd5",
+      "category": "public project placeholder"
+    },
+    {
+      "path": "Tests/UI/test_settings_encryption_card.py",
+      "constant": "PLAINTEXT_KEY",
+      "source_sha256": "73a201ddc8eb425ca7b10516d596f65d2eb4dbc9bcb4a2d095c4e05d1795a933",
+      "category": "public deterministic encryption test fixture"
+    },
+    {
+      "path": "Tests/test_config_encryption_lifecycle.py",
+      "constant": "PLAINTEXT_KEY",
+      "source_sha256": "d0dba7f683da7cd2000b7d62273c4abc410d56a588c9d77208110e64bffe26ca",
+      "category": "public deterministic encryption test fixture"
+    }
+  ],
+  "recognized_token_or_private_key_findings": 0,
+  "private_profiles_exported": false,
+  "limit": "Exact known-value and recognizable-token checks over selected bytes, with only three provenance-pinned public project/fixture literals classified; not a general security audit."
+}

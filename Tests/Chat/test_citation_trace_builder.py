@@ -1493,3 +1493,91 @@ def test_every_mutation_and_second_seal_reject_after_successful_seal() -> None:
     for mutation in mutations:
         with pytest.raises(ValueError, match="sealed"):
             mutation()
+
+
+def test_record_calls_encode_each_payload_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task 19b (perf): governed-payload budget accounting is incremental.
+
+    Each ``record_*`` call must canonicalize ONLY the payloads it proposes
+    (running byte counter -- the thinking_blocks incremental-growth pattern),
+    instead of re-encoding every accumulated payload per call, which made
+    each send pay redundant JSON serialization up to the 4 MiB cap. Governed
+    payloads are frozen pydantic models, so a payload's canonical bytes never
+    change after it is recorded and the counter is exact.
+    """
+    encoded: list[str] = []
+    original = CitationTraceBuilder._canonical_payload_bytes
+
+    def counting(payload: object) -> int:
+        encoded.append(str(getattr(payload, "payload_id")))
+        return original(payload)
+
+    monkeypatch.setattr(
+        CitationTraceBuilder, "_canonical_payload_bytes", staticmethod(counting)
+    )
+
+    builder = _builder()
+    run_one = _record_run(builder)
+    run_two = _record_run(builder)
+    prompt_set_one = builder.record_prompt_evidence_set(
+        run_id=run_one,
+        evidence=(
+            LocalPromptEvidenceCapture(
+                candidate_rank=1,
+                snapshot_text="[S1] MEDIA — Alpha\nExact",
+            ),
+        ),
+        created_at=NOW,
+    )
+    prompt_set_two = builder.record_prompt_evidence_set(
+        run_id=run_two,
+        evidence=(
+            LocalPromptEvidenceCapture(
+                candidate_rank=1,
+                snapshot_text="[S1] MEDIA — Beta\nExact",
+            ),
+        ),
+        created_at=NOW,
+    )
+    builder.record_initial_answer_attempt(
+        prompt_evidence_set_id=prompt_set_two,
+        answer_body="Marker-free exact answer.",
+        completed_at=NOW,
+    )
+
+    # Five record calls, five governed payloads: each payload is encoded
+    # exactly once. (The old full re-serialization performed
+    # 1+2+3+4+5 = 15 encodings on this sequence.)
+    assert len(encoded) == 5
+    assert len(set(encoded)) == 5
+
+    # The running counter equals a full re-serialization of everything
+    # recorded -- the incremental accounting never drifts from the exact
+    # total the old per-call computation produced.
+    expected_total = sum(
+        _compact_model_json_bytes(payload)
+        for payload in (
+            *builder.evidence_run_payloads,
+            *builder.evidence_snapshot_payloads,
+            *builder.answer_attempt_payloads,
+        )
+    )
+    assert builder._governed_payload_bytes == expected_total
+
+    # Cap enforcement still trips at the limit AND a rejected record leaves
+    # the counter untouched (the rejected payload stays unrecorded, so the
+    # budget still available equals the budget before the attempt).
+    counter_before = builder._governed_payload_bytes
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            builder_module,
+            "GOVERNED_PAYLOAD_UTF8_BYTES_MAX",
+            counter_before,
+            raising=False,
+        )
+        with pytest.raises(ValueError, match="governed payload exceeds"):
+            _record_run(builder)
+    assert builder._governed_payload_bytes == counter_before
+    assert len(builder.evidence_run_payloads) == 2

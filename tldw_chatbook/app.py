@@ -1,8 +1,23 @@
-
 # ADR-126: fence recovery and enroll before any runtime/config imports.
 from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
-
+if __name__ == "__main__": __import__("tldw_chatbook.Utils.launch_options").Utils.launch_options.adopt_config_flag()  # noqa: E701 -- TASK-34100.16: `--config PATH` picks the profile the fence admits; one line keeps app.py's size row
 admit_startup()
+if __name__ == "__main__":
+    # TASK-34100.4: `python -m tldw_chatbook.app` unlocks through the same
+    # pre-TUI startup unlock as `tldw-cli`, and at the same point: before this
+    # module imports config, which would otherwise load the still-encrypted
+    # file (and warn) ahead of the prompt. Spawn workers (`__mp_main__`) skip it.
+    # The terminal is quieted first, as `tldw-cli` does before its unlock:
+    # installing the password imports config, whose DEBUG/INFO wall otherwise
+    # printed between the prompt and the app (TASK-34100.4 review round 2).
+    from tldw_chatbook.Utils.startup_logging import quiet_startup_stderr
+
+    quiet_startup_stderr()
+    from tldw_chatbook.Backup_Recovery.launcher import startup_unlock
+
+    _unlock_exit = startup_unlock()
+    if _unlock_exit is not None:
+        raise SystemExit(_unlock_exit)
 
 # tldw_cli - Textual CLI for LLMs
 # Description: This file contains the main application logic for the tldw_cli, a Textual-based CLI for interacting with various LLM APIs.
@@ -121,16 +136,11 @@ from tldw_chatbook.Constants import (
     ALL_TABS,
     DEFAULT_SPLASH_DURATION_SECONDS,
     LIBRARY_NAV_CONTEXT_INGEST,
-    LIBRARY_NAV_CONTEXT_MODE,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     TAB_CHAT,
-    TAB_EVALS,
     TAB_HOME,
     TAB_LIBRARY,
-    TAB_SCHEDULES,
     TAB_SETTINGS,
-    TAB_WATCHLISTS_COLLECTIONS,
-    TAB_WORKFLOWS,
     WIDE_VIEWPORT_COLUMNS,
 )
 from tldw_chatbook.css import build_css
@@ -147,6 +157,7 @@ from tldw_chatbook.Home.active_work_adapter import (
     HomeControlResult,
     UnavailableHomeActiveWorkAdapter,
 )
+
 # TASK-33011: the Library ingest queue (``LibraryIngestQueueMixin`` and its
 # module-level helpers) lives in ``app_ingest_queue.py``. It is a base class of
 # ``TldwCli``, so it is imported eagerly. The private helpers are re-exported
@@ -302,6 +313,7 @@ from .UI.Navigation.screen_state_store import (
     ScreenStateStore,
 )
 from .UI.Navigation.screen_registry import (
+    _SCREEN_OWNED_ROUTE_CSS,
     ScreenRoute,
     registered_screen_aliases,
     registered_screen_routes,
@@ -310,6 +322,8 @@ from .UI.Navigation.screen_registry import (
 )
 from .UI.Navigation.shell_destinations import (
     ARTIFACTS_COMPATIBILITY_SHORTCUT,
+    LEGACY_ROUTE_NAV_CONTEXTS,
+    MCP_COMPATIBILITY_SHORTCUT,
     SHELL_DESTINATION_ORDER,
     SHELL_DESTINATION_SHORTCUTS,
 )
@@ -330,6 +344,7 @@ from tldw_chatbook.Media import (  # noqa: E402
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (  # noqa: E402
     build_prompt_scope_service,
 )
+
 # NOTE (boot budget, ADR-097): `Workspaces.agent_provisioning` is imported
 # lazily inside `_wire_workspace_agent_provisioning` (in
 # `app_service_wiring.py`; itself deferred to a post-ready timer) so it stays
@@ -350,6 +365,7 @@ from tldw_chatbook.runtime_policy.engine import PolicyEngine  # noqa: E402
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer  # noqa: E402
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY  # noqa: E402
 from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState  # noqa: E402
+
 # TASK-33011: TldwCli's service composition (the lazy service properties, the
 # ``_wire_*`` methods and their Notes-sync/Collections-capture helpers) lives in
 # ``app_service_wiring.py``. It is a base class of ``TldwCli``, so it is imported
@@ -361,15 +377,18 @@ from tldw_chatbook.app_service_wiring import (
     _build_terminal_backend,  # noqa: F401 -- re-export
     _extract_collections_article,  # noqa: F401 -- re-export
     _install_deferred_notes_sync_facades,
+    _notes_sync_boot_start_evidence,
     _read_app_raw_cli_permitted,
     _resolve_collections_media_reference,  # noqa: F401 -- re-export
     _resolve_collections_note_reference,  # noqa: F401 -- re-export
     _wire_notes_sync_services,
 )
+
 # TASK-33011: TldwCli's lifecycle, shutdown and quit flow lives in
 # ``app_lifecycle.py`` (``LifecycleMixin``), a base class of ``TldwCli``.
 from tldw_chatbook.app_lifecycle import LifecycleMixin, _DIAGNOSTICS_COMPONENT_APP
 from tldw_chatbook.app_navigation import NavigationMixin
+
 # TASK-33011: the command-palette providers (and their key-display helpers) live in
 # ``app_command_providers.py``. ``TldwCli.COMMANDS`` names the classes, so they are
 # imported eagerly and re-exported here for callers that import them from app.py.
@@ -457,6 +476,10 @@ DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS = 0.1
 #: maintenance: a 0.1 s timer could expire while synchronous post-ready setup
 #: was still running and race the ADR-097 UI-ready module census.
 DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 5.0
+#: The speech-stack environment diagnostic (one `persist_event` line) is
+#: post-ready work: its `console_voice_input` import pulls the STT stack,
+#: which must stay off the first-paint leg (TASK-22504).
+DEFERRED_SPEECH_STACK_DIAGNOSTICS_DELAY_SECONDS = 0.1
 #: Workspace agent provisioning (task-8) deferral: after `_ui_ready` so
 #: `Workspaces.agent_provisioning` stays out of the UI-ready census
 #: (ADR-097); same 0.1-0.2 s non-essential-startup window as audio.
@@ -652,11 +675,6 @@ def _usable_cpu_count() -> int:
     return max(1, os.cpu_count() or 1)
 
 
-
-
-
-
-
 # Home's open-eval-runs feed queries pending and failed statuses separately;
 # this cap bounds both queries (a count, not a listing -- anything beyond it
 # still reads as "runs need attention").
@@ -671,8 +689,6 @@ _HOME_EVAL_RUN_QUERY_LIMIT = 50
 APP_CONFIG = load_settings()
 
 # Early logging configuration removed - handled by configure_application_logging() during app initialization
-
-
 
 
 # --- Main App ---
@@ -724,10 +740,6 @@ def _build_notes_scope_service(
     )
 
 
-
-
-
-
 def _select_profile_database(notes_service: object | None) -> Any:
     """Return the seeded injected profile DB, or the seeded lazy global DB."""
     injected = getattr(notes_service, "db", None)
@@ -737,7 +749,7 @@ def _select_profile_database(notes_service: object | None) -> Any:
 class WideViewportTierMixin:
     """App-wide responsive wide tier: one class toggle for every modal.
 
-    The Conversation settings modal (PR #2670) and the Alt+M model popover
+    The Chat settings modal (PR #2670) and the Alt+M model popover
     (PR #2672) each shipped a private viewport-width tier with its own
     Python toggle. The repo-wide rollout replaces per-modal toggles with
     this single one: at >= 150 terminal columns the App gains the
@@ -884,9 +896,7 @@ class TldwCli(
         if not saved:
             # A profile whose config cannot be written still gets the correct
             # in-memory lifecycle for this run; boot must not fail over it.
-            logger.warning(
-                "Could not stamp the Library lifecycle for a new profile."
-            )
+            logger.warning("Could not stamp the Library lifecycle for a new profile.")
 
     def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
         """Add the consolidated widget-defaults stylesheet as one CSS source.
@@ -938,6 +948,13 @@ class TldwCli(
             ARTIFACTS_COMPATIBILITY_SHORTCUT,
             "library_artifacts",
             "Library Artifacts",
+            show=False,
+        ),
+        # ADR-240: preserve muscle memory after MCP folds into Settings.
+        Binding(
+            MCP_COMPATIBILITY_SHORTCUT,
+            "settings_tools_hub",
+            "Settings Tools & MCP",
             show=False,
         ),
         Binding(
@@ -1020,14 +1037,12 @@ class TldwCli(
     last_note_import_dir: Optional[Path] = None
     # Add attributes to hold the handlers (optional, but can be useful)
 
-
     llamacpp_server_process: Optional[subprocess.Popen] = None
     llamafile_server_process: Optional[subprocess.Popen] = None
     vllm_server_process: Optional[subprocess.Popen] = None
     ollama_server_process: Optional[subprocess.Popen] = None
     mlx_server_process: Optional[subprocess.Popen] = None
     onnx_server_process: Optional[subprocess.Popen] = None
-
 
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
@@ -1078,6 +1093,9 @@ class TldwCli(
         )
         self.served_canvas_handler = None
         self.served_canvas_control = None
+        # ADR-236: approval/run relay publisher; only ever non-None inside
+        # the served-child block below, so native runs never wrap a seam.
+        self.served_relay_publisher = None
         self._served_canvas_mode = "CHATBOOK_SERVED_CHILD" in os.environ or any(
             key in os.environ for key in canvas_control_keys
         )
@@ -1091,9 +1109,12 @@ class TldwCli(
                 load_application_profile_snapshot,
                 runtime_snapshot_id,
             )
+            from .Web_Server.served_relay_publisher import ServedRelayPublisher
 
             self._canvas_profile_snapshot = load_application_profile_snapshot()
-            self.served_canvas_handler = ServedCanvasControlHandler()
+            self.served_canvas_handler = ServedCanvasControlHandler(
+                relay_decide=self._served_relay_decide
+            )
             try:
                 self.served_canvas_control = CanvasControlClient.from_environment(
                     os.environ,
@@ -1106,6 +1127,10 @@ class TldwCli(
                 loguru_logger.warning(
                     "Served Canvas control disabled code=invalid_spawn_environment"
                 )
+            # None-safe: without a transport the relay stays inert.
+            self.served_relay_publisher = ServedRelayPublisher(
+                self.served_canvas_control
+            )
         self._served_canvas_control_start_task: asyncio.Task[None] | None = None
 
         # TASK-21115: a consolidated (BUNDLED_CSS) class adds no stylesheet
@@ -1240,6 +1265,15 @@ class TldwCli(
         #: reads and clears this one-shot slot to show a single toast.
         #: 0 means nothing to report.
         self._console_fleet_teardown_notice: int = 0
+        #: guardian task 2 (ADR-204 §Post-visit summary): the LAST Console
+        #: visit's Guardian summary payload (``{per_topic_counts,
+        #: escalated_rules, trend_notices}``), staged by
+        #: ``ChatScreen.on_unmount`` -> ``GuardianChecker.finalize_visit``
+        #: and consumed exactly once by the NEXT Console mount's slot
+        #: check (the report-on-next-mount precedent above). ``None``
+        #: means nothing to report; empty visits mint nothing. Task 3
+        #: polishes the surfacing copy.
+        self._guardian_visit_summary_notice: dict | None = None
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
@@ -1439,13 +1473,12 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        self._actor_pack_recovery_reads: set = set()
         # Portable Tool Packs are unavailable until first Tool Profiles use
         # composes every authority owner and attaches one complete guard.
         self.tool_pack_service: Any | None = None
         self.tool_pack_service_unavailable_reason: str | None = "not_ready"
-        self.tool_pack_receipt_reconciliation_unavailable_reason: str | None = (
-            "not_run"
-        )
+        self.tool_pack_receipt_reconciliation_unavailable_reason: str | None = "not_run"
         self._tool_pack_wiring_started = False
         self._tool_pack_composition_worker: Worker | None = None
         self._tool_profile_operations = None
@@ -1458,6 +1491,7 @@ class TldwCli(
         self._initial_screen_preimport_thread: threading.Thread | None = None
 
         self._ui_ready = False  # Track if UI is fully composed
+        self._initial_screen_pushed = False
         self._shutting_down = False  # Track if app is shutting down
         self._quit_in_progress = False
 
@@ -1573,8 +1607,17 @@ class TldwCli(
         self._notes_sync_runtime_owner: "NotesSyncRuntimeOwner | None" = None
         self._notes_sync_runtime_owner_lock = threading.Lock()
         self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
+        self._notes_sync_runtime_lazy_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
         self._recover_inflight_transfers_task: asyncio.Task[None] | None = None
+        # Kanban trio (server/local/scope) is built lazily on first access
+        # (TASK-21239): zero in-app consumers, and building it drags the
+        # 76-model `tldw_api.kanban_schemas` import chain (TASK-21107), so
+        # an unused subsystem costs neither construction nor import at boot.
+        self._server_kanban_service: Any = None
+        self._local_kanban_service: Any = None
+        self._kanban_scope_service: Any = None
+        self._kanban_services_lock = threading.Lock()
         # RAG admin trio (server/local/scope) is built lazily on first access
         # (task-254): its legacy UI consumers were deleted and nothing reads
         # these services at startup, so eager construction only added launch
@@ -1683,7 +1726,7 @@ class TldwCli(
         payload: "ChatHandoffPayload",
         *,
         action_label: str = "Use in Chat",
-    ) -> None:
+    ) -> bool:
         return _destinations().open_chat_with_handoff(
             self,
             payload,
@@ -1705,7 +1748,7 @@ class TldwCli(
         status: str | None = None,
         recovery: str | None = None,
         action_label: str | None = None,
-    ) -> None:
+    ) -> bool:
         return _destinations().open_console_for_live_work(
             self,
             source=source,
@@ -1807,15 +1850,20 @@ class TldwCli(
 
         def counts():
             return {
-                "pending": len(list_runs(status="pending", limit=_HOME_EVAL_RUN_QUERY_LIMIT)),
-                "failed": len(list_runs(status="failed", limit=_HOME_EVAL_RUN_QUERY_LIMIT)),
+                "pending": len(
+                    list_runs(status="pending", limit=_HOME_EVAL_RUN_QUERY_LIMIT)
+                ),
+                "failed": len(
+                    list_runs(status="failed", limit=_HOME_EVAL_RUN_QUERY_LIMIT)
+                ),
             }
 
         try:
             if (
                 type(service) is LocalEvaluationsService
                 and type(service.db) is EvalsDB
-                and getattr(list_runs, "__func__", None) is LocalEvaluationsService.list_runs
+                and getattr(list_runs, "__func__", None)
+                is LocalEvaluationsService.list_runs
             ):
                 return run_finite_local_worker(counts)
             return counts()
@@ -1838,7 +1886,8 @@ class TldwCli(
         try:
             if (
                 type(db) is MediaDatabase
-                and getattr(counter, "__func__", None) is MediaDatabase.count_read_it_later_media
+                and getattr(counter, "__func__", None)
+                is MediaDatabase.count_read_it_later_media
             ):
                 return int(run_finite_local_worker(counter))
             return int(counter())
@@ -2216,7 +2265,6 @@ class TldwCli(
         # Initialize current log widget reference
         self._current_log_widget = None
 
-
     def _setup_logging(self):
         """Set up logging for the application.
 
@@ -2272,8 +2320,8 @@ class TldwCli(
         # downstream reads the same module state.
         set_ascii_glyph_mode(get_cli_setting("appearance", "ascii_glyphs", False))
 
-        # Check if splash screen is enabled
-        splash_enabled = get_cli_setting("splash_screen", "enabled", True)
+        no_splash = getattr(self, "_cli_no_splash", False)  # --no-splash (TASK-34100.16)
+        splash_enabled = not no_splash and get_cli_setting("splash_screen", "enabled", True)
         logging.info(f"Splash screen enabled: {splash_enabled}")
         if splash_enabled:
             # Get splash screen configuration
@@ -2428,25 +2476,9 @@ class TldwCli(
         except Exception:
             return
 
-    # Legacy alias routes that need a default navigation context applied
-    # when navigated to directly (bare ``NavigateToScreen(route)``, no
-    # explicit context supplied). Mirrors how ``open_notes_workspace`` builds
-    # ``{LIBRARY_NAV_CONTEXT_MODE: "notes"}`` for the retired standalone
-    # Notes tab -- except "prompts" (the retired Personas "prompts" mode
-    # chip, Task 7), "skills" (the retired standalone Skills tab, Skills
-    # sub-project Task 5), "search" (the retired standalone Search
-    # screen, RAG UX v2 PR-1 Task 1), and "media" (the retired standalone
-    # Media Library screen, task-2851) have no dedicated re-entry action to
-    # carry that context, so the bare alias route itself must supply it here.
-    # The retired Customize screen folds into Settings > Theme.
-    _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT: dict[str, dict[str, str]] = {
-        "artifacts": {LIBRARY_NAV_CONTEXT_MODE: "artifacts-all"},
-        "prompts": {LIBRARY_NAV_CONTEXT_MODE: "prompts"},
-        "skills": {LIBRARY_NAV_CONTEXT_MODE: "skills"},
-        "search": {LIBRARY_NAV_CONTEXT_MODE: "search"},
-        "media": {LIBRARY_NAV_CONTEXT_MODE: "media"},
-        "customize": {"category": "theme"},
-    }
+    # Legacy alias-route default navigation contexts; the map itself lives
+    # in ``shell_destinations`` (route knowledge, no size ratchet there).
+    _LEGACY_ROUTE_LIBRARY_NAV_CONTEXT = LEGACY_ROUTE_NAV_CONTEXTS
 
     # How long the outgoing screen gets to flush pending work before the app
     # gives up on the transition.
@@ -2474,12 +2506,9 @@ class TldwCli(
     #: tests (2026-09-04, paired arms). The agentic split sheets predate
     #: this seam and keep their TASK-25812 wiring (console on the boot
     #: path; library/settings via their screens' ``CSS_PATH``).
-    _SCREEN_OWNED_ROUTE_CSS: ClassVar[dict[str, tuple[str, ...]]] = {
-        TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
-        TAB_EVALS: ("screen_feature_evals.tcss",),
-        TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",),
-        TAB_WORKFLOWS: ("screen_feature_workflows.tcss",),
-    }
+    _SCREEN_OWNED_ROUTE_CSS: ClassVar[dict[str, tuple[str, ...]]] = (
+        _SCREEN_OWNED_ROUTE_CSS
+    )
 
     # Cluster K2 (TASK-33011): Roleplay-to-Console character-conversation
     # activation, delegated to ``app_destinations``.
@@ -2729,6 +2758,12 @@ class TldwCli(
             "tools_settings",
             "notes",
             "prompts",
+            # ADR-240: the retired MCP destination's route id stays valid as
+            # a startup default -- `_push_initial_screen` resolves it through
+            # the registry alias to Settings and applies the legacy-route
+            # default context ({"category": "tools"}), same promise as
+            # `tools_settings` above.
+            "mcp",
         }
         return set(ALL_TABS) | shell_routes | legacy_aliases
 
@@ -2902,7 +2937,9 @@ class TldwCli(
         before; only real navigation -- dispatched through this handler --
         gains the fix.
         """
-        if getattr(self, "_screen_navigation_paused", False) or getattr(self, "_shutting_down", False):
+        if getattr(self, "_screen_navigation_paused", False) or getattr(
+            self, "_shutting_down", False
+        ):
             return
         worker = self.run_worker(
             self._run_admitted_screen_navigation(message),
@@ -2911,7 +2948,8 @@ class TldwCli(
             exit_on_error=False,
         )
         self._screen_navigation_workers = {
-            prior for prior in getattr(self, "_screen_navigation_workers", ())
+            prior
+            for prior in getattr(self, "_screen_navigation_workers", ())
             if not prior.is_finished
         }
         self._screen_navigation_workers.add(worker)
@@ -2960,7 +2998,6 @@ class TldwCli(
     @on(TTSProgressEvent)
     async def handle_tts_progress_event(self, event: TTSProgressEvent) -> None:
         return await _speech().handle_tts_progress_event(self, event)
-
 
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
@@ -3184,6 +3221,74 @@ class TldwCli(
     async def _close_owned_tts_resources(self) -> None:
         return await _speech()._close_owned_tts_resources(self)
 
+    def _record_speech_stack_diagnostics(self) -> None:
+        """Record this interpreter's speech-stack availability (one line).
+
+        Moved out of `on_mount` (TASK-22504): the `console_voice_input`
+        import this needs pulls the STT coordinator stack, and the
+        diagnostic is a persistent-diagnostics record, not first-frame
+        work -- `_post_mount_setup` schedules it past `_ui_ready`. The
+        body is unchanged; the function-body import below still reads the
+        LIVE module attribute, so tests that patch
+        `console_voice_input.resolve` before it runs keep reaching it.
+        """
+        # Which interpreter's speech stack this run actually has. Dictation
+        # degrades silently and differently per missing package -- without
+        # `webrtcvad` no segment can finalize mid-capture (so nothing appears
+        # until stop and no voice command can fire), and without the
+        # configured provider's package the resolver quietly picks another.
+        # Both were diagnosed only after several live rounds because the run
+        # left no record of its own environment (2026-08-01); one line here
+        # dates every future report to a specific interpreter.
+        #
+        # TASK-2110: a provider substitution is its own degradation, reported
+        # as such. The resolver's `was_overridden` (console_voice_input
+        # `resolve()`) means the configured provider's package is missing and
+        # another was substituted; recording only the substitute with
+        # `status=ok` is exactly the report that made the 2026-08-03 live gate
+        # read a degraded run as healthy. Status precedence: a substitution is
+        # `fallback` (VAD present) or `degraded-fallback` (both degradations);
+        # with no substitution the status keeps its original VAD-only meaning
+        # so the healthy path's shape is unchanged.
+        try:
+            from importlib.util import find_spec
+
+            from .Chat.console_voice_input import resolve as _resolve_dictation
+
+            # The provider dictation would actually use, not merely one that
+            # is installed: the resolver's config precedence is exactly what
+            # went wrong before, so recording its answer is the point.
+            _effective = _resolve_dictation()
+            _vad_available = find_spec("webrtcvad") is not None
+            _provider_substituted = (
+                _effective is not None and _effective.was_overridden
+            )
+            if _provider_substituted:
+                _status = "fallback" if _vad_available else "degraded-fallback"
+            else:
+                _status = "ok" if _vad_available else "degraded"
+            _speech_fields = {
+                "status": _status,
+                "provider": _effective.provider if _effective else "none",
+                "model": (_effective.model if _effective else None)
+                or "provider-default",
+            }
+            if _provider_substituted:
+                _speech_fields["configured_provider"] = (
+                    _effective.configured_provider
+                )
+            persist_event(
+                "dictation",
+                "speech_stack_available",
+                # WARNING, not ERROR: dictation still works, on a provider the
+                # user did not choose -- same severity the first-capture
+                # `VoiceProviderOverridden` toast uses for the same fact.
+                level=logging.WARNING if _provider_substituted else logging.INFO,
+                **_speech_fields,
+            )
+        except Exception:
+            pass
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self._start_persona_buddy_overlay()
@@ -3199,13 +3304,44 @@ class TldwCli(
         self._wire_watchlists_command_service()
         self._bind_tts_service()
         self._start_backup_maintenance_monitor()
-        self._notes_sync_runtime_start_task = asyncio.create_task(
-            self.notes_sync_runtime_owner.start(),
-            name="start_notes_sync_runtime",
-        )
-        self._notes_sync_runtime_start_task.add_done_callback(
-            self._observe_notes_sync_runtime_start
-        )
+        # TASK-21247: gate CONSTRUCTION, not only start. Reading the lazy
+        # property unconditionally paid the ~15-module notes-sync
+        # construction chain just before first paint on EVERY boot,
+        # including zero-profile ones -- exactly what TASK-21112 was filed
+        # to avoid. The predicate is the same TASK-21112 start-evidence gate
+        # the runtime's own start() evaluates (empty-store refinement per
+        # TASK-21240), evaluated BEFORE the property is touched; a broken
+        # probe fails OPEN (one full attempt) exactly as start() does.
+        try:
+            _notes_sync_start_evidence = _notes_sync_boot_start_evidence(self)
+        except Exception:
+            _notes_sync_start_evidence = True
+        if _notes_sync_start_evidence:
+            # PR #3084 review fix: a notes-sync BUILD failure on a
+            # configured profile must not escape on_mount (Textual's
+            # default crash) before the Library screen's safe reader can
+            # present it. Construct through the guarded reader; a failed
+            # build records `_notes_sync_runtime_build_failure` and skips
+            # start() entirely.
+            try:
+                _notes_sync_owner = self._read_notes_sync_runtime_owner_safe()
+            except Exception:
+                _notes_sync_owner = None
+            if _notes_sync_owner is not None:
+                self._notes_sync_runtime_start_task = asyncio.create_task(
+                    _notes_sync_owner.start(),
+                    name="start_notes_sync_runtime",
+                )
+                self._notes_sync_runtime_start_task.add_done_callback(
+                    self._observe_notes_sync_runtime_start
+                )
+        else:
+            # First-time setup force-starts the runtime on demand
+            # (`review_setup`), constructing it lazily at that point.
+            self.loguru_logger.debug(
+                "Notes-sync start gate: no configuration evidence; runtime "
+                "not constructed this boot."
+            )
         mount_start = time.perf_counter()
 
         # task-19561: hand the process-level SIGTERM/SIGINT handler this app
@@ -3223,32 +3359,11 @@ class TldwCli(
         except Exception:
             pass
 
-        # Which interpreter's speech stack this run actually has. Dictation
-        # degrades silently and differently per missing package -- without
-        # `webrtcvad` no segment can finalize mid-capture (so nothing appears
-        # until stop and no voice command can fire), and without the
-        # configured provider's package the resolver quietly picks another.
-        # Both were diagnosed only after several live rounds because the run
-        # left no record of its own environment (2026-08-01); one line here
-        # dates every future report to a specific interpreter.
-        try:
-            from importlib.util import find_spec
-
-            from .Chat.console_voice_input import resolve as _resolve_dictation
-
-            # The provider dictation would actually use, not merely one that
-            # is installed: the resolver's config precedence is exactly what
-            # went wrong before, so recording its answer is the point.
-            _effective = _resolve_dictation()
-            persist_event(
-                "dictation",
-                "speech_stack_available",
-                status="ok" if find_spec("webrtcvad") is not None else "degraded",
-                provider=_effective.provider if _effective else "none",
-                model=(_effective.model if _effective else None) or "provider-default",
-            )
-        except Exception:
-            pass
+        # The speech-stack environment diagnostic (dictation/
+        # speech_stack_available) is scheduled PAST `_ui_ready` -- see
+        # `_record_speech_stack_diagnostics`, called from
+        # `_post_mount_setup` (TASK-22504: its `console_voice_input`
+        # import must stay off the first-paint leg).
 
         # Restore persisted Library ingest job history (self.library_ingest_jobs
         # already exists -- constructed store-less in __init__). Never raises:
@@ -3508,39 +3623,28 @@ class TldwCli(
 
     def _start_served_canvas_control(self) -> None:
         """Attach this authoritative child to its parent transport."""
+        from .app_served import _start_served_canvas_control
+        return _start_served_canvas_control(self, app_globals=globals())
 
-        client = self.served_canvas_control
-        if client is None or self._served_canvas_control_start_task is not None:
-            return
-        task = asyncio.create_task(
-            client.start(), name="start_served_canvas_control"
-        )
-        self._served_canvas_control_start_task = task
+    def _served_relay_run_states(self):
+        """Current ``{session_id: run state}`` for the relay poller, if built."""
+        from .app_served import _served_relay_run_states
+        return _served_relay_run_states(self)
 
-        def observe(completed: asyncio.Task[None]) -> None:
-            try:
-                completed.result()
-            except asyncio.CancelledError:
-                pass
-            except Exception as error:
-                self.loguru_logger.warning(
-                    "Served Canvas control unavailable type={} code=connection_failed",
-                    type(error).__name__,
-                )
+    def served_relay_wrap_pending_approval(self, original):
+        """Wrap one ``set_pending_approval`` binding for the relay (served only)."""
+        from .app_served import _served_relay_wrap_pending_approval
+        return _served_relay_wrap_pending_approval(self, original)
 
-        task.add_done_callback(observe)
+    def _served_relay_decide(self, round_id, decisions):
+        """Apply one phone decision on this child's Console controller."""
+        from .app_served import _served_relay_decide
+        return _served_relay_decide(self, round_id, decisions)
 
     async def _stop_served_canvas_control(self) -> None:
         """Close the private child channel without affecting terminal exit."""
-
-        task = self._served_canvas_control_start_task
-        self._served_canvas_control_start_task = None
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        client = self.served_canvas_control
-        if client is not None:
-            await client.aclose()
+        from .app_served import _stop_served_canvas_control
+        return await _stop_served_canvas_control(self, app_globals=globals())
 
     @on(ModelCatalogRefreshed)
     async def on_model_catalog_refreshed(self, event: ModelCatalogRefreshed) -> None:
@@ -3712,9 +3816,7 @@ class TldwCli(
 
         app_config = self.app_config
         if isinstance(app_config, dict):
-            app_config.setdefault(WIZARD_STATE_SECTION, {})[
-                ENV_KEY_NOTICE_KEY
-            ] = True
+            app_config.setdefault(WIZARD_STATE_SECTION, {})[ENV_KEY_NOTICE_KEY] = True
 
         def _write() -> None:
             from tldw_chatbook.config import save_settings_to_cli_config
@@ -3736,7 +3838,10 @@ class TldwCli(
                 )
 
         self.run_worker(
-            _write, thread=True, group="first-run-env-key-notice-flag"
+            _write,
+            thread=True,
+            group="first-run-env-key-notice-flag",
+            exit_on_error=False,
         )
 
     def _push_first_run_wizard(self) -> None:
@@ -3819,10 +3924,24 @@ class TldwCli(
     def _handle_first_run_recovery_result(self, result: str | None) -> None:
         if result not in {"resume", "start_over", "later"}:
             return
+
+        async def apply() -> None:
+            # TASK-34100.1: setup work never exits the app. A failure reading
+            # the draft or opening the wizard re-offers the prompt instead.
+            try:
+                await self._apply_first_run_recovery_result(result)
+            except Exception as exc:  # noqa: BLE001 - the prompt is the recovery
+                # ``result`` is one of the three fixed choices checked above.
+                logger.error(
+                    "First-run recovery failed (choice={}, error_type={})",
+                    result,
+                    type(exc).__name__,
+                )
+                self.notify("Setup could not open. Try again.", severity="error")
+                self._schedule_first_run_recovery_retry()
+
         self.run_worker(
-            self._apply_first_run_recovery_result(result),
-            exclusive=True,
-            group="first-run-recovery",
+            apply(), exclusive=True, group="first-run-recovery", exit_on_error=False
         )
 
     async def _apply_first_run_recovery_result(self, result: str) -> None:
@@ -4101,11 +4220,8 @@ class TldwCli(
                 )
                 if callable(apply_chrome):
                     apply_chrome()
-            self._schedule_startup_model_catalog_refresh(
-                after_setup_completion=True
-            )
+            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
             return
-
 
         if completed is not True:
             self.post_message(NavigateToScreen(exit_route, screen_context))
@@ -4170,7 +4286,6 @@ class TldwCli(
         except Exception as exc:
             self.notify(f"Failed to open setup wizard: {exc}", severity="error")
 
-
     async def _push_initial_screen(self) -> None:
         """Push the configured initial screen for screen-based navigation startup."""
         if getattr(self, "_initial_screen_pushed", False):
@@ -4200,7 +4315,6 @@ class TldwCli(
                 if cause is not None:
                     message += f": {type(cause).__name__}: {cause}"
                 raise RuntimeError(message) from cause
-
 
         # TASK-24459: an initial tab of schedules/evals needs its split-off
         # feature CSS exactly like an in-app navigation does.
@@ -4383,6 +4497,13 @@ class TldwCli(
         ui_ready_time = time.perf_counter()
         freeze_long_lived_heap("ui_ready")  # ADR-198: keep the boot heap out of gen-2 scans
 
+        # TASK-22504: the speech-stack diagnostic's `console_voice_input`
+        # import stays off the first-paint leg; one timer tick past ready.
+        self.set_timer(
+            DEFERRED_SPEECH_STACK_DIAGNOSTICS_DELAY_SECONDS,
+            self._record_speech_stack_diagnostics,
+        )
+
         self.loguru_logger.info("App _post_mount_setup: Post-mount setup completed.")
 
         # Log UI loading metrics
@@ -4487,10 +4608,15 @@ class TldwCli(
                 group="scheduling",
             )
 
-        # dreams phase 1: Dreams DB + projection + boot catch-up, all after
-        # `_ui_ready` (ADR-097 boot-census ratchet; guarded internally, a
-        # disabled Dreams stops at two cheap settings reads).
+        # dreams phase 1: Dreams DB + projection + boot catch-up + the watch
+        # reconcile, all after `_ui_ready` (ADR-097 boot-census ratchet;
+        # guarded internally: a disabled Dreams is settings reads + one stat).
         self._wire_dreams_scheduler_integration()
+
+        # guardian task 2: the daily trend task rides the same post-
+        # `_ui_ready` seam (same ADR-097 discipline; internally gated on
+        # `[guardian] enabled`, a disabled Guardian projects nothing).
+        self._wire_guardian_scheduler_integration()
 
         self._schedule_deferred_startup_work()
         from .Backup_Recovery.profile_open import acknowledge_mounted
@@ -4502,27 +4628,15 @@ class TldwCli(
         await self.db_status_manager.update_db_sizes()
 
     def _active_footer_status(self) -> Optional[AppFooterStatus]:
-        """The visible screen's footer, falling back to the default-screen one.
+        """Delegate through the app-owned startup/footer wiring."""
+        from .app_startup import _active_footer_status
 
-        Every ``BaseAppScreen`` mounts its own ``AppFooterStatus`` (task-264),
-        so per-tick updates (DB sizes, word/token counts) must resolve the
-        currently active screen's instance rather than the cached
-        ``_db_size_status_widget`` acquired once from the default screen at
-        startup -- that cached widget is occluded as soon as any screen is
-        pushed. The cache is kept as a fallback for the brief window before
-        the first screen is pushed (or if the active screen has no footer
-        for some reason).
-
-        ``ScreenStackError`` is caught alongside ``QueryError`` because this
-        runs from ``set_interval`` timers (DB-size/token ticks) that can fire
-        during app shutdown, after the screen stack has already been drained
-        -- ``App.screen`` raises then, and the fallback cache is the right
-        answer (its update methods are themselves teardown-safe no-ops).
-        """
-        try:
-            return self.screen.query_one(AppFooterStatus)
-        except (ScreenStackError, QueryError):
-            return self._db_size_status_widget
+        return _active_footer_status(
+            self,
+            footer_type=AppFooterStatus,
+            query_error=QueryError,
+            screen_stack_error=ScreenStackError,
+        )
 
     def _create_deferred_startup_task(
         self,
@@ -4551,71 +4665,18 @@ class TldwCli(
         return task
 
     def _schedule_deferred_startup_work(self) -> None:
-        """Start nonessential services after the first interactive UI frame."""
+        """Delegate through the app-owned startup/footer wiring."""
+        from .app_startup import _schedule_deferred_startup_work
 
-        # TASK-22215: the boot-time thread fleet starts here, under the
-        # explicit order/concurrency policy in `Utils/boot_worker_policy.py`,
-        # rather than all at once (and rather than partly from `on_mount`,
-        # ahead of first paint, which is where the two FTS backfills used to
-        # start).
-        self._start_staggered_boot_workers()
-        self.set_timer(
-            DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
-            self._schedule_footer_status_updates,
-        )
-        self.set_timer(
-            DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
-            self._start_deferred_audio_service_initialization,
-        )
-        self.set_timer(
-            DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS,
-            self._deferred_wire_collections_capture_services,
-        )
-        # Workspace agent provisioning (task-8): best-effort hook attach +
-        # startup backfill, deferred past `_ui_ready` so the provisioning
-        # module stays out of the UI-ready module census (ADR-097).
-        self.set_timer(
-            DEFERRED_WORKSPACE_AGENT_PROVISIONING_DELAY_SECONDS,
-            self._deferred_wire_workspace_agent_provisioning,
-        )
-        self.set_timer(
-            DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS,
-            self._schedule_screen_preimport,
-        )
-        self.schedule_media_cleanup()
-        self._create_deferred_startup_task(
-            self._reconcile_interrupted_subscription_work(),
-            name="deferred_subscription_interrupt_reconcile",
-        )
-        coordinator = getattr(
+        return _schedule_deferred_startup_work(
             self,
-            "citation_artifact_ownership_coordinator",
-            None,
-        )
-        if coordinator is not None and coordinator.writes_enabled:
-            self._create_deferred_startup_task(
-                self._reconcile_citation_artifact_ownership(),
-                name="deferred_citation_artifact_reconciliation",
-            )
-        migration = getattr(
-            self,
-            "citation_legacy_migration_service",
-            None,
-        )
-        if migration is not None and migration.ready:
-            self._create_deferred_startup_task(
-                self._migrate_legacy_citations_idle_unit(),
-                name="deferred_legacy_citation_migration",
-            )
-        self._schedule_launch_wake()
-        # Schedule Notes/Sync last.  Earlier placement let the nominal 0.1 s
-        # delay expire while the remaining synchronous setup below it was
-        # still running, so its import graph could win the race against the
-        # first-interactive-frame census on slower starts.
-        _install_deferred_notes_sync_facades(self)
-        self.set_timer(
-            DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
-            self._deferred_wire_notes_sync_services,
+            db_size_delay=DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
+            audio_delay=DEFERRED_AUDIO_SERVICE_DELAY_SECONDS,
+            collections_delay=DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS,
+            workspace_delay=DEFERRED_WORKSPACE_AGENT_PROVISIONING_DELAY_SECONDS,
+            screen_delay=DEFERRED_SCREEN_PREIMPORT_DELAY_SECONDS,
+            notes_delay=DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS,
+            install_notes_facades=_install_deferred_notes_sync_facades,
         )
 
     # ------------------------------------------------------------------
@@ -4636,20 +4697,7 @@ class TldwCli(
         """
 
         def start_actor_pack_recovery() -> Worker:
-            # task-21106: Actor Pack crash recovery, moved out of __init__ --
-            # synchronous SQLite has no place on the construction path. A
-            # thread worker (not a coroutine) because recovery does blocking
-            # DB I/O; the coordinator's own once-guard makes every later
-            # surface-side call (Personas mount, create_persona) a cached
-            # no-op -- which is also why this may be staggered at all.
-            return self.run_worker(
-                self.ensure_actor_pack_recovery,
-                name="deferred_actor_pack_recovery",
-                group="actor_pack_recovery",
-                thread=True,
-                exclusive=True,
-                exit_on_error=False,
-            )
+            return self._start_actor_pack_recovery_worker(self.ensure_actor_pack_recovery)
 
         def start_actor_pack_staging_sweep() -> Worker:
             # task-22216: the Actor Pack staging crash-sweep, moved out of
@@ -4683,7 +4731,9 @@ class TldwCli(
         def start_subscriptions_fts_backfill() -> Worker | None:
             from tldw_chatbook.Backup_Recovery.activation import execution_allowed
 
-            if not execution_allowed(("db.subscriptions",), get_subscriptions_db_path()):
+            if not execution_allowed(
+                ("db.subscriptions",), get_subscriptions_db_path()
+            ):
                 return None
             # task-688: index subscription_items rows scraped before the FTS5
             # index existed, so search covers a user's whole back catalogue
@@ -4760,7 +4810,10 @@ class TldwCli(
                 try:
                     worker = self._start_boot_worker(key)
                 except Exception as error:
-                    if isinstance(error, RecoveryRequired) and str(error) == "storage_locally_paused":
+                    if (
+                        isinstance(error, RecoveryRequired)
+                        and str(error) == "storage_locally_paused"
+                    ):
                         # Native intent can arrive after admission but before a
                         # starter reads its config. Retain all unstarted keys;
                         # the existing reconcile timer retries after readmission.
@@ -4977,6 +5030,13 @@ class TldwCli(
             and type(db) is CharactersRAGDB
             and not db.is_memory_db
         )
+        if type(repository) is CitationTraceRepository:
+            from .Chat.citation_key_first_use import (
+                ensure_fingerprint_key_off_loop, run_citation_db_call,
+            )
+
+            if await run_citation_db_call(db, repository.fingerprint_bearing_rows_exist):
+                await ensure_fingerprint_key_off_loop(repository)
         reconcile = coordinator.reconcile_pending
 
         def reconcile_in_worker():
@@ -5015,10 +5075,14 @@ class TldwCli(
                     "citation_legacy_migration_service",
                     None,
                 )
-                if migration is None or not migration.ready:
+                if migration is None or not migration.writes_enabled:
                     return
-                from tldw_chatbook.Chat.citation_legacy_migration import CitationLegacyMigrationService
-                from tldw_chatbook.Chat.citation_trace_repository import CitationTraceRepository
+                from tldw_chatbook.Chat.citation_legacy_migration import (
+                    CitationLegacyMigrationService,
+                )
+                from tldw_chatbook.Chat.citation_trace_repository import (
+                    CitationTraceRepository,
+                )
 
                 repository = getattr(migration, "repository", None)
                 db = getattr(migration, "db", None)
@@ -5029,6 +5093,13 @@ class TldwCli(
                     and type(db) is CharactersRAGDB
                     and not db.is_memory_db
                 )
+                if type(repository) is CitationTraceRepository:
+                    from .Chat.citation_key_first_use import (
+                        ensure_fingerprint_key_off_loop, run_citation_db_call,
+                    )
+
+                    if await run_citation_db_call(db, os.path.lexists, migration.sidecar_path):
+                        await ensure_fingerprint_key_off_loop(repository)
                 migrate = migration.migrate_idle_unit
 
                 def migrate_in_worker():
@@ -5072,62 +5143,15 @@ class TldwCli(
             self._legacy_citation_migration_in_flight = False
 
     def _schedule_footer_status_updates(self) -> None:
-        """Wire the status-line DB-size updates after UI readiness.
+        """Delegate through the app-owned startup/footer wiring."""
+        from .app_startup import _schedule_footer_status_updates
 
-        task-21133: this used to arm a second pair of timers -- a 0.5 s
-        one-shot and a 10 s interval -- for a token counter whose entire
-        consumer surface task-17653 removed. Nothing armed the footer's
-        ``#footer-token-count`` chip any more (``BaseAppScreen`` composes
-        every ``AppFooterStatus`` with ``show_token_count=False``, and that
-        is the only construction site in the package), so each tick resolved
-        the active footer, ran three ``query_one`` selectors that no live
-        screen composes, and threw the answer away in a debug log. The
-        interval, its handle, and the whole chain behind it are gone; the
-        DB-size timers below are unchanged.
-        """
-
-        def record_footer_timer(name: str) -> None:
-            record_timer = getattr(self, "_record_footer_timer_created", None)
-            try:
-                if callable(record_timer):
-                    record_timer(name)
-                    return
-                monitor = getattr(self, "ui_responsiveness_monitor", None)
-                if monitor is not None:
-                    monitor.record_timer_created(name)
-            except Exception:
-                return
-
-        try:
-            # The cache is only a pre-first-screen fallback: per-tick updates
-            # resolve the ACTIVE screen's footer via `_active_footer_status`.
-            # Splash and the first-run wizard mount no AppFooterStatus, so a
-            # miss here must not abort timer setup (task-2721: it previously
-            # logged two tracebacks per fresh install and left the DB-size
-            # timers never started for the whole session).
-            try:
-                self._db_size_status_widget = self.query_one(AppFooterStatus)
-                self.loguru_logger.info("AppFooterStatus widget instance acquired.")
-            except QueryError:
-                self._db_size_status_widget = None
-                self.loguru_logger.debug(
-                    "Active screen has no AppFooterStatus; footer timers start "
-                    "anyway and each tick resolves the active screen's footer."
-                )
-
-            self.set_timer(
-                DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
-                self.update_db_sizes,
-            )
-            self.db_status_manager.start_periodic_updates(120)
-            record_footer_timer("footer-db-size-periodic")
-            self.loguru_logger.info(
-                "DB size update timer started for the shell status line (interval: 2 minutes)."
-            )
-        except Exception as e_db_size:
-            self.loguru_logger.opt(exception=True).error(
-                f"Error setting up DB size indicator for the shell status line: {e_db_size}",
-            )
+        return _schedule_footer_status_updates(
+            self,
+            footer_type=AppFooterStatus,
+            query_error=QueryError,
+            db_size_delay=DEFERRED_DB_SIZE_UPDATE_DELAY_SECONDS,
+        )
 
     # U/U2 (TASK-33011): speech initialization, delegated to ``app_speech``.
     def _start_deferred_audio_service_initialization(self) -> None:
@@ -5155,8 +5179,7 @@ class TldwCli(
         """Ordered, module-deduplicated routes for the background pre-importer.
 
         Several canonical route ids share one module (``"ccp"``/``"personas"``
-        both target ``personas_screen.PersonasScreen``, ``"tools_settings"``/
-        ``"mcp"`` both target ``mcp_screen.MCPScreen``) -- importing each
+        both target ``personas_screen.PersonasScreen``) -- importing each
         module once is enough, a second ``import_module`` call for the same
         name is just a dict lookup, but there's no reason to schedule the
         redundant work. ``SCREEN_PREIMPORT_PRIORITY_ROUTE_IDS`` (chat/
@@ -5223,10 +5246,9 @@ class TldwCli(
         TASK-21113 added pacing BETWEEN routes: after each import the thread
         hands the event loop back a slice proportional to what it just took
         (see ``SCREEN_PREIMPORT_YIELD_RATIO`` and friends), and parks
-        entirely while a screen navigation is resolving. Both are strictly
-        between-route, so the single-route call this method also serves --
-        task-21110's initial-screen warm-up, racing the splash -- reaches its
-        one ``load_screen_class()`` with nothing added in front of it. The
+        entirely while navigation or Console custody owns foreground work.
+        Both waits are between routes: TASK-21110's single-route splash
+        warmup reaches its ``load_screen_class()`` without a pause. The
         loop also drops out on ``_shutting_down`` so quit does not wait on a
         daemon thread's remaining registry.
 
@@ -5296,19 +5318,16 @@ class TldwCli(
             return False
 
     def _pause_between_preimports(self, gap_seconds: float) -> None:
-        """Yield the CPU between two route imports, then wait out any nav.
+        """Yield between imports and give received Console work priority.
 
-        Runs on the pre-import daemon thread. The park is bounded by
-        ``SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS`` and abandoned
-        immediately on ``_shutting_down`` so neither a wedged navigation nor
-        a quit can leave this thread sleeping in a loop.
+        Runs on the pre-import daemon thread. Navigation alone parks for at
+        most ``SCREEN_PREIMPORT_NAVIGATION_PARK_LIMIT_SECONDS``. Console
+        custody parks until accepted work settles; an import already running
+        cannot be interrupted. Shutdown abandons either park within one slice.
 
-        The gap sleep itself is sliced into navigation-poll-sized steps with
-        a ``_shutting_down`` check between slices (TASK-22214, the 22200
-        ``_interruptible_sleep`` precedent): with the caps at 2.0 s / 6.0 s
-        a single ``time.sleep(gap)`` would leave a quit waiting out the
-        whole gap before ``_preimport_screens``'s own shutdown check could
-        run. Sliced, the thread notices a quit within one 0.05 s slice.
+        Gap sleeps use poll-sized slices with a shutdown check between
+        them (TASK-22214): even a capped 2 s / 6 s gap need not finish
+        before shutdown is observed.
         """
         remaining = gap_seconds
         while remaining > 0:
@@ -5317,14 +5336,16 @@ class TldwCli(
             step = min(SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS, remaining)
             time.sleep(step)
             remaining -= step
-        # Counted, not accumulated: summing 0.05 a hundred times lands either
-        # side of 5.0 depending on float rounding, which would make the bound
-        # off by one at random.
+        # Count polls to avoid float accumulation shifting the nav bound.
         polls = 0
-        while (
-            polls < SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS
-            and not getattr(self, "_shutting_down", False)
-            and self._screen_navigation_in_progress()
+        runtime = getattr(self, "console_runtime", None)
+        while not getattr(self, "_shutting_down", False) and (
+            (
+                polls < SCREEN_PREIMPORT_MAX_NAVIGATION_POLLS
+                and self._screen_navigation_in_progress()
+            )
+            # Custody covers received intent before a controller/run exists.
+            or (runtime is not None and runtime.has_custodied_turns())
         ):
             time.sleep(SCREEN_PREIMPORT_NAVIGATION_POLL_SECONDS)
             polls += 1
@@ -5333,9 +5354,13 @@ class TldwCli(
         """Warm ``sys.modules`` for every registered screen route.
 
         See ``_preimport_screens`` for the per-route mechanics; this just
-        supplies the full, priority-ordered route list.
+        supplies the full, priority-ordered route list. Then the Console's
+        first-send modules (TASK-33620.15.5), after the routes (TASK-33620.15.14).
         """
         self._preimport_screens(self._screen_preimport_route_order())
+        from .Chat.console_first_send_modules import preimport_first_send_modules
+
+        preimport_first_send_modules(self)
 
     def _initial_screen_preimport_route(self) -> ScreenRoute | None:
         """The route whose module ``_push_initial_screen`` is about to import.
@@ -5571,7 +5596,6 @@ class TldwCli(
         except Exception:  # noqa: BLE001 -- a focus nudge must never crash the app
             logger.warning("app: terminal-focus-regained forwarding failed")
 
-
     ########################################################################
     #
     # --- EVENT DISPATCHERS ---
@@ -5662,6 +5686,16 @@ def __getattr__(name: str) -> Any:
 
         return getattr(app_entry, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# Stock Console preparation callbacks (no IO); must precede the main block (TASK-35302).
+_CONSOLE_SKILL_APP_SOURCE = (
+    TldwCli,
+    globals(),
+    TldwCli._create_deferred_startup_task,
+    TldwCli._create_deferred_startup_task.__code__,
+    ConsoleRuntime,
+)
 
 
 # --- Main execution block ---

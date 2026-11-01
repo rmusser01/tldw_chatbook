@@ -1,0 +1,28 @@
+{
+  "head": "fd922602dfa9711476da79e171ce0ead93eeab97",
+  "source_diff_sha256": "8e92a490c8925a6bd2598f8544395acea83636db67d082a29f9ed4235a27f1a2",
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/UI/test_console_transcript_context_projection.py",
+    "Tests/UI/test_settings_prompt_summary_worker.py",
+    "Tests/UI/test_console_skill_context_worker.py",
+    "Tests/Performance/test_console_skill_context_owned.py",
+    "Tests/Performance/test_console_attention_owned.py",
+    "Tests/Performance/test_console_tokenizer_owned.py",
+    "Tests/Performance/test_console_display_contention.py",
+    "Tests/UI/test_console_return_responsiveness.py",
+    "-v",
+    "--tb=short",
+    "--show-capture=no",
+    "--timeout=90",
+    "-p",
+    "no:cacheprovider"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-integration-103d36b67ff7",
+  "exit_code": 1,
+  "seconds": 256.60899999993853
+}

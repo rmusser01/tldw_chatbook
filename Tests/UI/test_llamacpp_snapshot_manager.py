@@ -16,6 +16,7 @@ from Tests.LLM_Management.test_snapshot_admission import (
     _explicit_command,
     _launch_files,
 )
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Event_Handlers.LLM_Management_Events.server_lifecycle import (
     ServerLaunchClaim,
@@ -605,6 +606,67 @@ async def test_details_observation_is_absolute_and_elapsed_timer_does_not_refres
                 )
                 assert str(manager.query_one("#snapshot-details").render()) == details
                 assert tuple(h.calls) == before_calls
+        finally:
+            h.hold.set()
+            await settle_ui(pilot, h.service)
+
+
+# --- TASK-35028: the elapsed-status write is equality-gated --------------------
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_paint_elapsed_repaints_only_when_the_status_copy_moves(
+    request, monkeypatch
+):
+    """The 1 Hz tick between whole-second boundaries must cost a compare, not
+    a repaint of the bare height:auto status row (TASK-34991 finding)."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Widgets import llamacpp_snapshot_manager as module
+
+    h = request.getfixturevalue("snapshot_ui")
+    async with h.app.run_test(size=(140, 45)) as pilot:
+        await h.app.push_screen(LLMScreen(h.app))
+        await pilot.pause()
+        manager = h.app.screen.query_one(module.LlamaCppSnapshotManager)
+        h.service.start_save(0)
+        try:
+            async with asyncio.timeout(5):
+                while h.service.view().status != "awaiting_ack":
+                    await pilot.pause(0.01)
+            # Take the live 1 Hz timer out of the race and drive the clock
+            # by hand, so the assertions are deterministic.
+            if manager._elapsed_timer is not None:
+                manager._elapsed_timer.stop()
+            clock = [h.service.view().started_at + 10]
+            monkeypatch.setattr(
+                module,
+                "time",
+                SimpleNamespace(monotonic=lambda: clock[0], time=lambda: 1800000000.0),
+            )
+            status = manager.query_one("#snapshot-operation-status", Static)
+            calls = []
+            original_update = status.update
+
+            def counting_update(*args, **kwargs):
+                calls.append(args)
+                return original_update(*args, **kwargs)
+
+            status.update = counting_update
+            manager._paint_elapsed()
+            assert len(calls) == 1
+            assert str(calls[0][0]).endswith(" · 10s")
+            # The same view (no second boundary crossed): no repaint.
+            manager._paint_elapsed()
+            manager._paint_elapsed()
+            assert len(calls) == 1, "unchanged status copy must not repaint"
+            # Three seconds later the elapsed suffix moves, and the write
+            # happens.
+            clock[0] += 3
+            manager._paint_elapsed()
+            assert len(calls) == 2
+            assert str(calls[-1][0]).endswith(" · 13s")
         finally:
             h.hold.set()
             await settle_ui(pilot, h.service)

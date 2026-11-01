@@ -1,0 +1,161 @@
+# Focus edges under 3:1 on dev today that TASK-36479 did not fix (its scope was
+# the 43 edges drawn with $ds-action-focus). Tracked by TASK-36663. Measured
+# 2026-10-24 against $surface, $panel and each focus rule's own fill over the
+# 89 measurable themes (Tests/UI/test_theme_contrast.py).
+#
+# One row per edge, tab-separated: source, selector, property, painted value.
+# The sweep skips exactly these edges. A new focus edge, or a listed one whose
+# value changes, is measured like any other. The guard fails when a row no
+# longer matches an edge or its edge clears 3:1 on every theme, so this list
+# only shrinks: fix an edge and delete its row; never add one.
+UI/Chunking_Lab_Modules/results_region.py::ResultsRegion.BUNDLED_CSS	ResultsRegion #chunk-inspector:focus	border	$accent
+UI/Navigation/main_navigation.py::MainNavigationBar.BUNDLED_CSS	.nav-button.is-active:focus	border	$tldw-active-edge
+UI/Navigation/main_navigation.py::MainNavigationBar.BUNDLED_CSS	.nav-button:focus	border	$primary
+UI/Screens/library_screen.py::LibraryScreen.BUNDLED_CSS	#library-note-context-region:focus	border	$accent
+UI/Screens/library_screen.py::LibraryScreen.BUNDLED_CSS	#library-note-preview-region:focus	border	$accent
+UI/Screens/trajectory_screen.py::TrajectoryScreen.BUNDLED_CSS	#trajectory-inspector:focus	border-top	$accent
+UI/stts_profile_library.py::STTSProfileLibrary.DEFAULT_CSS	#stts-profile-actions Button:focus	outline	$accent
+UI/stts_profile_library.py::STTSProfileLibrary.DEFAULT_CSS	#stts-profile-search:focus	border	$accent
+UI/stts_profile_library.py::STTSProfileLibrary.DEFAULT_CSS	#stts-profile-toolbar Button:focus	outline	$accent
+UI/stts_profile_library.py::TTSProfileDeleteModal.DEFAULT_CSS	#stts-profile-delete-actions Button:focus	outline	$accent
+UI/stts_profile_library.py::TTSProfileEditorModal.DEFAULT_CSS	#stts-profile-editor-actions Button:focus	outline	$accent
+Widgets/Console/console_conversation_action_menu.py::ConsoleConversationActionMenu.BUNDLED_CSS	ConsoleConversationActionMenu Button:focus	outline	$accent
+Widgets/Console/console_fork_chat_modal.py::ConsoleForkChatModal.BUNDLED_CSS	#console-fork-chat-title:focus	border	$accent
+Widgets/Console/console_project_instructions.py::ConsoleProjectInstructionStatusRow.BUNDLED_CSS	#console-project-instruction-status-button:focus	outline	$accent
+Widgets/Console/console_reaction_picker_modal.py::ConsoleReactionPickerModal.BUNDLED_CSS	#console-reaction-picker-actions Button:focus	outline	$accent
+Widgets/Console/console_workspace_action_menu.py::ConsoleWorkspaceActionMenu.BUNDLED_CSS	ConsoleWorkspaceActionMenu Button:focus	outline	$accent
+Widgets/Library/library_file_notes_git_panel.py::LibraryFileNotesGitPanel.DEFAULT_CSS	#file-notes-git-commit-body:focus	outline	$primary
+Widgets/Library/library_file_notes_git_panel.py::LibraryFileNotesGitPanel.DEFAULT_CSS	#file-notes-git-commit-review-technical > CollapsibleTitle:focus	outline	$accent
+Widgets/Library/library_file_notes_git_panel.py::LibraryFileNotesGitPanel.DEFAULT_CSS	#file-notes-git-push-body:focus	outline	$primary
+Widgets/Library/library_file_notes_git_panel.py::LibraryFileNotesGitPanel.DEFAULT_CSS	#file-notes-git-push-review-technical > CollapsibleTitle:focus	outline	$accent
+Widgets/Library/library_file_notes_git_panel.py::PushDestinationAuthorizationDialog.DEFAULT_CSS	#file-notes-push-auth-body:focus	outline	$primary
+Widgets/Persona_Widgets/persona_buddy_widget.py::PersonaBuddyWidget.BUNDLED_CSS	PersonaBuddyWidget:focus	outline	$accent
+Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py::PersonasPersonaVisualPackWidget.BUNDLED_CSS	PersonasPersonaVisualPackWidget #personas-persona-visual-actions Button:focus	outline	$accent
+Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py::PersonasVisualIdentityPackWidget.BUNDLED_CSS	PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button:focus	outline	$accent
+Widgets/emoji_picker.py::EmojiPickerScreen.BUNDLED_SCREEN_CSS	#search-input:focus	border	$primary
+css/components/_agentic_terminal.tcss	ConsoleSettingsModal Input:focus	border-left	$ds-input-focus-accent
+css/components/_agentic_terminal.tcss	ConsoleSettingsModal Select:focus	border-left	$ds-input-focus-accent
+css/components/_agentic_terminal.tcss	LibraryFileNotesGitPanel #file-notes-git-commit-body:focus	outline	$primary
+css/components/_agentic_terminal.tcss	LibraryFileNotesGitPanel #file-notes-git-push-body:focus	outline	$primary
+css/components/_agentic_terminal.tcss	LibraryIngestCanvas Checkbox:focus	outline	$accent
+css/components/_agentic_terminal.tcss	LibraryIngestCanvas Collapsible > CollapsibleTitle:focus	outline-left	$ds-focus-accent
+css/components/_agentic_terminal.tcss	LibraryIngestCanvas Collapsible > CollapsibleTitle:focus	outline-right	$ds-focus-accent
+css/components/_agentic_terminal.tcss	LibraryIngestCanvas Input:focus	outline	$accent
+css/components/_agentic_terminal.tcss	LibraryIngestCanvas Select:focus	outline	$accent
+css/components/_agentic_terminal.tcss	LibraryIngestCanvas Select:focus > SelectCurrent	border	$ds-input-focus-accent
+css/components/_dialogs.tcss	FileSystemPickerScreen Button:focus	outline-left	$ds-focus-accent
+css/components/_dialogs.tcss	FileSystemPickerScreen Button:focus	outline-right	$ds-focus-accent
+css/components/_dialogs.tcss	MCPRecoveryReviewDialog #mcp-recovery-review-body:focus	border	$ds-focus-accent
+css/components/_forms.tcss	.form-input:focus	border	$ds-input-focus-border
+css/components/_forms.tcss	.form-input:focus	border-bottom	$ds-input-focus-accent
+css/components/_forms.tcss	.form-textarea:focus	border	$ds-input-focus-border
+css/components/_forms.tcss	.form-textarea:focus	border-bottom	$ds-input-focus-accent
+css/components/_forms.tcss	Input:focus	border	$ds-input-focus-border
+css/components/_forms.tcss	Input:focus	border-bottom	$ds-input-focus-accent
+css/components/_forms.tcss	Switch:focus	border	$ds-focus-accent
+css/components/_forms.tcss	TextArea:focus	border	$ds-input-focus-border
+css/components/_forms.tcss	TextArea:focus	border-bottom	$ds-input-focus-accent
+css/components/_forms.tcss	ToggleButton:focus	border	$ds-focus-accent
+css/components/_navigation.tcss	.nav-button.is-active:focus	border	$tldw-active-edge
+css/components/_profile_interview.tcss	#profile-interview-answer:focus	border-left	$accent
+css/components/_profile_interview.tcss	#profile-interview-answer:focus	border-left	$ds-input-focus-accent
+css/components/_profile_interview.tcss	.personal-context-proposal-field:focus	border-left	$accent
+css/components/_profile_interview.tcss	.personal-context-review-row Input:focus	border-left	$accent
+css/components/_profile_interview.tcss	.personal-context-review-row Select:focus	border-left	$accent
+css/components/_profile_interview.tcss	PersonalContextReviewModal .personal-context-review-row Input.personal-context-review-input:focus	border-left	$ds-input-focus-accent
+css/components/_settings_splash_theme.tcss	.color-preset-swatch:focus	border-left	$foreground
+css/components/_settings_splash_theme.tcss	.color-preset-swatch:focus	border-right	$foreground
+css/components/_widgets.tcss	#settings-library-rag-card Collapsible > CollapsibleTitle:focus	border-bottom	$ds-focus-accent
+css/components/_widgets.tcss	#settings-library-rag-card Collapsible.-collapsed > CollapsibleTitle:focus	border-bottom	$ds-focus-accent
+css/components/_widgets.tcss	BaseTamagotchi:focus	border	$ds-focus-accent
+css/components/_widgets.tcss	ChatbooksWindowImproved .search-input:focus	border	$ds-input-focus-border
+css/components/_widgets.tcss	ChatbooksWindowImproved .search-input:focus	border-bottom	$ds-input-focus-accent
+css/core/_reset.tcss	*:focus	outline	$ds-focus-accent
+css/features/_chat.tcss	.rag-settings-panel:focus-within	border	$ds-focus-accent
+css/features/_console.tcss	#console-style-picker-filter:focus	border	$ds-input-focus-accent
+css/features/_console.tcss	.console-frame-solid.console-frame-left.console-edge-region-focused	border-left	$ds-focus-accent
+css/features/_console.tcss	.console-frame-solid.console-frame-right.console-edge-region-focused	border-right	$ds-focus-accent
+css/features/_console.tcss	.console-setup-modal-action:focus	border	$ds-focus-accent
+css/features/_console.tcss	.console-setup-modal-action:focus	outline-left	$ds-focus-accent
+css/features/_console.tcss	.console-setup-modal-action:focus	outline-right	$ds-focus-accent
+css/features/_console_panels.tcss	#console-prompt-picker-filter:focus	border	$ds-input-focus-accent
+css/features/_console_panels.tcss	#console-scope-picker-tag-search:focus	border	$ds-input-focus-accent
+css/features/_console_panels.tcss	#console-scope-picker-text-filter:focus	border	$ds-input-focus-accent
+css/features/_console_panels.tcss	#console-system-prompt-text:focus	border	$ds-input-focus-accent
+css/features/_lab.tcss	.lab-rail .lab-rail-row.is-active:focus	border-left	$accent
+css/features/_lab.tcss	.lab-rail .lab-rail-row.is-active:hover:focus	border-left	$accent
+css/features/_lab.tcss	.speech-input:focus	border	$ds-input-focus-border
+css/features/_lab.tcss	.stts-portability-actions Button:focus	outline	$accent
+css/features/_lab.tcss	.stts-portability-dialog Checkbox:focus	outline	$accent
+css/features/_lab.tcss	.stts-portability-dialog Select:focus	outline	$accent
+css/features/_lab.tcss	.stts-portability-dialog TextArea:focus	outline	$accent
+css/features/_lab.tcss	VllmSetupView Button.vllm-focus-target:focus	outline	$ds-focus-accent
+css/features/_lab.tcss	VllmSetupView CollapsibleTitle.vllm-focus-target:focus	outline	$ds-focus-accent
+css/features/_lab.tcss	VllmSetupView Input.vllm-focus-target:focus	outline	$ds-focus-accent
+css/features/_lab.tcss	VllmSetupView Select.vllm-focus-target:focus	outline	$ds-focus-accent
+css/features/_lab.tcss	VllmSetupView TextArea.vllm-focus-target:focus	outline	$ds-focus-accent
+css/features/_library.tcss	#library-conversation-reader-find:focus	border	$ds-input-focus-accent
+css/features/_library.tcss	.library-conversation-reader-message:focus	border-left	$ds-focus-accent
+css/features/_library.tcss	.library-export-field:focus	border	$ds-input-focus-accent
+css/features/_library.tcss	Button.library-canvas-action:focus	outline-left	$ds-focus-accent
+css/features/_library.tcss	Button.library-canvas-action:focus	outline-right	$ds-focus-accent
+css/features/_library_artifacts.tcss	#library-artifacts-body:focus	border	$ds-focus-accent
+css/features/_library_panels.tcss	#library-collections-capture-note:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-capture-tags:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-capture-title:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-capture-url:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-filter-date-from:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-filter-date-to:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-filter-domain:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-filter-tags:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-filter:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-freeform-note:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-highlight-note:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-highlight-quote:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-collections-linked-note-id:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-media-content-search:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-media-edit-form Input:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-media-highlight-add-collapsible Input:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-media-viewer-content:focus-within	border	$accent
+css/features/_library_panels.tcss	#library-note-context-keywords:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-note-context-region:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-note-keywords:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-note-preview-region:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-note-title:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-notes-filter:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-prompt-author:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-prompt-details:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-prompt-keywords:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-prompt-name:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-prompts-filter:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-prompts-import-path:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-rag-query-input:focus	border	$ds-input-focus-border
+css/features/_library_panels.tcss	#library-rag-query-input:focus	border-bottom	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-rag-run-query:focus	outline-left	$ds-focus-accent
+css/features/_library_panels.tcss	#library-rag-run-query:focus	outline-right	$ds-focus-accent
+css/features/_library_panels.tcss	#library-skill-allowed-tools:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-skill-argument-hint:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-skill-description:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-skill-model:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-skill-name:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-skills-filter:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	#library-skills-import-path:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	.library-ingest-field:focus	border	$ds-input-focus-accent
+css/features/_library_panels.tcss	.library-ingest-field:focus	outline	$ds-input-focus-accent
+css/features/_library_panels.tcss	.library-rag-result-card:focus	border	$ds-focus-accent
+css/features/_library_panels.tcss	.library-rag-result-card:focus	border-bottom	$ds-focus-accent
+css/features/_library_panels.tcss	.library-rag-result-card:focus	border-left	$ds-focus-accent
+css/features/_library_panels.tcss	Button.library-rag-recovery-action:focus	outline-left	$ds-focus-accent
+css/features/_library_panels.tcss	Button.library-rag-recovery-action:focus	outline-right	$ds-focus-accent
+css/features/_research_workspace.tcss	#research-workspace-shell.height-compact .research-workspace-pane:focus	outline	$accent
+css/features/_research_workspace.tcss	.research-workspace-pane:focus	border	$accent
+css/features/_research_workspace.tcss	ResearchPaneHandle .research-pane-handle-button:focus	outline	$accent
+css/features/_tab_dropdown.tcss	#tab-dropdown-select:focus	border	$ds-input-focus-border
+css/features/_tab_dropdown.tcss	#tab-dropdown-select:focus	border-bottom	$ds-input-focus-accent
+css/features/_wizards.tcss	.setup-choice-list:focus	border	$ds-focus-accent
+css/features/_wizards.tcss	.setup-detection-results:focus	border	$ds-focus-accent
+css/features/config_search.tcss	Input.search-highlight:focus	border	$ds-input-focus-border
+css/features/config_search.tcss	Input.search-highlight:focus	border-bottom	$ds-input-focus-accent
+css/features/config_search.tcss	TextArea.search-highlight:focus	border	$ds-input-focus-border
+css/features/config_search.tcss	TextArea.search-highlight:focus	border-bottom	$ds-input-focus-accent
+css/layout/_sidebars.tcss	.sidebar-section-collapsible:focus-within	border	$ds-focus-accent

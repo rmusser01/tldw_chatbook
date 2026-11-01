@@ -90,7 +90,6 @@ class LocalStudyService:
     def get_deck(self, deck_id: str) -> Any:
         return self._require_db().get_deck(deck_id)
 
-
     def create_deck(
         self,
         *,
@@ -243,8 +242,6 @@ class LocalStudyService:
         if not updated:
             return None
         return self._require_db().get_flashcard(card_id)
-
-
 
     def create_flashcards_bulk(self, cards: list[Mapping[str, Any]]) -> dict[str, Any]:
         created: list[Any] = []

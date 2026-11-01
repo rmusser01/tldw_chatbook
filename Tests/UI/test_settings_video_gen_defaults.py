@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.UI.Screens import settings_video_gen_defaults as d
 
 
@@ -14,7 +15,11 @@ def _cfg(**overrides):
         "minimax_video_api_key": "sk-test",
         "comfyui_base_url": "http://127.0.0.1:8188",
         "sd_cpp_binary_path": "",
-        "key_sources": {"minimax": "env:MINIMAX_API_KEY", "comfyui": "missing", "stable_diffusion_cpp": "missing"},
+        "key_sources": {
+            "minimax": "env:MINIMAX_API_KEY",
+            "comfyui": "missing",
+            "stable_diffusion_cpp": "missing",
+        },
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -34,7 +39,9 @@ def test_build_backend_rows_status():
 
 def test_effective_placeholder_reads_flat_field():
     cfg = _cfg()
-    assert d.effective_placeholder(cfg, "comfyui", "base_url") == "http://127.0.0.1:8188"
+    assert (
+        d.effective_placeholder(cfg, "comfyui", "base_url") == "http://127.0.0.1:8188"
+    )
 
 
 def test_comfyui_curated_fields_keep_model_workflow_owned():
@@ -66,7 +73,9 @@ def test_diff_global_and_backend_fields():
     draft = d.VideoGenDraftValues(
         default_backend="comfyui",
         retention_ttl_hours="48",
-        backend_fields={"minimax": {"default_model": "MiniMax-H3", "poll_interval_seconds": "5"}},
+        backend_fields={
+            "minimax": {"default_model": "MiniMax-H3", "poll_interval_seconds": "5"}
+        },
     )
     raw = {
         "video_generation": {
@@ -96,10 +105,10 @@ def test_diff_clear_and_empty_become_deletions():
 
 
 def test_diff_enabled_backends_normalized_order():
-    draft = d.VideoGenDraftValues(
-        enabled_backends=["stable_diffusion_cpp", "minimax"]
-    )
-    raw = {"video_generation": {"enabled_backends": ["minimax", "stable_diffusion_cpp"]}}
+    draft = d.VideoGenDraftValues(enabled_backends=["stable_diffusion_cpp", "minimax"])
+    raw = {
+        "video_generation": {"enabled_backends": ["minimax", "stable_diffusion_cpp"]}
+    }
     sections, _ = d.diff_to_sections(draft, raw)
     # Same set, different file order: NOT a diff (would otherwise rewrite on
     # every save and never clear the dirty marker).
@@ -110,9 +119,7 @@ def test_diff_enabled_backends_normalized_order():
 
 
 def test_diff_bool_field_coercion():
-    draft = d.VideoGenDraftValues(
-        backend_fields={"minimax": {"allow_uploads": True}}
-    )
+    draft = d.VideoGenDraftValues(backend_fields={"minimax": {"allow_uploads": True}})
     raw = {"video_generation": {"minimax": {"allow_uploads": False}}}
     sections, _ = d.diff_to_sections(draft, raw)
     assert sections["video_generation.minimax"] == {"allow_uploads": True}
@@ -147,7 +154,8 @@ def test_validate_disabled_backends_warns_not_blocks():
 
 
 @pytest.mark.asyncio
-async def test_panel_compose_covers_all_sections():
+@private_profile_test
+async def test_panel_compose_covers_all_sections(request):
     from textual.screen import Screen
     from textual.widgets import Checkbox, Collapsible, Select, Static
 
@@ -170,9 +178,7 @@ async def test_panel_compose_covers_all_sections():
         assert panel.query(Select)  # default backend + retention
         assert panel.query(Checkbox)  # enable toggles + confirm cost + allow_uploads
         assert panel.query(Collapsible)  # per-backend editors
-        section_texts = [
-            str(child.renderable) for child in panel.query(Static)
-        ]
+        section_texts = [str(child.renderable) for child in panel.query(Static)]
         assert any("Backends" in text for text in section_texts)
         assert any("Diagnostics" in text for text in section_texts)
         assert any("ffmpeg" in text for text in section_texts)
@@ -182,8 +188,9 @@ async def test_panel_compose_covers_all_sections():
 # -- fresh-profile dirty state (TASK-23191) ----------------------------------------
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
+async def test_video_gen_opens_clean_on_a_fresh_profile(request, monkeypatch):
     """Opening Video Gen with no persisted ``[video_generation]`` is not dirty.
 
     Regression pin for TASK-23191. Both of the panel's ``Select``s re-post
@@ -201,15 +208,14 @@ async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
     """
     from textual.widgets import Select, Static
 
-    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
-    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-
     from Tests.UI.test_destination_shells import (
         DestinationHarness,
         _active_destination_screen,
         _build_test_app,
         _wait_for_selector,
     )
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 
     real_load = SettingsConfigAdapter.load
 
@@ -218,9 +224,7 @@ async def test_video_gen_opens_clean_on_a_fresh_profile(monkeypatch):
         loaded.pop("video_generation", None)
         return loaded
 
-    monkeypatch.setattr(
-        SettingsConfigAdapter, "load", _load_without_video_generation
-    )
+    monkeypatch.setattr(SettingsConfigAdapter, "load", _load_without_video_generation)
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")

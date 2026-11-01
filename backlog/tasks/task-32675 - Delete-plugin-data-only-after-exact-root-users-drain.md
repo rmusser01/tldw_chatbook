@@ -32,6 +32,7 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 - [x] #2 Shared-root users and idle writer-capable processes are tracked until confirmed stopped; unresolved writers or handles leave deletion pending without forced cross-workspace cancellation.
 - [x] #3 Reattachment, stale root generations, symlink replacement and PID reuse cannot redirect cleanup; partial cleanup/restart retains the fence and honest progress.
 - [x] #4 Successful deletion advances root generation before fresh authorized use; cancellation cannot claim data restoration or revive cancelled work.
+- [x] #5 Qualified clean shutdown permits safe root recovery after restart; dirty, unknown, malformed or rollback-lost ownership evidence keeps affected retained roots fenced until explicit reconciliation, without treating an empty restored registry as proof that users stopped.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,4 +51,6 @@ Reason: implements accepted exact-root custody, authenticated clean/dirty runtim
 
 <!-- SECTION:NOTES:BEGIN -->
 Integrated reviewed F8 exact-root creation, grants, deletion/attachment/reconciliation and clean/dirty runtime checkpoints through existing authority/runtime owners. Registry v4 retains original process-root joins; shutdown fences ordinary work before final clean publication, and F7 resume compares actual root custody. Preserved isolated child provenance and fresh-process fork guard. ADR-162/163. Core 55 passed 289.47s; neighbors 250 passed 513.89s, no warnings/skips. All 46 owned Python files lint/format; changed syntax/whitespace pass. Built uninstalled wheel contains all four exact migration resources. Self-reviewed all ACs and documented local macOS/APFS, simulated boot-change and external-writer limits in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md. Actual hook/MCP grant producers remain H6/M4.
+
+Historical acceptance criterion 5 from the original reviewed PR head 7b4d5c501b is retained alongside current-dev implementation notes. New-base rebase qualification is tracked by TASK-32695 AC15; this historical checkmark does not claim that qualification.
 <!-- SECTION:NOTES:END -->

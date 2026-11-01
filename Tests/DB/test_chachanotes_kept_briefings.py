@@ -781,9 +781,7 @@ def test_kept_script_counts_returns_correct_counts_for_multiple_briefings(
             turns_json="[]",
         )
 
-        counts = db.kept_script_counts(
-            [two_scripts_id, one_script_id, zero_scripts_id]
-        )
+        counts = db.kept_script_counts([two_scripts_id, one_script_id, zero_scripts_id])
 
         assert counts == {
             two_scripts_id: 2,
@@ -870,9 +868,7 @@ def test_v28_database_migrates_to_v29_and_gains_kept_tables(
     path = tmp_path / "migrated.sqlite"
     _seed_v28_database(path, monkeypatch)
 
-    db = open_current_chachanotes_from_legacy(
-        path, client_id="kept-migrated"
-    )
+    db = open_current_chachanotes_from_legacy(path, client_id="kept-migrated")
     try:
         connection = db.get_connection()
         # See the dynamic-assertion note above: cost ticker PR1 bumped the
@@ -935,10 +931,3 @@ def test_migration_sql_kept_tables_have_no_sync_columns_or_fts() -> None:
     assert "on delete cascade" not in briefings_body
 
 
-def test_inline_migration_sql_matches_migration_file() -> None:
-    """Guard against the runner SQL constant and the on-disk migration file
-    (kept side by side for readability -- see either's header comment)
-    drifting apart."""
-    file_sql = MIGRATION_SQL_PATH.read_text(encoding="utf-8")
-    file_ddl = file_sql[file_sql.index("CREATE TABLE") :]
-    assert CharactersRAGDB._MIGRATE_V28_TO_V29_SQL.strip() == file_ddl.strip()

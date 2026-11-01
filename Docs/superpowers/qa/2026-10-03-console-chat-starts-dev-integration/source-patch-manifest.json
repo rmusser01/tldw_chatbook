@@ -1,0 +1,8 @@
+{
+  "base": "c49be0691652557c4a32db54a1604e4ea90cac97",
+  "head": "53065745187aaf4d47fc4357bb9096aa28fd5673",
+  "patch": "/private/tmp/console-chat-feature-only-01a0fa6c.patch",
+  "sha256": "31099e87d4c252475d366ac413f7bf311d2e11e338d921026a8eea93896a98db",
+  "bytes": 4691329,
+  "dev": "f0ffcf9e819b577bd38c416f38550969c75fb5a0"
+}

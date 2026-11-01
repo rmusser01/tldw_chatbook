@@ -1,0 +1,77 @@
+import json,pathlib,shlex,sys,time
+sys.path.insert(0,'/private/tmp/pr2995-task15-fix1')
+from verify import *
+report=S/'task-15-report.md';original=(S/'task-15-report-before-I1.md').read_bytes();assert report.read_bytes()==original
+commands=[]
+for n in ['red','red-corrected','red-focused','green','fatal-ruff','format-check','whitespace']:
+ d=json.loads((O/(n+'-argv.json')).read_text());r=json.loads((O/(n+'-result.json')).read_text());commands.append('### '+n+'\n\n```sh\nPYTHONPATH='+shlex.quote(d['PYTHONPATH'])+' '+shlex.join(d['argv'])+'\n```\n\nExit '+str(r['exit'])+'; '+str(round(r['seconds'],3))+' seconds in the owning process. Full output: `task-15-fix1-safe-evidence/'+n+'.log`; exact source hashes: `'+n+'-argv.json`.\n')
+append='''
+
+# Task 15 fix round 1 — Important I1
+
+## Ruling, source and change
+
+This appended section supersedes the original report's retained-limit choice. Root ruling 67 and the amended Task 15 brief require same-store/current-owner denial when ordinary registration and durable settlement both fail. BASE is `41155ce71ed84e6cb5d9c720a6d1a2f736c35e53` (metadata-only after previously reviewed source `9c0aa539712a2e2659a2b355d531228408932a83`). No original report text or evidence was rewritten.
+
+ADR required: no new ADR.
+ADR path: `backlog/decisions/219-console-chat-destinations-and-bounded-starts.md`.
+Reason: restore its existing charged-and-paused uncertainty contract with the same canonical identity, registry and recovery snapshot tokens.
+
+`AutomaticWorkLedger.__init__` now captures the existing resolved file-path identity before that ledger can authorize work. Memory stores retain their shared per-DB private UUID; separate memory DBs remain isolated. Initial resolution failure raises before a ledger is returned. The real `start()` control proves that this occurs before capacity claiming, active-item insertion, attempt/reservation writes or draft consumption.
+
+The identity getter now returns the captured value. Existing clear, lookup and recovery bodies reuse it without filesystem observation under the restriction lock. Ordinary registration delegates to a small `_retain_chat_start_restriction` method that uses only the captured identity, existing registry/lock, owner, attempt, chain and a fresh original-shape snapshot token. If the ordinary registration seam raises, coordinator cleanup invokes that same pure insertion directly. It performs no SQL or filesystem operation. Type-only fallback logging retains the existing physical-cleanup protection.
+
+Only four owned files change in this round: the coordinator, ledger and two append-only test files. The fork file remains byte-exact to the reviewed source. No second registry, lexical fallback key, wildcard narrowing, schema, authority floor, opening retry, dependency, timer, worker topology or public abort change was introduced.
+
+## RED and setup attribution
+
+The first `red` run expanded to 11 cases: 10 failures and one existing memory-isolation pass. The initial-identity case failed correctly because construction did not refuse. Nine other cases stopped at setup: the private-path guard rejects symlink directories. The tests were corrected to the repository's existing `directory/../database` alias pattern; the guard was not changed.
+
+`red-corrected` retained nine failures. Its global Path.resolve injection also affected unrelated Backup_Recovery admission and prevented subsequent observations. This is preserved as an injection-scope issue, not final I1 evidence. The fault was narrowed to Path.resolve calls from DB.automatic_work, leaving native workers, real SQL and the healthy alias-handle admission path observable.
+
+`red-focused` then produced the intended 10 failures before any production change: eight native cases reached physical thread exit, retained an accepted row and one charged generation, encountered a real SQLite trigger rejection of review settlement, and failed because the healthy alias handle did NOT refuse sibling admission. They cover commit/provider owners, persistent ordinary-registration failure versus a controlled OSError at the real Path.resolve boundary, and original versus replacement capacity/active ownership. File cleanup failed at canonical resolution, and the real start-boundary initial-identity case failed because start proceeded rather than refusing. The direct-constructor initial-identity RED and memory pass remain in the first receipt.
+
+The Path.resolve failure is injected at that concrete operation; it is not claimed to reproduce a particular OS outage. Durable settlement rejection is a real SQLite trigger rollback. Provider cases retain the earlier Task 15 explicit adversarial loss of the local receipt flag after native dual-store acceptance/provider entry; they do not claim that ordinary dispatch can precede durable fences.
+
+## Final verification
+
+The only GREEN run after implementation passed **27/27** cases in **39.78s pytest**: 12 new controls and 15 parameter-expanded cases from exactly the four existing selectors in `task-15-fix1-brief.md`. No new skips, xfails or pytest warnings occurred. No full 61/31-case cohort or 35-loading cohort was replayed. The source hashes recorded before GREEN exactly match the final source; there were no post-GREEN source edits.
+
+The new controls prove repeated cancellation retains physical ownership until commit/provider exit, cleanup resolves its outcome and releases only the captured token, replacement active/token state survives, the accepted charge remains, the healthy alias handle refuses uncertain work after exit, and unrelated roots remain admitted. Additional controls prove same-store alias equivalence, memory UUID sharing/isolation, same-owner retention, replacement-owner recovery and initial real-start refusal with zero attempts/reservations/claims and the saved draft intact. The four existing selectors retain recovery token fencing and all original assertions/waits/markers.
+
+Fatal Ruff (`E9,F63,F7,F82`), all-five-file Ruff formatting and whitespace checks passed. These owners have zero baseline formatter debt; formatting preserved AST and both entire prior test files remain exact prefixes. No warning suppression, installs, timeout increase, budget change or user-profile change occurred. Shared Python 3.12, worktree PYTHONPATH, canonical private profiles and the existing 300s pytest timeout were retained.
+
+## Exact source and evidence carry
+
+`source-AST-import-authority-custody-map.json` explicitly names the authorized exceptions: ledger constructor, identity getter, ordinary registrar and added pure insertion helper; coordinator `_restrict_cleanup`. All other ledger methods remain AST-exact, including the private absence predicate and the public abort/transaction/recovery/read/clear/lookup/settlement bodies. Public abort and recovery also have byte-exact body checks. `_run`, both physical drains, outcome fallback, captured-token release, all admission/currentness/receipt/preparation methods, imports and fork remain exact. The fallback's sole call inside its insertion body is `object()` for the unchanged recovery snapshot-token shape.
+
+All unowned tracked source and QA paths remain exact to BASE. This carries Task 14, eager-loading/import, worker, route, native/Close and unchanged cap/profile guards without asserting that the newly changed constructor is unchanged. The original qualification ZIP retains its exact 63,166,118 bytes and SHA256 `acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84`, preserving all 2118 original entry bytes without export/decompression/replay. Historical 35-loading evidence and concerns remain unchanged and historical; the original Task 15 61-case receipts are not relabeled as this source.
+
+The original 69-file package is preserved as **68 unchanged child files plus the exact original report at `task-15-report-before-I1.md`**. The original manifest and brief are retained byte-for-byte at their before-I1 paths. The current report preserves that exact report prefix and appends this fix. The separate R1 manifest uses the same `{relative_path: {sha256, bytes}}` files mapping. The current publication manifest transparently maps the original snapshot, untouched child rows, R1 evidence and appended current report. No private profiles, config bodies, databases, caches or probe data are exported.
+
+Self-review found no remaining I1 correctness concern. All owned pytest/native worker processes have exited; all command receipts carry exit codes and native exits are asserted in GREEN. Root owns the single scoped I1/new-breakage re-review and external publication/Qodo/CI/PerfGuard/latest-dev ancestry/merge gates.
+
+## Exact covering commands and outputs
+
+'''+ '\n'.join(commands)
+report.write_bytes(original+append.encode())
+assert report.read_bytes().startswith(original)
+assert git('rev-parse','HEAD').decode().strip()==BASE and not git('diff','--cached','--name-only')
+changed=git('diff','--name-only').decode().splitlines();assert set(changed)==set(OWN)-{'tldw_chatbook/Chat/console_chat_fork.py'}
+git('add','--',*changed)
+assert run('commit',['git','-c','gc.auto=0','commit','-m','fix(console): retain uncertain-start denial with captured store identity'])==0
+head=git('rev-parse','HEAD').decode().strip();assert not git('status','--porcelain')
+dump('clean-source-handoff.json',{'base':BASE,'head':head,'clean_status':True,'changed_paths':changed,'source_sha256':snapshot(),'source_matches_GREEN':snapshot()==json.loads((O/'green-argv.json').read_text())['source_hashes'],'sole_writer_relinquished':True})
+with report.open('a') as f:f.write('\nR1 source commit: `'+head+'` — `fix(console): retain uncertain-start denial with captured store identity`. Clean source/index/worktree handoff; only the four owned source/test paths above are committed.\n')
+(O/'verifier-report_commit.py.txt').write_bytes(pathlib.Path(__file__).read_bytes())
+# The R1 manifest includes only its safe directory; the current publication
+# manifest additionally carries the unchanged original rows and named snapshots.
+files={str(f.relative_to(S)):{'sha256':sha(f.read_bytes()),'bytes':f.stat().st_size} for f in O.iterdir() if f.is_file()}
+r1=S/'task-15-fix1-safe-evidence-manifest.json';r1.write_text(json.dumps({'files':files,'excluded':['private profiles','config bodies','databases','caches','probe data'],'original69_preservation_map':'task-15-fix1-safe-evidence/original-evidence-QA-Task14-carry.json'},indent=2)+'\n')
+old=json.loads((S/'task-15-safe-evidence-manifest-before-I1.json').read_text());current=dict(old['files']);current.pop('task-15-report.md');assert len(current)==68
+for n in ['task-15-brief-before-I1.md','task-15-report-before-I1.md','task-15-safe-evidence-manifest-before-I1.json','task-15-report.md','task-15-fix1-safe-evidence-manifest.json']:
+ f=S/n;current[n]={'sha256':sha(f.read_bytes()),'bytes':f.stat().st_size}
+current.update(files)
+(S/'task-15-safe-evidence-manifest.json').write_text(json.dumps({'files':current,'excluded':old['excluded'],'historical_receipt_maps_unchanged':True,'original69_representation':{'unchanged_child_files':68,'original_report_snapshot':'task-15-report-before-I1.md','original_manifest_snapshot':'task-15-safe-evidence-manifest-before-I1.json','current_report_original_prefix_exact':True},'R1_manifest':'task-15-fix1-safe-evidence-manifest.json'},indent=2)+'\n')
+for p,v in current.items():assert sha((S/p).read_bytes())==v['sha256']
+print(head,len(files),'R1safe artifacts;',len(current),'current publication entries; clean handoff')

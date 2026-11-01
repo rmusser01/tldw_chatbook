@@ -161,6 +161,7 @@ class ResearchWindow(Vertical):
         self.current_source = "local"
         self.runs: list[Any] = []
         self.selected_run: Any | None = None
+        self._selection_revision = 0
         self.current_bundle: dict[str, Any] | None = None
         self.current_artifact: Any | None = None
         self.event_log_entries: list[str] = []
@@ -210,9 +211,13 @@ class ResearchWindow(Vertical):
                 id="research-limits-input",
             )
             yield Select(
-                [("Balanced", "balanced"), ("Web only", "web_only"),
-                 ("Academic only", "academic_only"), ("Web first", "web_first"),
-                 ("Academic first", "academic_first")],
+                [
+                    ("Balanced", "balanced"),
+                    ("Web only", "web_only"),
+                    ("Academic only", "academic_only"),
+                    ("Web first", "web_first"),
+                    ("Academic first", "academic_first"),
+                ],
                 value=self.source_policy,
                 allow_blank=False,
                 id="research-policy-select",
@@ -297,9 +302,16 @@ class ResearchWindow(Vertical):
         self.limits_text = str((state or {}).get("limits") or "")
         policy = str((state or {}).get("policy") or "balanced")
         self.source_policy = (
-            policy if policy in {
-                "balanced", "web_only", "academic_only", "web_first", "academic_first",
-            } else "balanced"
+            policy
+            if policy
+            in {
+                "balanced",
+                "web_only",
+                "academic_only",
+                "web_first",
+                "academic_first",
+            }
+            else "balanced"
         )
         self.providers_text = str((state or {}).get("providers") or "")
         try:
@@ -323,9 +335,9 @@ class ResearchWindow(Vertical):
 
     def _sync_academic_toggle(self) -> None:
         try:
-            self.query_one("#research-academic-toggle", Checkbox).value = (
-                self.academic_enabled
-            )
+            self.query_one(
+                "#research-academic-toggle", Checkbox
+            ).value = self.academic_enabled
         except Exception:
             pass  # not mounted yet; the compose() initial value covers it
 
@@ -382,9 +394,7 @@ class ResearchWindow(Vertical):
             self._set_status(f"Follow-up failed: {exc}")
             return None
         if result.get("status") == "answered":
-            self.followup_answer_text = (
-                f"Q: {question}\n{result.get('answer') or ''}"
-            )
+            self.followup_answer_text = f"Q: {question}\n{result.get('answer') or ''}"
         else:
             self.followup_answer_text = (
                 f"Q: {question}\n[insufficient evidence] "
@@ -440,8 +450,7 @@ class ResearchWindow(Vertical):
     async def switch_source(self, source: str) -> list[Any]:
         self.current_source = self._normalize_source(source)
         self.runs = []
-        self.selected_run = None
-        self._reset_run_payload_state()
+        self._set_selected_run(None, reset_payload_state=True)
         self._set_status("")
         return await self.load_runs(self.current_source)
 
@@ -501,13 +510,14 @@ class ResearchWindow(Vertical):
         if typed_variants:
             typed_value = limits[typed_variants[-1]]
             limits = {
-                key: value
-                for key, value in limits.items()
-                if key not in typed_variants
+                key: value for key, value in limits.items() if key not in typed_variants
             }
             limits["max_iterations"] = typed_value
         else:
-            limits = {**limits, "max_iterations": max(1, int(self.iteration_rounds or 1))}
+            limits = {
+                **limits,
+                "max_iterations": max(1, int(self.iteration_rounds or 1)),
+            }
         if limits:
             payload = {**payload, "limits_json": limits}
         # task-16791: lane routing + provider selection ride the run record.
@@ -516,13 +526,18 @@ class ResearchWindow(Vertical):
         if self.providers_text.strip() and not providers:
             self._set_status("Providers input invalid or all-unknown; ignored.")
         if providers:
-            payload = {**payload, "provider_overrides": {
-                "academic_providers": providers,
-            }}
+            payload = {
+                **payload,
+                "provider_overrides": {
+                    "academic_providers": providers,
+                },
+            }
         created = await self.controller.create_run(self.current_source, payload)
         if self.current_source == "local":
             created_id = (
-                created.get("id") if isinstance(created, dict) else getattr(created, "id", None)
+                created.get("id")
+                if isinstance(created, dict)
+                else getattr(created, "id", None)
             )
             if created_id:
                 self._start_local_engine(str(created_id))
@@ -588,7 +603,9 @@ class ResearchWindow(Vertical):
                 # than mutating widgets from worker context (async workers
                 # run on the loop, but deferring is correct for either).
                 try:
-                    self.call_later(self._set_status, f"Local research engine error: {exc}")
+                    self.call_later(
+                        self._set_status, f"Local research engine error: {exc}"
+                    )
                 except Exception:
                     self._set_status(f"Local research engine error: {exc}")
 
@@ -645,7 +662,9 @@ class ResearchWindow(Vertical):
         if default_name:
             if self.is_mounted:
                 try:
-                    self.query_one("#research-artifact-name", Input).value = default_name
+                    self.query_one(
+                        "#research-artifact-name", Input
+                    ).value = default_name
                 except Exception:
                     pass
             await self.load_selected_run_artifact(default_name)
@@ -755,12 +774,16 @@ class ResearchWindow(Vertical):
 
     def _update_detail(self, run: Any) -> None:
         detail = (
-            f"{self._run_title(run)}\n"
-            f"Status: {self._record_get(run, 'status', 'unknown')}\n"
-            f"Phase: {self._record_get(run, 'phase', 'unknown')}\n"
-            f"Control: {self._record_get(run, 'control_state', 'unknown')}\n"
-            f"Latest checkpoint: {self._record_get(run, 'latest_checkpoint_id', 'none')}\n"
-            f"Progress: {self._record_get(run, 'progress_message', '') or 'n/a'}"
+            "No research run selected."
+            if run is None
+            else (
+                f"{self._run_title(run)}\n"
+                f"Status: {self._record_get(run, 'status', 'unknown')}\n"
+                f"Phase: {self._record_get(run, 'phase', 'unknown')}\n"
+                f"Control: {self._record_get(run, 'control_state', 'unknown')}\n"
+                f"Latest checkpoint: {self._record_get(run, 'latest_checkpoint_id', 'none')}\n"
+                f"Progress: {self._record_get(run, 'progress_message', '') or 'n/a'}"
+            )
         )
         if not self.is_mounted:
             return
@@ -821,20 +844,32 @@ class ResearchWindow(Vertical):
         if self.current_source != "local" or self.selected_run is None:
             return
         if self._record_field(self.selected_run, "status") in {
-            "completed", "failed", "cancelled", "draft",
+            "completed",
+            "failed",
+            "cancelled",
+            "draft",
         }:
             return
         try:
+            source = self.current_source
+            # A new selection or source departure revokes this view's read,
+            # even when the operator returns to the same source and run.
+            selection_revision = self._selection_revision
             run_id = self._selected_run_id()
-            updated = await self.controller.get_run(self.current_source, run_id)
+            updated = await self.controller.get_run(source, run_id)
         except Exception:
             return  # transient controller errors must not spam the status line
-        if updated is None:
+        if (
+            updated is None
+            or self.current_source != source
+            or self._selection_revision != selection_revision
+        ):
             return
         self.selected_run = updated
         self._update_detail(updated)
 
     def _set_selected_run(self, run: Any, *, reset_payload_state: bool) -> None:
+        self._selection_revision += 1
         self.selected_run = run
         if reset_payload_state:
             self._reset_run_payload_state()

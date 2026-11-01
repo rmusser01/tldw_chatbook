@@ -138,7 +138,8 @@ def _normalize_measurement(value: Any) -> CanonicalJSONByteMeasurement | None:
         return None
     separators = descriptor.get("separators")
     is_exact = (
-        set(descriptor) == {
+        set(descriptor)
+        == {
             "name",
             "encoding",
             "ensure_ascii",
@@ -176,9 +177,7 @@ def normalize_server_prompt_capabilities(health: Any) -> PromptSourceCapabilitie
     if capabilities is None:
         return _legacy_server_capabilities()
 
-    structured_kinds = _normalize_structured_kinds(
-        capabilities.get("structured_kinds")
-    )
+    structured_kinds = _normalize_structured_kinds(capabilities.get("structured_kinds"))
     artifact_types = _normalize_artifact_types(capabilities.get("artifact_types"))
     if structured_kinds is None or artifact_types is None:
         return _legacy_server_capabilities()
@@ -210,16 +209,16 @@ def validate_console_artifact_payload(
 ) -> dict[str, Any]:
     """Validate one Console block-v2 save without truncating or inferring support."""
     if payload.get("prompt_format") != "structured":
-        raise PromptCapabilityError(capabilities.backend, "valid Console block artifact")
+        raise PromptCapabilityError(
+            capabilities.backend, "valid Console block artifact"
+        )
     decoded = decode_prompt_artifact(payload)
     raw_definition = decoded.raw_definition
     kind = raw_definition.get("kind") if raw_definition is not None else None
     version = payload.get("prompt_schema_version")
     pair = (version if type(version) is int else None, kind)
     if pair not in capabilities.structured_kinds:
-        raise PromptCapabilityError(
-            capabilities.backend, f"structured kind {pair!r}"
-        )
+        raise PromptCapabilityError(capabilities.backend, f"structured kind {pair!r}")
     if payload.get("artifact_type", "prompt") not in capabilities.artifact_types:
         raise PromptCapabilityError(
             capabilities.backend,
@@ -230,7 +229,9 @@ def validate_console_artifact_payload(
         or raw_definition is None
         or decoded.definition is None
     ):
-        raise PromptCapabilityError(capabilities.backend, "valid Console block artifact")
+        raise PromptCapabilityError(
+            capabilities.backend, "valid Console block artifact"
+        )
     if capabilities.json_byte_measurement != CANONICAL_JSON_UTF8_V1:
         raise PromptCapabilityError(
             capabilities.backend, "canonical JSON byte measurement"
@@ -290,8 +291,7 @@ def validate_console_artifact_payload(
     definition_size = canonical_json_utf8_size(normalized_payload["prompt_definition"])
     if definition_size > capabilities.definition_limit:
         raise ValueError(
-            "prompt_definition exceeds "
-            f"{capabilities.definition_limit} UTF-8 bytes."
+            f"prompt_definition exceeds {capabilities.definition_limit} UTF-8 bytes."
         )
     return normalized_payload
 

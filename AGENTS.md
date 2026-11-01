@@ -9,6 +9,8 @@ This file provides comprehensive guidance to Codex (Codex.ai/code) when working 
 **Tech Stack**: Python ≥3.12, Textual 8.x (≥8.0.0,<9), SQLite with FTS5, AGPLv3+
 **Key Dependencies**: httpx, loguru, rich, pydantic, toml, keyring, aiofiles, jinja2
 
+**Internals reference**: `Docs/Architecture/` holds one living, code-anchored doc per subsystem (Console, agent runtime, tools/MCP, RAG, DB layer, …) with an index in its README. Check there before assuming how a subsystem works.
+
 ## Quick Commands
 
 ```bash
@@ -31,54 +33,54 @@ pytest --cov=tldw_chatbook  # With coverage
 
 ### Core Structure
 
-- **`app.py`** - Main entry, `TldwCli` class, tab management, global state
+- **`app.py`** - Main entry, `TldwCli` class (composition root), navigation dispatch, global state
 - **`config.py`** - TOML config at `~/.config/tldw_cli/config.toml`, env var fallbacks
-- **`Constants.py`** - Tab IDs (TAB_CHAT, TAB_CODING, etc.), UI dimensions, provider mappings
+- **`Constants.py`** - Route ids (TAB_CHAT, TAB_LIBRARY, …), display labels, navigation-context contract keys. UI dimensions are NOT here — they are `$ds-*` design tokens in `css/core/_variables.tcss` (ADR-150)
 
 ### UI Layer (`UI/` and `Widgets/`)
 
-**Main Windows** (all extend Screen):
-- `Chat_Window_Enhanced.py` - Streaming chat, images, RAG, tool calling
-- `Conv_Char_Window.py` - Conversation/character CRUD
-- `Notes_Window.py` - Notes with templates and sync
-- `SearchRAGWindow.py` - RAG search interface
-- `Evals_Window_v3.py` - LLM benchmarking
-- `MediaWindow.py` - Media management hub
-- `Screens/chat_screen.py` - The Console: live agent work, approvals, tools, and RAG
-- `IngestTldwApiWindow.py` - Media ingestion forms
+Navigation is screen-based and exclusive (no legacy tab-window UI): every destination is a `BaseAppScreen` (`UI/Navigation/base_app_screen.py`) registered lazily in `UI/Navigation/screen_registry.py`, with shell destinations + hotkeys defined in `UI/Navigation/shell_destinations.py`.
 
-**Settings**: `UI/Screens/settings_screen.py` (F9 Settings destination) is the canonical settings surface. The legacy `UI/Tools_Settings_Window.py` and `Widgets/enhanced_settings_sidebar.py` (legacy Chat window only) are deprecated parallels — do not add new settings there.
+**Main Screens** (`UI/Screens/`):
+- `chat_screen.py` - The Console: live agent work, streaming chat, images, RAG, approvals, tools
+- `personas_screen.py` - Characters, personas, dictionaries, behavior profiles
+- `library_screen.py` - Library hub: notes, media, conversations, prompts, skills, collections, search/RAG
+- `evals_screen.py` - LLM benchmarking
+- `settings_screen.py` - Settings (canonical surface; hosts the Tools & MCP hub — the retired MCP destination's four-mode workbench, ADR-240)
+- `watchlists_collections_screen.py`, `scheduling/schedules_workbench.py`, `llm_screen.py`, `image_gen_demo_screen.py`, and other feature screens
+
+**Settings**: `UI/Screens/settings_screen.py` (F4 Settings destination) is the canonical settings surface. The legacy `UI/Tools_Settings_Window.py` was removed (TASK-33244); its surviving test-driven backup helpers live in `Backup_Recovery/settings_backup_helpers.py`. `Widgets/enhanced_settings_sidebar.py` no longer exists. Add new settings only to the canonical Settings screen.
 
 **Key Widgets**:
-- `chat_message_enhanced.py` - Rich messages with actions
-- `tool_message_widgets.py` - Tool calling UI (ToolCallMessage, ToolResultMessage)
-- `IngestTldwApi*Window.py` - Media-specific ingestion forms
+- `Widgets/Console/console_transcript.py` - Live Console transcript and tool-result rendering, including file-write diffs
+- `Widgets/NewIngest/` - Unified media ingestion UI
 - `form_components.py` - Standardized form builders
+
 
 ### Business Logic
 
-- **`Chat/`** - `Chat_Functions.py` (conversation CRUD), `document_generator.py` (export formats)
-- **`Character_Chat/`** - `Character_Chat_Lib.py`, `ccv3_parser.py` (card formats)
-- **`Notes/`** - `sync_engine.py` (bidirectional sync), template system
-- **`RAG_Search/`** - `simplified/` for streamlined implementation, `chunking_service.py`
-- **`Tools/`** - `tool_executor.py`, built-in: DateTimeTool, CalculatorTool
+- **`Chat/`** - `Chat_Functions.py` (conversation CRUD, `chat_api_call` provider dispatch), `console_chat_controller.py`/`console_chat_store.py` (Console engine), `document_generator.py` (LLM document generation)
+- **`Character_Chat/`** - `Character_Chat_Lib.py` (card parse/persist, prompt composer), `character_card_formats.py` (multi-format detection). There is no V3 parser module — V3 cards ride the lenient V2 path in `Character_Chat_Lib.py`
+- **`Notes/`** - `notes_sync_runtime.py` / `notes_sync_reconciler.py` / `notes_sync_executor.py` (review-first bidirectional sync — there is no single `sync_engine.py`), `file_notes_service.py` (session file-notes), template system
+- **`RAG_Search/`** - `simplified/` for streamlined implementation, `chunking_service.py`, `ingestion_indexing.py` (shared service + daemon indexer)
+- **`Tools/`** - `tool_executor.py` (always-on builtins: DateTimeTool, CalculatorTool), `local_tool_impls.py` (fs_* family)
 - **`Evals/`** - `eval_orchestrator.py`, `eval_runner.py`, task-specific runners
-- **`LLM_Calls/`** - Provider integrations, unified `chat_with_provider()` interface
+- **`LLM_Calls/`** - Provider integrations: one `chat_with_<provider>()` per provider, dispatched via `Chat/Chat_Functions.py::chat_api_call` (`API_CALL_HANDLERS`). There is no unified `chat_with_provider()`
 - **`Image_Generation/`** / **`Video_Generation/`** - Media-generation packages: adapter registry, config with secrets precedence, single validation choke point (`worker.run_generation`). Video mirrors image per ADR-044; `Video_Generation/video_store.py` is the ephemeral message-keyed video file store (task-3401.4); video backends land in task-3401.3/.6/.7
 
 ### Data Layer (`DB/`)
 
-- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema v37
-- **`Client_Media_DB_v2.py`** - Media storage with chunking
-- **`RAG_Indexing_DB.py`** - Vector storage (when enabled)
-- Other DBs: Evals, Prompts, Subscriptions
+- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema version at `_CURRENT_SCHEMA_VERSION`; file-backed migrations in `DB/migrations/`
+- **`Client_Media_DB_v2.py`** - Media storage with chunking (in-code migration registry; Python-side FTS)
+- **`RAG_Indexing_DB.py`** - Incremental-indexing state (item → last_modified); vectors live in ChromaDB, not here
+- Other DBs: Evals, Prompts, Subscriptions, AgentRuns, Library collections/ingest-jobs, Workspaces
 - Patterns: soft deletion, optimistic locking, FTS5 triggers, parameterized queries only
 
 ### Event System (`Event_Handlers/`)
 
 Event flow: Widget → post_message() → @on() handler → workers → reactive updates → UI refresh
 
-Key events: ChatEvent, StreamingChunk, RAGSearchEvent, SyncEvent, EvalEvent, TabEvent
+Live shared event modules: `TTS_Events/`, `STTS_Events/`, `media_events.py`, plus function-style handler modules (ingest, notes, LLM management, evals). **Note:** the aspirational `Chat_Events/chat_messages.py` catalog was deleted (task-34890); the live Console uses widget-local messages handled in `UI/Screens/chat_screen.py`.
 
 ### Key Patterns
 
@@ -110,20 +112,20 @@ def _heavy_task(self):
 ### Adding Features
 
 **New LLM Provider**:
-1. Add to `LLM_Calls/` with `chat_with_provider()` method
-2. Register in main caller
-3. Add config section
+1. Add to `LLM_Calls/` as `chat_with_<provider>()` (streaming form returns an SSE generator)
+2. Register in `Chat/Chat_Functions.py::API_CALL_HANDLERS` (+ `PROVIDER_PARAM_MAP` if params need projection)
+3. Add config section; raise `ChatConfigurationError` on missing keys
 
-**New Tab**:
-1. Create Screen in `UI/`
-2. Add TAB_X constant
-3. Register in app.py compose()
-4. Add event handlers
+**New Screen/Destination**:
+1. Create a `BaseAppScreen` subclass in `UI/Screens/`
+2. Add a route entry in `UI/Navigation/screen_registry.py` (`_SCREEN_ROUTES`; add a TAB_X constant if shared)
+3. For a shell destination: extend `SHELL_DESTINATION_ORDER` + `SHELL_DESTINATION_SHORTCUTS` in `shell_destinations.py` (lockstep, ADR-031/152)
+4. Add `@on(...)` handlers / workers on the screen
 
 **New Tool**:
-1. Extend Tool class in `Tools/`
+1. Extend the `Tool` class in `Tools/` (or add a `LocalToolSpec` in `Tools/local_tool_impls.py`)
 2. Implement: get_name(), get_description(), get_parameters(), execute()
-3. Register in AVAILABLE_TOOLS
+3. Register through the provider seam: a `ToolProvider` registered with `Agents/tool_catalog.py::ToolCatalogRegistry` (per-run composition happens in `Chat/console_agent_bridge.py`); gate with a `[tools]` config key — there is no `AVAILABLE_TOOLS` global
 
 ### Security Requirements
 
@@ -146,9 +148,11 @@ def _heavy_task(self):
 Priority: env vars → config.toml → defaults
 
 Key sections:
-- `[API]` - Provider keys
+- `[api_settings]` (canonical provider settings; legacy `[openai_api]` etc. still overlaid)
 - `[splash_screen]` - Animation settings
-- `[embeddings]` - RAG config
+- `[Embeddings]` - Embedding provider/model (TOML section names are case-sensitive)
+- `[AppRAGSearchConfig.rag.*]` - RAG engine config
+- `[console]`, `[hooks]`, `[mcp]`, `[tools]`, `[agents]` - Console/agent behavior
 - Provider-specific sections
 
 ### Testing
@@ -159,10 +163,57 @@ Key sections:
 - Property-based testing with Hypothesis
 - Markers: unit, integration, optional, asyncio
 
+### Merging into `dev`
+
+(protection as of 2026-09-27): GitHub refuses a merge unless all of these hold:
+
+- the required check is green;
+- the branch is up to date with `dev` (strict);
+- every review thread is resolved.
+
+These apply to admins too.
+
+The merge queue (`.github/workflows/merge-queue.yml`, spec
+`Docs/superpowers/specs/2026-10-03-merge-queue-design.md`) runs in GitHub Actions. It works the same from any machine,
+session or tool. Check its mode with `gh variable get MERGE_QUEUE`; if that prints an error (variable not found), the
+variable is unset, which means off.
+
+**Queue `on`:**
+- Arm auto-merge (`gh pr merge <n> --auto --merge`) only when both of these hold:
+  - Qodo has posted its review on the *current* head;
+  - every thread on that head is resolved.
+
+  Then walk away. The queue rebases the PR when it reaches the front, starts its CI, and lets auto-merge land it.
+- Never `gh pr update-branch` an armed PR, and never merge an armed PR by hand. Either one makes the front PR's CI run go
+  to waste.
+- Before pushing more work to an armed PR, run `gh pr merge <n> --disable-auto`. Then `git pull --rebase`, because the
+  queue may have rebased your branch, and push with `--force-with-lease`. Never use a plain force push.
+- A conflict-free queue rebase needs no fresh Qodo review, because CI tests the combined result. New Qodo threads on the
+  rebased head block the merge, and the queue evicts the PR with the reason.
+- After a queue rebase, GitHub holds the PR's `pull_request` runs for approval, and the queue approves them itself. Those
+  are the runs whose required check counts toward mergeability. Approving one by hand is harmless. Never dispatch the
+  required check by hand to unblock a PR: a `workflow_dispatch` run's check is not in the PR's status rollup, so the PR
+  stays BLOCKED (verified 2026-10-06; spec V4).
+- An evicted PR has auto-merge off and a comment saying why. Fix the cause and re-arm; it rejoins at the back.
+- When a PR and `dev` have both changed the same file under `.github/workflows/` since the PR's base, GitHub refuses
+  the queue's rebase (the built-in token may not rewrite workflow files), and the queue evicts the PR at once
+  (`evict-workflow-file`). Rebase it onto `dev` yourself (`git pull --rebase origin dev`, push with
+  `--force-with-lease`) and re-arm; after that the queue can rebase it again unless `dev` changes that file once more.
+  A PR that changes a workflow file `dev` has left alone is rebased normally (verified on #3062, 2026-10-10).
+  This rule is inferred from the cases seen so far (#3058 refused; #3062 and #2892 rebased); GitHub does not document it.
+
+**Queue `off` or `dry`:**
+- Re-sync a PR that is behind by **rebasing** it: `gh pr update-branch --rebase <n>`, or a local `git rebase origin/dev`
+  pushed with `--force-with-lease`. Never merge `dev` into the branch (plain `gh pr update-branch` does exactly that).
+- Re-sync only the PR you are about to merge. Under strict protection, one PR merges per CI cycle.
+- Arm auto-merge only under the same Qodo and threads rule as above, and run `gh pr merge <n> --disable-auto` before
+  pushing more work.
+
 ## Special Systems
 
 ### Tool Calling
 - Schema v7 adds tool messages; `tool_executor.py` runs the builtin tools
+- The MCP workbench (Servers / Tools / Permissions / Audit) lives in Settings → Tools & MCP (ADR-240). The old MCP destination is retired: `mcp`/`tools_settings` routes alias Settings with `{"category": "tools"}` context, and ctrl+9 is a compatibility deep-link to that category (ADR-172 pattern)
 - `Agents/tool_catalog.py` is the provider seam: builtin/local/skill/MCP providers register with one `ToolCatalogRegistry`
 - Local fs_* tools (fs_list/fs_read/fs_write/fs_edit/fs_glob/fs_grep) in `Tools/local_tool_impls.py`, exposed via `Agents/local_tool_provider.py`
 - Approvals flow through the MCP permission store; local tools sit under the `local:__local__` hub
@@ -185,14 +236,14 @@ Key sections:
 - Password dialogs in widgets
 
 ### Splash Screen
-- 20+ animations in `splash_animations.py`
+- 20+ animations in `Utils/Splash_Screens/` (by category; `Utils/splash_animations.py` is a compat stub)
 - Config: `[splash_screen]` section
 - Custom cards in `examples/custom_splash_cards/`
 
 ### Notes Sync
-- Bidirectional file ↔ DB
-- Last-write-wins conflict resolution
-- Background monitoring
+- Bidirectional file ↔ DB, review-first: both-sides-changed is always a surfaced conflict (KEEP_FILE/KEEP_NOTE/KEEP_BOTH), never auto-resolved — not last-write-wins
+- Durable journaled execution; mid-apply crashes resume on next start
+- Polling watcher (no FS-events dependency) drives reconciliation hints
 
 ### Pre-commit Hook
 - `auto_review.py` for Codex integration
@@ -218,7 +269,7 @@ Key sections:
 3. **Schema migrations** - Always increment version, add to migrations/
 4. **Optional deps** - Check with `optional_deps.py` before importing
 5. **Thread safety** - Use transaction() context manager
-6. **Tab constants** - Must match IDs in compose()
+6. **Route ids** - TAB_* constants must match `screen_registry.py` routes; shell destinations move in lockstep with their shortcuts (ADR-031/152)
 7. **Streaming** - Always offer non-streaming fallback
 8. **FTS5** - Triggers auto-update on text columns
 9. **Workers** - Mark exclusive=True to prevent duplicates
@@ -229,11 +280,12 @@ Key sections:
 
 Critical files for common tasks:
 - Entry: `app.py`, `config.py`, `Constants.py`
-- Chat: `Chat_Functions.py`, `chat_message_enhanced.py`
+- Chat/Console: `Chat/Chat_Functions.py`, `Chat/console_chat_controller.py`, `UI/Screens/chat_screen.py`
 - DB: `base_db.py`, `ChaChaNotes_DB.py`
-- LLM: `LLM_API_Calls.py`, `model_capabilities.py`
+- LLM: `LLM_Calls/LLM_API_Calls.py`, `model_capabilities.py`
 - Security: `path_validation.py`, `input_validation.py`
-- UI: `form_components.py`, reactive patterns in any widget
+- UI: `Widgets/form_components.py`, reactive patterns in any widget
+- Internals reference: `Docs/Architecture/README.md`
 
 ## Design Language (UI Tokens) — ADR-150
 

@@ -103,9 +103,7 @@ def test_a_completed_job_from_a_live_server_validates():
         MediaIngestJobListResponse,
     )
 
-    listed = MediaIngestJobListResponse.model_validate(
-        _LIVE_COMPLETED_LIST_RESPONSE
-    )
+    listed = MediaIngestJobListResponse.model_validate(_LIVE_COMPLETED_LIST_RESPONSE)
 
     job = listed.jobs[0]
     assert job.status == "completed"

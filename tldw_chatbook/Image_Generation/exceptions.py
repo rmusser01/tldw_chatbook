@@ -27,6 +27,7 @@ _COMFYUI_IMAGE_EDIT_GUIDANCE: dict[ComfyUIImageEditPhase, str] = {
     "persistence": "The edited image could not be saved locally. The source remains staged.",
 }
 
+
 class ImageGenerationError(RuntimeError):
     """Raised when image generation fails."""
 

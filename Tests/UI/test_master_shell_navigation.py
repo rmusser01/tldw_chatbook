@@ -30,7 +30,9 @@ from tldw_chatbook.UI.Navigation.main_navigation import (
 #: live, since `App.CSS_PATH` stylesheets outrank widget `DEFAULT_CSS`
 #: regardless of specificity or `!important` (see the rule's docstring in
 #: `main_navigation.py`).
-_BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
+_BUNDLED_CSS_PATH = str(
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
 
 #: The selector `test_ghost_rule_is_width_neutral_under_the_bundled_stylesheet`
 #: pins, and the box-model properties that made it geometry-non-neutral once
@@ -117,13 +119,14 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-watchlists_collections", "\u23035 Watchlists"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
-        ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
         ("nav-lab", "F2 Lab"),
         ("nav-logs", "F3 Logs"),
         ("nav-settings", "F4 Settings"),
         ("nav-research", "F5 Research"),
         ("nav-meetings", "F7 Meetings"),
+        ("nav-plugins", "F8 Plugins"),
+        ("nav-kanban", "F9 Kanban"),
     ]
 
 
@@ -137,6 +140,8 @@ def test_nav_button_label_numbering_scheme():
     assert nav_button_label("settings", "Settings") == "F4 Settings"
     assert nav_button_label("research", "Research") == "F5 Research"
     assert nav_button_label("meetings", "Meetings") == "F7 Meetings"
+    assert nav_button_label("plugins", "Plugins") == "F8 Plugins"
+    assert nav_button_label("kanban", "Kanban") == "F9 Kanban"
 
 
 @pytest.mark.asyncio
@@ -170,7 +175,10 @@ async def test_console_attention_glyph_is_accessible_and_geometry_stable(size):
 
 
 @pytest.mark.asyncio
-async def test_fresh_navigation_mount_recomputes_durable_console_attention():
+@pytest.mark.parametrize(
+    "refresh_api", ["recompute_console_attention", "request_console_attention_refresh"]
+)
+async def test_fresh_navigation_mount_recomputes_durable_console_attention(refresh_api):
     calls: list[dict[str, bool]] = []
 
     class TestApp(ConsolidatedCSSApp):
@@ -181,7 +189,7 @@ async def test_fresh_navigation_mount_recomputes_durable_console_attention():
 
     app = TestApp()
     app.console_runtime = SimpleNamespace(
-        recompute_console_attention=lambda **kwargs: calls.append(kwargs)
+        **{refresh_api: lambda **kwargs: calls.append(kwargs)}
     )
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -530,13 +538,16 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "watchlists_collections": "ctrl+5",
         "schedules": "ctrl+7",
         "workflows": "ctrl+8",
-        "mcp": "ctrl+9",
+        # ADR-240: the MCP destination retired into Settings > Tools & MCP;
+        # ctrl+9 survives as MCP_COMPATIBILITY_SHORTCUT outside the map.
         "acp": "ctrl+0",
         "lab": "f2",
         "logs": "f3",
         "settings": "f4",
         "research": "f5",
         "meetings": "f7",
+        "plugins": "f8",
+        "kanban": "f9",
     }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     from Tests.UI.css_destination_tour import DESTINATION_BODIES
@@ -861,7 +872,9 @@ async def test_nav_strip_never_renders_a_partial_destination_label(width, active
             # default position, some destination WILL straddle the "More
             # ›" hint's edge -- if nothing were ever ghosted here, the
             # geometry/rendered-text assertions above would be vacuous.
-            assert ghosted, "test premise: expected a straddling destination at 100 cols"
+            assert ghosted, (
+                "test premise: expected a straddling destination at 100 cols"
+            )
 
 
 # --- task-4020: re-critique RC-02 -- ghosting effectiveness under the real,
@@ -912,9 +925,7 @@ def _plain_nav_text(app: App) -> str:
     legible label.
     """
     strips = app.screen._compositor.render_strips()
-    return "\n".join(
-        "".join(segment.text for segment in strip) for strip in strips
-    )
+    return "\n".join("".join(segment.text for segment in strip) for strip in strips)
 
 
 @pytest.mark.asyncio
@@ -957,8 +968,7 @@ async def test_naive_colorless_capture_false_positives_on_ghosted_labels():
         # A colorless capture sees the clipped fragment even though the
         # button is ghosted (fg == bg) and disabled.
         assert fragment in _plain_nav_text(app), (
-            "expected the colorless capture to include the ghosted destination "
-            "fragment"
+            "expected the colorless capture to include the ghosted destination fragment"
         )
 
         # The color-aware check (already established by task-3200, reused
@@ -1218,9 +1228,7 @@ async def test_click_on_ghosted_nav_button_via_border_route_is_a_no_op():
             if button.has_class("nav-button-clip-ghost")
         ]
         assert ghosted, "test premise: expected a straddling destination at 80 cols"
-        target = next(
-            (b for b in ghosted if b.id == "nav-artifacts"), ghosted[0]
-        )
+        target = next((b for b in ghosted if b.id == "nav-artifacts"), ghosted[0])
         assert target.disabled
         region = target.region
 

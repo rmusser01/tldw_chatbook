@@ -1,6 +1,6 @@
 """TASK-25834: the chip and the surface it opens must use one word.
 
-The Console status strip renders "Library · Auto off · Agent blocked"; clicking
+The Console status strip renders "Library · Auto off · Agent access off"; clicking
 it opened a modal whose matching control was labelled "Assistant Library
 access". Same permission, two nouns -- and "Assistant" already means something
 else in that same status bar ("Assistant: General", the persona), so the reader

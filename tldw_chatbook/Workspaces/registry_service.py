@@ -8,14 +8,21 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+import inspect
 import json
 from pathlib import Path, PurePosixPath
 import re
 from secrets import token_urlsafe
 import sqlite3
+import sys
 import threading
-from typing import Any, ContextManager, Protocol
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, ContextManager, Protocol
 from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
+
+if TYPE_CHECKING:
+    from .project_index.models import IndexAuthorityReader, IndexAuthorityFence
+
 
 from loguru import logger
 
@@ -26,6 +33,7 @@ from tldw_chatbook.Chat.rag_scope import (
     serialize_scope,
 )
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.input_validation import validate_workspace_name
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
@@ -248,6 +256,14 @@ class WorkspaceRegistryServiceError(Exception):
     """Base exception for workspace registry failures."""
 
 
+class WorkspaceArchiveConflict(WorkspaceRegistryServiceError):
+    """The captured workspace archive episode or name no longer matches."""
+
+    def __init__(self, workspace_id: str) -> None:
+        super().__init__("Workspace archive state changed. Refresh and try again.")
+        self.workspace_id = workspace_id
+
+
 class WorkspaceNotFound(WorkspaceRegistryServiceError):
     """Raised when a workspace operation targets a missing workspace."""
 
@@ -357,9 +373,7 @@ def _validate_ssh_python_interpreter(value: Any) -> None:
             one or more ``[A-Za-z0-9_./-]`` characters (no spaces or
             shell metacharacters) or starts with ``-``.
     """
-    if not isinstance(value, str) or not _SSH_PYTHON_INTERPRETER_RE.fullmatch(
-        value
-    ):
+    if not isinstance(value, str) or not _SSH_PYTHON_INTERPRETER_RE.fullmatch(value):
         raise WorkspaceRegistryServiceError(
             f"Invalid python interpreter {value!r}: allowed charset is "
             "[A-Za-z0-9_./-] with no spaces"
@@ -435,8 +449,7 @@ def _validate_ssh_overlap(
             )
         if existing_path in path.parents:
             raise WorkspaceRegistryServiceError(
-                f"{path} is inside the already-bound SSH root "
-                f"{binding.locator}."
+                f"{path} is inside the already-bound SSH root {binding.locator}."
             )
         if path in existing_path.parents:
             raise WorkspaceRegistryServiceError(
@@ -525,7 +538,12 @@ def binding_exclusion_entries(binding: Any) -> tuple[BindingExclusion, ...]:
         path = item.get("path")
         kind = item.get("kind", "directory")
         added_at = item.get("added_at", "")
-        if isinstance(path, str) and path and kind in {"file", "directory"} and isinstance(added_at, str):
+        if (
+            isinstance(path, str)
+            and path
+            and kind in {"file", "directory"}
+            and isinstance(added_at, str)
+        ):
             entries.append(BindingExclusion(path=path, kind=kind, added_at=added_at))
         else:
             dropped += 1
@@ -554,7 +572,12 @@ def _validated_exclusion_relative(binding: Any, path: str) -> PurePosixPath:
     """
     raw = str(path).strip()
     candidate = PurePosixPath(raw)
-    if not raw or raw.startswith("~") or candidate.is_absolute() or ".." in candidate.parts:
+    if (
+        not raw
+        or raw.startswith("~")
+        or candidate.is_absolute()
+        or ".." in candidate.parts
+    ):
         raise WorkspaceRegistryServiceError(
             "Exclusion path must be relative to the binding root."
         )
@@ -566,13 +589,9 @@ def _validated_exclusion_relative(binding: Any, path: str) -> PurePosixPath:
         # ValueError: embedded NUL bytes; RuntimeError: symlink loops.
         # Both must surface as the service's own error contract, not crash
         # the Settings handler with an unexpected exception type.
-        raise WorkspaceRegistryServiceError(
-            "Binding root is not resolvable."
-        ) from exc
+        raise WorkspaceRegistryServiceError("Binding root is not resolvable.") from exc
     if target != resolved_root and resolved_root not in target.parents:
-        raise WorkspaceRegistryServiceError(
-            "Exclusion path escapes the binding root."
-        )
+        raise WorkspaceRegistryServiceError("Exclusion path escapes the binding root.")
     if target == resolved_root:
         raise WorkspaceRegistryServiceError(
             "Exclude specific paths; remove the binding to exclude the whole root."
@@ -600,7 +619,12 @@ def _validated_remote_exclusion_relative(binding: Any, path: str) -> PurePosixPa
     """
     raw = str(path).strip()
     candidate = PurePosixPath(raw)
-    if not raw or raw.startswith("~") or candidate.is_absolute() or ".." in candidate.parts:
+    if (
+        not raw
+        or raw.startswith("~")
+        or candidate.is_absolute()
+        or ".." in candidate.parts
+    ):
         raise WorkspaceRegistryServiceError(
             "Exclusion path must be relative to the binding root."
         )
@@ -612,9 +636,7 @@ def _validated_remote_exclusion_relative(binding: Any, path: str) -> PurePosixPa
 
         root = parse_remote_locator(str(binding.locator)).path
     except (RemoteLocatorError, ValueError, TypeError) as exc:
-        raise WorkspaceRegistryServiceError(
-            "Binding root is not resolvable."
-        ) from exc
+        raise WorkspaceRegistryServiceError("Binding root is not resolvable.") from exc
     if candidate == PurePosixPath(".") or root == root / candidate:
         raise WorkspaceRegistryServiceError(
             "Exclude specific paths; remove the binding to exclude the whole root."
@@ -641,6 +663,7 @@ class LocalWorkspaceRegistryService:
         self._id_factory = id_factory or (lambda: f"workspace-link-{uuid4().hex}")
         self._now_factory = now_factory or registry_now_iso
         self._mutation_generation = 0
+        self._project_index_listeners: set[Callable[[str], None]] = set()
         self._change_review_binding_owner: _ChangeReviewBindingOwner | None = None
         self._receipt_token_factory = receipt_token_factory or (
             lambda: token_urlsafe(32)
@@ -752,7 +775,9 @@ class LocalWorkspaceRegistryService:
         description: str = "",
         authority: WorkspaceAuthority | str = WorkspaceAuthority.LOCAL_ONLY,
         sync_status: WorkspaceSyncStatus | str = WorkspaceSyncStatus.NOT_CONFIGURED,
-        assistant_defaults: WorkspaceAssistantDefaults | None | object = _OMITTED_ASSISTANT_DEFAULTS,
+        assistant_defaults: WorkspaceAssistantDefaults
+        | None
+        | object = _OMITTED_ASSISTANT_DEFAULTS,
         confirm_read_write: bool = False,
         tool_profile_confirmation_token: str | None = None,
     ) -> WorkspaceRecord:
@@ -908,7 +933,7 @@ class LocalWorkspaceRegistryService:
                 """
             params = (0,)
         try:
-            with self.db.connection() as conn:
+            with operation_owned_connection(self.db), self.db.connection() as conn:
                 rows = conn.execute(query, params).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -919,7 +944,7 @@ class LocalWorkspaceRegistryService:
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
-            with self.db.connection() as conn:
+            with operation_owned_connection(self.db), self.db.connection() as conn:
                 row = conn.execute(
                     """
                     SELECT *
@@ -985,99 +1010,128 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError("Workspace rename failed.")
         return renamed
 
-    def archive_workspace(self, workspace_id: str) -> WorkspaceRecord:
-        """Archive a workspace, hiding it from listings (TASK-714).
-
-        Conversations and memberships are untouched - archiving only removes
-        the workspace from the switcher/browser. When the archived workspace
-        was active, the built-in Default workspace becomes active so Console
-        always has a real context.
+    def archive_workspace(
+        self, workspace_id: str, *, expected_archive_revision: int | None = None
+    ) -> WorkspaceRecord:
+        """Archive a workspace with an atomic lifecycle revision check.
 
         Args:
             workspace_id: Workspace to archive.
+            expected_archive_revision: Captured revision, or current state when omitted.
 
         Returns:
-            The archived workspace record.
+            The archived record. Conversations and memberships retain their identity.
 
         Raises:
-            WorkspaceNotFound: Unknown or already-archived workspace.
-            WorkspaceRegistryServiceError: Default workspace or storage
-                failure.
+            WorkspaceArchiveConflict: Captured lifecycle state no longer matches.
+            WorkspaceNotFound: Unknown or already-archived workspace without a snapshot.
+            WorkspaceRegistryServiceError: Default workspace or storage failure.
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         if safe_workspace_id == DEFAULT_WORKSPACE_ID:
             raise WorkspaceRegistryServiceError(
                 "The Default workspace cannot be archived."
             )
-        record = self.get_workspace(safe_workspace_id)
-        if record is None or record.archived:
-            raise WorkspaceNotFound(safe_workspace_id)
-        was_active = record.active
         now = self._now_factory()
         try:
-            with self.db.transaction() as conn:
-                conn.execute(
+            with self.db.transaction(immediate=True) as conn:
+                index_bindings = tuple(row[0] for row in conn.execute(
+                    "SELECT binding_id FROM workspace_runtime_bindings WHERE workspace_id=?",
+                    (safe_workspace_id,),
+                ))
+                record = self._archive_lifecycle_record(
+                    conn,
+                    safe_workspace_id,
+                    archived=False,
+                    expected_archive_revision=expected_archive_revision,
+                )
+                cursor = conn.execute(
                     """
                     UPDATE workspace_records
-                    SET archived = 1, active = 0, updated_at = ?
-                    WHERE workspace_id = ?
+                    SET archived = 1, active = 0, archived_at = ?,
+                        archive_revision = archive_revision + 1, updated_at = ?
+                    WHERE workspace_id = ? AND archived = 0 AND archive_revision = ?
                     """,
-                    (now, safe_workspace_id),
+                    (now, now, safe_workspace_id, record.archive_revision),
                 )
+                if cursor.rowcount != 1:
+                    raise WorkspaceArchiveConflict(safe_workspace_id)
+                archived = self.get_workspace(safe_workspace_id)
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
-        if was_active:
+        for binding_id in index_bindings:
+            self._notify_project_index_change(binding_id)
+        if record.active:
             self.ensure_default_workspace()
             self.set_active_workspace(DEFAULT_WORKSPACE_ID)
-        archived = self.get_workspace(safe_workspace_id)
         if archived is None:
             raise WorkspaceRegistryServiceError("Workspace archive failed.")
         return archived
 
     def unarchive_workspace(
-        self, workspace_id: str, *, name: str | None = None
+        self,
+        workspace_id: str,
+        *,
+        name: str | None = None,
+        expected_archive_revision: int | None = None,
+        expected_name: str | None = None,
     ) -> WorkspaceRecord:
-        """Restore an archived workspace to listings (spec §2).
-
-        Never auto-activates: the user chooses when to switch. A replacement
-        name resolves name reuse in the same transaction as restoration.
+        """Restore the captured archive episode without activating the workspace.
 
         Args:
             workspace_id: Archived workspace to restore.
-            name: Optional replacement display name; strict text, trimmed
-                and nonblank.
+            name: Optional replacement display name.
+            expected_archive_revision: Captured revision, or current state when omitted.
+            expected_name: Captured display name, or current name when omitted.
+
+        Returns:
+            The restored workspace record.
 
         Raises:
-            WorkspaceNotFound: Unknown, not-archived, or concurrently restored
-                workspace.
-            WorkspaceRegistryServiceError: Invalid name, duplicate name, or
-                storage failure.
+            WorkspaceArchiveConflict: Captured lifecycle state or name changed.
+            WorkspaceNotFound: Unknown or active workspace without a snapshot.
+            WorkspaceRegistryServiceError: Invalid/duplicate name or storage failure.
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
-        record = self.get_workspace(safe_workspace_id)
-        if record is None or not record.archived:
-            raise WorkspaceNotFound(safe_workspace_id)
-        try:
-            safe_name = validate_workspace_name(record.name if name is None else name)
-        except ValueError as exc:
-            raise WorkspaceRegistryServiceError(str(exc)) from exc
         now = self._now_factory()
         try:
             with self.db.transaction(immediate=True) as conn:
+                record = self._archive_lifecycle_record(
+                    conn,
+                    safe_workspace_id,
+                    archived=True,
+                    expected_archive_revision=expected_archive_revision,
+                    expected_name=expected_name,
+                )
+                try:
+                    safe_name = validate_workspace_name(
+                        record.name if name is None else name
+                    )
+                except ValueError as exc:
+                    raise WorkspaceRegistryServiceError(str(exc)) from exc
                 self._reject_duplicate_name(
                     safe_name, exclude_workspace_id=safe_workspace_id
                 )
                 cursor = conn.execute(
                     """
                     UPDATE workspace_records
-                    SET archived = 0, name = ?, updated_at = ?
+                    SET archived = 0, archived_at = NULL,
+                        archive_revision = archive_revision + 1, name = ?, updated_at = ?
                     WHERE workspace_id = ? AND archived = 1
+                      AND archive_revision = ? AND name = ?
                     """,
-                    (safe_name, now, safe_workspace_id),
+                    (
+                        safe_name,
+                        now,
+                        safe_workspace_id,
+                        record.archive_revision,
+                        record.name,
+                    ),
                 )
                 if cursor.rowcount != 1:
-                    raise WorkspaceNotFound(safe_workspace_id)
+                    raise WorkspaceArchiveConflict(safe_workspace_id)
+                restored = self.get_workspace(safe_workspace_id)
         except sqlite3.IntegrityError as exc:
             raise WorkspaceRegistryServiceError(
                 f"A workspace named {safe_name} already exists. Choose Restore as with another name."
@@ -1085,10 +1139,38 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
-        restored = self.get_workspace(safe_workspace_id)
         if restored is None:
             raise WorkspaceRegistryServiceError("Workspace unarchive failed.")
         return restored
+
+    @staticmethod
+    def _archive_lifecycle_record(
+        conn: sqlite3.Connection,
+        workspace_id: str,
+        *,
+        archived: bool,
+        expected_archive_revision: int | None,
+        expected_name: str | None = None,
+    ) -> WorkspaceRecord:
+        """Capture and validate lifecycle state inside the reserved write transaction."""
+        row = conn.execute(
+            "SELECT * FROM workspace_records WHERE workspace_id = ?", (workspace_id,)
+        ).fetchone()
+        record = _workspace_from_row(row) if row is not None else None
+        captured = expected_archive_revision is not None or expected_name is not None
+        if record is None or record.archived != archived:
+            if captured:
+                raise WorkspaceArchiveConflict(workspace_id)
+            raise WorkspaceNotFound(workspace_id)
+        if (
+            expected_archive_revision is not None
+            and (
+                type(expected_archive_revision) is not int
+                or record.archive_revision != expected_archive_revision
+            )
+        ) or (expected_name is not None and record.name != expected_name):
+            raise WorkspaceArchiveConflict(workspace_id)
+        return record
 
     def set_assistant_defaults(
         self,
@@ -2634,6 +2716,120 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         return tuple(_membership_from_row(row) for row in rows)
 
+    def subscribe_project_index_changes(
+        self, listener: Callable[[str], None]
+    ) -> Callable[[], None]:
+        """Subscribe to post-commit hints; durable fences remain authoritative."""
+        self._project_index_listeners.add(listener)
+        return lambda: self._project_index_listeners.discard(listener)
+
+    def _notify_project_index_change(self, binding_id: str) -> None:
+        for listener in tuple(self._project_index_listeners):
+            try:
+                listener(binding_id)
+            except Exception:  # noqa: BLE001 - observers cannot roll back a committed mutation.
+                logger.debug("Project index invalidation observer failed")
+
+    def project_index_authority_adapters(
+        self, current_data_authority: Callable[[], str]
+    ) -> tuple[IndexAuthorityReader, IndexAuthorityFence]:
+        """Bind code-owned profile authority to exact-key readers and short fences.
+
+        Composition supplies a live admitted data/restore generation reader.
+        User input and the process-global selected workspace are never consulted.
+        """
+        from tldw_chatbook.Tools.remote_root_types import LocalRoot
+        from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+        from tldw_chatbook.Utils.sensitive_paths import (
+            SensitiveExclusion,
+            sensitive_exclusions_under,
+        )
+        from .project_index.models import ProjectIndexAuthority, ProjectIndexKey
+
+        @contextmanager
+        def fence(key: ProjectIndexKey):
+            if type(key) is not ProjectIndexKey:
+                raise TypeError("index_key_required")
+            with self.binding_authority_fence(key.binding_id) as row:
+                authority = None
+                try:
+                    if (
+                        row is not None
+                        and row["workspace_id"] == key.workspace_id
+                        and row["binding_kind"] == RuntimeBindingKind.LOCAL_FILESYSTEM.value
+                        and current_data_authority() == key.data_authority_id
+                    ):
+                        binding = _runtime_binding_from_row(row)
+                        root = Path(binding.locator)
+                        chain = capture_directory_chain(root)
+                        if root.absolute() == chain.canonical_root:
+                            exclusions = sensitive_exclusions_under(root) + tuple(
+                                SensitiveExclusion(
+                                    "subtree" if e.kind == "directory" else "file", e.path
+                                )
+                                for e in binding_exclusion_entries(binding)
+                            )
+                            authority = ProjectIndexAuthority(
+                                key,
+                                LocalRoot(root),
+                                chain,
+                                exclusions,
+                                int(row["revision"]),
+                            )
+                except (OSError, ValueError, RuntimeError):
+                    authority = None
+                yield authority
+
+        def reader(key: ProjectIndexKey):
+            with fence(key) as authority:
+                return authority
+
+        return reader, fence
+
+    @contextmanager
+    def project_index_detached_fence(self, workspace_id: str, binding_id: str, revision: int):
+        """Accept cleanup-only ownership after a later detach/archive witness.
+
+        No locator is read and this does not grant source or query authority.
+        Caller already holds every native generation capability for the group.
+        """
+        with self.db.transaction(immediate=True) as conn:
+            witness = conn.execute(
+                "SELECT revision FROM workspace_binding_authority WHERE binding_id=?",
+                (binding_id,),
+            ).fetchone()
+            row = conn.execute(
+                "SELECT b.workspace_id,w.archived FROM workspace_runtime_bindings b "
+                "JOIN workspace_records w USING(workspace_id) WHERE b.binding_id=?",
+                (binding_id,),
+            ).fetchone()
+            yield bool(witness and witness[0] > revision and (
+                row is None or (row[0] == workspace_id and row[1])
+            ))
+
+    def binding_authority_revision(self, binding_id: str) -> int:
+        """Read the durable witness, including a detached binding's tombstone."""
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT revision FROM workspace_binding_authority WHERE binding_id=?",
+                (binding_id,),
+            ).fetchone()
+            return int(row[0]) if row else 0
+
+    @contextmanager
+    def binding_authority_fence(self, binding_id: str):
+        """Serialize bounded index acceptance against other processes' mutations.
+
+        Acquire this registry lock before an index-store transaction. Never hold
+        it for chunking, scanning, worker joins, network calls or cleanup.
+        """
+        with self.db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "SELECT b.*,a.revision FROM workspace_runtime_bindings b JOIN workspace_binding_authority a USING(binding_id) JOIN workspace_records w ON w.workspace_id=b.workspace_id WHERE b.binding_id=? AND w.archived=0",
+                (binding_id,),
+            ).fetchone()
+            yield row
+
     def save_runtime_binding(
         self,
         binding: WorkspaceRuntimeBinding,
@@ -2698,6 +2894,7 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
+        self._notify_project_index_change(safe_binding.binding_id)
         stored = self.get_runtime_binding(safe_binding.binding_id)
         if stored is None:
             raise WorkspaceRegistryServiceError("Runtime binding save failed.")
@@ -2806,16 +3003,12 @@ class LocalWorkspaceRegistryService:
         try:
             loc = parse_remote_locator(raw_locator)
         except RemoteLocatorError as exc:
-            raise WorkspaceRegistryServiceError(
-                f"Invalid SSH locator: {exc}"
-            ) from exc
+            raise WorkspaceRegistryServiceError(f"Invalid SSH locator: {exc}") from exc
         _validate_ssh_python_interpreter(python_interpreter)
         try:
             target = canonicalize_locator(loc, ssh_bin=ssh_bin)
         except RemoteLocatorError as exc:
-            raise WorkspaceRegistryServiceError(
-                f"Invalid SSH locator: {exc}"
-            ) from exc
+            raise WorkspaceRegistryServiceError(f"Invalid SSH locator: {exc}") from exc
         _validate_ssh_overlap(
             (target.hostname, target.port, target.user),
             loc.path,
@@ -2900,7 +3093,9 @@ class LocalWorkspaceRegistryService:
                 relative = _validated_exclusion_relative(binding, path)
                 absolute = Path(str(binding.locator)) / relative
                 kind = (
-                    "directory" if not absolute.exists() or absolute.is_dir() else "file"
+                    "directory"
+                    if not absolute.exists() or absolute.is_dir()
+                    else "file"
                 )
             key = relative.as_posix().casefold()
             entries = list(binding_exclusion_entries(binding))
@@ -2911,7 +3106,9 @@ class LocalWorkspaceRegistryService:
                     f"Exclusion limit reached ({_MAX_BINDING_EXCLUSIONS})."
                 )
             entries.append(
-                BindingExclusion(path=relative.as_posix(), kind=kind, added_at=self._now_factory())
+                BindingExclusion(
+                    path=relative.as_posix(), kind=kind, added_at=self._now_factory()
+                )
             )
             return self._save_binding_exclusions(binding, entries)
 
@@ -2939,7 +3136,11 @@ class LocalWorkspaceRegistryService:
             binding = self._binding_for_exclusion_edit(workspace_id, binding_id)
             relative = PurePosixPath(str(path).strip())
             key = relative.as_posix().casefold()
-            entries = [e for e in binding_exclusion_entries(binding) if e.path.casefold() != key]
+            entries = [
+                e
+                for e in binding_exclusion_entries(binding)
+                if e.path.casefold() != key
+            ]
             return self._save_binding_exclusions(binding, entries)
 
     def list_binding_exclusions(self, binding_id: str) -> tuple[BindingExclusion, ...]:
@@ -3061,6 +3262,7 @@ class LocalWorkspaceRegistryService:
         if cursor.rowcount == 0:
             raise BindingNotFound(safe_binding_id)
         self._bump_mutation_generation()
+        self._notify_project_index_change(safe_binding_id)
 
     def set_folder_binding_access(
         self, binding_id: str, *, allow_write: bool
@@ -3112,9 +3314,7 @@ class LocalWorkspaceRegistryService:
             "ssh-filesystem",
             str(RuntimeBindingKind.SSH_FILESYSTEM),
         ):
-            raise WorkspaceRegistryServiceError(
-                f"SSH binding not found: {binding_id}"
-            )
+            raise WorkspaceRegistryServiceError(f"SSH binding not found: {binding_id}")
         metadata = dict(existing.metadata)
         metadata["access"] = "rw" if allow_write else "ro"
         return self.save_runtime_binding(
@@ -3134,25 +3334,25 @@ class LocalWorkspaceRegistryService:
         """Return one runtime binding if it exists."""
 
         safe_binding_id = _normalize_required_text(binding_id, "binding_id")
-        try:
-            with self.db.connection() as conn:
-                row = conn.execute(
-                    """
-                    SELECT *
-                    FROM workspace_runtime_bindings
-                    WHERE binding_id = ?
-                    """,
-                    (safe_binding_id,),
-                ).fetchone()
-        except sqlite3.Error as exc:
-            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        if row is None:
-            return None
-        if row["workspace_id"] == DEFAULT_WORKSPACE_ID:
-            self._delete_default_runtime_bindings()
-            return None
-        binding = _runtime_binding_from_row(row)
-        return binding
+        with operation_owned_connection(self.db):
+            try:
+                with self.db.connection() as conn:
+                    row = conn.execute(
+                        """
+                        SELECT *
+                        FROM workspace_runtime_bindings
+                        WHERE binding_id = ?
+                        """,
+                        (safe_binding_id,),
+                    ).fetchone()
+            except sqlite3.Error as exc:
+                raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+            if row is None:
+                return None
+            if row["workspace_id"] == DEFAULT_WORKSPACE_ID:
+                self._delete_default_runtime_bindings()
+                return None
+            return _runtime_binding_from_row(row)
 
     def list_runtime_bindings(
         self,
@@ -3605,17 +3805,25 @@ class LocalWorkspaceRegistryService:
 
         now = self._now_factory()
         try:
-            with self.db.transaction() as conn:
-                conn.execute(
+            with self.db.transaction(immediate=True) as conn:
+                row = conn.execute(
+                    "SELECT * FROM workspace_records WHERE workspace_id = ?",
+                    (DEFAULT_WORKSPACE_ID,),
+                ).fetchone()
+                if row is None or not row["archived"]:
+                    return
+                record = _workspace_from_row(row)
+                cursor = conn.execute(
                     """
                     UPDATE workspace_records
                     SET name = ?,
                         description = ?,
                         authority = ?,
                         sync_status = ?,
-                        archived = 0,
+                        archived = 0, archived_at = NULL,
+                        archive_revision = archive_revision + 1,
                         updated_at = ?
-                    WHERE workspace_id = ?
+                    WHERE workspace_id = ? AND archived = 1 AND archive_revision = ?
                     """,
                     (
                         DEFAULT_WORKSPACE_NAME,
@@ -3624,8 +3832,11 @@ class LocalWorkspaceRegistryService:
                         WorkspaceSyncStatus.NOT_CONFIGURED.value,
                         now,
                         DEFAULT_WORKSPACE_ID,
+                        record.archive_revision,
                     ),
                 )
+                if cursor.rowcount != 1:
+                    raise WorkspaceArchiveConflict(DEFAULT_WORKSPACE_ID)
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
@@ -3640,6 +3851,8 @@ def _workspace_from_row(row: sqlite3.Row) -> WorkspaceRecord:
         sync_status=WorkspaceSyncStatus(row["sync_status"]),
         active=bool(row["active"]),
         archived=bool(row["archived"]),
+        archived_at=row["archived_at"],
+        archive_revision=row["archive_revision"],
         assistant_defaults=_assistant_defaults_from_json(row["assistant_defaults"]),
         assistant_defaults_explicit_none=bool(row["assistant_defaults_explicit_none"]),
         created_at=row["created_at"],
@@ -3801,3 +4014,291 @@ def next_local_workspace_identity(
         if workspace_id not in existing_ids and workspace_name not in existing_names:
             return workspace_id, workspace_name
         index += 1
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "LocalWorkspaceRegistryService", LocalWorkspaceRegistryService),
+        (globals(), "WorkspaceDB", WorkspaceDB),
+        *(
+            (
+                LocalWorkspaceRegistryService,
+                name,
+                vars(LocalWorkspaceRegistryService)[name],
+            )
+            for name in (
+                "__init__",
+                "get_active_workspace",
+                "list_folder_bindings",
+                "list_runtime_bindings",
+            )
+        ),
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "_workspace_from_row",
+                "_runtime_binding_from_row",
+                "_filesystem_binding_missing",
+                "_assistant_defaults_from_json",
+                "_metadata_from_json",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "LocalWorkspaceRegistryService", LocalWorkspaceRegistryService),
+            (globals(), "WorkspaceDB", WorkspaceDB),
+            *(
+                (
+                    LocalWorkspaceRegistryService,
+                    name,
+                    vars(LocalWorkspaceRegistryService)[name],
+                )
+                for name in (
+                    "__init__",
+                    "get_active_workspace",
+                    "list_folder_bindings",
+                    "list_runtime_bindings",
+                )
+            ),
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_workspace_from_row",
+                    "_runtime_binding_from_row",
+                    "_filesystem_binding_missing",
+                    "_assistant_defaults_from_json",
+                    "_metadata_from_json",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+_HOOK_WORKSPACE_READERS = tuple(
+    (
+        LocalWorkspaceRegistryService,
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        function.__closure__,
+    )
+    for name in ('get_workspace', 'read_change_review_consent')
+    for function in (getattr(LocalWorkspaceRegistryService, name),)
+)
+
+
+_DEFAULT_BINDING_DISPLAY_MISSING = object()
+
+
+def _stock_default_bindings_are_empty(
+    service: object,
+    workspace_id: object,
+    source: tuple,
+) -> bool:
+    """Qualify only the immutable stock Default policy for disposable display."""
+    try:
+        if (
+            source is not _DEFAULT_BINDING_DISPLAY_SOURCE
+            or type(workspace_id) is not str
+        ):
+            return False
+        namespace, path, spec, origin, bindings, descriptors, functions = source
+        module = sys.modules.get(namespace.get("__name__"))
+        if (
+            type(module) is not ModuleType
+            or vars(module) is not namespace
+            or namespace.get("__file__") != path
+            or namespace.get("__spec__") is not spec
+            or getattr(spec, "origin", None) != origin
+            or any(namespace.get(name) is not value for name, value in bindings)
+        ):
+            return False
+        if (
+            type(service) is not LocalWorkspaceRegistryService
+            or workspace_id != DEFAULT_WORKSPACE_ID
+        ):
+            return False
+        if any(
+            inspect.getattr_static(owner, name, _DEFAULT_BINDING_DISPLAY_MISSING)
+            is not value
+            for owner, name, value in descriptors
+        ):
+            return False
+        for (
+            function,
+            code,
+            defining,
+            defaults,
+            keywords,
+            items,
+            closure,
+            cells,
+            wrapped,
+        ) in functions:
+            if (
+                function.__code__ is not code
+                or function.__globals__ is not defining
+                or function.__defaults__ is not defaults
+                or function.__kwdefaults__ is not keywords
+                or len(function.__kwdefaults__ or {}) != len(items)
+                or any(
+                    (function.__kwdefaults__ or {}).get(key) is not value
+                    for key, value in items
+                )
+                or function.__closure__ is not closure
+                or any(cell.cell_contents is not value for cell, value in cells)
+                or vars(function).get("__wrapped__") is not wrapped
+            ):
+                return False
+        fields = vars(service)
+        if type(fields) is not dict or any(
+            name in fields
+            for owner, name, _value in descriptors
+            if owner is LocalWorkspaceRegistryService and name != "db"
+        ):
+            return False
+        database = fields.get("db")
+        return (
+            type(database) is WorkspaceDB
+            and inspect.getattr_static(database, "is_memory_db", None) is False
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+# Producer-owned originals survive custom changes installed before UI import.
+_DEFAULT_BINDING_DISPLAY_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (name, globals()[name])
+        for name in (
+            "LocalWorkspaceRegistryService",
+            "WorkspaceDB",
+            "DEFAULT_WORKSPACE_ID",
+            "_normalize_required_text",
+            "_stock_default_bindings_are_empty",
+            "_DEFAULT_BINDING_DISPLAY_MISSING",
+        )
+    ),
+    tuple(
+        (
+            owner,
+            name,
+            inspect.getattr_static(owner, name, _DEFAULT_BINDING_DISPLAY_MISSING),
+        )
+        for owner, names in (
+            (
+                LocalWorkspaceRegistryService,
+                (
+                    "__getattribute__",
+                    "__getattr__",
+                    "__dict__",
+                    "db",
+                    "list_runtime_bindings",
+                    "list_folder_bindings",
+                    "_delete_default_runtime_bindings",
+                ),
+            ),
+            (
+                WorkspaceDB,
+                ("__getattribute__", "__getattr__", "__dict__", "is_memory_db"),
+            ),
+        )
+        for name in names
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for outer in (
+            _normalize_required_text,
+            _stock_default_bindings_are_empty,
+            LocalWorkspaceRegistryService.list_runtime_bindings,
+            LocalWorkspaceRegistryService.list_folder_bindings,
+            LocalWorkspaceRegistryService._delete_default_runtime_bindings,
+        )
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+_DEFAULT_BINDING_DISPLAY_POLICY = (
+    _stock_default_bindings_are_empty,
+    _stock_default_bindings_are_empty.__code__,
+    _DEFAULT_BINDING_DISPLAY_SOURCE,
+)
+
+
+def _default_binding_display_current(
+    service: object,
+    workspace_id: object,
+    policy: tuple = _DEFAULT_BINDING_DISPLAY_POLICY,
+) -> bool:
+    """Retain the definition-owned policy even before a display module imports."""
+    if _DEFAULT_BINDING_DISPLAY_POLICY is not policy:
+        return False
+    checker, code, source = policy
+    return checker.__code__ is code and checker(service, workspace_id, source)
+
+
+_DEFAULT_BINDING_DISPLAY_CHECK = (
+    _default_binding_display_current,
+    _default_binding_display_current.__code__,
+    _default_binding_display_current.__defaults__,
+    _default_binding_display_current.__kwdefaults__,
+)

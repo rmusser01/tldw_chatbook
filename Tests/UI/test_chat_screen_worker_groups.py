@@ -45,9 +45,7 @@ def _guarded_paths() -> list[Path]:
     """
     assert CHAT_SCREEN_PATH.exists(), f"{CHAT_SCREEN_PATH} not found."
     modules = sorted(
-        path
-        for path in _CONSOLE_MODULES_DIR.glob("*.py")
-        if path.name != "__init__.py"
+        path for path in _CONSOLE_MODULES_DIR.glob("*.py") if path.name != "__init__.py"
     )
     assert modules, (
         f"no modules found in {_CONSOLE_MODULES_DIR}; this guard's scope "

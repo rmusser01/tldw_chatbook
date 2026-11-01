@@ -64,7 +64,9 @@ def test_queue_flag_round_trips_through_the_normalizer():
     """Phase D's read-path lesson: the DB returns the flag; the normalizer
     must carry it, or every downstream consumer sees un-queued items."""
     db = SubscriptionsDB(":memory:", "test")
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     with db.transaction() as conn:
         cursor = conn.execute(
             "INSERT INTO subscription_items (subscription_id, url, title) "
@@ -438,8 +440,12 @@ def test_overflow_counts_dropped_items_and_features_survive_the_cap():
     source = _new_source(db, watchlist, "firehose")
 
     # Two queued items below the watermark (window-exempt, hence featured).
-    queued_old = _add_item(db, source, "Queued old", "2026-07-10T09:00:00+00:00", queued=True)
-    queued_new = _add_item(db, source, "Queued new", "2026-07-11T09:00:00+00:00", queued=True)
+    queued_old = _add_item(
+        db, source, "Queued old", "2026-07-10T09:00:00+00:00", queued=True
+    )
+    queued_new = _add_item(
+        db, source, "Queued new", "2026-07-11T09:00:00+00:00", queued=True
+    )
     _complete_briefing(db, watchlist, queued_new)
 
     window = [
@@ -479,17 +485,16 @@ def test_overflow_and_watermark_stay_exact_over_a_backlog_larger_than_the_cap():
     # ages out of it and the selection comes back empty (this exact test
     # started failing on 2026-07-31 + 7d with an all-empty selection).
     recent = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    backlog = [
-        _add_item(db, source, f"Item {n}", recent)
-        for n in range(cap + 30)
-    ]
+    backlog = [_add_item(db, source, f"Item {n}", recent) for n in range(cap + 30)]
 
     selection = select_briefing_items(db, watchlist, mode="auto", item_cap=cap)
 
     assert len(selection.items) == cap
     assert _ids(selection) == list(reversed(backlog[-cap:]))  # newest `cap`, id DESC
     assert selection.overflow_count == len(backlog) - cap  # exact, not an estimate
-    assert selection.covers_through_item_id == backlog[-1]  # the TRUE max, not the max kept
+    assert (
+        selection.covers_through_item_id == backlog[-1]
+    )  # the TRUE max, not the max kept
 
 
 def test_the_window_materialisation_is_bounded_not_the_full_backlog(monkeypatch):
@@ -531,7 +536,9 @@ def test_the_window_materialisation_is_bounded_not_the_full_backlog(monkeypatch)
     assert len(selection.items) == cap
     featured_count = len(selection.featured_ids)
     assert fetched_counts, "the row-fetch seam must have been called"
-    assert all(count <= cap + featured_count for count in fetched_counts), fetched_counts
+    assert all(count <= cap + featured_count for count in fetched_counts), (
+        fetched_counts
+    )
     # Well short of the full backlog -- the whole property fix 2 exists for.
     assert sum(fetched_counts) < (cap + 30)
 
@@ -584,8 +591,12 @@ def test_first_window_is_the_last_seven_days_by_created_at():
     source = _new_source(db, watchlist, "fresh")
 
     now = datetime(2026, 7, 30, 12, 0, 0, tzinfo=timezone.utc)
-    too_old = _add_item(db, source, "Eight days old", (now - timedelta(days=8)).isoformat())
-    recent = _add_item(db, source, "Six days old", (now - timedelta(days=6)).isoformat())
+    too_old = _add_item(
+        db, source, "Eight days old", (now - timedelta(days=8)).isoformat()
+    )
+    recent = _add_item(
+        db, source, "Six days old", (now - timedelta(days=6)).isoformat()
+    )
 
     assert db.latest_completed_watermark(watchlist) is None
     selection = select_briefing_items(db, watchlist, mode="auto", now=now)
@@ -737,9 +748,10 @@ def test_a_failed_briefings_junction_rows_do_not_bury_a_queued_item():
     assert _ids(select_briefing_items(db, watchlist, mode="curated")) == [queued]
 
     # ... and a briefing that DID reach the user still excludes it.
-    assert db.transition_briefing(
-        briefing, status="failed", error="interrupted"
-    ) is not None
+    assert (
+        db.transition_briefing(briefing, status="failed", error="interrupted")
+        is not None
+    )
     _complete_briefing(db, watchlist, queued, item_ids=[queued])
     assert select_briefing_items(db, watchlist, mode="curated").items == []
 
@@ -814,7 +826,9 @@ def test_window_query_parameter_count_does_not_scale_with_queue_size():
     assert len(selection.items) == queued_count
 
     param_counts = [
-        len(call.args[1]) for call in spy_conn.execute.call_args_list if len(call.args) > 1
+        len(call.args[1])
+        for call in spy_conn.execute.call_args_list
+        if len(call.args) > 1
     ]
     assert param_counts, "select_briefing_items must have executed at least one query"
     # A per-id `NOT IN` would show up here as a query bound with roughly

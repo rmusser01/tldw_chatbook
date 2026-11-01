@@ -1,0 +1,56 @@
+{
+  "actual_cases": 8,
+  "cases": [
+    {
+      "classname": "Tests.Architecture.test_module_size_ratchet",
+      "name": "test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/personas_screen.py]",
+      "outcome": "passed",
+      "time": "0.344"
+    },
+    {
+      "classname": "Tests.Architecture.test_module_size_ratchet",
+      "name": "test_budget_is_not_left_slack[tldw_chatbook/UI/Screens/personas_screen.py]",
+      "outcome": "passed",
+      "time": "0.001"
+    },
+    {
+      "classname": "Tests.Architecture.test_module_size_ratchet",
+      "name": "test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py]",
+      "outcome": "passed",
+      "time": "0.003"
+    },
+    {
+      "classname": "Tests.Architecture.test_module_size_ratchet",
+      "name": "test_budget_is_not_left_slack[tldw_chatbook/Chat/console_chat_controller.py]",
+      "outcome": "passed",
+      "time": "0.001"
+    },
+    {
+      "classname": "Tests.Architecture.test_module_size_ratchet",
+      "name": "test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_interrupt_rounds.py]",
+      "outcome": "passed",
+      "time": "0.001"
+    },
+    {
+      "classname": "Tests.Architecture.test_module_size_ratchet",
+      "name": "test_budget_is_not_left_slack[tldw_chatbook/Chat/console_interrupt_rounds.py]",
+      "outcome": "passed",
+      "time": "0.001"
+    },
+    {
+      "classname": "Tests.Architecture.test_module_size_ratchet",
+      "name": "test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_context_compaction.py]",
+      "outcome": "passed",
+      "time": "0.001"
+    },
+    {
+      "classname": "Tests.Architecture.test_module_size_ratchet",
+      "name": "test_budget_is_not_left_slack[tldw_chatbook/Chat/console_context_compaction.py]",
+      "outcome": "passed",
+      "time": "0.001"
+    }
+  ],
+  "outcomes": {
+    "passed": 8
+  }
+}

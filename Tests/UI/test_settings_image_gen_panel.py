@@ -4,13 +4,15 @@ panel's population from a scratch config.
 
 Harness mirrors ``Tests/UI/test_internal_prompts_search_survives_save.py``:
 ``DestinationHarness`` + ``_open_settings_category`` (both from
-``test_destination_shells``/``test_settings_configuration_hub``) plus the
-shared ``scratch_config`` fixture (``Tests/UI/conftest.py`` re-exports it
-from ``Tests/Internal_Prompts/conftest.py``).
+``test_destination_shells``/``test_settings_configuration_hub``). The
+module-local ``scratch_config`` fixture seeds the already-selected private
+profile through the real config writer.
 """
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import threading
 import time
 import tomllib
@@ -19,6 +21,7 @@ import pytest
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 import tldw_chatbook.UI.Screens.settings_screen as settings_screen_module
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -26,10 +29,13 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
 )
 from Tests.UI.test_settings_configuration_hub import (
+    _click_scrolled_settings_button,
     _open_settings_category,
     _wait_for_settings_search_focus,
     _wait_for_settings_text,
 )
+from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness, _settle
+from tldw_chatbook.app import WideViewportTierMixin
 from tldw_chatbook.Image_Generation.config import (
     DEFAULT_SWARMUI_TIMEOUT_SECONDS,
     get_image_generation_config,
@@ -38,8 +44,10 @@ from tldw_chatbook.Image_Generation.config import (
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Screens import settings_video_gen_defaults as video_defaults
 from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     BACKEND_IDS,
+    BACKEND_LABELS,
     ImageGenProbeResult,
     effective_placeholder,
 )
@@ -54,6 +62,26 @@ _ALL_SECRET_ENV_VARS = (
     "QWEN_API_KEY",
     "SWARMUI_TOKEN",
 )
+
+
+def _seed_selected_image_config(text):
+    """Seed only image defaults in the already-selected private child profile."""
+    from tldw_chatbook import config
+
+    path = Path(os.environ["TLDW_CONFIG_PATH"])
+    with path.open("rb") as stream:
+        current = tomllib.load(stream)
+    assert config.delete_settings_from_cli_config(
+        "image_generation", list(current.get("image_generation", {}))
+    )
+    assert config.save_settings_to_cli_config(tomllib.loads(text))
+    reset_image_generation_config_cache()
+
+
+@pytest.fixture
+def scratch_config():
+    """Return the selected-profile writer without seeding in the parent."""
+    return _seed_selected_image_config
 
 
 @pytest.fixture(autouse=True)
@@ -99,7 +127,9 @@ async def _open_real_settings_destination(app, pilot, *, timeout: float = 5.0):
             break
         await pilot.pause(0.02)
     else:
-        raise AssertionError("Settings destination never mounted its Image Gen category")
+        raise AssertionError(
+            "Settings destination never mounted its Image Gen category"
+        )
 
     button = screen.query_one("#settings-category-image_generation")
     if not button.display:
@@ -133,7 +163,8 @@ async def _open_real_settings_destination(app, pilot, *, timeout: float = 5.0):
 
 
 @pytest.mark.asyncio
-async def test_image_gen_category_in_rail_and_search(scratch_config):
+@private_profile_test
+async def test_image_gen_category_in_rail_and_search(request, scratch_config):
     scratch_config("")
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -156,7 +187,8 @@ async def test_image_gen_category_in_rail_and_search(scratch_config):
 
 
 @pytest.mark.asyncio
-async def test_panel_populates_from_scratch_config(scratch_config):
+@private_profile_test
+async def test_panel_populates_from_scratch_config(request, scratch_config):
     scratch_config(
         """
 [image_generation]
@@ -234,7 +266,10 @@ default_model = "m-x"
 
 
 @pytest.mark.asyncio
-async def test_fresh_config_shows_placeholder_not_merged_default_value(scratch_config):
+@private_profile_test
+async def test_fresh_config_shows_placeholder_not_merged_default_value(
+    request, scratch_config
+):
     """Set-vs-default blur regression (Fix Round 1).
 
     A config file with NO ``[image_generation]`` section at all (the
@@ -266,7 +301,8 @@ default_theme = "textual-dark"
 
 
 @pytest.mark.asyncio
-async def test_secret_input_never_echoes_saved_key(scratch_config):
+@private_profile_test
+async def test_secret_input_never_echoes_saved_key(request, scratch_config):
     saved_key = "sk-should-never-render-in-the-ui"
     scratch_config(
         f"""
@@ -295,7 +331,8 @@ api_key = "{saved_key}"
 
 
 @pytest.mark.asyncio
-async def test_env_key_shows_env_source_line(scratch_config, monkeypatch):
+@private_profile_test
+async def test_env_key_shows_env_source_line(request, scratch_config, monkeypatch):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "env-secret-value-not-rendered")
@@ -321,7 +358,8 @@ async def test_env_key_shows_env_source_line(scratch_config, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_save_revert_disabled_test_buttons_enabled(scratch_config):
+@private_profile_test
+async def test_save_revert_disabled_test_buttons_enabled(request, scratch_config):
     """Save/Revert stay disabled with nothing staged, but the eight Test
     buttons (task 6: wired to `probe_backend`) are clickable regardless of
     dirty state -- a probe reads the CURRENT form values, so it is useful
@@ -347,10 +385,10 @@ async def test_save_revert_disabled_test_buttons_enabled(scratch_config):
 # ---------------------------------------------------------------------------
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_edit_marks_dirty_and_save_writes_nested_toml(scratch_config, tmp_path):
-    scratch_config(
-        """
+async def test_edit_marks_dirty_and_save_writes_nested_toml(request, tmp_path):
+    _seed_selected_image_config("""
 [image_generation]
 default_backend = "openrouter"
 enabled_backends = ["openrouter"]
@@ -376,10 +414,12 @@ default_model = "old-model"
         assert "*" in str(rail_button.label)
         assert not panel.query_one("#settings-imagegen-save", Button).disabled
 
+        panel.query_one("#settings-imagegen-save", Button).scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-        config_path = tmp_path / "config.toml"
+        config_path = Path(os.environ["TLDW_CONFIG_PATH"])
         with open(config_path, "rb") as f:
             saved = tomllib.load(f)
         assert (
@@ -395,7 +435,8 @@ default_model = "old-model"
 
 
 @pytest.mark.asyncio
-async def test_save_blocked_when_default_disabled(scratch_config, tmp_path):
+@private_profile_test
+async def test_save_blocked_when_default_disabled(request, scratch_config, tmp_path):
     scratch_config(
         """
 [image_generation]
@@ -403,7 +444,7 @@ default_backend = "openrouter"
 enabled_backends = ["openrouter"]
 """
     )
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     before = config_path.read_text(encoding="utf-8")
 
     app = _build_test_app()
@@ -419,7 +460,7 @@ enabled_backends = ["openrouter"]
         enabled_checkbox.value = False
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await pilot.pause()
         await pilot.pause()
 
@@ -430,7 +471,8 @@ enabled_backends = ["openrouter"]
 
 
 @pytest.mark.asyncio
-async def test_revert_discards_draft(scratch_config, tmp_path):
+@private_profile_test
+async def test_revert_discards_draft(request, scratch_config, tmp_path):
     scratch_config(
         """
 [image_generation]
@@ -457,7 +499,9 @@ default_model = "original-model"
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" in str(rail_button.label)
 
-        await pilot.click("#settings-imagegen-revert")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-imagegen-revert"
+        )
         await pilot.pause()
         await _wait_for_image_gen_loaded(pilot)
 
@@ -470,18 +514,18 @@ default_model = "original-model"
         )
         assert model_input.value == "original-model"
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert saved["image_generation"]["openrouter"]["default_model"] == "original-model"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_clear_key_deletes_not_blanks(scratch_config, tmp_path, monkeypatch):
+async def test_clear_key_deletes_not_blanks(request, tmp_path, monkeypatch):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
-    scratch_config(
-        """
+    _seed_selected_image_config("""
 [image_generation]
 default_backend = "openrouter"
 enabled_backends = ["openrouter"]
@@ -509,9 +553,7 @@ api_key = "sk-saved-key"
         # column at this terminal size. Posting Button.Pressed directly is
         # the same real message a click sends, without depending on pixel
         # geometry this harness doesn't style.
-        panel.query_one(
-            "#settings-imagegen-clear-openrouter-api_key", Button
-        ).press()
+        panel.query_one("#settings-imagegen-clear-openrouter-api_key", Button).press()
         await pilot.pause()
 
         source_line = screen.query_one(
@@ -519,18 +561,21 @@ api_key = "sk-saved-key"
         )
         assert str(source_line.renderable) == "missing"
 
+        panel.query_one("#settings-imagegen-save", Button).scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert "api_key" not in saved["image_generation"].get("openrouter", {})
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_clear_swarmui_token_also_deletes_legacy_api_key(
-    scratch_config, tmp_path, monkeypatch
+    request, scratch_config, tmp_path, monkeypatch
 ):
     """Clear on swarmui's token must delete BOTH spellings: the loader
     resolves legacy ``api_key`` as a back-compat fallback, so leaving it
@@ -556,15 +601,13 @@ api_key = "fake-stale-legacy-token"
         await _open_image_gen(pilot)
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
 
-        panel.query_one(
-            "#settings-imagegen-clear-swarmui-swarm_token", Button
-        ).press()
+        panel.query_one("#settings-imagegen-clear-swarmui-swarm_token", Button).press()
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     swarmui_section = saved["image_generation"].get("swarmui", {})
@@ -573,7 +616,10 @@ api_key = "fake-stale-legacy-token"
 
 
 @pytest.mark.asyncio
-async def test_pasted_key_saves_and_input_resets(scratch_config, tmp_path, monkeypatch):
+@private_profile_test
+async def test_pasted_key_saves_and_input_resets(
+    request, scratch_config, tmp_path, monkeypatch
+):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     scratch_config(
@@ -596,7 +642,7 @@ enabled_backends = ["openrouter"]
         key_input.value = "sk-pasted-key"
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
@@ -610,15 +656,16 @@ enabled_backends = ["openrouter"]
         )
         assert str(source_line.renderable) == "local config key saved"
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert saved["image_generation"]["openrouter"]["api_key"] == "sk-pasted-key"
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_unedited_baked_field_produces_empty_diff_on_save(
-    scratch_config, tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """Pin (carry-note 1): a FRESH config (no ``[image_generation]`` section
     at all -- every backend field is baked-default-only) must NOT write any
@@ -632,8 +679,7 @@ async def test_unedited_baked_field_produces_empty_diff_on_save(
     """
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
-    scratch_config(
-        """
+    _seed_selected_image_config("""
 [general]
 default_theme = "textual-dark"
 """
@@ -651,10 +697,12 @@ default_theme = "textual-dark"
         model_input.value = "openai/gpt-5-image-mini"
         await pilot.pause()
 
+        panel.query_one("#settings-imagegen-save", Button).scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
 
@@ -679,7 +727,10 @@ default_theme = "textual-dark"
 
 
 @pytest.mark.asyncio
-async def test_revert_action_shortcut_recomposes_panel(scratch_config, tmp_path):
+@private_profile_test
+async def test_revert_action_shortcut_recomposes_panel(
+    request, scratch_config, tmp_path
+):
     """IMPORTANT fix: the footer `r` shortcut calls
     ``action_settings_revert_category`` directly (not the panel's own
     Revert button) -- before the fix, IMAGE_GENERATION fell through to the
@@ -728,14 +779,17 @@ default_model = "original-model"
         )
         assert model_input.value == "original-model"
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert saved["image_generation"]["openrouter"]["default_model"] == "original-model"
 
 
 @pytest.mark.asyncio
-async def test_default_backend_select_mount_refire_is_suppressed(scratch_config):
+@private_profile_test
+async def test_default_backend_select_mount_refire_is_suppressed(
+    request, scratch_config
+):
     """MINOR 1 fix: constructing the default-backend Select with its own
     current (non-blank) value fires a Select.Changed the moment it mounts
     (verified empirically -- a fresh Select's reactive default IS blank,
@@ -771,8 +825,9 @@ enabled_backends = ["openrouter"]
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_invalid_global_int_field_blocks_save_with_inline_error(
-    scratch_config, tmp_path
+    request, scratch_config, tmp_path
 ):
     """MINOR 2 fix: typing non-numeric text into a global int field (e.g.
     ``default_batch``) must behave like the per-backend int fields --
@@ -787,7 +842,7 @@ default_backend = "openrouter"
 enabled_backends = ["openrouter"]
 """
     )
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     before = config_path.read_text(encoding="utf-8")
 
     app = _build_test_app()
@@ -806,7 +861,7 @@ enabled_backends = ["openrouter"]
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" in str(rail_button.label)
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await pilot.pause()
         await pilot.pause()
 
@@ -838,7 +893,8 @@ _ALL_BACKEND_IDS = BACKEND_IDS
 
 
 @pytest.mark.asyncio
-async def test_probe_uses_current_form_values(scratch_config, monkeypatch):
+@private_profile_test
+async def test_probe_uses_current_form_values(request, scratch_config, monkeypatch):
     """Test gathers the CURRENT form values: an edited-but-unsaved Input
     wins over the saved config value, and a field the user never touched
     (timeout_seconds) falls back to the resolved effective value rather
@@ -897,7 +953,10 @@ base_url = "http://original-host:7801"
 
 
 @pytest.mark.asyncio
-async def test_probe_secret_uses_pasted_unsaved_key(scratch_config, monkeypatch):
+@private_profile_test
+async def test_probe_secret_uses_pasted_unsaved_key(
+    request, scratch_config, monkeypatch
+):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     scratch_config(
@@ -940,8 +999,9 @@ api_key = "sk-saved-key"
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_probe_secret_falls_back_to_effective_when_nothing_pasted(
-    scratch_config, monkeypatch
+    request, scratch_config, monkeypatch
 ):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -977,7 +1037,10 @@ api_key = "sk-saved-key"
 
 
 @pytest.mark.asyncio
-async def test_probe_renders_badge_and_reenables_buttons(scratch_config, monkeypatch):
+@private_profile_test
+async def test_probe_renders_badge_and_reenables_buttons(
+    request, scratch_config, monkeypatch
+):
     """All eight Test buttons disable for the duration of one probe (gated
     via a real `threading.Event` on the probe's own worker thread) and
     re-enable once it completes; the result badge lands on the right
@@ -1043,8 +1106,9 @@ base_url = "http://localhost:7801"
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_probe_escaped_exception_renders_probe_error_badge(
-    scratch_config, monkeypatch, caplog
+    request, scratch_config, monkeypatch, caplog
 ):
     """Any exception `probe_backend` fails to catch itself must degrade to
     the closed-set "Unreachable: probe error" badge -- never propagate
@@ -1096,7 +1160,10 @@ base_url = "http://localhost:7801"
 
 
 @pytest.mark.asyncio
-async def test_probe_badge_resets_on_category_reopen(scratch_config, monkeypatch):
+@private_profile_test
+async def test_probe_badge_resets_on_category_reopen(
+    request, scratch_config, monkeypatch
+):
     """Probe state is ephemeral -- leaving Image Gen and coming back must
     show the normal Configured/Not-configured badge again, never a probe
     result from the prior visit."""
@@ -1145,7 +1212,10 @@ base_url = "http://localhost:7801"
 
 
 @pytest.mark.asyncio
-async def test_emptying_a_saved_field_deletes_not_blanks(scratch_config, tmp_path):
+@private_profile_test
+async def test_emptying_a_saved_field_deletes_not_blanks(
+    request, scratch_config, tmp_path
+):
     """Important 1, end-to-end: selecting-all-and-deleting a saved field's
     text (not the dedicated Clear button, which only exists for secrets)
     must delete the key from config.toml, never write "" over it.
@@ -1176,17 +1246,20 @@ default_model = "old-model"
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" in str(rail_button.label)
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert "default_model" not in saved["image_generation"].get("openrouter", {})
 
 
 @pytest.mark.asyncio
-async def test_swarmui_token_saves_and_resolves_end_to_end(scratch_config, tmp_path, monkeypatch):
+@private_profile_test
+async def test_swarmui_token_saves_and_resolves_end_to_end(
+    request, scratch_config, tmp_path, monkeypatch
+):
     """CRITICAL fix, end-to-end: a pasted swarmui token must both persist
     to config.toml AND actually resolve (key_sources == "config", input
     resets, source line updates) through the real save -> cache-reset ->
@@ -1214,7 +1287,7 @@ enabled_backends = ["swarmui"]
         token_input.value = "fake-swarm-token"
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
@@ -1223,12 +1296,10 @@ enabled_backends = ["swarmui"]
         )
         assert token_input.value == ""
 
-        source_line = panel.query_one(
-            "#settings-imagegen-key-source-swarmui", Static
-        )
+        source_line = panel.query_one("#settings-imagegen-key-source-swarmui", Static)
         assert str(source_line.renderable) == "local config key saved"
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert saved["image_generation"]["swarmui"]["swarm_token"] == "fake-swarm-token"
@@ -1239,9 +1310,10 @@ enabled_backends = ["swarmui"]
 
 
 # ---------------------------------------------------------------------------
-# Live-CSS layout regression (whole-branch review): DestinationHarness (used
-# by every other test in this file) has no CSS_PATH, so it structurally
-# cannot exercise the real app-tier TCSS bundle -- it never caught that a
+# Live-CSS layout regression (whole-branch review): the plain
+# DestinationHarness most tests here use has no CSS_PATH (the
+# _SettingsCssHarness tests further down, TASK-33641.3, load the full
+# stylesheet). When this was written it had never caught that a
 # bare `Checkbox { width: 100%; height: 2; }` type selector living in
 # _conversations.tcss (unscoped, app-wide) was stretching every Enabled
 # checkbox to its row's full width, clipping the default marker + Test
@@ -1250,35 +1322,52 @@ enabled_backends = ["swarmui"]
 # `#settings-imagegen-panel` rule) starved its nested backend-editor
 # VerticalScroll down to ~1 row, hiding Backend settings/Generation
 # defaults/Save/Revert below the fold with nothing able to scroll them into
-# view. These two tests run against the REAL `TldwCli` app directly (the
-# same pattern `test_screen_navigation.py`'s real-app tests use) specifically
-# so the real CSS bundle is exercised -- confirmed live via a tmux capture
+# view. This test (both sizes) runs the REAL `TldwCli` app directly (the
+# same pattern `test_screen_navigation.py`'s real-app tests use) so the real
+# app, not a harness, is exercised -- confirmed live via a tmux capture
 # at 235 and 120 columns before writing this pin (see task-5-report.md).
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("size", [(235, 52), (120, 45)])
 @pytest.mark.asyncio
-async def test_backend_row_controls_visible_and_clickable_under_real_css(
-    scratch_config, size
-):
-    scratch_config(
-        """
-[image_generation]
-default_backend = "openrouter"
-enabled_backends = ["openrouter", "swarmui"]
-"""
-    )
+@private_profile_test
+async def test_backend_row_controls_visible_and_clickable_under_real_css(request, size):
+    """The backend rows' controls stay inside their rows under the app CSS.
+
+    TASK-33002.17 (ledger R11): ``scratch_config`` re-pointed
+    ``TLDW_CONFIG_PATH`` after the config module had bound its source, which
+    the ADR-126 admission refuses at setup (``raw_source_selection_changed``),
+    so this guard has not run since that admission landed (TASK-32628,
+    2026-09-16). The real writer now stores the backends in this case's
+    private profile.
+
+    Args:
+        request: Pytest request; ``private_profile_test`` runs this case in a
+            child pytest on a fresh HOME, XDG dirs and TLDW_CONFIG_PATH.
+        size: Terminal size of the app.
+    """
+    from tldw_chatbook import config
+
+    assert config.apply_settings_mutation_to_cli_config(
+        {
+            "image_generation": {
+                "default_backend": "openrouter",
+                "enabled_backends": ["openrouter", "swarmui"],
+            }
+        }
+    ).file_replaced
     app = _build_test_app()
+    # The private profile's config enables the splash, which outlasts the
+    # wait for the initial screen; compose() runs after the factory patches.
+    app._cli_no_splash = True
     async with app.run_test(size=size) as pilot:
         screen = await _open_real_settings_destination(app, pilot)
 
         for backend_id in BACKEND_IDS:
             row = screen.query_one(f"#settings-imagegen-backend-{backend_id}")
             test_btn = screen.query_one(f"#settings-imagegen-test-{backend_id}", Button)
-            cb = screen.query_one(
-                f"#settings-imagegen-enabled-{backend_id}", Checkbox
-            )
+            cb = screen.query_one(f"#settings-imagegen-enabled-{backend_id}", Checkbox)
             # task-7: eight rows (was six) no longer all fit within these
             # small terminal sizes without scrolling -- scroll each row into
             # view first (same pattern already used below for save_btn)
@@ -1321,13 +1410,236 @@ enabled_backends = ["openrouter", "swarmui"]
 
 
 # ---------------------------------------------------------------------------
+# TASK-33641.3: the backend names. A 12-cell label column cut
+# "ComfyUI (H3 image edit)" to "ComfyUI (H3" and ran "SD.cpp video" into
+# "Not configured" with no gap. Image Gen and Video Gen share the row class,
+# so one test covers every label of both panels, under the real stylesheet.
+# The wider column needs the app's wide tier, so the host carries the mixin
+# TldwCli does; 150 columns is where that tier starts. Below it the column
+# stays 12 cells, and the 120 and 149 column sizes are what pin that rule:
+# without it the shared 24-cell label pushes Test off the default row.
+# ---------------------------------------------------------------------------
+
+
+class _WideTierSettingsHarness(WideViewportTierMixin, _SettingsCssHarness):
+    """The Settings CSS harness with the app's ``-wide-viewport`` class."""
+
+
+async def _open_backends_panel(pilot, host, category, panel):
+    await _settle(pilot)
+    screen = _active_destination_screen(host)
+    screen._select_category(category.value)
+    deadline = time.monotonic() + 5.0
+    while not screen.query(f"#settings-{panel}-default_backend"):
+        assert time.monotonic() < deadline, f"the {panel} panel never loaded"
+        await pilot.pause(0.02)
+    return screen
+
+
+def _painted_before_status(screen, label, status) -> str:
+    """The cells painted on the name's line, from its column to the status."""
+    return (
+        screen._compositor.render_strips()[label.region.y]
+        .crop(label.region.x, status.region.x)
+        .text
+    )
+
+
+async def _wait_until_the_name_line_can_be_read(
+    pilot, screen, label, status, subject, status_width=None
+):
+    """Wait for the row's layout and for its scroll into view to land.
+
+    ``_painted_before_status`` reads the line at the name's row. The lower
+    rows start outside the scroll clip, and until ``scroll_visible`` lands
+    their label still has a region there: the line read at it is another
+    widget's (a rule, or blank). A fixed pause does not bound that on a
+    loaded machine. ``status_width`` also waits for a status text just
+    written.
+    """
+    deadline = time.monotonic() + 5.0
+    while not (
+        label.region.width
+        and status.region.width
+        and status_width in (None, status.region.width)
+        and screen.find_widget(label).clip.contains_region(label.region)
+    ):
+        assert time.monotonic() < deadline, (
+            f"{subject}: the name's line was never laid out and scrolled into view"
+        )
+        await pilot.pause(0.02)
+
+
+@pytest.mark.parametrize(
+    "size", [(120, 45), (149, 45), (150, 45), (211, 44), (235, 52)]
+)
+@pytest.mark.parametrize("panel", ["imagegen", "videogen"])
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_backend_rows_paint_each_name_whole_before_one_status_column(size, panel):
+    category, backend_ids, labels = (
+        (SettingsCategoryId.IMAGE_GENERATION, BACKEND_IDS, BACKEND_LABELS)
+        if panel == "imagegen"
+        else (
+            SettingsCategoryId.VIDEO_GENERATION,
+            video_defaults.BACKEND_IDS,
+            video_defaults.BACKEND_LABELS,
+        )
+    )
+    host = _WideTierSettingsHarness(_build_test_app(), "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_backends_panel(pilot, host, category, panel)
+
+        status_columns = {}
+        for backend_id in backend_ids:
+            row = screen.query_one(f"#settings-{panel}-backend-{backend_id}")
+            label = row.query_one(".settings-input-label", Static)
+            status = row.query_one(".settings-imagegen-badge", Static)
+            row.scroll_visible(animate=False)
+            await _wait_until_the_name_line_can_be_read(
+                pilot, screen, label, status, f"{backend_id} @ {size}"
+            )
+            painted = _painted_before_status(screen, label, status)
+            name = labels[backend_id]
+            if size[0] < host.WIDE_VIEWPORT_COLUMNS:
+                assert label.region.width == 12, (
+                    f"{backend_id} @ {size}: the name column is "
+                    f"{label.region.width} cells below the wide tier, not 12"
+                )
+                # The column cuts the name, so only its start can be asked
+                # for; that still tells the name's line from any other line.
+                assert painted.strip() and name.startswith(painted.rstrip()), (
+                    f"{backend_id} @ {size}: {painted!r} is painted before the "
+                    f"status, not the start of the name {name!r}"
+                )
+            else:
+                assert painted.startswith(f"{name} "), (
+                    f"{backend_id} @ {size}: {painted!r} is painted before the "
+                    f"status, not the whole name {name!r} and a blank cell"
+                )
+            # A cut name needs the gap too: the 12-cell column painted
+            # "SD.cpp video" for "SD.cpp video (local)", flush to its status.
+            assert painted.endswith(" "), (
+                f"{backend_id} @ {size}: {painted!r} is painted right up to "
+                "the status, with no blank cell"
+            )
+            # The default backend's row is the widest: it carries "★ Default".
+            assert row.children[-1].region.right <= row.region.right, (
+                f"{backend_id} @ {size}: the row's last control ends at "
+                f"{row.children[-1].region.right}, past the row's right edge "
+                f"({row.region.right})"
+            )
+            status_columns[backend_id] = status.region.x
+        assert len(set(status_columns.values())) == 1, (
+            f"@ {size}: the statuses start at different columns: {status_columns}"
+        )
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)], ids=["211x44", "235x52"])
+@pytest.mark.parametrize("panel", ["imagegen", "videogen"])
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_the_backend_editor_is_whole_and_save_reachable(size, panel):
+    """Capture phase (TASK-33641.3): nothing sized Video Gen's panel or its
+    backend editor, so both kept ``height: 1fr`` and the editor collapsed
+    to one row, cutting Save off. Image Gen's 2026-07-25 fix (3058f378c1)
+    sized its own two ids only; the same pin now holds for both panels."""
+    category = (
+        SettingsCategoryId.IMAGE_GENERATION
+        if panel == "imagegen"
+        else SettingsCategoryId.VIDEO_GENERATION
+    )
+    host = _WideTierSettingsHarness(_build_test_app(), "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_backends_panel(pilot, host, category, panel)
+
+        editor = screen.query_one(f"#settings-{panel}-editor")
+        deadline = time.monotonic() + 5.0
+        while not editor.region.height:  # the panel loaded; wait for its layout
+            assert time.monotonic() < deadline, f"{panel} @ {size}: never laid out"
+            await pilot.pause(0.02)
+        assert editor.region.height == editor.virtual_size.height, (
+            f"{panel} @ {size}: Backend settings editor region "
+            f"({editor.region.height}) is shorter than its content "
+            f"({editor.virtual_size.height})"
+        )
+        save_btn = screen.query_one(f"#settings-{panel}-save", Button)
+        save_btn.scroll_visible(animate=False)
+        deadline = time.monotonic() + 5.0
+        while not screen.find_widget(save_btn).clip.contains_region(save_btn.region):
+            assert time.monotonic() < deadline, (
+                f"{panel} @ {size}: scrolling never brought Save into view "
+                f"(Save {save_btn.region}, editor {editor.region})"
+            )
+            await pilot.pause(0.02)
+        widget, _offset = screen.screen.get_widget_at(*save_btn.region.center)
+        assert widget is save_btn, f"{panel} @ {size}: Save is not reachable"
+
+
+@pytest.mark.parametrize("size", [(150, 45), (151, 45)])
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row(size):
+    """A probe writes its result into the status in place, and it can be long.
+
+    At 150 columns the row is 67 cells. With a fixed 24-cell name column
+    "Reachable (auth unverified)" put Test outside the default backend's row
+    and "Unreachable: connection refused" clipped it on every other row.
+
+    The shortened name keeps a blank cell before the status. At 151 columns
+    that second result leaves the default SwarmUI row 15 cells for the name,
+    and a column with no padding painted "SwarmUI (local)Unreachable:
+    connection refused".
+    """
+    host = _WideTierSettingsHarness(_build_test_app(), "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_backends_panel(
+            pilot, host, SettingsCategoryId.IMAGE_GENERATION, "imagegen"
+        )
+        default_rows = 0
+        for badge in ("Reachable (auth unverified)", "Unreachable: connection refused"):
+            for backend_id in BACKEND_IDS:
+                row = screen.query_one(f"#settings-imagegen-backend-{backend_id}")
+                label = row.query_one(".settings-input-label", Static)
+                status = row.query_one(".settings-imagegen-badge", Static)
+                marker = row.query_one(".settings-imagegen-default-marker", Static)
+                test_btn = row.query_one(Button)
+                screen._apply_image_gen_probe_result(
+                    backend_id, badge, screen._image_gen_probe_session
+                )
+                row.scroll_visible(animate=False)
+                await _wait_until_the_name_line_can_be_read(
+                    pilot,
+                    screen,
+                    label,
+                    status,
+                    f"{backend_id} @ {size} with {badge!r}",
+                    status_width=len(badge),
+                )
+                default_rows += bool(marker.region.width)
+                assert test_btn.region.right <= row.region.right, (
+                    f"{backend_id} @ {size} with {badge!r}: Test ends at "
+                    f"{test_btn.region.right}, past the row's right edge "
+                    f"({row.region.right})"
+                )
+                painted = _painted_before_status(screen, label, status)
+                assert painted.endswith(" "), (
+                    f"{backend_id} @ {size} with {badge!r}: {painted!r} is "
+                    "painted right up to the status, with no blank cell"
+                )
+        assert default_rows, "no row carried the default marker"
+
+
+# ---------------------------------------------------------------------------
 # Qodo review of PR #901: stale default marker on Select clear, cached
 # raw-section baseline.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_clearing_default_backend_select_clears_all_row_markers(
+    request,
     scratch_config,
 ):
     """Fix 1: clearing the default-backend Select to Select.NULL must
@@ -1353,9 +1665,7 @@ enabled_backends = ["openrouter"]
         )
         assert "Default" in str(default_marker.renderable)
 
-        select = panel.query_one(
-            "#settings-imagegen-default_backend", Select
-        )
+        select = panel.query_one("#settings-imagegen-default_backend", Select)
         select.value = Select.NULL
         await pilot.pause()
 
@@ -1370,8 +1680,9 @@ enabled_backends = ["openrouter"]
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_raw_section_cache_reused_and_invalidated_at_exactly_three_points(
-    scratch_config, monkeypatch
+    request, scratch_config, monkeypatch
 ):
     """Fix 3: `_image_gen_raw_section()` must load the merged config ONCE
     per category session (lazily, on first access), never once per
@@ -1452,7 +1763,7 @@ enabled_backends = ["openrouter"]
         # line itself, independent of whatever happens to repopulate it.
         sentinel = {"__sentinel__": True}
         screen._image_gen_raw_section_cache = sentinel
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
         assert screen._image_gen_raw_section_cache != sentinel, (
             "a successful Save must invalidate the cache"
@@ -1467,7 +1778,9 @@ enabled_backends = ["openrouter"]
         model_input.value = "yet-another-model"
         await pilot.pause()
         screen._image_gen_raw_section_cache = sentinel
-        await pilot.click("#settings-imagegen-revert")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-imagegen-revert"
+        )
         await pilot.pause()
         await _wait_for_image_gen_loaded(pilot)
         assert screen._image_gen_raw_section_cache != sentinel, (
@@ -1496,7 +1809,10 @@ enabled_backends = ["openrouter"]
 
 
 @pytest.mark.asyncio
-async def test_comfyui_panel_fields_disclosure_and_narrow_geometry(scratch_config):
+@private_profile_test
+async def test_comfyui_panel_fields_disclosure_and_narrow_geometry(
+    request, scratch_config
+):
     scratch_config("")
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -1538,8 +1854,9 @@ async def test_comfyui_panel_fields_disclosure_and_narrow_geometry(scratch_confi
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_comfyui_optional_fields_render_packaged_placeholder_and_clear_on_save(
-    scratch_config, tmp_path
+    request, scratch_config, tmp_path
 ):
     scratch_config(
         """
@@ -1561,24 +1878,20 @@ default_sampler = "euler"
         await _open_image_gen(pilot)
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
         for key in ("default_seed", "default_steps", "default_sampler"):
-            field = panel.query_one(
-                f"#settings-imagegen-field-comfyui-{key}", Input
-            )
+            field = panel.query_one(f"#settings-imagegen-field-comfyui-{key}", Input)
             field.value = ""
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
         for key in ("default_seed", "default_steps", "default_sampler"):
-            field = panel.query_one(
-                f"#settings-imagegen-field-comfyui-{key}", Input
-            )
+            field = panel.query_one(f"#settings-imagegen-field-comfyui-{key}", Input)
             assert field.value == ""
             assert field.placeholder == "Use packaged workflow"
 
-    with open(tmp_path / "config.toml", "rb") as stream:
+    with open(Path(os.environ["TLDW_CONFIG_PATH"]), "rb") as stream:
         saved = tomllib.load(stream)
     comfyui = saved["image_generation"].get("comfyui", {})
     assert "default_seed" not in comfyui
@@ -1587,8 +1900,9 @@ default_sampler = "euler"
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_failed_image_gen_persistence_does_not_reset_runtime(
-    scratch_config, monkeypatch
+    request, scratch_config, monkeypatch
 ):
     scratch_config("")
     resets: list[None] = []
@@ -1612,20 +1926,21 @@ async def test_failed_image_gen_persistence_does_not_reset_runtime(
     async with host.run_test(size=(190, 55)) as pilot:
         screen = _active_destination_screen(host)
         await _open_image_gen(pilot)
-        field = screen.query_one(
-            "#settings-imagegen-field-comfyui-base_url", Input
-        )
+        field = screen.query_one("#settings-imagegen-field-comfyui-base_url", Input)
         field.value = "http://127.0.0.1:8288"
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
-        await _wait_for_settings_text(screen, pilot, "Failed to save Image Gen defaults.")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
+        await _wait_for_settings_text(
+            screen, pilot, "Failed to save Image Gen defaults."
+        )
 
     assert resets == []
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mixed_image_gen_write_delete_failure_is_atomic_and_does_not_reset(
-    scratch_config, monkeypatch, tmp_path
+    request, scratch_config, monkeypatch, tmp_path
 ):
     scratch_config(
         """
@@ -1685,12 +2000,12 @@ default_seed = 7
             "#settings-imagegen-field-comfyui-default_seed", Input
         ).value = ""
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(
             screen, pilot, "Failed to save Image Gen defaults."
         )
 
-    with open(tmp_path / "config.toml", "rb") as stream:
+    with open(Path(os.environ["TLDW_CONFIG_PATH"]), "rb") as stream:
         saved = tomllib.load(stream)
     comfyui = saved["image_generation"]["comfyui"]
     assert comfyui == {
@@ -1699,11 +2014,7 @@ default_seed = 7
     }
     assert atomic_calls == [
         (
-            {
-                "image_generation.comfyui": {
-                    "base_url": "http://127.0.0.1:8288"
-                }
-            },
+            {"image_generation.comfyui": {"base_url": "http://127.0.0.1:8288"}},
             {"image_generation.comfyui": ["default_seed"]},
         )
     ]
@@ -1711,8 +2022,9 @@ default_seed = 7
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_post_replace_cache_failure_refreshes_image_runtime_and_reports_failure(
-    scratch_config, monkeypatch, tmp_path
+    request, scratch_config, monkeypatch, tmp_path
 ):
     import tldw_chatbook.config as app_config
 
@@ -1744,7 +2056,7 @@ base_url = "http://127.0.0.1:8188"
             "#settings-imagegen-field-comfyui-base_url", Input
         ).value = "http://127.0.0.1:8288"
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(
             screen, pilot, "Failed to save Image Gen defaults."
         )
@@ -1752,16 +2064,15 @@ base_url = "http://127.0.0.1:8188"
         assert after is not before
         assert after.comfyui_image_base_url == "http://127.0.0.1:8288"
 
-    with open(tmp_path / "config.toml", "rb") as stream:
+    with open(Path(os.environ["TLDW_CONFIG_PATH"]), "rb") as stream:
         saved = tomllib.load(stream)
-    assert saved["image_generation"]["comfyui"]["base_url"] == (
-        "http://127.0.0.1:8288"
-    )
+    assert saved["image_generation"]["comfyui"]["base_url"] == ("http://127.0.0.1:8288")
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_successful_image_gen_persistence_resets_runtime_exactly_once(
-    scratch_config, monkeypatch
+    request, scratch_config, monkeypatch
 ):
     scratch_config("")
     resets: list[None] = []
@@ -1777,12 +2088,10 @@ async def test_successful_image_gen_persistence_resets_runtime_exactly_once(
     async with host.run_test(size=(190, 55)) as pilot:
         screen = _active_destination_screen(host)
         await _open_image_gen(pilot)
-        field = screen.query_one(
-            "#settings-imagegen-field-comfyui-base_url", Input
-        )
+        field = screen.query_one("#settings-imagegen-field-comfyui-base_url", Input)
         field.value = "http://127.0.0.1:8288"
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
     assert resets == [None]

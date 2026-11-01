@@ -151,9 +151,7 @@ class TestLibraryRagScopeSummary:
         line ("Select at least one Library source.") -- repeating every
         available source in a parenthetical "off" list here would just be
         noise restating the same fact."""
-        scope = LibraryRagScopeState.from_source_counts(
-            notes=2, media=1, selected=()
-        )
+        scope = LibraryRagScopeState.from_source_counts(notes=2, media=1, selected=())
         assert library_rag_scope_summary(scope) == "Scope: no sources selected"
 
     def test_none_available_keeps_the_unchanged_common_case_copy(self):
@@ -368,8 +366,21 @@ def test_provider_ready_parameter_no_longer_exists() -> None:
         )
 
 
-def test_library_rag_paid_mode_notice_names_the_provider() -> None:
-    assert library_rag_paid_mode_notice("openai") == "To openai: question + evidence"
+def test_library_rag_paid_mode_notice_names_the_provider_and_model() -> None:
+    """TASK-34000.21: the model is named before Run, with the footer's own
+    `·` joiner; with none resolvable the line says so rather than naming
+    one it cannot know."""
+    assert (
+        library_rag_paid_mode_notice("openai", "gpt-4.1-mini")
+        == "To openai · gpt-4.1-mini: question + evidence"
+    )
+    assert (
+        library_rag_paid_mode_notice("openai")
+        == "To openai · its default model: question + evidence"
+    )
+    assert library_rag_paid_mode_notice("openai", "  ") == library_rag_paid_mode_notice(
+        "openai"
+    )
 
 
 def test_panel_state_threads_provider_name_into_query_state() -> None:
@@ -1484,8 +1495,12 @@ class TestLibraryRagAllMatchesWeakScoreKinds:
                 "title": "Keyword only",
                 "score": 0.0161,
                 "provenance": {
-                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": None,
-                                      "fts_score": 0.001, "vector_score": None},
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": None,
+                        "fts_score": 0.001,
+                        "vector_score": None,
+                    },
                 },
             }
         )
@@ -1501,8 +1516,12 @@ class TestLibraryRagAllMatchesWeakScoreKinds:
                 "title": "Strong hybrid",
                 "score": 0.0161,
                 "provenance": {
-                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
-                                      "fts_score": 0.001, "vector_score": 0.83},
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": 1,
+                        "fts_score": 0.001,
+                        "vector_score": 0.83,
+                    },
                 },
             }
         )
@@ -1560,8 +1579,12 @@ class TestLibraryRagResultRowScoreKind:
                 "title": "A",
                 "score": 0.0161,
                 "provenance": {
-                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
-                                      "fts_score": 0.001, "vector_score": 0.83},
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": 1,
+                        "fts_score": 0.001,
+                        "vector_score": 0.83,
+                    },
                 },
             }
         )
@@ -1575,8 +1598,12 @@ class TestLibraryRagResultRowScoreKind:
                 "title": "A",
                 "score": 0.0161,
                 "provenance": {
-                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": None,
-                                      "fts_score": 0.001, "vector_score": None},
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": None,
+                        "fts_score": 0.001,
+                        "vector_score": None,
+                    },
                 },
             }
         )
@@ -1602,7 +1629,11 @@ class TestLibraryRagResultRowScoreKind:
 
     def test_reranker_channel_is_read_from_provenance(self):
         row = LibraryRagResultRow.from_result(
-            {"title": "A", "score": 7.5, "provenance": {"_final_score_kind": "reranker"}}
+            {
+                "title": "A",
+                "score": 7.5,
+                "provenance": {"_final_score_kind": "reranker"},
+            }
         )
         assert row.score_kind == "reranker"
 
@@ -1647,8 +1678,12 @@ class TestLibraryRagResultRowScoreKind:
                 "score": 0.95,
                 "provenance": {
                     "rerank_score": 0.95,
-                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
-                                      "fts_score": 0.001, "vector_score": 0.83},
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": 1,
+                        "fts_score": 0.001,
+                        "vector_score": 0.83,
+                    },
                 },
             }
         )
@@ -1684,8 +1719,12 @@ class TestLibraryRagResultRowScoreKind:
                 "title": "A",
                 "score": 0.0161,
                 "metadata": {
-                    "hybrid_fusion": {"fts_rank": 1, "vector_rank": 1,
-                                      "fts_score": 0.001, "vector_score": 0.51},
+                    "hybrid_fusion": {
+                        "fts_rank": 1,
+                        "vector_rank": 1,
+                        "fts_score": 0.001,
+                        "vector_score": 0.51,
+                    },
                 },
             }
         )
@@ -1777,7 +1816,9 @@ class TestLibraryRagCoverageNote:
 
     def test_all_weak_with_everything_covered_renders_only_the_weak_prefix(self):
         rows = (self._row(0.09),)
-        diagnostics = {"semantic_scope_coverage": {"covered": ["notes"], "uncovered": []}}
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": ["notes"], "uncovered": []}
+        }
         assert (
             library_rag_coverage_note(diagnostics, rows)
             == "No strong semantic matches — results below are weak."
@@ -1785,7 +1826,9 @@ class TestLibraryRagCoverageNote:
 
     def test_all_weak_and_uncovered_combine_weak_prefix_then_sentence(self):
         rows = (self._row(0.09),)
-        diagnostics = {"semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]}}
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": [], "uncovered": ["notes"]}
+        }
         assert library_rag_coverage_note(diagnostics, rows) == (
             "No strong semantic matches — results below are weak. "
             "Semantic search found nothing from: Notes."
@@ -1939,14 +1982,17 @@ class TestLibraryRagCoverageNote:
         exactly when it is most diagnostic: a plain-profile query that
         matched nothing must still say the profile ran keyword-only, or the
         user reads the empty result as "the vector index has nothing"."""
-        assert library_rag_coverage_note(
-            {
-                LIBRARY_RAG_ROUTE_NOTES_KEY: [
-                    "Profile 'BM25 Only': keyword search (no vectors)"
-                ]
-            },
-            (),
-        ) == "Profile 'BM25 Only': keyword search (no vectors)."
+        assert (
+            library_rag_coverage_note(
+                {
+                    LIBRARY_RAG_ROUTE_NOTES_KEY: [
+                        "Profile 'BM25 Only': keyword search (no vectors)"
+                    ]
+                },
+                (),
+            )
+            == "Profile 'BM25 Only': keyword search (no vectors)."
+        )
 
     def test_zero_row_coverage_claims_stay_suppressed_alongside_a_route_note(self):
         """Only the routing fact survives zero rows -- the "found nothing
@@ -1963,7 +2009,9 @@ class TestLibraryRagCoverageNote:
 
     def test_blank_route_notes_render_nothing(self):
         rows = (self._row(0.6),)
-        diagnostics = {"semantic_scope_coverage": {"covered": ["notes"], "uncovered": []}}
+        diagnostics = {
+            "semantic_scope_coverage": {"covered": ["notes"], "uncovered": []}
+        }
         assert library_rag_coverage_note(diagnostics, rows) == ""
         assert (
             library_rag_coverage_note(
@@ -1992,10 +2040,7 @@ class TestLibraryRagResultsCountLine:
 
     def test_plural_noun_for_multiple_results(self):
         rows = (self._row("A"), self._row("B"), self._row("C"))
-        assert (
-            library_rag_results_count_line(rows, "cats")
-            == "3 results for 'cats'."
-        )
+        assert library_rag_results_count_line(rows, "cats") == "3 results for 'cats'."
 
     def test_query_is_markup_escaped(self):
         rows = (self._row(),)
@@ -2023,7 +2068,14 @@ class TestLibraryRagEmptyStateQuietCopy:
         assert copy == (
             "No evidence matched 'unicorn migration guide'.\nTry broader terms."
         )
-        for jargon in ("Owner:", "Unavailable:", "Why:", "Next:", "Recovery:", "No results"):
+        for jargon in (
+            "Owner:",
+            "Unavailable:",
+            "Why:",
+            "Next:",
+            "Recovery:",
+            "No results",
+        ):
             assert jargon not in copy
 
     def test_escapes_rich_markup_in_the_query(self) -> None:
@@ -2132,7 +2184,7 @@ def test_scope_source_type_map_matches_open_source_type_map_except_prompts() -> 
     for raw_source_type in shared_keys - {"prompt", "prompts"}:
         assert open_map[raw_source_type] == scope_map[raw_source_type], (
             "_OPEN_SOURCE_TYPE_MAP and _SCOPE_SOURCE_TYPE_MAP disagree on "
-                f"{raw_source_type!r} outside the documented prompt divergence."
+            f"{raw_source_type!r} outside the documented prompt divergence."
         )
     assert open_map["prompt"] == "prompt"  # _open_library_item_by_id's dispatch key
     assert scope_map["prompt"] == "prompts"  # the plural scope-toggle key
@@ -2521,7 +2573,9 @@ class TestLibraryRagRerankingNotice:
         )
 
     def test_degraded_tag_names_the_stage_and_the_detail(self):
-        rows = (self._row(source_type="note", reranking_degraded="3/5 scorings failed"),)
+        rows = (
+            self._row(source_type="note", reranking_degraded="3/5 scorings failed"),
+        )
         assert library_rag_coverage_note({}, rows) == (
             "Reranking was degraded (3/5 scorings failed) — these results "
             "are in their original retrieval order."
@@ -2567,7 +2621,9 @@ class TestLibraryRagRerankingNotice:
     def test_skipped_wins_when_a_row_somehow_carries_both(self):
         """The service's two tag sites are mutually exclusive branches, but
         nothing enforces that here -- one sentence, deterministically."""
-        rows = (self._row(reranking_skipped="dead credential", reranking_degraded="1/2"),)
+        rows = (
+            self._row(reranking_skipped="dead credential", reranking_degraded="1/2"),
+        )
         note = library_rag_coverage_note({}, rows)
         assert note.startswith("Reranking was skipped (dead credential)")
         assert "degraded" not in note

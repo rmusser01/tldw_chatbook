@@ -38,7 +38,8 @@ async def test_opening_the_view_writes_nothing(tmp_path, monkeypatch):
         await app.push_screen(screen)
         await pilot.pause()
         row = next(
-            b for b in screen.query(Button)
+            b
+            for b in screen.query(Button)
             if getattr(b, "lab_view_key", None) == "dictation"
         )
         row.press()
@@ -65,7 +66,8 @@ async def test_a_real_change_still_persists(tmp_path, monkeypatch):
         await app.push_screen(screen)
         await pilot.pause()
         row = next(
-            b for b in screen.query(Button)
+            b
+            for b in screen.query(Button)
             if getattr(b, "lab_view_key", None) == "dictation"
         )
         row.press()

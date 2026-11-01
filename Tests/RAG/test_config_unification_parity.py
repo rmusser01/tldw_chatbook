@@ -1,11 +1,16 @@
 import pytest
 from tldw_chatbook.RAG_Search.config_profiles import ConfigProfileManager, ProfileConfig
-from tldw_chatbook.RAG_Search.simplified.config import RAGConfig, EmbeddingConfig, VectorStoreConfig
+from tldw_chatbook.RAG_Search.simplified.config import (
+    RAGConfig,
+    EmbeddingConfig,
+    VectorStoreConfig,
+)
 
 
 @pytest.fixture(autouse=True)
 def _reset_singleton():
     from tldw_chatbook.RAG_Search.ingestion_indexing import reset_shared_rag_service
+
     reset_shared_rag_service()
     yield
     reset_shared_rag_service()
@@ -13,19 +18,29 @@ def _reset_singleton():
 
 def _wire(monkeypatch, tmp_path, active_rag):
     mgr = ConfigProfileManager(profiles_dir=tmp_path / "profiles")
-    p = ProfileConfig(name="Active", description="d", profile_type="custom", rag_config=active_rag)
+    p = ProfileConfig(
+        name="Active", description="d", profile_type="custom", rag_config=active_rag
+    )
     mgr.save_profile(p)
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
+
     monkeypatch.setattr(ac, "_manager", lambda: mgr, raising=False)
     monkeypatch.setattr(ac, "_active_profile_id", lambda: p.id, raising=False)
     return mgr, p
 
 
-def test_ingest_and_query_config_are_identical_for_active_profile(monkeypatch, tmp_path):
-    from tldw_chatbook.RAG_Search.simplified.active_config import resolve_active_rag_config
+def test_ingest_and_query_config_are_identical_for_active_profile(
+    monkeypatch, tmp_path
+):
+    from tldw_chatbook.RAG_Search.simplified.active_config import (
+        resolve_active_rag_config,
+    )
     from tldw_chatbook.RAG_Search.simplified.config import RAGConfig as RC
-    rag = RAGConfig(embedding=EmbeddingConfig(model="mock"),
-                    vector_store=VectorStoreConfig(type="memory"))
+
+    rag = RAGConfig(
+        embedding=EmbeddingConfig(model="mock"),
+        vector_store=VectorStoreConfig(type="memory"),
+    )
     _wire(monkeypatch, tmp_path, rag)
     monkeypatch.setenv("RAG_EMBEDDING_MODEL", "env-wins-model")
     # Search path config:
@@ -34,7 +49,10 @@ def test_ingest_and_query_config_are_identical_for_active_profile(monkeypatch, t
     ingest_cfg = resolve_active_rag_config()
     assert query_cfg.embedding.model == ingest_cfg.embedding.model == "env-wins-model"
     # And the fingerprint-determining fields match (anti dimension-crash):
-    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import fingerprint_collection
+    from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import (
+        fingerprint_collection,
+    )
+
     assert fingerprint_collection(query_cfg) == fingerprint_collection(ingest_cfg)
 
 
@@ -51,8 +69,10 @@ def test_get_shared_rag_service_routes_active_pointer_through_resolver(monkeypat
     import tldw_chatbook.RAG_Search.simplified as simplified_pkg
     import tldw_chatbook.RAG_Search.simplified.active_config as ac
 
-    sentinel_config = RAGConfig(embedding=EmbeddingConfig(model="resolved-sentinel"),
-                                 vector_store=VectorStoreConfig(type="memory"))
+    sentinel_config = RAGConfig(
+        embedding=EmbeddingConfig(model="resolved-sentinel"),
+        vector_store=VectorStoreConfig(type="memory"),
+    )
     calls = []
 
     def _fake_create_rag_service(**kwargs):

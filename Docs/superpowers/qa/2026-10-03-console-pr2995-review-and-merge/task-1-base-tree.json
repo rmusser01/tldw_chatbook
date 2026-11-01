@@ -1,0 +1,1 @@
+{"root": "/private/tmp/console-pr2995-base-nfsxecon", "revision": "f843ca811f01da6c39d903b6cd7328d68d50416f", "command": ["git", "archive", "f843ca811f01da6c39d903b6cd7328d68d50416f", "tldw_chatbook", "Tests", "pyproject.toml", "scripts", "config.toml"], "exit": 0}

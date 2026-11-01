@@ -1,0 +1,852 @@
+--- Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py
++++ Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py
+@@ -109,7 +109,9 @@
+     )
+ 
+ 
+-def _acceptance(conversation_id: str, *, suffix: str = "1") -> ConsoleDurableTurnAcceptance:
++def _acceptance(
++    conversation_id: str, *, suffix: str = "1"
++) -> ConsoleDurableTurnAcceptance:
+     return ConsoleDurableTurnAcceptance(
+         conversation_id=conversation_id,
+         user_message_id=f"user-{suffix}",
+@@ -199,12 +201,8 @@
+                 acceptance.attempt_id,
+                 acceptance.origin,
+                 acceptance.queue_entry_id,
+-                dump_console_turn_library_authority_json(
+-                    acceptance.frozen_authority
+-                ),
+-                dump_console_resolved_destination_json(
+-                    acceptance.resolved_destination
+-                ),
++                dump_console_turn_library_authority_json(acceptance.frozen_authority),
++                dump_console_resolved_destination_json(acceptance.resolved_destination),
+                 dump_console_dispatch_reconstructability_json(
+                     acceptance.reconstructability
+                 ),
+@@ -266,7 +264,7 @@
+                         {
+                             "call_id": "call-1",
+                             "name": "calculator",
+-                            "arguments": "{\"expression\":\"2+2\"}",
++                            "arguments": '{"expression":"2+2"}',
+                             "state": "pending",
+                         }
+                     ],
+@@ -453,7 +451,9 @@
+         dump_console_turn_library_authority_json(authority)
+ 
+ 
+-def test_reconstructability_codec_requires_an_explicit_opaque_reference_format() -> None:
++def test_reconstructability_codec_requires_an_explicit_opaque_reference_format() -> (
++    None
++):
+     with pytest.raises(ConsoleDispatchCheckpointValidationError):
+         dump_console_dispatch_reconstructability_json(
+             ConsoleDispatchReconstructability(
+@@ -481,10 +481,14 @@
+     assert read.status is ConsoleDispatchResultStatus.COMMITTED
+     assert read.checkpoint == inserted
+ 
+-    rows = db.get_connection().execute(
+-        "SELECT id, role, assistant_generation_state, version, deleted "
+-        "FROM messages ORDER BY id"
+-    ).fetchall()
++    rows = (
++        db.get_connection()
++        .execute(
++            "SELECT id, role, assistant_generation_state, version, deleted "
++            "FROM messages ORDER BY id"
++        )
++        .fetchall()
++    )
+     assert [tuple(row) for row in rows] == [
+         ("assistant-1", "assistant", "accepted", 1, 0),
+         ("user-1", "user", None, 1, 0),
+@@ -493,11 +497,14 @@
+ 
+ def test_acceptance_replaces_before_first_marker_atomically(tmp_path: Path) -> None:
+     db, conversation_id = _db_and_conversation(tmp_path / "cursor.sqlite")
+-    assert db.set_conversation_active_cursor(
+-        conversation_id,
+-        active_leaf_message_id=None,
+-        before_message_id="old-root",
+-    ) is True
++    assert (
++        db.set_conversation_active_cursor(
++            conversation_id,
++            active_leaf_message_id=None,
++            before_message_id="old-root",
++        )
++        is True
++    )
+ 
+     inserted = _insert(
+         db,
+@@ -624,7 +631,9 @@
+     with pytest.raises(ConsoleDispatchCheckpointValidationError):
+         _insert(db, repository, acceptance)
+ 
+-    assert db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
++    assert (
++        db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
++    )
+ 
+ 
+ def test_a_root_fork_prompt_is_saved_marked_and_refused_with_a_parent(
+@@ -729,9 +738,7 @@
+     tmp_path: Path,
+     operation: str,
+ ) -> None:
+-    db, conversation_id = _db_and_conversation(
+-        tmp_path / f"deleted-{operation}.sqlite"
+-    )
++    db, conversation_id = _db_and_conversation(tmp_path / f"deleted-{operation}.sqlite")
+     repository = ConsoleDispatchRepository(db)
+     inserted = _insert(db, repository, _continuation_acceptance(conversation_id))
+     owner = (
+@@ -781,18 +788,25 @@
+         )
+         assert result.status is ConsoleDispatchResultStatus.CONFLICT
+ 
+-    assistant = db.get_connection().execute(
+-        "SELECT assistant_generation_state, version, deleted FROM messages WHERE id = ?",
+-        (owner.assistant_message_id,),
+-    ).fetchone()
++    assistant = (
++        db.get_connection()
++        .execute(
++            "SELECT assistant_generation_state, version, deleted FROM messages WHERE id = ?",
++            (owner.assistant_message_id,),
++        )
++        .fetchone()
++    )
+     assert tuple(assistant) == (
+         owner.state.value,
+         owner.assistant_message_version,
+         0,
+     )
+-    assert db.get_connection().execute(
+-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+-    ).fetchone()[0] == 1
++    assert (
++        db.get_connection()
++        .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
++        .fetchone()[0]
++        == 1
++    )
+ 
+ 
+ @pytest.mark.parametrize("boundary", ["user", "assistant", "checkpoint"])
+@@ -806,7 +820,7 @@
+         connection.execute(
+             f"""
+             CREATE TRIGGER fail_{boundary} BEFORE INSERT ON messages
+-            WHEN NEW.role = '{boundary if boundary == 'user' else 'assistant'}'
++            WHEN NEW.role = '{boundary if boundary == "user" else "assistant"}'
+             BEGIN SELECT RAISE(ABORT, 'injected {boundary} failure'); END
+             """
+         )
+@@ -823,9 +837,12 @@
+         _insert(db, repository, _acceptance(conversation_id))
+ 
+     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+-    assert connection.execute(
+-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+-    ).fetchone()[0] == 0
++    assert (
++        connection.execute(
++            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
++        ).fetchone()[0]
++        == 0
++    )
+ 
+ 
+ def test_acceptance_persists_the_full_user_attachment_set_atomically(
+@@ -900,12 +917,16 @@
+         _insert(db, repository, acceptance)
+ 
+     assert connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+-    assert connection.execute(
+-        "SELECT COUNT(*) FROM message_attachments"
+-    ).fetchone()[0] == 0
+-    assert connection.execute(
+-        "SELECT COUNT(*) FROM console_dispatch_checkpoints"
+-    ).fetchone()[0] == 0
++    assert (
++        connection.execute("SELECT COUNT(*) FROM message_attachments").fetchone()[0]
++        == 0
++    )
++    assert (
++        connection.execute(
++            "SELECT COUNT(*) FROM console_dispatch_checkpoints"
++        ).fetchone()[0]
++        == 0
++    )
+ 
+ 
+ def test_nonempty_attachments_cannot_claim_unreconstructable_retry_state(
+@@ -931,7 +952,9 @@
+     with pytest.raises(ConsoleDispatchCheckpointValidationError):
+         _insert(db, repository, acceptance)
+ 
+-    assert db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
++    assert (
++        db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
++    )
+ 
+ 
+ @pytest.mark.parametrize("boundary", ["assistant_state", "checkpoint_state"])
+@@ -942,7 +965,9 @@
+     repository = ConsoleDispatchRepository(db)
+     inserted = _insert(db, repository, _acceptance(conversation_id))
+     connection = db.get_connection()
+-    table = "messages" if boundary == "assistant_state" else "console_dispatch_checkpoints"
++    table = (
++        "messages" if boundary == "assistant_state" else "console_dispatch_checkpoints"
++    )
+     connection.execute(
+         f"""
+         CREATE TRIGGER fail_{boundary} BEFORE UPDATE ON {table}
+@@ -975,7 +1000,13 @@
+ 
+ @pytest.mark.parametrize(
+     "mismatch",
+-    ["checkpoint_revision", "user_version", "assistant_version", "assistant_state", "deleted"],
++    [
++        "checkpoint_revision",
++        "user_version",
++        "assistant_version",
++        "assistant_state",
++        "deleted",
++    ],
+ )
+ def test_state_cas_requires_every_expected_owner_predicate(
+     tmp_path: Path, mismatch: str
+@@ -1047,20 +1078,23 @@
+     assert result.checkpoint.assistant_message_version == 2
+     assert result.committed_message_version == 2
+     assert result.committed_payload_hash == expected_hash
+-    assert db.read_committed_chat_sync_intent(
+-        message_id=inserted.assistant_message_id,
+-        message_version=2,
+-        payload_hash=expected_hash,
+-    ) is not None
+-
+-
+-@pytest.mark.parametrize("boundary", ["terminal_content", "sync_intent", "checkpoint_delete"])
++    assert (
++        db.read_committed_chat_sync_intent(
++            message_id=inserted.assistant_message_id,
++            message_version=2,
++            payload_hash=expected_hash,
++        )
++        is not None
++    )
++
++
++@pytest.mark.parametrize(
++    "boundary", ["terminal_content", "sync_intent", "checkpoint_delete"]
++)
+ def test_terminal_settlement_failure_at_each_write_boundary_rolls_back(
+     tmp_path: Path, boundary: str
+ ) -> None:
+-    db, conversation_id = _db_and_conversation(
+-        tmp_path / f"settle-{boundary}.sqlite"
+-    )
++    db, conversation_id = _db_and_conversation(tmp_path / f"settle-{boundary}.sqlite")
+     repository = ConsoleDispatchRepository(db)
+     inserted = _insert(db, repository, _acceptance(conversation_id))
+     connection = db.get_connection()
+@@ -1109,7 +1143,9 @@
+     assert repository.read_for_session(conversation_id).checkpoint == inserted
+ 
+ 
+-def test_terminal_settlement_is_atomic_and_returns_committed_proof(tmp_path: Path) -> None:
++def test_terminal_settlement_is_atomic_and_returns_committed_proof(
++    tmp_path: Path,
++) -> None:
+     db, conversation_id = _db_and_conversation(tmp_path / "settle.sqlite")
+     repository = ConsoleDispatchRepository(db)
+     inserted = _insert(db, repository, _acceptance(conversation_id))
+@@ -1269,11 +1305,14 @@
+     assert repository.read_for_session(conversation_id).status is (
+         ConsoleDispatchResultStatus.NOT_FOUND
+     )
+-    assert db.read_committed_chat_sync_intent(
+-        message_id=inserted.assistant_message_id,
+-        message_version=3,
+-        payload_hash=expected_hash,
+-    ) is not None
++    assert (
++        db.read_committed_chat_sync_intent(
++            message_id=inserted.assistant_message_id,
++            message_version=3,
++            payload_hash=expected_hash,
++        )
++        is not None
++    )
+ 
+ 
+ def test_native_replay_rejects_added_hook_receipt_before_dedupe(tmp_path):
+
+--- Tests/Chat/test_console_chat_create_confirm.py
++++ Tests/Chat/test_console_chat_create_confirm.py
+@@ -1,4 +1,5 @@
+ """Confirm rounds for agent-initiated chat creation (fork_chat / new_chat)."""
++
+ import threading
+ 
+ import pytest
+@@ -8,8 +9,14 @@
+ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+-from Tests.Chat.test_console_skill_script_confirm import _FakeApp, _wait_until  # reuse fakes
+-from Tests.Chat.test_console_chat_create_integration import child_new_chat_rig, real_db_controller
++from Tests.Chat.test_console_skill_script_confirm import (
++    _FakeApp,
++    _wait_until,
++)  # reuse fakes
++from Tests.Chat.test_console_chat_create_integration import (
++    child_new_chat_rig,
++    real_db_controller,
++)
+ 
+ 
+ @pytest.fixture
+@@ -21,7 +28,9 @@
+         controller = ConsoleChatController(store=store, provider_gateway=object())
+         controller.app = _FakeApp()
+         controller.pending_chat_create_payloads = []
+-        controller.set_pending_chat_create = controller.pending_chat_create_payloads.append
++        controller.set_pending_chat_create = (
++            controller.pending_chat_create_payloads.append
++        )
+         made.append(controller)
+         return controller
+ 
+@@ -37,11 +46,16 @@
+ def test_allow_round_trip(make_controller):
+     controller = make_controller()
+     result = {}
+-    t = threading.Thread(target=lambda: result.update(
+-        decision=controller.request_chat_create_confirm(_payload(), session_id="s1")))
++    t = threading.Thread(
++        target=lambda: result.update(
++            decision=controller.request_chat_create_confirm(_payload(), session_id="s1")
++        )
++    )
+     t.start()
+     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
+-    controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[0])
++    controller.resolve_pending_chat_create(
++        True, False, request_id=controller.pending_chat_create_ids()[0]
++    )
+     t.join(timeout=5)
+     assert result["decision"] == {"allow": True, "remember": False}
+ 
+@@ -49,17 +63,23 @@
+ def test_deny_round_trip(make_controller):
+     controller = make_controller()
+     result = {}
+-    t = threading.Thread(target=lambda: result.update(
+-        decision=controller.request_chat_create_confirm(_payload(), session_id="s1")))
++    t = threading.Thread(
++        target=lambda: result.update(
++            decision=controller.request_chat_create_confirm(_payload(), session_id="s1")
++        )
++    )
+     t.start()
+     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
+-    controller.resolve_pending_chat_create(False, False, request_id=controller.pending_chat_create_ids()[0])
++    controller.resolve_pending_chat_create(
++        False, False, request_id=controller.pending_chat_create_ids()[0]
++    )
+     t.join(timeout=5)
+     assert result["decision"] == {"allow": False, "remember": False}
+ 
+ 
+ def test_remember_grants_session_scope(make_controller):
+     controller = make_controller()
++
+     # TASK-32531: grants ride only for VERIFIED primary requesters.
+     class _PDB:
+         @staticmethod
+@@ -73,11 +93,16 @@
+ 
+     def first():
+         with use_run_id("run-x"):
+-            results.append(controller.request_chat_create_confirm(_payload(), session_id="s1"))
++            results.append(
++                controller.request_chat_create_confirm(_payload(), session_id="s1")
++            )
++
+     t = threading.Thread(target=first)
+     t.start()
+     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
+-    controller.resolve_pending_chat_create(True, True, request_id=controller.pending_chat_create_ids()[0])
++    controller.resolve_pending_chat_create(
++        True, True, request_id=controller.pending_chat_create_ids()[0]
++    )
+     t.join(timeout=5)
+ 
+     # Second call in the same session: no card, straight allow. ("s1" is
+@@ -300,6 +325,7 @@
+     from tldw_chatbook.Agents.run_context import use_run_id
+ 
+     controller = make_controller()
++
+     # Arm with the run context INSIDE the worker (the round stamps
+     # current_run_id there); legacy no-session caller so the payload
+     # MOUNTS to the sink instead of parking for a background session.
+@@ -328,8 +354,15 @@
+         self._row = row
+ 
+     def get_run(self, run_id):
+-        return {"agent_kind": self._row, "parent_run_id": "parent-1",
+-                "task": "do the thing"} if run_id == "run-9" else None
++        return (
++            {
++                "agent_kind": self._row,
++                "parent_run_id": "parent-1",
++                "task": "do the thing",
++            }
++            if run_id == "run-9"
++            else None
++        )
+ 
+ 
+ def test_subagent_requester_stamps_identity_and_skips_session_grant(make_controller):
+@@ -337,7 +370,9 @@
+     real = controller.store.create_session(title="S")
+     sid = real.id  # active session: the round MOUNTS (no park)
+     controller._chat_create_session_grants[sid] = {"fork_chat"}
+-    controller._agent_bridge = type("B", (), {"agent_runs_db": _FakeAgentDB("subagent")})
++    controller._agent_bridge = type(
++        "B", (), {"agent_runs_db": _FakeAgentDB("subagent")}
++    )
+ 
+     decisions = []
+ 
+@@ -486,4 +521,7 @@
+         ]
+         assert controller.execute_agent_chat_create(prepared)["ok"]
+     assert polls == [None]
+-    assert not controller._chat_creation_records and not controller.pending_chat_create_ids()
++    assert (
++        not controller._chat_creation_records
++        and not controller.pending_chat_create_ids()
++    )
+
+@
+         parts.append(f"Up to message: {message_id}")
+         return "\n".join(f"> {part}" for part in parts)
+ 
+-    def build_transcript_note(self, message_id: str) -> ConsoleNoteDraft | ConsoleSubmitResult:
++    def build_transcript_note(
++        self, message_id: str
++    ) -> ConsoleNoteDraft | ConsoleSubmitResult:
+         """Format the transcript up to and including message_id as a note.
+ 
+         Args:
+@@ -22280,9 +22341,7 @@
+             )
+         title = "Summary: " + (span[0].content.strip().splitlines() or [""])[0][:48]
+         content = (
+-            self._note_provenance_header(session_id, message_id)
+-            + "\n\n"
+-            + summary
++            self._note_provenance_header(session_id, message_id) + "\n\n" + summary
+         )
+         return ConsoleNoteDraft(title=title, content=content)
+ 
+@@ -23200,7 +23259,9 @@
+                 run_id=f"preview:{session.id}",
+                 session_id=session.id,
+                 current_user_message=None,
+-                kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
++                kill_switch=(
++                    self._console_tool_kill_switch_reader() or (lambda: False)
++                ),
+                 reserve_direct_update_schema=True,
+             )
+             configuration = (
+@@ -23414,9 +23475,7 @@
+                 locator_fingerprint=project_selection.locator_fingerprint,
+                 max_bytes=startup_max_bytes,
+                 dispatch_started_wall_ns=time.time_ns(),
+-                excluded_dirs=_project_instruction_excluded_dirs(
+-                    project_selection
+-                ),
++                excluded_dirs=_project_instruction_excluded_dirs(project_selection),
+             )
+         except Exception:  # noqa: BLE001 - prep failure proceeds
+             # Content-free by design: no exception text is attached (a
+@@ -23595,7 +23654,9 @@
+                 run_id=f"preview:{session.id}",
+                 session_id=session.id,
+                 current_user_message=None,
+-                kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
++                kill_switch=(
++                    self._console_tool_kill_switch_reader() or (lambda: False)
++                ),
+                 reserve_direct_update_schema=True,
+             )
+         try:
+@@ -24069,7 +24130,9 @@
+     def _hook_authority_values(self, session_id: str) -> dict[str, Any]:
+         """Read current hook authority without assembling unrelated catalogs."""
+         keys = (
+-            "workspace_roots", "project_authority", "tool_policy_profile_id",
++            "workspace_roots",
++            "project_authority",
++            "tool_policy_profile_id",
+             "persona_policy_rules",
+         )
+         if self._turn_context_provider is not None:
+@@ -24077,17 +24140,24 @@
+             return {key: getattr(snapshot, key) for key in keys}
+         session = next(item for item in self.store.sessions() if item.id == session_id)
+         workspace_id = self.store.session_workspace_id(session_id)
+-        roots, _aliases, _skipped = capture_change_review_admission(self.app, workspace_id)
++        roots, _aliases, _skipped = capture_change_review_admission(
++            self.app, workspace_id
++        )
+         return {
+             "workspace_roots": roots,
+             "project_authority": capture_project_instruction_authority(
+-                session, getattr(self.app, "workspace_registry_service", None),
++                session,
++                getattr(self.app, "workspace_registry_service", None),
+                 include_bindings=self._agent_dispatch_is_eligible(
+                     session, prefill=self.store.session_one_shot_prefill(session_id)
+                 ),
+             ),
+-            "tool_policy_profile_id": resolve_turn_tool_policy_profile_id(self.app, workspace_id),
+-            "persona_policy_rules": resolve_turn_persona_policy_rules(self.app, session),
++            "tool_policy_profile_id": resolve_turn_tool_policy_profile_id(
++                self.app, workspace_id
++            ),
++            "persona_policy_rules": resolve_turn_persona_policy_rules(
++                self.app, session
++            ),
+         }
+ 
+     def resolve_turn_configuration_snapshot(
+@@ -24116,9 +24186,7 @@
+ 
+         selection = self._provider_selection_for_session(session_id)
+         model = selection.explicit_model or selection.configured_model
+-        session = next(
+-            item for item in self.store.sessions() if item.id == session_id
+-        )
++        session = next(item for item in self.store.sessions() if item.id == session_id)
+         held_scope = session.rag_scope_holder.scope
+         from tldw_chatbook.Chat.console_agent_bridge import console_run_budget
+         from tldw_chatbook.Library.library_rag_state import library_rag_profile_top_k
+@@ -25809,12 +25877,17 @@
+                     if key in payload
+                 }
+             )
+-            calls = [{
+-                "name": "install_skill" if kind == "skill_install" else "run_skill_script",
+-                "args_summary": summarize_hook_arguments(arguments),
+-            }]
++            calls = [
++                {
++                    "name": "install_skill"
++                    if kind == "skill_install"
++                    else "run_skill_script",
++                    "args_summary": summarize_hook_arguments(arguments),
++                }
++            ]
+         engine.notify(
+-            "ApprovalRequested", session_id=session_id,
++            "ApprovalRequested",
++            session_id=session_id,
+             run_id=run_id,
+             data={
+                 "calls": calls,
+@@ -27190,9 +27263,7 @@
+         capacity = prepared_before.capacity
+         # TASK-26019: this accounting IS the request's own (AC#2); the
+         # breakdown surface reads the latest copy, no re-estimation.
+-        self._context_accounting_by_session[session_id] = (
+-            prepared_before.accounting
+-        )
++        self._context_accounting_by_session[session_id] = prepared_before.accounting
+         mandatory_tokens = (
+             prepared_before.accounting.non_compactable_tokens
+             - prepared_before.accounting.memory_tokens
+@@ -27459,12 +27530,14 @@
+             session_id,
+             resolution,
+             reason="automatic",
+-            current=lambda: self._compaction_admission(
+-                session_id=session_id,
+-                resolution=resolution,
+-                prompt=prompt,
+-            )
+-            == admission,
++            current=lambda: (
++                self._compaction_admission(
++                    session_id=session_id,
++                    resolution=resolution,
++                    prompt=prompt,
++                )
++                == admission
++            ),
+         )
+         transaction = await service.compact(
+             admission=admission,
+@@ -27480,7 +27553,12 @@
+             prepare_main=prepare_main,
+             prefix_messages=snapshots[: boundary_index + 1],
+             retry_fence=compaction_retry_fence(
+-                conversation_id, resolution, prompt, resolved, effective, snapshots,
++                conversation_id,
++                resolution,
++                prompt,
++                resolved,
++                effective,
++                snapshots,
+                 active_request=not manual_action,
+             ),
+             honor_failure_latch=micro_compaction or not manual_action,
+@@ -27821,11 +27899,9 @@
+         character_emote_snapshot: CharacterEmoteRunSnapshot | None = None
+         if force_plain:
+             try:
+-                character_emote_snapshot = (
+-                    await self._character_emote_snapshot_for_run(
+-                        owner_id,
+-                        turn_context,
+-                    )
++                character_emote_snapshot = await self._character_emote_snapshot_for_run(
++                    owner_id,
++                    turn_context,
+                 )
+             except _CharacterEmoteAuthorityChanged:
+                 return self._block_context_preflight(
+@@ -28078,9 +28154,7 @@
+                     propagate_trace_call_persistence_errors=(
+                         propagate_trace_call_persistence_errors
+                     ),
+-                    trusted_profile_user_message_id=(
+-                        trusted_profile_user_message_id
+-                    ),
++                    trusted_profile_user_message_id=(trusted_profile_user_message_id),
+                 )
+             return await self._run_direct_provider_reply(
+                 resolution=resolution,
+@@ -28343,11 +28417,15 @@
+             return
+         register = getattr(bridge, "on_fleet_child_settled", None)
+         if callable(register):
+-            register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled)
++            register(
++                ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled
++            )
+         else:
+             register = getattr(bridge, "on_fleet_drained", None)
+             if callable(register):
+-                register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained)
++                register(
++                    ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained
++                )
+ 
+     def _on_fleet_drained_reattach_usage(self, event: Any) -> None:
+         """``FleetDrained`` consumer: hop off the child's thread and fold.
+@@ -29721,9 +29799,7 @@
+         project_state = (
+             ProjectInstructionControlState(
+                 project_instructions_enabled=project_snapshot.enabled,
+-                working_folder_binding_id=(
+-                    project_snapshot.working_folder_binding_id
+-                ),
++                working_folder_binding_id=(project_snapshot.working_folder_binding_id),
+                 working_folder_locator_fingerprint=(
+                     project_snapshot.working_folder_locator_fingerprint
+                 ),
+@@ -29741,10 +29817,7 @@
+         confirm_project_dispatch = None
+         project_authority_guard = None
+         project_activation_callback = None
+-        if (
+-            session is not None
+-            and project_state.project_instructions_enabled
+-        ):
++        if session is not None and project_state.project_instructions_enabled:
+             try:
+                 registry = getattr(self.app, "workspace_registry_service", None)
+             except Exception:
+@@ -30095,7 +30168,9 @@
+                     session_id=session_id,
+                     turn_context=turn_context,
+                     project_root=(
+-                        project_selection.root if project_selection is not None else None
++                        project_selection.root
++                        if project_selection is not None
++                        else None
+                     ),
+                     project_root_identity=(
+                         project_selection.root_identity
+@@ -30106,12 +30181,16 @@
+                     admitted_roots=run_admitted_roots,
+                 )
+             )
+-            raw_shell_provider, raw_shell_review_hook = self._compose_raw_shell_provider(
+-                session_id=session_id,
+-                turn_context=turn_context,
+-                project_root=(
+-                    project_selection.root if project_selection is not None else None
+-                ),
++            raw_shell_provider, raw_shell_review_hook = (
++                self._compose_raw_shell_provider(
++                    session_id=session_id,
++                    turn_context=turn_context,
++                    project_root=(
++                        project_selection.root
++                        if project_selection is not None
++                        else None
++                    ),
++                )
+             )
+             self._mcp_provider = mcp_provider
+ 
+@@ -30189,7 +30268,9 @@
+             # hooks see every batch; each gates only what its provider owns,
+             # so the combined hook is a collision-free merge.
+             if local_review_hook is not None:
+-                review_hook = build_combined_review_hook([review_hook, local_review_hook])
++                review_hook = build_combined_review_hook(
++                    [review_hook, local_review_hook]
++                )
+             if virtual_cli_review_hook is not None:
+                 review_hook = build_combined_review_hook(
+                     [review_hook, virtual_cli_review_hook]
+@@ -30207,7 +30288,9 @@
+                 managed_skill_promotion_gate = ManagedSkillProposalGate()
+                 managed_skill_review_hook = build_managed_skill_promotion_review_hook(
+                     managed_skill_promotion_gate,
+-                    functools.partial(self.request_mcp_approvals, session_id=session_id),
++                    functools.partial(
++                        self.request_mcp_approvals, session_id=session_id
++                    ),
+                 )
+                 review_hook = build_combined_review_hook(
+                     [review_hook, managed_skill_review_hook]
+@@ -30268,7 +30351,9 @@
+             ):
+                 raise RuntimeError("Prepared turn changed before provider dispatch.")
+             if generation_token is None:
+-                generation_token = self.store.begin_generation_attempt(assistant_message_id)
++                generation_token = self.store.begin_generation_attempt(
++                    assistant_message_id
++                )
+             _generation_handoff.issue(generation_token)
+             if variant_mode:
+                 self.store.begin_variant_stream(
+@@ -30307,7 +30392,9 @@
+                     run_id=assistant_message_id,
+                     session_id=session_id,
+                     current_user_message=trusted_profile_user_message,
+-                    kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
++                    kill_switch=(
++                        self._console_tool_kill_switch_reader() or (lambda: False)
++                    ),
+                 )
+             canvas_provider = None
+             canvas_authority = None
+@@ -30643,9 +30730,9 @@
+             if session.id == session_id:
+                 conversation_id = session.persisted_conversation_id or session_id
+                 with self._lifecycle_revision_lock:
+-                    self._lifecycle_session_by_conversation[
+-                        str(conversation_id)
+-                    ] = session_id
++                    self._lifecycle_session_by_conversation[str(conversation_id)] = (
++                        session_id
++                    )
+                 return conversation_id
+         return session_id
+ 
+@@ -31165,8 +31252,7 @@
+                 # stopped: ...").
+                 return reason + suffix
+             return (
+-                f"Agent run stuck: "
+-                f"{reason or 'budget or loop limit reached'}.{suffix}"
++                f"Agent run stuck: {reason or 'budget or loop limit reached'}.{suffix}"
+             )
+         return f"Agent run failed: {reason or outcome.status}."
+ 
+@@ -31257,7 +31343,11 @@
+     def _resolved_system_prompt(self, session_id: str | None) -> str | None:
+         """Resolve the trusted identity system template for the session kind."""
+         session = next(
+-            (candidate for candidate in self.store.sessions() if candidate.id == session_id),
++            (
++                candidate
++                for candidate in self.store.sessions()
++                if candidate.id == session_id
++            ),
+             None,
+         )
+         return session_send_system_prompt(
+@@ -32078,24 +32168,25 @@
+                 wake.retry_soon()
+         # Hook lifecycle belongs to an accepted turn, independently of the
+         # queue's coalesced notification policy. Pop before invoking callbacks.
+-        if (
+-            target in self._run_hooks_stop_pending
+-            and run_state.status in {
+-                ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED,
+-                ConsoleRunStatus.STOPPED,
+-            }
+-        ):
++        if target in self._run_hooks_stop_pending and run_state.status in {
++            ConsoleRunStatus.COMPLETED,
++            ConsoleRunStatus.FAILED,
++            ConsoleRunStatus.STOPPED,
++        }:
+             self._run_hooks_stop_pending.discard(target)
+             try:
+                 engine = self._run_hooks_engine()
+                 if engine is not None:
+                     engine.notify(
+-                        "Stop", session_id=target,
+-                        data={"status": {
+-                            ConsoleRunStatus.COMPLETED: "completed",
+-                            ConsoleRunStatus.FAILED: "error",
+-                            ConsoleRunStatus.STOPPED: "cancelled",
+-                        }[run_state.status]},
++                        "Stop",
++                        session_id=target,
++                        data={
++                            "status": {
++                                ConsoleRunStatus.COMPLETED: "completed",
++                                ConsoleRunStatus.FAILED: "error",
++                                ConsoleRunStatus.STOPPED: "cancelled",
++                            }[run_state.status]
++                        },
+                     )
+             except Exception:  # noqa: BLE001 -- observers cannot break settlement
+                 logger.warning("Stop observer failed; continuing terminal publication")
+@@ -32179,7 +32270,11 @@
+         if mapped_status is None:
+             return
+         session = next(
+-            (candidate for candidate in self.store.sessions() if candidate.id == session_id),
++            (
++                candidate
++                for candidate in self.store.sessions()
++                if candidate.id == session_id
++            ),
+             None,
+         )
+         conversation_id = (
+

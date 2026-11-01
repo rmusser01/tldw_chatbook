@@ -6,7 +6,10 @@ spans, so a message can never inject Rich markup (the transcript's safety
 guarantee is preserved).
 """
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Chat.console_roleplay_identity import (
     ConsolePresentationContext,
     resolve_console_message_presentation,
@@ -21,7 +24,9 @@ def test_markdown_spans_render_heading_bold_and_code():
     """Headings, **bold**, and `code` map to the expected styled segments."""
     from tldw_chatbook.Widgets.Console.console_transcript import _BOLD_STYLE
 
-    assert _markdown_body_spans("### Understanding WAL") == [("Understanding WAL", "bold underline")]
+    assert _markdown_body_spans("### Understanding WAL") == [
+        ("Understanding WAL", "bold underline")
+    ]
     assert _markdown_body_spans("use **local RAG** now") == [
         "use ",
         ("local RAG", _BOLD_STYLE),
@@ -169,9 +174,7 @@ def test_flavor_curly_single_quoted_thought_preserves_curly_contraction():
 def test_flavor_ordinary_apostrophe_and_unclosed_thought_stay_literal():
     """Contractions and incomplete thoughts never become thought spans."""
     assert _markdown_body_spans("Don't panic.") == ["Don't panic."]
-    assert _markdown_body_spans("She wondered, 'not yet") == [
-        "She wondered, 'not yet"
-    ]
+    assert _markdown_body_spans("She wondered, 'not yet") == ["She wondered, 'not yet"]
 
 
 def test_flavor_single_asterisk_action_gets_action_style():
@@ -217,7 +220,7 @@ def test_flavor_outer_speech_swallows_nested_single_quotes():
     """Outer speech precedence keeps nested single quotes in one span."""
     from tldw_chatbook.Widgets.Console.console_transcript import _SPEECH_STYLE
 
-    straight = '"I said \'no\'."'
+    straight = "\"I said 'no'.\""
     curly = "“I said ‘no’.”"
 
     assert _markdown_body_spans(straight) == [(straight, _SPEECH_STYLE)]

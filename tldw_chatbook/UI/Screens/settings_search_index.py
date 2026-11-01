@@ -395,6 +395,8 @@ def build_field_search_index() -> None:
                     "settings-console-context-carry-forward-mode",
                     "Keep after compaction",
                 ),
+                # Capture finding 12: its button sits in a labelled row now.
+                ("settings-console-context-edit-summary-prompt", "Summary prompt"),
                 # TASK-23109 completion sweep: labels mirror the rendered rows.
                 (
                     "settings-console-exchange-capture-enabled",
@@ -421,10 +423,7 @@ def build_field_search_index() -> None:
                 ),
                 ("settings-console-agent-max-model-turns", "Model turns (backstop)"),
                 ("settings-console-agent-max-steps", "Steps (backstop)"),
-                (
-                    "settings-console-default-user-display-name",
-                    "Default chat display name",
-                ),
+                ("settings-console-default-user-display-name", "Chat display name"),
                 ("settings-console-default-streaming", "Streaming"),
                 ("settings-console-default-temperature", "Temperature"),
                 ("settings-console-default-top-p", "Top P"),
@@ -460,12 +459,29 @@ def build_field_search_index() -> None:
                     "settings-console-background-effect-fps",
                     "Background effect frame rate",
                 ),
-                # Review finding 5: bare Button toggle with no labeled row --
-                # invisible to the drift guard's heuristic, indexed by hand.
+                # TASK-18925: the OS-notifications group's four toggles,
+                # indexed like the background-effects rows above them.
+                ("settings-console-os-notifications-enabled", "OS notifications"),
+                (
+                    "settings-console-os-notifications-enabled",
+                    "Enable OS notifications",
+                ),
+                (
+                    "settings-console-os-notifications-run-finished",
+                    "Notify run finished",
+                ),
+                ("settings-console-os-notifications-run-failed", "Notify run failed"),
+                (
+                    "settings-console-os-notifications-needs-approval",
+                    "Notify needs approval",
+                ),
+                # Review finding 5: a toggle with no labeled row (a Checkbox
+                # since capture finding 12), indexed by hand.
                 (
                     "settings-console-remote-images-toggle",
                     "Render images linked in assistant replies",
                 ),
+                ("settings-console-remote-images-toggle", "Render linked images"),
                 ("settings-console-remote-images-toggle", "Remote images"),
             ),
             SettingsCategoryId.APPEARANCE: (
@@ -521,16 +537,20 @@ def build_field_search_index() -> None:
                 ),
             ),
             SettingsCategoryId.PROVIDERS_MODELS: (
-                ("settings-provider-value", "Provider"),
+                # TASK-33007.2: the one-row Provider control; the Select
+                # behind it is a hidden adapter.
+                ("settings-provider-search", "Provider"),
                 ("settings-provider-api-mode", "API mode"),
                 (
                     "settings-provider-api-mode",
                     "api_settings.<provider>.api_mode",
                 ),
-                ("settings-model-value", "Model"),
+                # TASK-33007.3: the picker's field; the Input behind it is a
+                # hidden adapter holding the model id.
+                ("model-search-picker-input", "Model"),
                 ("settings-provider-endpoint-value", "Endpoint"),
                 ("settings-provider-api-key", "API key"),
-                ("settings-provider-credential-env-var", "Credential env var"),
+                ("settings-provider-credential-env-var", "Env var"),
                 ("settings-model-context-window", "Model context window tokens"),
                 # TASK-23109 completion sweep: model-catalog refresh controls.
                 (
@@ -574,6 +594,10 @@ def build_field_search_index() -> None:
                 ),
                 ("settings-model-profile-thinking-budget-tokens", "Think budget"),
                 ("settings-model-profile-streaming", "Streaming"),
+                # TASK-33007.6: the Prompt-cache snapshots disclosure's fields
+                # (ADR-119); '/' opens the closed disclosure it lands in.
+                ("settings-snapshot-enabled", "Enable prompt-cache snapshots"),
+                ("settings-snapshot-keep", "Snapshot keep count"),
             ),
             SettingsCategoryId.SPEECH_TTS: (
                 ("settings-speech-default-provider", "Default TTS Provider"),
@@ -626,6 +650,10 @@ def build_field_search_index() -> None:
                 for name, label in _labels.items()
             ),
             SettingsCategoryId.PRIVACY_SECURITY: (
+                # TASK-34100.4: the Encryption card's password-gated actions.
+                ("settings-encryption-enable", "Encrypt API keys"),
+                ("settings-encryption-change", "Change master password"),
+                ("settings-encryption-disable", "Turn off encryption"),
                 ("settings-raw-cli-permitted", "Allow raw CLI host access"),
             ),
             SettingsCategoryId.NETWORK: (
@@ -650,7 +678,7 @@ def build_field_search_index() -> None:
                 (
                     "settings-library-rag-assistant-access-default",
                     # TASK-25732: one noun for this permission everywhere --
-                    # the Console chip says "Agent blocked", and "Assistant"
+                    # the Console chip says "Agent access off", and "Assistant"
                     # already names the persona in that same status strip.
                     "Agent Library access",
                 ),
@@ -733,6 +761,15 @@ def build_field_search_index() -> None:
                 ),
             ),
         }
+    )
+    # TASK-33003.14: Console Behavior's generation fallbacks carry Providers &
+    # Models' labels, and Providers & Models wins the tie, so each also answers
+    # to its section's name: '/fallback temperature' lands on the fallback.
+    console = FIELD_SEARCH_INDEX[SettingsCategoryId.CONSOLE_BEHAVIOR]
+    FIELD_SEARCH_INDEX[SettingsCategoryId.CONSOLE_BEHAVIOR] = console + tuple(
+        (field_id, f"Global fallback {label}")
+        for field_id, label in console
+        if field_id.startswith("settings-console-default-")
     )
 
 

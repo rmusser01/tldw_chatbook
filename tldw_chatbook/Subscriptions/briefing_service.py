@@ -224,7 +224,9 @@ def build_briefing_prompt(
         )
     if rest:
         heading = "## Also in this window" if featured else "## In this window"
-        sections.append(heading + "\n\n" + "\n\n".join(_item_block(item) for item in rest))
+        sections.append(
+            heading + "\n\n" + "\n\n".join(_item_block(item) for item in rest)
+        )
     if overflow_count > 0:
         sections.append(
             "## Coverage note\n\n"
@@ -495,7 +497,9 @@ def pending_briefing_claim_watchlist_ids() -> frozenset[int]:
     reading the two registries -- safe only when called from the event
     loop, same as the other two accessors in this section.
     """
-    return frozenset(_ACTIVE_BRIEFING_CLAIMS) - frozenset(_ACTIVE_BRIEFING_CLAIM_ROW_IDS)
+    return frozenset(_ACTIVE_BRIEFING_CLAIMS) - frozenset(
+        _ACTIVE_BRIEFING_CLAIM_ROW_IDS
+    )
 
 
 @contextmanager
@@ -684,9 +688,12 @@ def _accept_briefing(
 ) -> dict[str, Any]:
     """Validate and commit or resolve one database-owned briefing claim."""
     with db.transaction() as conn:
-        if conn.execute(
-            "SELECT 1 FROM watchlists WHERE id = ?", (watchlist_id,)
-        ).fetchone() is None:
+        if (
+            conn.execute(
+                "SELECT 1 FROM watchlists WHERE id = ?", (watchlist_id,)
+            ).fetchone()
+            is None
+        ):
             raise KeyError(f"Watchlist not found: {watchlist_id}")
         if (
             validate_preset
@@ -947,9 +954,17 @@ async def _execute_accepted_briefing(
 
         if not selection.items:
             row = await asyncio.to_thread(
-                _finish_empty, db, briefing_id, mode, recorded_preset_id, covers_through, selection
+                _finish_empty,
+                db,
+                briefing_id,
+                mode,
+                recorded_preset_id,
+                covers_through,
+                selection,
             )
-            logger.info(f"briefing {briefing_id}: empty window for watchlist {watchlist_id}")
+            logger.info(
+                f"briefing {briefing_id}: empty window for watchlist {watchlist_id}"
+            )
             return row
 
         system, user = build_briefing_prompt(
@@ -1021,7 +1036,9 @@ async def _execute_accepted_briefing(
             # Recording this `complete` would show an empty artifact with no
             # error to explain it -- and would advance the window past items
             # nothing ever reported.
-            logger.warning(f"briefing {briefing_id}: {endpoint} returned an empty response")
+            logger.warning(
+                f"briefing {briefing_id}: {endpoint} returned an empty response"
+            )
             return await asyncio.to_thread(
                 _finish_failure,
                 db,

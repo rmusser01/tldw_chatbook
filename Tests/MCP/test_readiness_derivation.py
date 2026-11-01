@@ -163,7 +163,12 @@ def test_server_external_record_resource_prompt_counts_follow_tool_count_rules()
     assert unreported.prompt_count is None
 
     malformed = server_external_record_readiness(
-        {"server_id": "s4", "name": "S4", "resource_count": "many", "prompt_count": 2.5},
+        {
+            "server_id": "s4",
+            "name": "S4",
+            "resource_count": "many",
+            "prompt_count": 2.5,
+        },
         server_id="main",
     )
     assert malformed.resource_count is None

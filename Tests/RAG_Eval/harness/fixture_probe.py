@@ -34,6 +34,7 @@ product; the overall row of any report built from a handful of candidates
 (or from scoped-only candidates, which are excluded from cross-mode
 averages) is an artefact of the sample, not a measurement.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -213,15 +214,11 @@ def verdict(
                 "today's pipeline answers this candidate",
             )
 
-    ranks = ", ".join(
-        f"{mode}=miss" for mode in vector_modes
-    )
+    ranks = ", ".join(f"{mode}=miss" for mode in vector_modes)
     plain = result.cell("plain")
     plain_note = ""
     if plain is not None and not plain.error:
-        plain_note = (
-            f"; plain={'miss' if plain.is_miss else plain.best_rank}"
-        )
+        plain_note = f"; plain={'miss' if plain.is_miss else plain.best_rank}"
     return ProbeVerdict(
         result.query_id, True, f"measured failure ({ranks}){plain_note}"
     )
@@ -391,7 +388,8 @@ def probe_candidates(
                 target_slugs=tuple(candidate.relevant_slugs),
                 cells=cells,
                 top_ids={
-                    mode: tuple(outcome.retrieved_doc_ids[:k]) for mode, outcome in pairs
+                    mode: tuple(outcome.retrieved_doc_ids[:k])
+                    for mode, outcome in pairs
                 },
             )
         )

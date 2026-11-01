@@ -15,9 +15,9 @@ whatever the workbench hands you" contract.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -35,12 +35,27 @@ from tldw_chatbook.MCP.permission_store import (
 )
 from tldw_chatbook.UI.Widgets.table_click_select import DataTableClickSelectMixin
 
+if TYPE_CHECKING:
+    from tldw_chatbook.MCP.hub_tool_catalog import HubTool
+
+
 _TABLE_COLUMNS = ("Tool", "State", "Tags")
 # UX batch item 11: the Tags column is omitted entirely when no row in the
 # current matrix carries a real tag -- mirrors `mcp_servers_mode.py`'s own
 # per-source `_TABLE_COLUMNS_NO_SCOPE` precedent (Task 11 there): columns
 # are rebuilt from scratch on every `update_matrix()` call.
 _TABLE_COLUMNS_NO_TAGS = _TABLE_COLUMNS[:-1]
+
+# task-35151: one-shot mount-echo sentinel -- the same per-instance pattern
+# MCPRail's selects use (see `_ECHO_CONSUMED` in mcp_rail.py for the full
+# rationale). A `Select(allow_blank=False)` ALWAYS posts one Changed for its
+# constructor-time first option on mount, and that echo can be DELIVERED
+# after a deep link has already selected a non-default profile (reverting
+# it to "default"); consuming exactly one matching echo per Select instance
+# drops the echo while a genuine default -> X -> default round trip still
+# dispatches. Local twin of the rail's sentinel so the two stay consumable
+# independently.
+_ECHO_CONSUMED = object()
 
 # UX batch item 10: tool rows are indented two spaces under their pinned
 # "Server default — X" row -- Console/Library hierarchy idiom (label prefix
@@ -76,10 +91,158 @@ _PROFILE_HINT_TEXT = (
     "some tools to Ask."
 )
 
+# task-35154 (spec amendment A7 item 2): the mode's opening line, pinned
+# verbatim like `_SERVER_PROFILES_POINTER` above (tests assert this exact
+# copy, so any rewording happens HERE). Users flip a tool gate in Servers,
+# watch this matrix not change, and conclude it is broken -- the two
+# layers do different jobs: a gate off in Servers means the tool does not
+# exist for agents (it can still be LISTED here -- catalog visibility is
+# not the gate), while Allow/Ask/Off in this matrix governs only tools
+# that pass the gate. Plain-language per the TASK-35018/35019 copy rule:
+# names what the user sees (Servers, Allow/Ask/Off, this list), no config
+# keys, no "registration gate" jargon. "Console agents" is this surface's
+# own term (see `_PROFILE_HINT_TEXT` above).
+_GATE_VS_PERMISSION_EXPLAINER = (
+    "Tools turned off in Servers do not exist for Console agents — "
+    "Allow/Ask/Off in this list only governs tools that are turned on."
+)
+
 # Wave C (F3): cap on how many undiscovered server names the discovery
 # hint names inline before collapsing to "+N more" -- the hint is one dim
 # line under the legend, not a second table.
 _UNDISCOVERED_NAME_CAP = 3
+
+
+def _tool_has_arg_rules(
+    servers_payload: Mapping[str, Any],
+    server_key: str,
+    tool_name: str,
+    *,
+    ancestor_servers: Sequence[Mapping[str, Any]] = (),
+) -> bool:
+    """Whether the STORE payload carries any EXACT-INPUT allow rule for
+    one tool (task-32281) -- same raw-payload read shape as
+    `_raw_tool_state()` immediately above, checked alongside it so the
+    matrix's ``≡`` marker never needs its own store round-trip
+    (`servers_payload` is the caller's already-loaded profile slice).
+
+    Review round 1 (Minor 1): counts only ``args_json``-shaped rules --
+    the same filter `MCPPermissionStore.list_tool_arg_rules()` applies
+    (a hand-written ``{"field": ..., "pattern": ...}`` glob rule is
+    never returned there either). Picked over the alternative (listing
+    glob rules read-only in the inspector too) as the cheaper fix: it
+    keeps the marker and the list it's advertising in agreement without
+    adding a second rendering path for a rule shape this UI has never
+    offered a way to CREATE (only `add_tool_arg_rule()`'s exact-input
+    writer feeds this surface; glob rules are hand-edited-file-only).
+
+    Qodo #2597 #1: `ancestor_servers` carries the rest of the selected
+    profile's inheritance chain (the `default` profile's own `servers`
+    slice, when a named profile is selected), because an INHERITED rule
+    is just as live as a locally stored one -- `arg_rule_allows()`
+    honors it and `list_tool_arg_rules()` now lists it, so the matrix
+    must mark it too. Answering "does ANY chain profile carry a rule"
+    needs no shadowing logic: the resolver stops at the first profile
+    carrying rules, which is a profile carrying rules either way.
+    """
+
+    def _entry_has_rules(servers: Mapping[str, Any]) -> bool:
+        server_entry = servers.get(server_key)
+        if not isinstance(server_entry, Mapping):
+            return False
+        tools_entry = server_entry.get("tools")
+        if not isinstance(tools_entry, Mapping):
+            return False
+        tool_entry = tools_entry.get(tool_name)
+        if not isinstance(tool_entry, Mapping):
+            return False
+        rules = tool_entry.get("arg_rules")
+        # `servers_payload` here may be a FROZEN snapshot (`_tool_policy_
+        # inventory()`'s `read_profile_inventory_snapshot()`/`read_
+        # snapshot_strict()` path, via `permission_store._freeze_
+        # snapshot()`, which turns every list into a tuple) -- accept both.
+        if not isinstance(rules, (list, tuple)):
+            return False
+        return any(
+            isinstance(rule, Mapping)
+            and isinstance(rule.get("args_json"), str)
+            and rule.get("args_json")
+            for rule in rules
+        )
+
+    return any(
+        _entry_has_rules(servers) for servers in (servers_payload, *ancestor_servers)
+    )
+
+
+def _build_permission_preview(
+    selected_server_key: str | None,
+    rows: list[PermRow],
+    tools_by_server: dict[str, list[HubTool]],
+    labels_by_key: dict[str, str],
+    effective: dict[tuple[str, str], EffectiveToolState],
+    global_label: str,
+    *,
+    extra_override_rows: Sequence[PermRow] = (),
+) -> str:
+    """One plain-language sentence -- UX batch item 9: Library counts-
+    line vocabulary (lowercase state words, no noun, " · " separators,
+    no trailing period -- `library_ingest_state._queue_counts_line()`'s
+    own precedent), scoped to the rail's currently selected server when
+    that server has any discovered tools:
+    `"<label>: N allow · M ask · K off — global default: <word>"`.
+
+    With no selection (or the selected server has no discovered
+    tools): `"global default: <word>"`, plus a
+    `" · N overrides across M servers"` suffix when at least one
+    explicit server- or tool-level override exists anywhere in `rows`
+    OR `extra_override_rows` (omitted entirely when there are none,
+    rather than a "0 overrides" segment nobody needs).
+
+    Fix 2 (PR #906 review): `extra_override_rows` -- the built-in
+    section's own `PermRow`s, when the caller has them
+    (`_build_permission_rows()`'s own `extra_override_rows`) -- is
+    counted into this suffix alongside `rows` so a persistent built-in
+    override is reflected here too, matching `update_matrix()`'s own
+    documented contract that this sentence "ALWAYS summarizes the
+    full, UNFILTERED matrix". It plays no part in the rail-scoped
+    branch immediately below: that branch only ever triggers for a
+    SELECTED MCP server (`self._selected_server_key`), which the
+    built-in section's pseudo server key can never be (the rail never
+    lists it -- see `_builtin_permission_matrix_rows()`'s docstring).
+    """
+    global_word = global_label.lower()
+    server_key = selected_server_key
+    tools = tools_by_server.get(server_key) if server_key else None
+    if tools:
+        counts = {"allow": 0, "ask": 0, "deny": 0}
+        for tool in tools:
+            tool_effective = effective.get((tool.server_key, tool.name))
+            state = tool_effective.state if tool_effective is not None else "ask"
+            counts[state] = counts.get(state, 0) + 1
+        label = labels_by_key.get(server_key, server_key)
+        return (
+            f"{label}: {counts['allow']} allow · {counts['ask']} ask · "
+            f"{counts['deny']} off — global default: {global_word}"
+        )
+    override_rows = [
+        row
+        for row in rows
+        if row.kind in ("server", "tool") and row.cycle_current is not None
+    ] + [
+        row
+        for row in extra_override_rows
+        if row.kind in ("server", "tool") and row.cycle_current is not None
+    ]
+    if not override_rows:
+        return f"global default: {global_word}"
+    override_servers = {row.server_key for row in override_rows}
+    override_word = "override" if len(override_rows) == 1 else "overrides"
+    server_word = "server" if len(override_servers) == 1 else "servers"
+    return (
+        f"global default: {global_word} · {len(override_rows)} {override_word} "
+        f"across {len(override_servers)} {server_word}"
+    )
 
 
 def _undiscovered_servers_hint(snapshots: list) -> str | None:
@@ -207,7 +370,9 @@ def tool_state_kind(effective: EffectiveToolState) -> str:
         `state_text()`'s `kind` bucket -- `"ready"`, `"warning"`, or
         `"error"` for a recognized `effective.state`, else `"muted"`.
     """
-    return {"allow": "ready", "ask": "warning", "deny": "error"}.get(effective.state, "muted")
+    return {"allow": "ready", "ask": "warning", "deny": "error"}.get(
+        effective.state, "muted"
+    )
 
 
 def format_tool_state_label(effective: EffectiveToolState) -> str:
@@ -324,6 +489,7 @@ class PermissionProfileContext:
     selector_generation: int
     policy_digest: str
     revision: int | None
+    policy_chain_digest: str = ""
 
 
 @dataclass(frozen=True)
@@ -492,6 +658,15 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         color: $text-muted;
         padding: 0 1;
     }
+    /* task-35154: the gate-vs-permission explainer is the same quiet,
+    dimmed one-liner tier as the kill-switch hint -- informational chrome
+    above the profile selector, never a competing headline. */
+    #mcp-perm-explainer {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+        padding: 0 1;
+    }
     /* T8: the server-source governance section is a plain read-only
     listing (a handful of Static rows at most) -- hugs its own content,
     same rationale as #mcp-perm-preview immediately above. */
@@ -499,10 +674,32 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         height: auto;
         min-height: 0;
     }
+    /* TASK-18928: the suggestion-review table hugs its row count like
+    #mcp-perm-table, capped so a long review list can never crowd out the
+    matrix above it. */
+    #mcp-perm-suggestions-table {
+        height: auto;
+        max-height: 12;
+        min-height: 0;
+    }
+    #mcp-perm-suggestions-label,
+    #mcp-perm-suggestions-hint {
+        height: auto;
+        min-height: 0;
+        color: $text-muted;
+    }
     """
 
     BINDINGS = [
         Binding("space", "cycle_state", "Cycle permission", show=False),
+        # TASK-18928: suggestion-review actions (htop-style single letters,
+        # ADR-031). All four act ONLY while the suggestions table holds
+        # focus (see `_focused_suggestion_row`), so they can never fire
+        # from the permission matrix and vice versa.
+        Binding("a", "accept_suggestion", "Accept suggestion", show=False),
+        Binding("d", "dismiss_suggestion", "Dismiss suggestion", show=False),
+        Binding("r", "restore_suggestion", "Restore dismissed", show=False),
+        Binding("c", "clear_suggestion_dismissals", "Clear dismissals", show=False),
     ]
 
     class RecoveryReviewRequested(Message, namespace="mcp_permissions_mode"):
@@ -554,6 +751,49 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
             super().__init__()
             self.value = value
 
+    # -- TASK-18928: suggestion review messages (single-writer contract --
+    # the workbench applies every mutation through the control-plane
+    # service and resyncs this canvas; the widget never touches the store).
+
+    class SuggestionAcceptRequested(Message, namespace="mcp_permissions_mode"):
+        """Accept one mined suggestion: persist a real Always-allow entry."""
+
+        def __init__(
+            self,
+            server_key: str,
+            tool_name: str,
+            *,
+            definition_hash: str = "",
+            profile_context: PermissionProfileContext | None = None,
+        ) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+            self.definition_hash = definition_hash
+            self.profile_context = profile_context
+
+    class SuggestionDismissRequested(Message, namespace="mcp_permissions_mode"):
+        """Dismiss one suggestion so it is not re-proposed."""
+
+        def __init__(self, server_key: str, tool_name: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+
+    class SuggestionRestoreRequested(Message, namespace="mcp_permissions_mode"):
+        """Restore one dismissed suggestion (it may be proposed again)."""
+
+        def __init__(self, server_key: str, tool_name: str) -> None:
+            super().__init__()
+            self.server_key = server_key
+            self.tool_name = tool_name
+
+    class SuggestionDismissalsClearRequested(Message, namespace="mcp_permissions_mode"):
+        """Clear every remembered dismissal (the review surface's reset)."""
+
+        def __init__(self) -> None:
+            super().__init__()
+
     class RowSelected(Message, namespace="mcp_permissions_mode"):
         """Posted when the user selects a matrix row (Enter/click on the
         DataTable's cursor row) -- mirrors `MCPToolsMode.on_data_table_row_
@@ -599,6 +839,11 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         self._all_rows: list[PermRow] = []
         self._rows_by_key: dict[str, PermRow] = {}
         self._visible_rows: list[PermRow] = []
+        # TASK-18928: suggestion-review row identities (row key ->
+        # (server_key, tool_name, dismissed, definition_hash)), rebuilt by
+        # `populate_suggestions()` alongside its table.
+        self._suggestion_rows_by_key: dict[str, tuple[str, str, bool, str]] = {}
+        self._suggestion_profile_context: PermissionProfileContext | None = None
         # UX batch item 11: whether ANY row in the current (unfiltered)
         # matrix carries a real tag -- cached once per `update_matrix()`
         # call and reused by every `_apply_filter()` re-render so the Tags
@@ -621,15 +866,26 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         self._tool_column_width: int | None = None
 
     def compose(self) -> ComposeResult:
+        # task-35154: the mode opens with the one-line gate-vs-permission
+        # explainer (see `_GATE_VS_PERMISSION_EXPLAINER` above) -- FIRST
+        # child, so it is read before the profile selector and the matrix.
+        yield Static(
+            _GATE_VS_PERMISSION_EXPLAINER, id="mcp-perm-explainer", markup=False
+        )
         yield Static(
             "Tool policy profile", id="mcp-perm-tool-profile-label", markup=False
         )
-        yield Select(
+        profile_select = Select(
             [("default · local", "default")],
             value="default",
             id="mcp-perm-tool-profile",
             allow_blank=False,
         )
+        # task-35151: pin the mount-echo value this instance was actually
+        # constructed with -- `on_select_changed` consumes at most one
+        # matching Changed per instance (see `_ECHO_CONSUMED` above).
+        profile_select._mcp_mount_echo_value = "default"
+        yield profile_select
         # Wave C (F8): populated by `set_profile_hint()` -- hidden while
         # empty (the default profile needs no Console-context caveat).
         hint = Static("", id="mcp-perm-profile-hint", markup=False)
@@ -682,6 +938,18 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         yield table
         yield Static("", id="mcp-perm-preview", markup=False)
         yield Static(_LEGEND_TEXT, id="mcp-perm-legend", markup=False)
+        # TASK-18928: suggestion review (approval-history mining). The whole
+        # section hides while there is nothing to review -- no dead chrome.
+        suggestions_label = Static("", id="mcp-perm-suggestions-label", markup=False)
+        suggestions_label.display = False
+        yield suggestions_label
+        suggestions_table = DataTable(id="mcp-perm-suggestions-table")
+        suggestions_table.cursor_type = "row"
+        suggestions_table.display = False
+        yield suggestions_table
+        suggestions_hint = Static("", id="mcp-perm-suggestions-hint", markup=False)
+        suggestions_hint.display = False
+        yield suggestions_hint
         # T8: dedicated slot container for the server-source governance
         # listing -- mirrors `MCPToolsMode`'s own
         # `#mcp-tools-filter-server-slot` pattern (a persistent empty
@@ -694,6 +962,8 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
     async def on_mount(self) -> None:
         table = self.query_one("#mcp-perm-table", DataTable)
         table.add_columns(*_TABLE_COLUMNS)
+        suggestions_table = self.query_one("#mcp-perm-suggestions-table", DataTable)
+        suggestions_table.add_columns("Server / tool", "Approvals", "Status")
 
     def on_descendant_focus(self, event: DescendantFocus) -> None:
         """Reveal the focused descendant after its layout settles.
@@ -895,7 +1165,9 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
 
         self._apply_filter()
 
-        self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
+        self.query_one("#mcp-perm-preview", Static).update(
+            f"{echo}{preview}" if echo else preview
+        )
         legend_text = _LEGEND_TEXT
         for extra_line in (gate_breadcrumb, discovery_hint):
             if extra_line:
@@ -1150,6 +1422,19 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         if event.select.id != "mcp-perm-tool-profile" or self._profile_select_sync:
             return
         event.stop()
+        # task-35151: one-shot per-instance mount-echo guard -- see
+        # `_ECHO_CONSUMED` at module top and MCPRail's identical pattern.
+        # The first Changed a Select instance ever posts is its constructor
+        # echo (a user can't interact before mount); consuming at most one
+        # matching event per instance drops exactly the echo, so a late
+        # delivery can no longer revert a deep-linked profile to "default",
+        # while a genuine default -> X -> default round trip still
+        # dispatches.
+        echo_value = getattr(event.select, "_mcp_mount_echo_value", _ECHO_CONSUMED)
+        if echo_value is not _ECHO_CONSUMED:
+            event.select._mcp_mount_echo_value = _ECHO_CONSUMED
+            if event.value == echo_value:
+                return
         if event.value is Select.BLANK:
             return
         self.post_message(self.ToolPolicyProfileSelected(str(event.value)))
@@ -1212,6 +1497,140 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
                 return True
         return False
 
+    # -- suggestion review (TASK-18928) --------------------------------------
+
+    def populate_suggestions(
+        self,
+        recommendations: list[object],
+        dismissals: dict[str, str],
+        *,
+        profile_context: PermissionProfileContext | None = None,
+    ) -> None:
+        """Rebuild the suggestion-review section from one service snapshot.
+
+        Args:
+            recommendations: Current (already dismissal-filtered)
+                ``PermissionPromptRecommendation`` entries.
+            dismissals: The dismissed-suggestion map (tool id -> ISO ts).
+            profile_context: Profile authority captured for these recommendations.
+
+        The whole section hides while both inputs are empty -- an honest
+        empty state, no dead chrome and no phantom key targets.
+        """
+        table = self.query_one("#mcp-perm-suggestions-table", DataTable)
+        self._suggestion_rows_by_key = {}
+        self._suggestion_profile_context = profile_context
+        table.clear()
+        rows: list[tuple[str, tuple[str, str, str], tuple[str, str, bool, str]]] = []
+        for recommendation in recommendations:
+            label = (
+                f"{recommendation.server_label or recommendation.server_key}"
+                f" / {recommendation.tool_name}"
+            )
+            key = f"sugg:{recommendation.server_key}::{recommendation.tool_name}"
+            rows.append(
+                (
+                    key,
+                    (
+                        label,
+                        str(recommendation.approved_count),
+                        f"last approved {recommendation.last_seen}".rstrip(),
+                    ),
+                    (
+                        recommendation.server_key,
+                        recommendation.tool_name,
+                        False,
+                        recommendation.definition_hash,
+                    ),
+                )
+            )
+        for tool_id, dismissed_at in sorted(dismissals.items()):
+            server_key, _, tool_name = tool_id.partition("::")
+            rows.append(
+                (
+                    f"dismissed:{tool_id}",
+                    (f"{server_key} / {tool_name}", "-", f"dismissed {dismissed_at}"),
+                    (server_key, tool_name, True, ""),
+                )
+            )
+        for key, cells, identity in rows:
+            table.add_row(*cells, key=key)
+            self._suggestion_rows_by_key[key] = identity
+        visible = bool(rows)
+        table.display = visible
+        label = self.query_one("#mcp-perm-suggestions-label", Static)
+        hint = self.query_one("#mcp-perm-suggestions-hint", Static)
+        label.display = visible
+        hint.display = visible
+        if visible:
+            label.update("Suggested \"Always allow\" (from your approval history)")
+            hint.update(
+                "a: accept (writes a real Always-allow) · d: dismiss · "
+                "r: restore dismissed · c: clear dismissals"
+            )
+
+    def _focused_suggestion_row(self) -> tuple[str, str, bool, str] | None:
+        """The cursor row identity, dismissal flag, and reviewed definition hash.
+
+        None unless the suggestions table itself holds focus -- every
+        suggestion action is a no-op from any other focus (including the
+        permission matrix), and `space` on the matrix is a no-op while the
+        suggestions table holds focus, so the two key surfaces cannot
+        cross-fire.
+        """
+        try:
+            table = self.query_one("#mcp-perm-suggestions-table", DataTable)
+        except Exception:
+            return None
+        focused = getattr(self.screen, "focused", None)
+        if focused is not table:
+            return None
+        cursor_row = table.cursor_row
+        if cursor_row < 0:
+            return None
+        try:
+            row_key, _ = table.coordinate_to_cell_key((cursor_row, 0))
+        except Exception:
+            return None
+        key_value = row_key.value
+        if key_value is None:
+            return None
+        return self._suggestion_rows_by_key.get(str(key_value))
+
+    def action_accept_suggestion(self) -> None:
+        row = self._focused_suggestion_row()
+        if row is None or row[2]:
+            return
+        self.post_message(
+            self.SuggestionAcceptRequested(
+                server_key=row[0],
+                tool_name=row[1],
+                definition_hash=row[3],
+                profile_context=self._suggestion_profile_context,
+            )
+        )
+
+    def action_dismiss_suggestion(self) -> None:
+        row = self._focused_suggestion_row()
+        if row is None or row[2]:
+            return
+        self.post_message(
+            self.SuggestionDismissRequested(server_key=row[0], tool_name=row[1])
+        )
+
+    def action_restore_suggestion(self) -> None:
+        row = self._focused_suggestion_row()
+        if row is None or not row[2]:
+            return
+        self.post_message(
+            self.SuggestionRestoreRequested(server_key=row[0], tool_name=row[1])
+        )
+
+    def action_clear_suggestion_dismissals(self) -> None:
+        if self._focused_suggestion_row() is None:
+            return
+        self.post_message(self.SuggestionDismissalsClearRequested())
+
     def action_cycle_state(self) -> None:
         """Cycle the matrix's CURSOR row one Space-press (T2's cycle rules).
 
@@ -1220,6 +1639,9 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
         posts `StateCycleRequested` with the next state already computed --
         the workbench applies it, it never re-derives it.
         """
+        suggestions_table = self.query_one("#mcp-perm-suggestions-table", DataTable)
+        if getattr(self.screen, "focused", None) is suggestions_table:
+            return
         table = self.query_one("#mcp-perm-table", DataTable)
         if table.row_count == 0:
             return

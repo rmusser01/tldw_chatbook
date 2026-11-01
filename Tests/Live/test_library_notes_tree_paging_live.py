@@ -40,7 +40,9 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
         parent_id=None,
     )
     for index in range(24):
-        repository.create_folder(name=f"Root {index:02d} " + "details " * 6, parent_id=None)
+        repository.create_folder(
+            name=f"Root {index:02d} " + "details " * 6, parent_id=None
+        )
     children = [
         repository.create_folder(
             name=f"Child {index:02d} " + "details " * 5,
@@ -48,8 +50,12 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
         )
         for index in range(25)
     ]
-    deep = repository.create_folder(name="Deep ancestor", parent_id=children[0].folder_id)
-    deepest = repository.create_folder(name="Deepest managed leaf", parent_id=deep.folder_id)
+    deep = repository.create_folder(
+        name="Deep ancestor", parent_id=children[0].folder_id
+    )
+    deepest = repository.create_folder(
+        name="Deepest managed leaf", parent_id=deep.folder_id
+    )
 
     for index in range(25):
         assert db.add_note(f"Unfiled {index:02d} " + "details " * 6, "live")
@@ -81,9 +87,22 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
         if membership.folder_id == deepest.folder_id
     )
 
-    assert repository.page_child_folders(parent_id=None, limit=20, offset=0).total_folders == 25
-    assert repository.page_child_folders(parent_id=primary.folder_id, limit=20, offset=0).total_folders == 25
-    assert repository.page_note_placements(parent_id=None, limit=20, offset=0).total_placements == 25
+    assert (
+        repository.page_child_folders(parent_id=None, limit=20, offset=0).total_folders
+        == 25
+    )
+    assert (
+        repository.page_child_folders(
+            parent_id=primary.folder_id, limit=20, offset=0
+        ).total_folders
+        == 25
+    )
+    assert (
+        repository.page_note_placements(
+            parent_id=None, limit=20, offset=0
+        ).total_placements
+        == 25
+    )
     primary_pages = tuple(
         repository.page_note_placements(
             parent_id=primary.folder_id, limit=20, offset=offset
@@ -104,7 +123,9 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
         for placement in duplicate_placements
         if placement.membership is not None
     } == {duplicate_manual.membership_id, duplicate_managed.membership_id}
-    assert all(str(placement.note["id"]) != shadow_id for placement in primary_placements)
+    assert all(
+        str(placement.note["id"]) != shadow_id for placement in primary_placements
+    )
     deepest_page = repository.page_note_placements(
         parent_id=deepest.folder_id, limit=20, offset=0
     )
@@ -121,7 +142,11 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
 
     async def page_with_one_shot_failure(**kwargs):
         nonlocal fail_once
-        if kwargs.get("parent_id") == primary.folder_id and kwargs.get("offset") == 20 and fail_once:
+        if (
+            kwargs.get("parent_id") == primary.folder_id
+            and kwargs.get("offset") == 20
+            and fail_once
+        ):
             fail_once = False
             failure_entered.set()
             await failure_release.wait()
@@ -157,7 +182,8 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             )
             await pilot.pause()
             root_folder_pager = next(
-                pager for pager in screen.query(".library-notes-tree-pager")
+                pager
+                for pager in screen.query(".library-notes-tree-pager")
                 if pager.content_kind == "folders" and pager.parent_folder_id is None
             )
             root_folder_pager.press()
@@ -168,27 +194,31 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             )
             await pilot.pause()
             primary_row = next(
-                row for row in screen.query(".library-notes-folder-row")
+                row
+                for row in screen.query(".library-notes-folder-row")
                 if row.folder_id == primary.folder_id
             )
             primary_row.press()
             primary_key = NotesBranchKey(primary.folder_id, "placements")
             await _wait_for_condition(
                 pilot,
-                lambda: primary_key in screen._notes_state.tree_branches
-                and not screen._notes_state.tree_branches[primary_key].loading
-                and {
-                    row.content_kind
-                    for row in screen.query(".library-notes-tree-pager")
-                    if row.parent_folder_id == primary.folder_id
-                }
-                >= {"folders", "placements"},
+                lambda: (
+                    primary_key in screen._notes_state.tree_branches
+                    and not screen._notes_state.tree_branches[primary_key].loading
+                    and {
+                        row.content_kind
+                        for row in screen.query(".library-notes-tree-pager")
+                        if row.parent_folder_id == primary.folder_id
+                    }
+                    >= {"folders", "placements"}
+                ),
                 message="live primary branch did not settle",
             )
             await pilot.pause()
             child_key = NotesBranchKey(primary.folder_id, "folders")
             child_pager = next(
-                row for row in screen.query(".library-notes-tree-pager")
+                row
+                for row in screen.query(".library-notes-tree-pager")
                 if row.parent_folder_id == primary.folder_id
                 and row.content_kind == "folders"
             )
@@ -207,7 +237,8 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             )
             await pilot.pause()
             pager = next(
-                row for row in screen.query(".library-notes-tree-pager")
+                row
+                for row in screen.query(".library-notes-tree-pager")
                 if row.parent_folder_id == primary.folder_id
                 and row.content_kind == "placements"
             )
@@ -225,7 +256,9 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                     break
             assert screen.focused is pager
             pager.press()
-            await _wait_for_condition(pilot, failure_entered.is_set, message="live failure did not enter")
+            await _wait_for_condition(
+                pilot, failure_entered.is_set, message="live failure did not enter"
+            )
             await _wait_for_condition(
                 pilot,
                 lambda: (
@@ -252,7 +285,9 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             retry = screen.query_one(f"#{pager.id}", Button)
             assert str(retry.label).endswith("Retry")
             retry_observation = (
-                str(retry.label), str(retry.id), str(screen.focused.id)
+                str(retry.label),
+                str(retry.id),
+                str(screen.focused.id),
             )
             retry.press()
             await _wait_for_condition(
@@ -280,16 +315,23 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 preferred_membership_id=target.membership_id,
                 focus=True,
             )
-            assert screen._notes_state.tree_selected_placement_id == FolderPlacementId.note(
-                primary.folder_id, target.note_id, target.membership_id
+            assert (
+                screen._notes_state.tree_selected_placement_id
+                == FolderPlacementId.note(
+                    primary.folder_id, target.note_id, target.membership_id
+                )
             )
             await _wait_for_condition(
                 pilot,
-                lambda: getattr(screen.focused, "membership_id", None)
-                == target.membership_id,
+                lambda: (
+                    getattr(screen.focused, "membership_id", None)
+                    == target.membership_id
+                ),
                 message="live located placement did not receive focus",
             )
-            assert getattr(screen.focused, "membership_id", None) == target.membership_id
+            assert (
+                getattr(screen.focused, "membership_id", None) == target.membership_id
+            )
             assert screen._notes_state.tree_branches[primary_key].start_offset == 20
             earlier = next(
                 row
@@ -306,9 +348,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             screen.set_focus(earlier, scroll_visible=True)
             await pilot.pause()
             earlier_strips = screen._compositor.render_strips()
-            assert "Notes 21–40 of 45  Load" in earlier_strips[
-                earlier.region.y
-            ].text
+            assert "Notes 21–40 of 45  Load" in earlier_strips[earlier.region.y].text
             earlier_observation = f"{earlier.range_copy} {earlier.action_copy}"
             earlier_generation = screen._notes_state.tree_branches[
                 primary_key
@@ -336,11 +376,15 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 duplicate_id,
                 duplicate_manual.membership_id,
             )
-            assert screen._notes_state.tree_selected_placement_id == duplicate_placement_id
+            assert (
+                screen._notes_state.tree_selected_placement_id == duplicate_placement_id
+            )
             await _wait_for_condition(
                 pilot,
-                lambda: getattr(screen.focused, "membership_id", None)
-                == duplicate_manual.membership_id,
+                lambda: (
+                    getattr(screen.focused, "membership_id", None)
+                    == duplicate_manual.membership_id
+                ),
                 message="live exact duplicate placement did not receive focus",
             )
             duplicate_row = screen.focused
@@ -366,7 +410,9 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 child_key
             ].generation
             screen._request_library_notes_tree_slice(
-                NotesBranchKey(primary.folder_id, "folders"), direction="replace", offset=0
+                NotesBranchKey(primary.folder_id, "folders"),
+                direction="replace",
+                offset=0,
             )
             await _wait_for_condition(
                 pilot,
@@ -392,14 +438,14 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             )
             await pilot.pause()
             primary_row = next(
-                row for row in screen.query(".library-notes-folder-row")
+                row
+                for row in screen.query(".library-notes-folder-row")
                 if row.folder_id == primary.folder_id
             )
             primary_row.press()
             await _wait_for_condition(
                 pilot,
-                lambda: primary.folder_id
-                not in screen._notes_state.tree_expanded_ids,
+                lambda: primary.folder_id not in screen._notes_state.tree_expanded_ids,
                 message="live Primary collapse did not settle",
             )
             await _wait_for_condition(
@@ -412,7 +458,8 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             )
             await pilot.pause()
             primary_row = next(
-                row for row in screen.query(".library-notes-folder-row")
+                row
+                for row in screen.query(".library-notes-folder-row")
                 if row.folder_id == primary.folder_id
             )
             primary_row.press()
@@ -431,14 +478,14 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             )
             await pilot.pause()
             primary_row = next(
-                row for row in screen.query(".library-notes-folder-row")
+                row
+                for row in screen.query(".library-notes-folder-row")
                 if row.folder_id == primary.folder_id
             )
             primary_row.press()
             await _wait_for_condition(
                 pilot,
-                lambda: primary.folder_id
-                not in screen._notes_state.tree_expanded_ids,
+                lambda: primary.folder_id not in screen._notes_state.tree_expanded_ids,
                 message="live final Primary collapse did not settle",
             )
 
@@ -451,11 +498,15 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
             deepest_placement_id = FolderPlacementId.note(
                 deepest.folder_id, shadow_id, shadow_deepest.membership_id
             )
-            assert screen._notes_state.tree_selected_placement_id == deepest_placement_id
+            assert (
+                screen._notes_state.tree_selected_placement_id == deepest_placement_id
+            )
             await _wait_for_condition(
                 pilot,
-                lambda: getattr(screen.focused, "membership_id", None)
-                == shadow_deepest.membership_id,
+                lambda: (
+                    getattr(screen.focused, "membership_id", None)
+                    == shadow_deepest.membership_id
+                ),
                 message="live deepest located placement did not receive focus",
             )
             assert {
@@ -503,7 +554,9 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 )
                 await pilot.pause()
                 title_painted = " ".join(
-                    "\n".join(strip.text for strip in screen._compositor.render_strips()).split()
+                    "\n".join(
+                        strip.text for strip in screen._compositor.render_strips()
+                    ).split()
                 )
                 assert "Shadowed managed ancestor" in str(deepest_row.label)
                 assert "Shadowed managed" in title_painted
@@ -529,7 +582,10 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 assert "Notes 1–20 of 25" in pager_painted
                 screen.set_focus(deepest_row, scroll_visible=True)
                 await pilot.pause()
-                assert getattr(screen.focused, "membership_id", None) == shadow_deepest.membership_id
+                assert (
+                    getattr(screen.focused, "membership_id", None)
+                    == shadow_deepest.membership_id
+                )
                 for row in screen.query(
                     ".library-notes-folder-row, .library-notes-tree-note-row, "
                     ".library-notes-tree-pager"
@@ -550,8 +606,7 @@ async def test_live_real_repository_large_tree_walkthrough(tmp_path) -> None:
                 f"deepest_focus={shadow_deepest.membership_id}; "
                 f"retry={retry_observation[0]} control={retry_observation[1]} "
                 f"focus={retry_observation[2]}; "
-                f"earlier={earlier_observation}; "
-                + "; ".join(observations),
+                f"earlier={earlier_observation}; " + "; ".join(observations),
             )
     finally:
         db.close_connection()

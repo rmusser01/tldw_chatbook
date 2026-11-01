@@ -1,0 +1,11 @@
+{
+  "published_previous_head": "06cfe2f6a30236dcd8f81893ebf49bc3d0b78036",
+  "reviewed_source_head": "d94791f244e81ae370fe674d5e333fb6af94fd39",
+  "new_artifacts_verified": 155,
+  "old_qa_files_exact_blob_and_mode": 10397,
+  "prior527_followup_preserved": 527,
+  "original_zip_bytes": 63166118,
+  "original_zip_sha256": "acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84",
+  "credential_audit_findings": 0,
+  "shared_checkout_mutations": false
+}

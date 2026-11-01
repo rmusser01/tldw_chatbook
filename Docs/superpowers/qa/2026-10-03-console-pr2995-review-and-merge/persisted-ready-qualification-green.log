@@ -1,0 +1,12 @@
+.......                                                                  [100%]
+============================= slowest 25 durations =============================
+12.12s call     Tests/UI/test_console_composer_cursor.py::test_console_composer_shift_enter_inserts_newline_enter_still_sends
+11.61s call     Tests/UI/test_console_native_chat_flow.py::test_console_successful_send_does_not_leave_empty_send_tooltip
+8.84s call     Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft[credential_saved-Credential saved \u2014 checking readiness]
+6.35s call     Tests/UI/test_console_composer_cursor.py::test_console_composer_arrow_home_end_keys_move_caret_and_render_glyph
+6.23s call     Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft[without_saving-Returned without saving \u2014 readiness unchanged]
+6.22s call     Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_claims_exact_revision_and_restores_mounted_draft[provider_settings_saved-Provider settings saved \u2014 checking readiness]
+2.27s call     Tests/UI/test_console_native_chat_flow.py::test_native_ready_console_config_survives_cache_invalidating_reload
+
+(14 durations < 1s hidden.)
+7 passed in 62.65s (0:01:02)

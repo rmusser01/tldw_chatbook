@@ -16,6 +16,9 @@ from tldw_chatbook.UI.Console_Modules.realtime import (
     ConsoleRealtimeSession,
 )
 
+# Real config readers must retain the collection-time admitted profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class _FSM:
     def __init__(self, *, state: str = "live") -> None:

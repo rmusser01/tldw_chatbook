@@ -332,9 +332,7 @@ async def test_preferred_layout_survives_an_isolated_fresh_restart(
         _LOAD_REGION_LAYOUT_TARGET, region_layout_store.load_region_layout
     )
 
-    desired = RegionLayout(
-        collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS})
-    )
+    desired = RegionLayout(collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS}))
     assert save_settings_to_cli_config(
         {
             "watchlists": {
@@ -352,9 +350,7 @@ async def test_preferred_layout_survives_an_isolated_fresh_restart(
     assert first.region_layout == desired
     first._article_focus_active = True
     first._effective_region_layout = RegionLayout(
-        collapsed=frozenset(
-            {Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL}
-        )
+        collapsed=frozenset({Region.LEFT_RAIL, Region.ITEMS, Region.RIGHT_RAIL})
     )
     first._responsive_region_layout = RegionLayout(
         collapsed=frozenset({Region.RIGHT_RAIL})

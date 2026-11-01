@@ -510,6 +510,36 @@ def request_route_provenance(
     )
 
 
+def stream_fallback_route_provenance(
+    original: RequestRouteTraceProvenance,
+    *,
+    provider: str,
+    execution_key: str,
+    has_tools: bool,
+) -> RequestRouteTraceProvenance:
+    """Keep generic agent retries on the existing failed-call continuation.
+
+    Direct llama and plain requests retain their established fallback route.
+    The TOOL_LOOP admission still proves the settled prior call and unchanged
+    request surface; this projection grants no adapter authority by itself.
+    """
+    generic = (
+        bool(execution_key)
+        and execution_key != "custom-hosted"
+        and not (provider in {"llama_cpp", "local_llamacpp"} and not has_tools)
+    )
+    if generic and original.route in {
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+    }:
+        return request_route_provenance(
+            ConsoleRequestRoute.TOOL_LOOP,
+            actor_id=original.actor_id,
+            chain_id=original.chain_id,
+        )
+    return request_route_provenance(ConsoleRequestRoute.LLAMA_FALLBACK)
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderArtifactTraceProvenance:
     """Intent to store one provider-only value under a frozen trace policy."""
@@ -662,6 +692,23 @@ def _validate_derived_shape(descriptor: DerivedTraceProvenance) -> None:
                 "sidecar attachment artifact contradicts its owner"
             )
         return
+    if (
+        transform is TraceTransformKind.MESSAGE_REWRITE
+        and artifact is not None
+        and artifact.source is TraceProvenanceSource.PROVIDER_OVERLAY
+    ):
+        if (
+            len(descriptor.inputs) != 2
+            or type(descriptor.inputs[0]) is not SavedRevisionTraceProvenance
+            or type(descriptor.inputs[1]) is not DerivedTraceProvenance
+            or descriptor.inputs[1].transform
+            is not TraceTransformKind.CONTINUATION_ATTACHMENT
+            or descriptor.inputs[1].inputs != (descriptor.inputs[0],)
+        ):
+            raise TraceProvenanceAlignmentError(
+                "completed replay transform requires its exact saved continuation owner"
+            )
+        return
     required_artifacts = {
         TraceTransformKind.MESSAGE_REWRITE: frozenset({TraceProvenanceSource.THINKING}),
         TraceTransformKind.PROVIDER_OVERLAY: frozenset(
@@ -741,6 +788,18 @@ def current_turn_source_revision_id(descriptor: TraceProvenance) -> str | None:
     if (
         type(descriptor) is DerivedTraceProvenance
         and descriptor.transform is TraceTransformKind.CURRENT_TURN_TEXT
+    ):
+        return descriptor.inputs[0].revision_id
+    return None
+
+
+def completed_replay_source_revision_id(descriptor: TraceProvenance) -> str | None:
+    """Identify only the closed saved-owner/continuation replay derivation."""
+    if (
+        type(descriptor) is DerivedTraceProvenance
+        and descriptor.transform is TraceTransformKind.MESSAGE_REWRITE
+        and descriptor.artifact is not None
+        and descriptor.artifact.source is TraceProvenanceSource.PROVIDER_OVERLAY
     ):
         return descriptor.inputs[0].revision_id
     return None

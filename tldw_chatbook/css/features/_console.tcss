@@ -153,12 +153,25 @@
 #console-speech-controls {margin:$ds-space-0 $ds-space-2 $ds-space-0 $ds-space-0;}
 
 #console-auto-speak-label,
-#console-hands-free-label {width:auto;height:$ds-size-1;margin-right:$ds-space-1;}
+#console-hands-free-label {width:auto;height:$ds-size-1;margin-right:$ds-space-0;}
 
+/* TASK-33626.1: each control is its state word (Off/On/Paused, Off/
+   Starting…/On), muted when off. Every ink is a theme-guarded readable hue
+   (AA on $panel, the header fill). Focus inverts the word into a
+   $ds-active-fg bar ($text-primary, pinned 4.5:1 on $panel) instead of the
+   reset's outline, which painted over the value. */
 #console-auto-speak,
 #console-hands-free-switch {
-    width:$ds-size-5;min-width:$ds-size-5;max-width:$ds-size-5;height:$ds-size-1;min-height:$ds-size-1;max-height:$ds-size-1;
-    padding:$ds-space-0;margin:$ds-space-0;border:none;
+    width:auto;min-width:$ds-size-0;height:$ds-size-1;min-height:$ds-size-1;max-height:$ds-size-1;
+    padding:$ds-space-0 $ds-space-1;margin:$ds-space-0;border:none;background:transparent;color:$text-muted;
+}
+#console-auto-speak.-on,
+#console-hands-free-switch.-on {color:$text-success;text-style:bold;}
+#console-auto-speak.-paused,
+#console-hands-free-switch.-starting {color:$text-warning;text-style:bold;}
+#console-auto-speak:focus,
+#console-hands-free-switch:focus {
+    outline:none;border:none;background:$ds-active-fg;color:$ds-surface-panel;text-style:bold;
 }
 
 #console-auto-speak {margin-right:$ds-space-1;}
@@ -168,39 +181,15 @@
     width:auto;height:$ds-size-1;min-height:$ds-size-1;max-height:$ds-size-1;margin:$ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
-#console-status-chips {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    max-height: $ds-size-1;
-    layout: horizontal;
-    border: none;
-    padding: $ds-space-0 $ds-space-1;
-    /* TASK-17650: cancel .ds-panel's bottom margin — it rendered as a
-       permanent blank row between the chips and the footer. */
-    margin: $ds-space-0;
-}
+/* TASK-35160 follow-up: the Status collapsible is gone -- the expanded/
+   collapsed presentations, the Status ▾/▴ toggle buttons and the collapsed
+   copy rule died with it. The scroll viewport below is the whole strip. */
 
-/* TASK-15704: both mounted presentations stay one row high. The fixed restore
-   control leads; the copy or scroll viewport consumes only the remaining
-   width, so neither can push past the strip at narrow terminal sizes. */
-#console-status-expanded,
-#console-status-collapsed {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    max-height: $ds-size-1;
-    layout: horizontal;
-    align: left middle;
-}
-
-/* TASK-2154.5 (LY-03): expanded chip overflow scrolls horizontally (focus
-   auto-scroll for keyboard, Shift+wheel / trackpad swipe for mouse) instead
-   of silently clipping later chips. The scrollbar itself is hidden because
-   the inner viewport is a single row -- same contract as the native tab
-   strip. */
+/* TASK-2154.5 (LY-03): line overflow scrolls horizontally (segment cursor
+   + Shift+arrows for keyboard, wheel / Shift+wheel / trackpad swipe for
+   mouse) instead of silently clipping. The scrollbar itself is hidden
+   because the inner viewport is a single row -- same contract as the
+   native tab strip. */
 #console-status-chip-scroll {
     width: $ds-width-fill;
     min-width: $ds-size-0;
@@ -215,94 +204,72 @@
     scrollbar-size-horizontal: 0;
 }
 
-#console-status-collapse,
-#console-status-expand {
-    width: $ds-size-9;
-    min-width: $ds-size-9;
-    max-width: $ds-size-9;
+/* TASK-35160 follow-up: the ◀ ▶ click-to-page arrows flanking the line.
+   Click-only (no tab stops -- the line owns keyboard paging), hidden when
+   the line fits, dimmed at the line's ends. */
+.console-status-arrow {
+    width: $ds-size-2;
+    min-width: $ds-size-2;
+    max-width: $ds-size-2;
     height: $ds-size-1;
     min-height: $ds-size-1;
     max-height: $ds-size-1;
     border: none;
     padding: $ds-space-0;
+    margin: $ds-space-0;
+    background: transparent;
+    color: $ds-text-muted;
 }
 
-#console-status-collapsed-copy {
-    width: $ds-width-fill;
+.console-status-arrow:hover {
+    color: $ds-text-primary;
+    background: $ds-surface-raised;
+}
+
+.console-status-arrow:disabled {
+    color: $ds-text-muted;
+    background: transparent;
+}
+
+/* TASK-35160: the strip shell's id rule (supersedes the pre-35160 rule
+   further up this sheet -- the status-row contract test pins these exact
+   declarations, and two rules for one id made the first match win). */
+#console-status-chips {
+    width: $ds-width-full;
     min-width: $ds-size-0;
     height: $ds-size-1;
     min-height: $ds-size-1;
-    color: $ds-text-muted;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
+    max-height: $ds-size-1;
+    layout: horizontal;
+    border: none;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
 }
 
-.console-control-chip {
+/* TASK-35160: the strip is one clickable text line (ConsoleStatusText) --
+   the per-chip background/padding/margin/ellipsis rules above its era are
+   gone; segment emphasis rides markup styles (dim/bold/reverse) and the
+   [@click] hover underline is Textual's link styling. */
+
+.console-status-text {
     width: auto;
-    /* RAG-46: a ~10x1-cell hit target is easy to miss with mouse/touch. Raised
-       from 7 to 12 (min-width) and the horizontal padding from `0 1` to `0 2`
-       to widen both the box and its clickable interior; short labels like
-       "RAG: off" now render with more breathing room instead of a
-       near-flush-to-edge fit. */
-    min-width: $ds-size-12;
-    /* task-1671: 22 cut model ids mid-token ("Model: claude-3-hai…").
-       The ask was 25 chars of the MODEL NAME, and the "Model: " prefix
-       costs 7 with 2 more for padding -- hence 34. Chips are width:auto,
-       so this cap only bites long labels: "Library search: off" and
-       friends are unchanged. Focus still lifts the cap entirely. */
-    max-width: $ds-size-34;
     height: $ds-size-1;
     min-height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
-    padding: $ds-space-0 $ds-space-2;
-    background: $ds-surface-raised;
+    max-height: $ds-size-1;
     color: $ds-text-primary;
-    text-overflow: ellipsis;
     text-wrap: nowrap;
 }
 
-#console-cost-chip {
-    max-width: $ds-width-full;
-}
-
-.console-chip-dim {
-    color: $ds-text-muted;
-}
-
-.console-chip-alert {
-    color: $ds-text-primary;
-    text-style: bold;
-}
-
-/* task-4 (PR3 cost ticker): the cost chip's "cache expired" state -- not
-   an alert (nothing needs the user's attention) and not a plain dim
-   readiness pill either, so it gets its own informational color rather
-   than reusing either. */
-.console-chip-cold {
-    color: $ds-status-info;
-}
-
-/* task-7: the temporary-chat chip -- distinct from the neutral readiness
-   chips above so "this chat is not saved" reads as a state worth noticing,
-   not just another setting pill. */
-#console-temporary-chip {
-    color: $warning;
-    text-style: italic;
-}
-
-/* Keyboard reachability: chips ellipsize at 22 cells, so focusing a chip
-   lifts the width cap to reveal the full label (the tooltip carries the
-   same text on hover). Later chips clip under the bar's hidden overflow. */
-.console-control-chip:focus {
-    max-width: $ds-width-full;
+/* Keyboard reachability: the strip's segment cursor (reverse video) is the
+   in-line position cue; focusing the line itself gets a non-obscuring cue. */
+.console-status-text:focus {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
-    text-style: bold underline;
+    text-style: bold;
     /* TASK-383: the global `*:focus { outline: solid }` fallback OVERLAYS a box
-       onto this height-1 chip, replacing the label with border glyphs (the
-       "empty outlined box" defect). The high-contrast bg/fg + bold underline
-       above already give a non-obscuring focus cue, so suppress the outline
-       that would otherwise hide the label. */
+       onto this height-1 row, replacing the label with border glyphs (the
+       "empty outlined box" defect). The high-contrast bg/fg + bold above
+       already give a non-obscuring focus cue, so suppress the outline. */
     outline: none;
 }
 
@@ -566,7 +533,7 @@
 }
 
 #console-send-authority-summary:focus {
-    outline: heavy $ds-action-focus;
+    outline: heavy $ds-active-fg;
 }
 
 #console-send-authority-heading {
@@ -605,6 +572,14 @@ ConsoleTerminalWorkspace#console-main-column {
     background: $ds-surface-panel;
 }
 
+/* TASK-33625.3: the grid cell is each control's frame. Buttons keep
+   Textual's one-cell line pad but drop the side padding, so a 13-cell column
+   at 80x24 shows "Terminal 1" whole; narrower cells get compact labels. */
+ConsoleTerminalWorkspace#console-main-column > Button {
+    padding: $ds-space-0;
+}
+
+
 #console-terminal-danger,
 #console-terminal-access,
 #console-terminal-open-settings,
@@ -641,6 +616,12 @@ ConsoleTerminalWorkspace#console-main-column {
     color: $ds-text-muted;
 }
 
+/* TASK-33625.3: a focus outline is drawn OVER a widget's outermost cells,
+   so the old focused viewport hid column 0, the last column and the top and
+   bottom rows of PTY output (" M" read "M") while the PTY was sized to the
+   whole widget. The dense-form one-column edge is reserved in both states
+   instead: focus changes only its weight, colour and the fill, never the
+   content cells, and the viewport's content size is exactly the PTY's. */
 #console-terminal-viewport {
     width: $ds-width-full;
     min-width: $ds-size-0;
@@ -648,12 +629,16 @@ ConsoleTerminalWorkspace#console-main-column {
     min-height: $ds-size-0;
     padding: $ds-space-0;
     overflow: hidden;
+    border: none;
+    border-left: solid $ds-control-edge;
     background: $ds-surface-raised;
     color: $ds-text-primary;
 }
 
 #console-terminal-viewport:focus {
-    outline: solid $ds-action-focus;
+    outline: none;
+    border-left: thick $ds-active-fg;
+    background: $ds-input-focus-bg;
 }
 
 #console-right-rail {
@@ -882,7 +867,7 @@ ConsoleTerminalWorkspace#console-main-column {
    Button in the app (test_textual_css_fastpath.py's ratchet). Coverage and
    losslessness pinned by test_console_inspector_focus_carriers.py. */
 Button.console-rail-focus-carrier:focus {
-    outline-left: thick $ds-action-focus;
+    outline-left: thick $ds-active-fg;
 }
 
 /* Inspector ROWS are deliberately absent above: the `*:focus` fallback in
@@ -1058,7 +1043,7 @@ Button.console-rail-focus-carrier:focus {
 }
 
 #console-native-composer.console-composer-focused {
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     background: $ds-input-focus-bg;
 }
 
@@ -1700,6 +1685,17 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
     color: $ds-text-muted;
 }
 
+/* TASK-33621.51: what an Automatic Library send's search did, one quiet
+   non-interactive line under the USER turn that ran it. The inset is
+   padding, not margin: a margin cell shows the transcript's background-effect
+   layer (the terminal default), a notch left of the text. */
+.console-transcript-library-outcome {
+    width: $ds-width-fill;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-2;
+    color: $ds-text-muted;
+}
+
 /* console selection phase 5: docked status line for keyboard text-selection
    mode (`s`), same muted palette as the annotations marker above but pinned
    to the transcript's bottom edge like the jump pill (below), one row tall.
@@ -1853,13 +1849,20 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
     align: center middle;
 }
 
-#console-delete-receipt {
+/* TASK-33628.5: the box stays while its content swaps between the receipt
+   and the "Deleting/Restoring N messages" progress shown while a save runs. */
+#console-delete-receipt-box {
     width: $ds-size-60;
     max-width: $ds-width-full;
     height: auto;
     border: tall $primary;
     background: $surface;
     padding: $ds-space-1 $ds-space-2;
+}
+
+#console-delete-receipt,
+#console-delete-receipt-progress {
+    height: auto;
 }
 
 #console-delete-receipt-actions {
@@ -2225,6 +2228,15 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     color: $ds-text-muted;
 }
 
+/* TASK-18924: date dividers between conversation rows in the Chats
+   section (Today / Yesterday / This week / Older). Composes the shared
+   dim-copy color with a one-level indent so the label reads as a
+   sub-header of the section, not a row. */
+.console-conversation-browser-date-divider {
+    color: $ds-text-muted;
+    padding-left: $ds-space-2;
+}
+
 /* TASK-717: conversation rows whose record is proven missing render dim and
    inert instead of impersonating openable chats. */
 .console-workspace-conversation-row-broken {
@@ -2413,21 +2425,13 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     /* $background is a distinctly darker token than the Console shell's own
      * $ds-surface-panel background, so this alpha fill actually blends to a
      * dimmed shade (verified: ~#191d21 vs the shell's flat #242f38) instead
-     * of a same-color no-op like the previous $ds-surface-panel 80% fill. */
+     * of a same-color no-op like the previous $ds-surface-panel 80% fill.
+     * Nothing is drawn on it but the card (TASK-33008.4). */
     background: $background 60%;
-    layers: console-setup-snow console-setup-card;
-}
-
-.console-setup-modal-backdrop-snow {
-    layer: console-setup-snow;
-    width: $ds-width-full;
-    height: $ds-height-full;
-    color: $ds-text-muted;
 }
 
 /* Console's rendered frame color (#6f7782) — see Console_Modules.frame.CONSOLE_FRAME_COLOR. */
 .console-setup-modal-card {
-    layer: console-setup-card;
     /* TASK-389: 62 gave 56 content cells (−2 border −4 padding); the honest
        step-3 line "…Composer unlocks after setup" is 59 cells, so its last word
        wrapped off. 66 gives 60 content cells so the full sentence fits. */
@@ -2669,3 +2673,59 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 .console-generation-frame { border: round $ds-console-frame !important; }
 
 #console-control-hooks.hooks-attention{color:$ds-status-approval-required;}
+
+/* ADR-166: native archive results and exact one-shot recovery controls. */
+#console-archive-recovery, #console-archive-recovery-controls {
+    height: $ds-height-auto;
+    width: $ds-width-fill;
+}
+#console-archive-recovery-controls .archive-recovery-card {
+    height: $ds-height-auto;
+    width: $ds-width-fill;
+    background: $ds-surface-panel;
+    border: solid $ds-grid-line;
+    padding: $ds-space-inset;
+    margin-bottom: $ds-space-stack;
+}
+#console-archive-recovery-controls .archive-recovery-copy,
+#console-archive-recovery-controls .archive-recovery-row {
+    height: $ds-height-auto;
+    width: $ds-width-fill;
+}
+#console-archive-recovery-controls .archive-recovery-row {
+    margin-bottom: $ds-space-stack;
+}
+#console-archive-recovery-controls RecoveryActionButton,
+#console-archive-recovery-controls #recovery-scope {
+    width: $ds-width-fill;
+    height: $ds-control-height;
+    margin-top: $ds-space-stack;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+#console-archive-recovery-controls RecoveryActionButton:hover,
+#console-archive-recovery-controls #recovery-scope:hover {
+    background: $ds-hover-bg;
+    color: $ds-hover-fg;
+}
+#console-archive-recovery-controls RecoveryActionButton:focus,
+#console-archive-recovery-controls #recovery-scope:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+#console-archive-recovery-controls RecoveryActionButton:disabled,
+#console-archive-recovery-controls RecoveryActionButton:disabled:hover {
+    background: $ds-disabled-bg;
+    color: $ds-text-disabled-readable;
+    opacity: 100%;
+}
+#console-archive-recovery-controls #recovery-scope > SelectCurrent {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+#console-archive-recovery-controls #recovery-scope:focus > SelectCurrent {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}

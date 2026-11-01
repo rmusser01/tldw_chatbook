@@ -52,7 +52,9 @@ async def test_card_shows_profile_and_edit_posts_message():
     received = []
 
     class CaptureApp(WidgetApp):
-        def on_edit_persona_profile_requested(self, message: EditPersonaProfileRequested) -> None:
+        def on_edit_persona_profile_requested(
+            self, message: EditPersonaProfileRequested
+        ) -> None:
             received.append(message.persona_id)
 
     app = CaptureApp()
@@ -85,9 +87,7 @@ async def test_persona_editor_and_event_contract_has_no_user_profile_aliases():
     )
     assert editor_spec is not None
     retired_editor_spec = importlib.util.find_spec(
-        "tldw_chatbook.Widgets.Persona_Widgets."
-        + "user_profile_"
-        + "editor_widget"
+        "tldw_chatbook.Widgets.Persona_Widgets." + "user_profile_" + "editor_widget"
     )
     assert retired_editor_spec is None
 
@@ -95,12 +95,8 @@ async def test_persona_editor_and_event_contract_has_no_user_profile_aliases():
 
     assert hasattr(personas_pane_messages, "EditPersonaProfileRequested")
     assert hasattr(personas_pane_messages, "PersonaProfileSaveRequested")
-    assert not hasattr(
-        personas_pane_messages, "Edit" + "User" + "ProfileRequested"
-    )
-    assert not hasattr(
-        personas_pane_messages, "User" + "ProfileSaveRequested"
-    )
+    assert not hasattr(personas_pane_messages, "Edit" + "User" + "ProfileRequested")
+    assert not hasattr(personas_pane_messages, "User" + "ProfileSaveRequested")
 
 
 async def test_card_hides_empty_rows():
@@ -283,9 +279,7 @@ async def test_editor_load_collect_roundtrip_new_fields():
             == "persistent_scoped"
         )
         assert (
-            pilot.app.query_one(
-                "#personas-editor-personality-traits", TextArea
-            ).text
+            pilot.app.query_one("#personas-editor-personality-traits", TextArea).text
             == "meticulous, dry wit"
         )
         data = editor.collect()
@@ -309,9 +303,7 @@ async def test_editor_new_persona_defaults_enabled_and_session_scoped():
             == "session_scoped"
         )
         assert (
-            pilot.app.query_one(
-                "#personas-editor-personality-traits", TextArea
-            ).text
+            pilot.app.query_one("#personas-editor-personality-traits", TextArea).text
             == ""
         )
         data = editor.collect()

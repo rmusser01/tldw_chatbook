@@ -686,7 +686,9 @@ async def test_every_slot_names_a_real_attribute_on_the_target_it_declares():
 
     store = ConsoleChatStore()
     controller = ConsoleChatController(store=store, provider_gateway=None)
+    runtime = ConsoleRuntime(app=None)
     targets = {
+        "archive_recovery": runtime.ensure_archive_recovery(),
         "controller": controller,
         "store": store,
         "wake": controller.fleet_wake,
@@ -699,7 +701,6 @@ async def test_every_slot_names_a_real_attribute_on_the_target_it_declares():
         )
         assert slot.why, f"slot {slot.name!r} has no viewless justification"
 
-    runtime = ConsoleRuntime(app=None)
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
     view = _View({})

@@ -235,7 +235,9 @@ class TestChromaWhereTranslation:
     def test_single_key_uses_in_operator(self, tmp_path):
         store, fake = self._store_with_fake_collection(tmp_path)
 
-        store.search(_query_vec(), top_k=5, metadata_allowlist={"source_id": {"2", "1"}})
+        store.search(
+            _query_vec(), top_k=5, metadata_allowlist={"source_id": {"2", "1"}}
+        )
 
         assert fake.last_query_kwargs["where"] == {"source_id": {"$in": ["1", "2"]}}
 
@@ -341,6 +343,125 @@ class TestSemanticSearchThreadsAllowlist:
         )
 
         assert spy.search_calls[0]["metadata_allowlist"] is None
+
+
+class TestPrecomputedQueryEmbedding:
+    """task-34390: ``RAGService.search`` accepts a precomputed query
+    embedding so a scoped fan-out (multi-entry allowlist, or
+    ``pipeline_functions_simple.search_semantic``'s per-source-type loop)
+    embeds the query once instead of once per store query. Same store
+    queries, same results -- only the redundant forward passes go."""
+
+    @staticmethod
+    def _counting_embeddings(service, calls):
+        """Wrap the service's embeddings wrapper with a call counter that
+        still produces the real (mock-backend) vectors. Returns the
+        untouched original bound method."""
+        original_create = service.embeddings.create_embeddings_async
+
+        async def counting_create(texts):
+            calls.append(list(texts))
+            return await original_create(texts)
+
+        service.embeddings.create_embeddings_async = counting_create
+        return original_create
+
+    def test_union_allowlist_with_precomputed_vector_embeds_once(self):
+        service = _make_service()
+        hits = [
+            SearchResult(
+                id="d1", score=0.9, document="doc", metadata={"source_id": "1"}
+            )
+        ]
+        spy = _SpyStore(hits=hits)
+        service.vector_store = spy
+        embed_calls: list = []
+        original_create = self._counting_embeddings(service, embed_calls)
+
+        allowlist = [
+            {"source_type": {"media"}, "source_id": {"1"}},
+            {"source_type": {"note"}, "source_id": {"2"}},
+        ]
+
+        # Baseline (old behavior, no precomputed vector): one embed per
+        # union entry, one store query per entry.
+        baseline = asyncio.run(
+            service.search(
+                "query text",
+                top_k=3,
+                search_type="semantic",
+                include_citations=False,
+                metadata_allowlist=allowlist,
+            )
+        )
+        assert len(embed_calls) == 2
+        assert len(spy.search_calls) == 2
+
+        # Precomputed path: the identical fan-out performs ZERO further
+        # embeds and issues the SAME store queries.
+        embed_calls.clear()
+        store_calls_before = len(spy.search_calls)
+        precomputed = asyncio.run(original_create(["query text"]))[0]
+        results = asyncio.run(
+            service.search(
+                "query text",
+                top_k=3,
+                search_type="semantic",
+                include_citations=False,
+                metadata_allowlist=allowlist,
+                query_embedding=precomputed,
+            )
+        )
+
+        assert embed_calls == []
+        assert len(spy.search_calls) - store_calls_before == 2
+        assert [(r.id, r.score) for r in results] == [
+            (r.id, r.score) for r in baseline
+        ]
+
+    def test_query_embedding_rejected_for_non_semantic(self):
+        """Same convention as the other scoping kwargs: unsupported
+        combinations raise rather than silently ignore the request."""
+        service = _make_service()
+
+        with pytest.raises(ValueError, match="query_embedding is only supported"):
+            asyncio.run(
+                service.search(
+                    "query text",
+                    search_type="keyword",
+                    query_embedding=[1.0, 0.0],
+                )
+            )
+        with pytest.raises(ValueError, match="query_embedding is only supported"):
+            asyncio.run(
+                service.search(
+                    "query text",
+                    search_type="hybrid",
+                    query_embedding=[1.0, 0.0],
+                )
+            )
+
+    def test_default_none_keeps_single_entry_behavior(self):
+        """Omitting the kwarg (every pre-task-34390 caller) still embeds
+        exactly once for a single-entry scoped search."""
+        service = _make_service()
+        spy = _SpyStore(hits=[])
+        service.vector_store = spy
+        embed_calls: list = []
+        self._counting_embeddings(service, embed_calls)
+
+        asyncio.run(
+            service.search(
+                "query text",
+                top_k=3,
+                search_type="semantic",
+                include_citations=False,
+                metadata_allowlist={"source_id": {"1"}},
+            )
+        )
+
+        assert embed_calls == [["query text"]]
+        assert len(spy.search_calls) == 1
 
 
 # === Cache key isolation (metadata_allowlist must not cross-contaminate) ===

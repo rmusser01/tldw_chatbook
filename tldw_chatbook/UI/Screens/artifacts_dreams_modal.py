@@ -2,11 +2,20 @@
 
 One story's full surface on the Artifacts screen: title, source URL,
 body, provenance, a "what we'll look for" preview of the NEXT cycle's
-queries, and the Phase-1 action set -- keep/unkeep, dive deeper (stage a
+queries, and the action set -- keep/unkeep, dive deeper (stage a
 ``ChatHandoffPayload`` into Chat), export to Markdown, ingest into the
 read-it-later capture queue (Task 8, via
 ``Dreams.ingest_action.ingest_story_url`` bound to the app's capture
-service), more/less feedback, close.
+service), track this page into the watchlists loop (Phase 2 Task 3, via
+``Dreams.track_service.track_page`` bound to the app's
+``LocalWatchlistsService``), untrack it again (Phase 2 Task 6, via
+``Dreams.track_service.untrack`` -- no tracked wrapper is a gentle
+notice), watch the discovery question itself (task-35586, via
+``Dreams.track_service.track_question`` -- the story's ``query``
+verbatim, no subscription, offered on every non-synthetic row including
+``dreams://llm`` ones because a question needs no URL),
+more/less feedback, goals & privacy
+(Phase 2 Task 1: pushes ``DreamsGoalsModal``), close.
 
 Modal structure follows this stream's own modal idioms:
 
@@ -17,11 +26,9 @@ Modal structure follows this stream's own modal idioms:
   ``rich.text.Text`` (never a bare ``str``, never markup-parsed) or
   ``rich.markdown.Markdown(..., hyperlinks=False)`` -- a link must never
   carry an invisible destination.
-- Panel styling from the Artifacts screen's own sibling modal
-  (``artifact_share_dialog.ArtifactShareDialog``): a small
-  ``DEFAULT_CSS`` composed of existing theme variables (``$background``/
-  ``$surface``/``$primary``/``$warning``) rather than any new tcss sheet,
-  token, or hex literal (ADR-150: nothing new to govern).
+- Central design tokens and the existing consolidated CSS builder style
+  the panel and compact action grid (ADR-150). SafeModalDismissMixin
+  preserves top-screen dismissal and restores the opener's focus (ADR-161).
 - Handoff staging follows the ``skills_screen.attach_to_console`` idiom
   exactly: resolve ``open_chat_with_handoff`` off the running app with
   ``getattr``, warn-and-stay when the runtime lacks it, never invent
@@ -35,22 +42,26 @@ stays inspectable -- but offers Close only: every story action is a
 silent no-op, the hint line advertises Close only, and nothing is ever
 written for a row with no ``dream_stories`` id behind it.
 
-**Ingest is http(s)-only.** LLM-knowledge stories (``dreams://llm/…`` URLs)
-have no web destination for the read-it-later queue, so their modal hides
-the Ingest button, drops it from the hint line, and the ``i`` keybinding
-degrades to a gentle notice instead of submitting a doomed capture.
+**Ingest and Track are http(s)-only.** LLM-knowledge stories
+(``dreams://llm/…`` URLs) have no web destination for the read-it-later
+queue and no page for the watchlists loop to watch, so their modal hides
+the Ingest/Track buttons, drops them from the hint line, and the ``i``/
+``t`` keybindings degrade to a gentle notice instead of submitting a
+doomed capture or a URL-less track.
 
 **All writes are single-row instant SQLite calls** made directly in the
 action handlers (controller ruling, mirroring the kept-briefings modal):
 ``DreamsDB.set_story_kept``/``record_feedback`` are one-statement
 transactions against a thread-local held connection, so no worker and no
 ``asyncio.to_thread`` hop is warranted. After ANY mutating action the
-modal calls ``on_changed()`` (the Artifacts screen re-reads its rows) and
+modal calls ``on_changed()`` (the Library reader refreshes after modal return) and
 posts a dismissible notice; export/path errors surface as notices, never
 crashes.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 import inspect
 import re
@@ -67,13 +78,15 @@ from rich.markdown import Markdown
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Grid, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Utils.path_validation import validate_filename, validate_path_simple
 from ...Utils.timestamps import utc_now_iso
+from ...Widgets.modal_dismissal import SafeModalDismissMixin
+from .artifacts_dreams_goals_modal import DreamsGoalsModal
 
 #: Same refusal as ``kept_briefings_modal._MARKDOWN_HYPERLINKS`` and the
 #: Artifacts screen's own report preview: story bodies are LLM-written
@@ -106,6 +119,45 @@ _UNCONFIRMED_INGEST_NOTICE = (
 )
 _NO_HTTP_URL_NOTICE = (
     "This story has no web URL to ingest."
+)
+_INGEST_PRIVATE_URL_NOTICE = (
+    "This story's address is on a private network or could not be resolved; "
+    "nothing was ingested."
+)
+_NO_HTTP_URL_TRACK_NOTICE = (
+    "This story has no web URL to track."
+)
+_NO_TRACK_BACKEND_NOTICE = (
+    "Page tracking is unavailable in this runtime."
+)
+_NOT_TRACKED_NOTICE = (
+    "This story is not being tracked."
+)
+_UNTRACKED_NOTICE = "Stopped tracking this page."
+_UNWATCHED_NOTICE = "Stopped watching this question."
+_TRACK_CAP_NOTICE = (
+    "Tracking budget is full: retire a tracked page before adding more."
+)
+_TRACK_DREAMS_OFF_NOTICE = (
+    "Dreams is switched off, so nothing was tracked. Switch it on in "
+    "Settings > Domain Defaults > Dreams to track stories."
+)
+# Watchlists cannot switch an existing source back on, so this must not
+# tell the user to "enable it" there (review of #2921, round 4, A2).
+_TRACK_SOURCE_DISABLED_NOTICE = (
+    "This page already has a source in Watchlists that is switched off, "
+    "and Dreams did not switch it off, so it is left alone. To track the "
+    "page, delete that source in Watchlists and track again."
+)
+_TRACK_INVALID_URL_NOTICE = (
+    "This page's address is not a valid http(s) URL; nothing was tracked."
+)
+_TRACK_PRIVATE_URL_NOTICE = (
+    "This page's address is on a private network or could not be resolved; "
+    "nothing was tracked."
+)
+_NO_QUERY_NOTICE = (
+    "This story recorded no query to watch."
 )
 
 
@@ -169,6 +221,10 @@ def _detail_renderable(story: Mapping[str, Any]) -> RenderableType:
     """Header + body for one story (literal `Text`, hyperlink-free Markdown)."""
     header = Text()
     header.append(str(story.get("title") or "Untitled dream story"), style="bold")
+    if story.get("tracked"):
+        # Same badge idiom as the list rows' " · kept": an ACTIVE tracked
+        # item names this story as its origin (Phase 2 Task 5).
+        header.append(" · tracked", style="dim")
     header.append("\n")
     header.append(str(story.get("url") or "no source URL"), style="dim")
     header.append("\n")
@@ -210,7 +266,7 @@ def _export_markdown(story: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-class DreamsStoryModal(ModalScreen[None]):
+class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
     """Inspect one Dreams story and act on it; always dismisses ``None``.
 
     Args:
@@ -226,6 +282,18 @@ class DreamsStoryModal(ModalScreen[None]):
             a ``CollectionsCaptureBackend``) or ``None``; called lazily at
             action time so the Ingest action degrades to a notice rather
             than crashing a runtime without the capture service.
+        subs_service_getter: Zero-arg callable returning the app's
+            ``LocalWatchlistsService`` or ``None``; called lazily at action
+            time so the Track action (Phase 2 Task 3, via
+            ``Dreams.track_service.track_page``) degrades to a notice rather
+            than crashing a runtime without the watchlists service. ``None``
+            (the default) keeps older constructors working.
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` or ``None`` (Phase 2 Task 5); the track
+            action promotes one one-time reminder a week before the story's
+            ``event_date`` when it is set, degrading silently when the
+            scheduler is unavailable. ``None`` (the default) keeps older
+            constructors working.
         on_changed: Zero-arg callback fired after every mutating action;
             the Artifacts screen re-reads its Dreams rows.
     """
@@ -235,24 +303,34 @@ class DreamsStoryModal(ModalScreen[None]):
         ("d", "dive", "Dive deeper"),
         ("e", "export", "Export"),
         ("i", "ingest", "Ingest"),
+        ("t", "track", "Track this"),
+        ("u", "untrack", "Untrack"),
+        ("w", "watch", "Watch a question"),
         ("m", "more", "More like this"),
         ("l", "less", "Less like this"),
+        ("g", "goals", "Goals & privacy"),
         ("q", "close", "Close"),
         # Hidden: Escape is the safe-dismissal grammar (task-16211), not a
-        # footer-advertised action -- the hint line stays exactly the seven.
+        # footer-advertised action -- the hint line stays exactly the eleven.
         Binding("escape", "close", "Close", show=False),
     )
 
-    # Mirrors ArtifactShareDialog's placement ruling: DEFAULT_CSS parses
-    # at mount (runtime), not into the boot bundle, and uses only
-    # existing theme variables -- zero new tokens or literals (ADR-150).
-    DEFAULT_CSS = """
-    DreamsStoryModal { align: center middle; background: $background 70%; }
+    SAFE_MODAL_CONTENT = "#dsm-dialog"
+
+    # Central tokens are resolved by the existing consolidated CSS builder.
+    BUNDLED_CSS = """
+    DreamsStoryModal { align: center middle; background: $background $ds-opacity-dim; }
     DreamsStoryModal > VerticalScroll {
-        width: 76; max-width: 96%; height: auto; max-height: 90%;
-        background: $surface; border: solid $primary; padding: 1 2;
+        width: $ds-size-76; max-width: $ds-percent-96; height: auto; max-height: $ds-percent-90;
+        background: $ds-surface-raised; border: solid $ds-action-focus; padding: $ds-space-1 $ds-space-2;
     }
-    DreamsStoryModal #dsm-hints { color: $warning; margin-top: 1; }
+    DreamsStoryModal #dsm-hints { color: $ds-status-warning; margin-top: $ds-space-1; }
+    DreamsStoryModal #dsm-actions {
+        grid-size: 2; grid-columns: 1fr 1fr;
+        grid-rows: $ds-control-height-compact; grid-gutter: $ds-space-1;
+        height: auto; margin-top: $ds-space-1;
+    }
+    DreamsStoryModal #dsm-actions Button { width: $ds-width-full; min-width: $ds-size-0; }
     """
 
     def __init__(
@@ -262,14 +340,20 @@ class DreamsStoryModal(ModalScreen[None]):
         dreams_db_getter: Callable[[], Any],
         capture_backend_getter: Callable[[], Any],
         on_changed: Callable[[], None],
+        subs_service_getter: Callable[[], Any] | None = None,
+        scheduling_db_getter: Callable[[], Any] | None = None,
     ) -> None:
         super().__init__()
         self._story = dict(story)
         self._synthetic = bool(story.get("synthetic"))
         self._dreams_db_getter = dreams_db_getter
         self._capture_backend_getter = capture_backend_getter
+        self._subs_service_getter = subs_service_getter
+        self._scheduling_db_getter = scheduling_db_getter
         self._on_changed = on_changed
         self._ingest_in_flight = False
+        self._track_in_flight = False
+        self._watch_in_flight = False
 
     # --- Compose ---------------------------------------------------------
 
@@ -280,7 +364,7 @@ class DreamsStoryModal(ModalScreen[None]):
             else:
                 yield Static(_detail_renderable(self._story), id="dsm-detail")
                 yield Static("", id="dsm-preview")
-            with Horizontal(id="dsm-actions"):
+            with Grid(id="dsm-actions"):
                 if not self._synthetic:
                     yield Button(
                         "Unkeep (k)" if self._story.get("kept") else "Keep (k)",
@@ -297,6 +381,24 @@ class DreamsStoryModal(ModalScreen[None]):
                         yield Button(
                             "Ingest (i)", id="dsm-ingest-button", compact=True
                         )
+                        # Tracking watches the same web destination Ingest
+                        # captures, so it rides the same http(s) gate: a
+                        # dreams://llm row has no URL to watch.
+                        yield Button(
+                            "Track this (t)", id="dsm-track-button", compact=True
+                        )
+                        # Untrack is Track's inverse on the same gate (an
+                        # untrackable row was never trackable).
+                        yield Button(
+                            "Untrack (u)", id="dsm-untrack-button", compact=True
+                        )
+                    # Watch question (task-35586): tracks the QUERY, not the
+                    # page -- a dreams://llm row has no URL but its discovery
+                    # query is still a watchable question, so unlike
+                    # Ingest/Track this rides NO http(s) gate.
+                    yield Button(
+                        "Watch question (w)", id="dsm-watch-button", compact=True
+                    )
                     yield Button(
                         "More like this (m)", id="dsm-more-button", compact=True
                     )
@@ -305,9 +407,11 @@ class DreamsStoryModal(ModalScreen[None]):
                     )
                 yield Button("Close (q)", id="dsm-close-button", compact=True)
             # ADR-031 rule 4: the hint line advertises EXACTLY the
-            # implemented actions -- all seven for a story with an http(s)
-            # URL, Close only for a synthetic failed-cycle row, and no
-            # Ingest for a dreams://llm row whose action is gated off.
+            # implemented actions -- all eleven for a story with an http(s)
+            # URL (Watch question included), Close only for a synthetic
+            # failed-cycle row, and no Ingest/Track/Untrack for a
+            # dreams://llm row whose actions are gated off (Watch stays:
+            # its query needs no URL).
             yield Static(self._hints_text(), id="dsm-hints")
 
     def _hints_text(self) -> Text:
@@ -315,8 +419,10 @@ class DreamsStoryModal(ModalScreen[None]):
         if not self._synthetic:
             hints.append("k Keep · d Dive deeper · e Export")
             if _ingestable(self._story):
-                hints.append(" · i Ingest")
-            hints.append(" · m More like this · l Less like this · ")
+                hints.append(" · i Ingest · t Track this · u Untrack")
+            hints.append(" · w Watch question")
+            hints.append(" · m More like this · l Less like this · "
+                         "g Goals & privacy · ")
         hints.append("q Close")
         return hints
 
@@ -333,14 +439,17 @@ class DreamsStoryModal(ModalScreen[None]):
         text.append(f"({_PREVIEW_LABEL})", style="dim")
         text.append("\n")
         if queries:
-            for query in queries:
-                text.append(f"- {query}\n")
+            for row in queries:
+                line = f"- {row['query']}"
+                if row.get("goal_derived"):
+                    line += " (goal-derived)"
+                text.append(f"{line}\n")
         else:
             text.append("No interest profile yet; nothing to preview.", style="dim")
         self.query_one("#dsm-preview", Static).update(text)
 
-    def _preview_queries(self) -> list[str]:
-        """Fallback queries for the current snapshot, via the public seam."""
+    def _preview_queries(self) -> list[dict]:
+        """Labeled fallback queries for the current snapshot (public seam)."""
         db = self._db()
         if db is None:
             return []
@@ -351,11 +460,12 @@ class DreamsStoryModal(ModalScreen[None]):
 
             snap = snapshot(db, now_epoch=time.time())
             topics = [str(topic["text"]) for topic in snap.get("topics", [])]
+            goals = snap.get("goals", [])
             try:
                 count = int(dreams_setting("queries_per_cycle") or 3)
             except (TypeError, ValueError):
                 count = 3
-            return preview_queries(topics, max(1, count))
+            return preview_queries(topics, goals, count=max(1, count))
         except Exception as exc:  # noqa: BLE001 - degrade the section, not the modal
             logger.warning(
                 f"Dreams query preview failed: {type(exc).__name__}"
@@ -374,6 +484,15 @@ class DreamsStoryModal(ModalScreen[None]):
         try:
             return self._capture_backend_getter()
         except Exception:  # noqa: BLE001 - a broken getter is a missing backend
+            return None
+
+    def _track_service(self) -> Any:
+        """The app's watchlists service for the track action, or ``None``."""
+        if self._subs_service_getter is None:
+            return None
+        try:
+            return self._subs_service_getter()
+        except Exception:  # noqa: BLE001 - a broken getter is a missing service
             return None
 
     def _story_id(self) -> int | None:
@@ -441,7 +560,7 @@ class DreamsStoryModal(ModalScreen[None]):
             return
         self._story["kept"] = kept
         self.notify(
-            "Kept -- this story survives future cycles."
+            "Kept -- listed first among its day's stories."
             if kept
             else "Unkept.",
             markup=False,
@@ -492,30 +611,46 @@ class DreamsStoryModal(ModalScreen[None]):
         if story_id is None:
             self.notify(_NO_DB_NOTICE, severity="warning", markup=False)
             return
-        try:
-            export_dir = _dreams_export_dir()
-            export_dir.mkdir(parents=True, exist_ok=True)
-            filename = validate_filename(
-                f"{_slugify(str(self._story.get('title') or ''))}-{story_id}.md"
-            )
-            path = validate_path_simple(
-                export_dir / filename, require_exists=False
-            )
-            path.write_text(_export_markdown(self._story), encoding="utf-8")
-        except (OSError, ValueError) as exc:
-            logger.warning(f"Dreams export failed: {type(exc).__name__}")
-            self.notify(
-                f"Could not export this story: {type(exc).__name__}",
-                severity="error",
-                markup=False,
-            )
-            return
-        if not self._record_feedback("exported"):
-            return
-        # The filename embeds a title-derived slug (web-derived text), so
-        # this notice never parses markup.
-        self.notify(f"Exported to {path.name}", markup=False)
-        self._changed()
+
+        async def _write_story_export() -> None:
+            # task-34936: the markdown write runs off the click path; the
+            # feedback record and notices apply on completion, on the loop.
+            try:
+                export_dir = await asyncio.to_thread(_dreams_export_dir)
+                await asyncio.to_thread(
+                    export_dir.mkdir, parents=True, exist_ok=True
+                )
+                filename = validate_filename(
+                    f"{_slugify(str(self._story.get('title') or ''))}-{story_id}.md"
+                )
+                path = validate_path_simple(
+                    export_dir / filename, require_exists=False
+                )
+                await asyncio.to_thread(
+                    path.write_text,
+                    _export_markdown(self._story),
+                    encoding="utf-8",
+                )
+            except (OSError, ValueError) as exc:
+                logger.warning(f"Dreams export failed: {type(exc).__name__}")
+                self.notify(
+                    f"Could not export this story: {type(exc).__name__}",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            if not self._record_feedback("exported"):
+                return
+            # The filename embeds a title-derived slug (web-derived text),
+            # so this notice never parses markup.
+            self.notify(f"Exported to {path.name}", markup=False)
+            self._changed()
+
+        self.run_worker(
+            _write_story_export,
+            exclusive=True,
+            group="dreams-story-export",
+        )
 
     async def action_ingest(self) -> None:
         """Submit the story URL to read-it-later, then record feedback.
@@ -549,6 +684,7 @@ class DreamsStoryModal(ModalScreen[None]):
         # Lazy Dreams import (same pattern as ``_preview_queries``).
         from ...Dreams.ingest_action import (
             UNKNOWN_OUTCOME_IDENTIFIER,
+            StoryUrlNotPublic,
             ingest_story_url,
         )
 
@@ -562,6 +698,11 @@ class DreamsStoryModal(ModalScreen[None]):
                     f"via Dreams {datetime.now(UTC).date().isoformat()}"
                 ),
             )
+        except StoryUrlNotPublic:
+            # Refused at the door, before anything was submitted (T24).
+            self.notify(_INGEST_PRIVATE_URL_NOTICE, severity="warning",
+                        markup=False)
+            return
         except Exception as exc:  # noqa: BLE001 - a failed capture is a notice
             logger.warning(f"Dreams ingest failed: {type(exc).__name__}")
             self.notify(
@@ -584,6 +725,301 @@ class DreamsStoryModal(ModalScreen[None]):
         self.notify(f"Ingested to read-it-later ({identifier}).", markup=False)
         self._changed()
 
+    async def action_track(self) -> None:
+        """Attach-or-create the page watch (Phase 2 Task 3), then record.
+
+        Guards mirror ``action_ingest``: synthetic rows and ``dreams://llm``
+        rows (no web URL to watch) are refused notices, a second press while
+        the async track is in flight is ignored, and a missing watchlists
+        service degrades to a notice. ``TrackCapReached`` refuses BEFORE any
+        write (the service's cap guard is first), so no feedback, no
+        refresh; success records ``tracked`` feedback, fires ``on_changed``,
+        and the notice carries the service's outcome word verbatim
+        (created/attached/re-enabled).
+        """
+        if self._synthetic:
+            self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
+            return
+        if not _ingestable(self._story):
+            # dreams://llm rows have no page to watch; the button and hint
+            # are already hidden for them, this guard covers the "t" key.
+            self.notify(_NO_HTTP_URL_TRACK_NOTICE, severity="information",
+                        markup=False)
+            return
+        if self._track_in_flight:
+            # The whole track chain is async: a second press while it is
+            # awaited would double-create the wrapper.
+            return
+        subs_service = self._track_service()
+        db = self._db()
+        story_id = self._story_id()
+        if subs_service is None or db is None or story_id is None:
+            self.notify(_NO_TRACK_BACKEND_NOTICE, severity="warning",
+                        markup=False)
+            return
+        # Lazy Dreams import (same pattern as ``action_ingest``).
+        from ...Dreams.track_service import (
+            TrackCapReached,
+            TrackDreamsOff,
+            TrackInvalidURL,
+            TrackPrivateURL,
+            TrackSourceDisabled,
+            track_page,
+        )
+
+        # The story's kind maps onto the tracked-item intent vocabulary
+        # ('event'/'deal' pass through; everything else is a topic watch).
+        intent = {"event": "event", "deal": "deal"}.get(
+            str(self._story.get("kind") or ""), "topic"
+        )
+        self._track_in_flight = True
+        try:
+            result = await track_page(
+                subs_service,
+                db,
+                url=str(self._story.get("url") or ""),
+                title=str(self._story.get("title") or "Untitled dream story"),
+                intent=intent,
+                event_date=self._story.get("event_date") or None,
+                origin_story_id=story_id,
+                # Phase 2 Task 5: the reminder seam rides the same call --
+                # ``promote_to_reminder`` degrades (logs, returns None)
+                # whenever the scheduler is missing, so passing the getter
+                # straight through (it may itself be None) never changes
+                # the outcome word below.
+                scheduling_db_getter=self._scheduling_db_getter,
+            )
+        except TrackCapReached:
+            self.notify(_TRACK_CAP_NOTICE, severity="warning", markup=False)
+            return
+        except TrackDreamsOff:
+            # TASK-34928: the service refuses before anything is written.
+            self.notify(_TRACK_DREAMS_OFF_NOTICE, severity="warning",
+                        markup=False)
+            return
+        except TrackPrivateURL:
+            # Qodo #1 (PR #2921): a story URL nobody typed must be a
+            # public destination before Dreams stores it as a watch. The
+            # subclass is caught first so its notice says why.
+            self.notify(_TRACK_PRIVATE_URL_NOTICE, severity="warning",
+                        markup=False)
+            return
+        except TrackInvalidURL:
+            # Qodo #8 (PR #2890): the service refused the URL before any
+            # write; ``_ingestable`` should have caught it first, so this
+            # is a belt-and-braces notice for a direct press race.
+            self.notify(_TRACK_INVALID_URL_NOTICE, severity="warning",
+                        markup=False)
+            return
+        except TrackSourceDisabled:
+            # P7 (fix round 1): the URL's source exists but is disabled and
+            # is not ours to re-enable; the service raised before any write.
+            self.notify(
+                _TRACK_SOURCE_DISABLED_NOTICE, severity="warning", markup=False
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 - a failed track is a notice
+            logger.warning(f"Dreams track failed: {type(exc).__name__}")
+            self.notify(
+                f"Could not track this story: {type(exc).__name__}",
+                severity="error",
+                markup=False,
+            )
+            return
+        finally:
+            self._track_in_flight = False
+        if not self._record_feedback("tracked"):
+            return
+        # "created"/"attached"/"re-enabled" is the service's fixed outcome
+        # word, never story-derived text, so this notice never parses markup.
+        self.notify(f"Tracking this page ({result['outcome']}).", markup=False)
+        self._changed()
+
+    async def action_untrack(self) -> None:
+        """Retire the story's tracked wrapper (Phase 2 Task 6), if any.
+
+        ``find_tracked_by_story`` resolves the ACTIVE page wrapper this
+        story's track created (or, when the story has no page watch, its
+        question watch); found, ``untrack`` retires it
+        (``retired_reason="manual"``) and disables a dream-created
+        subscription -- a notice names what stopped, the badge clears
+        once no active watch is left, and ``on_changed`` refreshes the
+        screen's rows. No active wrapper
+        (never tracked, the tracked row belongs to another story, or a
+        sweep already auto-retired it) is a gentle notice with no write
+        and no refresh. Untrack records NO feedback: removing a watch is
+        not an interest signal.
+        """
+        if self._synthetic:
+            self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
+            return
+        if self._track_in_flight:
+            # Same in-flight guard as track: the untrack chain is async, and
+            # a second press while it is awaited would double-retire.
+            return
+        subs_service = self._track_service()
+        db = self._db()
+        story_id = self._story_id()
+        if subs_service is None or db is None or story_id is None:
+            self.notify(_NO_TRACK_BACKEND_NOTICE, severity="warning",
+                        markup=False)
+            return
+        from ...Dreams.track_service import untrack
+
+        self._track_in_flight = True
+        try:
+            # Single-row indexed read (``idx_dream_tracked_origin_story``):
+            # direct call, the modal's single-row SQLite discipline.
+            # Untrack is Track's inverse, so the PAGE wrapper is asked
+            # for by mechanism (Qodo #10, PR #2921): a story that is also
+            # watched by question owns a second, possibly newer, wrapper,
+            # and "the newest" retired that one while the page's
+            # subscription kept fetching. Only a story with no page
+            # watch falls back to whatever watch it does have, so a
+            # question watch is never left without a way to stop it.
+            tracked = (
+                db.find_tracked_by_story(story_id, mechanism="page")
+                or db.find_tracked_by_story(story_id)
+            )
+            if tracked is None:
+                # Gentle refusal: nothing to retire, so nothing is written
+                # and the screen does not refresh.
+                self.notify(_NOT_TRACKED_NOTICE, severity="information",
+                            markup=False)
+                return
+            await untrack(
+                subs_service, db, int(tracked["id"]),
+                # Qodo #13 (PR #2890): retiring the wrapper also disables
+                # the one-time reminder linked to it (the same getter the
+                # track action promotes through; None degrades silently).
+                scheduling_db_getter=self._scheduling_db_getter,
+            )
+            # The badge means "an active watch names this story": another
+            # wrapper (the question watch) may still be running.
+            still_tracked = db.find_tracked_by_story(story_id) is not None
+        except Exception as exc:  # noqa: BLE001 - a failed untrack is a notice
+            logger.warning(f"Dreams untrack failed: {type(exc).__name__}")
+            self.notify(
+                f"Could not untrack this story: {type(exc).__name__}",
+                severity="error",
+                markup=False,
+            )
+            return
+        finally:
+            self._track_in_flight = False
+        self._story["tracked"] = still_tracked
+        self.notify(
+            _UNTRACKED_NOTICE if tracked.get("mechanism") == "page"
+            else _UNWATCHED_NOTICE,
+            markup=False,
+        )
+        self._changed()
+        if self.is_attached:
+            self.refresh(recompose=True)
+
+    async def action_watch(self) -> None:
+        """Watch the story's discovery question (task-35586, Phase 2 Track).
+
+        ``track_question`` is the seam: the story's ``query`` -- the search
+        that found it -- becomes the watch's template VERBATIM (v1 ruling:
+        no edit affordance; the success notice states the watched query so
+        the user sees exactly what will re-run). The intent derives from
+        the story's ``kind`` and the ``event_date`` rides through when
+        present. A question watch owns no subscription, so -- unlike
+        ``action_track`` -- no watchlists service is consulted; only the
+        Dreams DB is required. Guards mirror the other write actions:
+        synthetic rows are refused, a second press while the async watch
+        is in flight is ignored, a blank query is a gentle refusal, and
+        ``TrackCapReached`` (the service's guard-first cap) refuses with
+        a notice and writes nothing. Success records ``tracked`` feedback,
+        fires ``on_changed``, and keeps the modal open.
+        """
+        if self._synthetic:
+            self.notify(_SYNTHETIC_NOTICE, severity="warning", markup=False)
+            return
+        if self._watch_in_flight:
+            # The watch chain is async: a second press while it is awaited
+            # could double-create the wrapper before the reuse lookup lands.
+            return
+        db = self._db()
+        story_id = self._story_id()
+        if db is None or story_id is None:
+            self.notify(_NO_DB_NOTICE, severity="warning", markup=False)
+            return
+        template = str(self._story.get("query") or "").strip()
+        if not template:
+            # ``track_question`` refuses an empty template as a caller bug;
+            # the modal degrades that to a notice instead (the story row is
+            # the caller's data, not the user's press).
+            self.notify(_NO_QUERY_NOTICE, severity="information", markup=False)
+            return
+        # Lazy Dreams import (same pattern as ``action_ingest``).
+        from ...Dreams.track_service import (
+            TrackCapReached,
+            TrackDreamsOff,
+            track_question,
+        )
+
+        # Same kind-to-intent mapping as ``action_track``: 'event'/'deal'
+        # pass through, everything else is a topic watch.
+        intent = {"event": "event", "deal": "deal"}.get(
+            str(self._story.get("kind") or ""), "topic"
+        )
+        self._watch_in_flight = True
+        try:
+            await track_question(
+                db,
+                query_template=template,
+                intent=intent,
+                event_date=self._story.get("event_date") or None,
+                origin_story_id=story_id,
+                # Same reminder seam as ``action_track``: an event-dated
+                # watch promotes one one-time reminder a week ahead, and
+                # ``promote_to_reminder`` degrades silently when the
+                # scheduler is missing.
+                scheduling_db_getter=self._scheduling_db_getter,
+            )
+        except TrackCapReached:
+            self.notify(_TRACK_CAP_NOTICE, severity="warning", markup=False)
+            return
+        except TrackDreamsOff:
+            self.notify(_TRACK_DREAMS_OFF_NOTICE, severity="warning",
+                        markup=False)
+            return
+        except Exception as exc:  # noqa: BLE001 - a failed watch is a notice
+            logger.warning(f"Dreams watch failed: {type(exc).__name__}")
+            self.notify(
+                f"Could not watch this question: {type(exc).__name__}",
+                severity="error",
+                markup=False,
+            )
+            return
+        finally:
+            self._watch_in_flight = False
+        if not self._record_feedback("tracked"):
+            return
+        # The template is story-derived (LLM-written from web material), so
+        # this notice never parses markup.
+        self.notify(f"Watching this question: {template}", markup=False)
+        self._changed()
+
+    def _feedback_notice(self, steering: str) -> str:
+        """The notice for a more/less reaction: ``steering`` when it can steer.
+
+        Feedback moves the topics a story matched and the query angle of
+        the goal whose search found it (``cycle_service._net_from_rows`` /
+        ``_write_goal_angles``). A story with neither -- a watchlist item
+        that matched no topic, say -- has nothing for the reaction to act
+        on, and promising that future cycles will lean one way was false
+        (review of #2921, round 3, N6). The reaction is still recorded.
+        """
+        if self._story.get("matched_topics") or self._story.get("goal"):
+            return steering
+        return (
+            "Noted -- but this story matched none of your topics or goals, "
+            "so there is nothing for it to steer."
+        )
+
     def action_more(self) -> None:
         """Record ``more`` feedback, notify, dismiss."""
         if self._synthetic:
@@ -592,7 +1028,9 @@ class DreamsStoryModal(ModalScreen[None]):
         if not self._record_feedback("more"):
             return
         self.notify(
-            "Noted -- future cycles will lean toward stories like this.",
+            self._feedback_notice(
+                "Noted -- future cycles will lean toward stories like this."
+            ),
             markup=False,
         )
         self._changed()
@@ -606,11 +1044,35 @@ class DreamsStoryModal(ModalScreen[None]):
         if not self._record_feedback("less"):
             return
         self.notify(
-            "Noted -- future cycles will lean away from stories like this.",
+            self._feedback_notice(
+                "Noted -- future cycles will lean away from stories like this."
+            ),
             markup=False,
         )
         self._changed()
         self.dismiss(None)
+
+    def action_goals(self) -> None:
+        """Open the goals & privacy modal; refresh the preview on return.
+
+        Not a story action: it is the profile's own management surface, so
+        it works from a synthetic failed-cycle row too (whose hint line
+        still advertises Close only). Goal edits flow ``on_changed`` through
+        this modal's own callback, so the Artifacts screen refreshes; the
+        dismiss callback repaints this modal's preview, which may have
+        changed (goals drive labeled preview lines).
+        """
+        def _after_goals(_result: None) -> None:
+            if not self._synthetic and self.is_attached:
+                self._render_preview()
+
+        self.app.push_screen(
+            DreamsGoalsModal(
+                dreams_db_getter=self._dreams_db_getter,
+                on_changed=self._on_changed,
+            ),
+            _after_goals,
+        )
 
     def action_close(self) -> None:
         self.dismiss(None)
@@ -625,6 +1087,9 @@ class DreamsStoryModal(ModalScreen[None]):
             "dsm-dive-button": self.action_dive,
             "dsm-export-button": self.action_export,
             "dsm-ingest-button": self.action_ingest,
+            "dsm-track-button": self.action_track,
+            "dsm-untrack-button": self.action_untrack,
+            "dsm-watch-button": self.action_watch,
             "dsm-more-button": self.action_more,
             "dsm-less-button": self.action_less,
             "dsm-close-button": self.action_close,
@@ -632,7 +1097,8 @@ class DreamsStoryModal(ModalScreen[None]):
         handler = dispatch.get(button_id)
         if handler is not None:
             result = handler()
-            # ``action_ingest`` is async (the capture entry is); the rest
-            # return None immediately.
+            # ``action_ingest``/``action_track``/``action_untrack``/
+            # ``action_watch`` are async (the capture and track entries
+            # are); the rest return None immediately.
             if inspect.isawaitable(result):
                 await result

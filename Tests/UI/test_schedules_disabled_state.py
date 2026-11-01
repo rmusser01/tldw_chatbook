@@ -19,11 +19,13 @@ from tldw_chatbook.Scheduling.models import (
 )
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
+    _row_subtitle,
 )
 from tldw_chatbook.UI.Screens.scheduling.task_detail import (
     _format_next_run,
     _task_status,
 )
+from tldw_chatbook.UI.Screens.scheduling.unified_rows import _reminder_row
 
 
 _RUN_AT = datetime(2099, 7, 20, 14, 0, tzinfo=timezone.utc)
@@ -237,6 +239,210 @@ def test_fired_reminder_status_agrees_with_the_queue_bucket():
     assert _format_next_run(fired) == "—"
 
 
+# --- TASK-33641.4: only a FIRED ONE-TIME reminder earns the bare dash -----
+#
+# ``_format_next_run`` returned "—" for every row whose DISPLAY status was
+# Completed, and it checked that before it read ``next_run_at``.
+# ``_task_status`` falls through to ``last_status`` for an enabled reminder,
+# and a successful dispatch records "completed" on a recurring reminder too,
+# so a weekly reminder hid its next run from its first successful run onward.
+#
+# These nodes carry ``bootstrap_profile``: without it this file's setup trips
+# ``RecoveryRequired: raw_source_selection_changed`` (Tests/UI/conftest.py
+# imports the app under the per-test redirect) before any assertion runs.
+# They write no config, so keeping the collection-time profile is safe.
+
+_WEEKLY_NOW = datetime(2026, 9, 30, 9, 0, tzinfo=timezone.utc)
+
+
+def _weekly(**overrides) -> ReminderTask:
+    """A recurring reminder as a successful dispatch leaves it: armed, next run stored."""
+    fields = dict(
+        id="task-weekly",
+        title="Weekly digest",
+        schedule_kind=ScheduleKind.RECURRING,
+        cron="0 9 * * 1",
+        timezone="UTC",
+        next_run_at=datetime(2026, 10, 5, 9, 0, tzinfo=timezone.utc),
+        last_run_at=datetime(2026, 9, 28, 9, 0, tzinfo=timezone.utc),
+        last_status=TaskStatus.COMPLETED,
+    )
+    fields.update(overrides)
+    return ReminderTask(**fields)
+
+
+def _queue_next_run(task: ReminderTask) -> str:
+    """The next-run half of the queue row's subtitle, built as the table builds it."""
+    return _row_subtitle(_reminder_row(task), _WEEKLY_NOW).split(" · ", 1)[0]
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "last_status",
+    [
+        TaskStatus.COMPLETED,
+        TaskStatus.MISSED,
+        TaskStatus.TIMED_OUT,
+        TaskStatus.WAITING,
+    ],
+)
+def test_enabled_recurring_reminder_shows_its_next_run_whatever_its_last_status(
+    last_status,
+):
+    task = _weekly(last_status=last_status)
+    assert _format_next_run(task, now=_WEEKLY_NOW) == "2026-10-05 09:00 UTC (in 5d)"
+    assert _queue_next_run(task) == "2026-10-05 09:00 (in 5d)"
+
+
+@pytest.mark.bootstrap_profile
+def test_rearmed_one_time_reminder_shows_its_new_run():
+    """The rule is "has it fired", not "is it recurring".
+
+    A fired one-time reminder that is enabled and has had its schedule
+    edited is armed again: the edit stores a new ``next_run_at`` and leaves
+    ``last_status`` at "completed". That row is one-time, enabled and
+    Completed with a stored next run, so a fix that spared only recurring
+    reminders would still hide a run that will fire.
+    """
+    new_run = _weekly().next_run_at  # a one-time reminder's next run IS its run_at
+    task = _weekly(schedule_kind=ScheduleKind.ONE_TIME, cron=None, run_at=new_run)
+    # The shape that used to read a bare dash, asserted rather than assumed.
+    assert task.enabled is True
+    assert task.next_run_at == new_run
+    assert _task_status(task) is TaskStatus.COMPLETED
+
+    assert _format_next_run(task, now=_WEEKLY_NOW) == "2026-10-05 09:00 UTC (in 5d)"
+    assert _queue_next_run(task) == "2026-10-05 09:00 (in 5d)"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [
+        (
+            ReminderTask(
+                id="task-fired",
+                title="Backup",
+                schedule_kind=ScheduleKind.ONE_TIME,
+                run_at=_RUN_AT,
+                next_run_at=None,
+                last_run_at=_RUN_AT,
+                enabled=False,
+                last_status=TaskStatus.COMPLETED,
+            ),
+            "—",
+        ),
+        (_weekly(enabled=False), "— (disabled)"),
+        (_weekly(last_status=TaskStatus.PAUSED), "— (paused)"),
+    ],
+    ids=["fired-one-time", "disabled", "paused"],
+)
+def test_reminder_that_will_not_run_keeps_its_dash_form(task, expected):
+    """Negative controls: the fix must not un-suppress these three."""
+    assert _format_next_run(task, now=_WEEKLY_NOW) == expected
+    assert _queue_next_run(task) == expected
+
+
+@pytest.mark.bootstrap_profile
+def test_enabled_recurring_reminder_with_no_next_run_reads_the_plain_dash():
+    """An exhausted cron is the "enabled, nothing scheduled" case: it reads
+    "-" like any enabled reminder with no next run, not the fired "—"."""
+    assert _format_next_run(_weekly(next_run_at=None), now=_WEEKLY_NOW) == "-"
+
+
+_DUE_AT = datetime(2026, 9, 28, 9, 0, tzinfo=timezone.utc)  # a Monday
+
+
+def _dispatched_weekly_db(tmp_path):
+    """A REAL DB holding one weekly reminder after a successful dispatch."""
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+
+    db = ScheduledTasksDB(tmp_path / "recurring.db")
+    task_id = db.create_reminder_task(
+        owner_id="local",
+        title="Weekly digest",
+        schedule_kind="recurring",
+        cron="0 9 * * 1",
+        timezone="UTC",
+        next_run_at=_DUE_AT.isoformat(),
+        enabled=True,
+    )
+    db.mark_reminder_dispatched(task_id, _DUE_AT, success=True)
+    return db, task_id
+
+
+@pytest.mark.bootstrap_profile
+def test_real_recurring_dispatch_keeps_the_next_run_visible(tmp_path):
+    """The recurring case over the REAL DB, not a hand-built model: a
+    successful dispatch records "completed", leaves the reminder armed and
+    stores the next occurrence, and that occurrence is what the row shows."""
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SchedulingService,
+    )
+
+    due_at = _DUE_AT
+    db, task_id = _dispatched_weekly_db(tmp_path)
+    try:
+        row = db.get_reminder_task(task_id)
+    finally:
+        db.close()
+
+    assert row is not None
+    task = SchedulingService._row_to_reminder(row)
+    # The state the bug depended on, asserted rather than assumed.
+    assert task.enabled is True
+    assert task.last_status is TaskStatus.COMPLETED
+    assert task.next_run_at == datetime(2026, 10, 5, 9, 0, tzinfo=timezone.utc)
+
+    # The badge still reports the last outcome; only the next run changed.
+    assert _task_status(task) is TaskStatus.COMPLETED
+    assert _format_next_run(task, now=due_at) == "2026-10-05 09:00 UTC (in 7d)"
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)], ids=["211x44", "235x52"])
+async def test_a_dispatched_weekly_row_paints_its_relative_next_run(tmp_path, size):
+    """TASK-33641.4 AC#1, painted under the app's CSS at full-screen sizes.
+
+    The Details column is auto-width and wider than the queue pane, so the
+    row's right end is cut. With the next run after the schedule summary
+    the row read "Weekly on Monday at 09:00 UTC · 2026-10-0" and the
+    relative part never reached the screen.
+    """
+    from Tests.UI.consolidated_css import APP_STYLESHEETS
+    from Tests.UI.schedules_test_helpers import settle_schedules_workbench
+    from tldw_chatbook.Scheduling.services.scheduling_service import (
+        SchedulingService,
+    )
+
+    db, _task_id = _dispatched_weekly_db(tmp_path)
+    app = ConsolidatedCSSApp(css_path=[str(path) for path in APP_STYLESHEETS])
+    app.scheduling_service = SchedulingService(
+        db=db, runtime_source="local", app_getter=lambda: app
+    )
+    try:
+        async with app.run_test(size=size) as pilot:
+            workbench = SchedulesWorkbench(app_instance=pilot.app)
+            await pilot.app.push_screen(workbench)
+            await pilot.pause()
+            await settle_schedules_workbench(pilot, workbench)
+            workbench._render_table(now=_DUE_AT)  # the deterministic "(in 7d)"
+            await pilot.pause()
+
+            table = workbench.query_one("#scheduling-task-table", DataTable)
+            region = table.region
+            strips = pilot.app.screen._compositor.render_strips()
+            lines = [
+                "".join(seg.text for seg in strip.crop(region.x, region.right))
+                for strip in strips[region.y : region.bottom]
+            ]
+            row_line = next(line for line in lines if "Weekly digest" in line)
+            assert "(in 7d)" in row_line, row_line
+    finally:
+        db.close()
+
+
 # --- review F5: behavior consumers use the underlying status --------------
 
 
@@ -273,6 +479,11 @@ class _WorkbenchApp(ConsolidatedCSSApp):
         self.scheduling_service = _DisabledTaskService()
 
 
+# ``bootstrap_profile`` (whole-PR review of Phase 9, round 1): the mounted
+# workbench's footer reads guarded config while it composes, so without it
+# this node never reaches an assertion and could run in no PR lane. It writes
+# no config.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_disabled_row_and_badge_read_disabled_and_survive_refresh():
     app = _WorkbenchApp()
@@ -290,20 +501,18 @@ async def test_disabled_row_and_badge_read_disabled_and_survive_refresh():
         # configured 2099 date (descriptive, unaffected by enabled state
         # -- same as the create/edit form would show); the "no concrete
         # future time" promise-avoidance rule (task-23101) applies only
-        # to the next-run half, after the "·" separator.
+        # to the next-run half, before the "·" separator (TASK-33641.4).
         table = workbench.query_one("#scheduling-task-table", DataTable)
         row = table.get_row_at(0)
         assert str(row[0]) == "⏸"
-        next_run_text = str(row[2]).rsplit("·", 1)[-1]
+        next_run_text = str(row[2]).split("·", 1)[0]
         assert "2099" not in next_run_text
         assert "disabled" in next_run_text.lower()
 
         badge = workbench.query_one("#scheduling-task-status-badge", Static)
         assert "Disabled" in str(badge.render())
 
-        next_run = workbench.query_one(
-            "#scheduling-task-detail-next-run", Static
-        )
+        next_run = workbench.query_one("#scheduling-task-detail-next-run", Static)
         assert "2099" not in str(next_run.render())
 
         # The derived state survives a queue refresh.
@@ -321,12 +530,8 @@ class _DisabledMissedService(MockSchedulingServiceMixin):
 
     async def list_tasks(self, owner_id=None, include_projections=True):
         return [
-            _reminder_with(
-                "task-m", "Failed backup", TaskStatus.MISSED, enabled=False
-            ),
-            _reminder_with(
-                "task-c", "Conflicted", TaskStatus.CONFLICT, enabled=False
-            ),
+            _reminder_with("task-m", "Failed backup", TaskStatus.MISSED, enabled=False),
+            _reminder_with("task-c", "Conflicted", TaskStatus.CONFLICT, enabled=False),
         ]
 
 

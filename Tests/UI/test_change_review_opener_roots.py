@@ -29,6 +29,10 @@ from tldw_chatbook.UI.Screens.change_review_screen import ChangeReviewScreen
 from tldw_chatbook.Workspaces.change_tracking import ShadowRepoService
 from tldw_chatbook.Workspaces.change_turn_tracker import ChangeTurnTracker
 
+# Mounts the real Console app: keep the collection-time profile (the per-test
+# redirect fails config admission before the opener is ever reached).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class _Workspace:
     def __init__(self, root, service, tracker, db) -> None:
@@ -108,15 +112,32 @@ async def test_opener_passes_the_controllers_workspace_roots_to_the_screen(
 @pytest.mark.asyncio
 async def test_opener_degrades_to_no_roots_when_the_controller_raises(
     workspace_fixture,
+    monkeypatch,
 ):
     """A controller lookup failure must never break the opener -- it opens
     the screen with `workspace_roots=None` (screen-side default: an empty
     tuple), matching `_console_change_review_provider`'s own degrade
     posture just above it in `chat_screen.py`.
+
+    TASK-33620.15.1.3: the roots are read through
+    `resolve_session_workspace_roots` rather than a whole turn snapshot, so
+    the failure is injected there -- at the controller lookup the opener's
+    accessor actually makes.
     """
+    from tldw_chatbook.UI.Console_Modules import wiring
+
     ws = workspace_fixture
 
     app = _build_test_app()
+    # Admit a real root, so the empty result below can only come from the
+    # failed lookup -- never from there being nothing to admit.
+    app.change_review_consent_service = SimpleNamespace(
+        admit_turn=lambda _workspace_id: SimpleNamespace(
+            ready_roots=(str(ws.root),),
+            ready_aliases=(),
+            skipped_roots=(),
+        )
+    )
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
@@ -130,7 +151,7 @@ async def test_opener_degrades_to_no_roots_when_the_controller_raises(
         def _raise(*_args, **_kwargs):
             raise RuntimeError("turn-context resolution exploded")
 
-        controller.resolve_turn_execution_context = _raise
+        monkeypatch.setattr(wiring, "resolve_session_workspace_roots", _raise)
 
         console._open_change_review()
         review = await _wait_for_change_review_screen(host, pilot)

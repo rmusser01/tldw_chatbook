@@ -364,7 +364,9 @@ async def test_first_rows_match_the_static_they_replace(content):
     assert new_rows == old_rows
 
 
-async def _drag_and_get_selected_text(app_cls, content, down, up, widget_id, widget_type):
+async def _drag_and_get_selected_text(
+    app_cls, content, down, up, widget_id, widget_type
+):
     """Perform a real mouse drag and read back the resulting selection.
 
     Shared by the Static-vs-VirtualizedRawContent tab comparison tests below
@@ -820,7 +822,9 @@ async def test_wide_glyph_rows_declare_their_true_cell_length():
         for y in range(widget.scrollable_content_region.height):
             strip = widget.render_line(y)
             real = Segment.get_line_length(strip._segments)
-            assert strip.cell_length == real, f"row {y} declares {strip.cell_length}, is {real}"
+            assert strip.cell_length == real, (
+                f"row {y} declares {strip.cell_length}, is {real}"
+            )
             assert real == width, f"row {y} is {real} cells in a {width}-cell widget"
 
 

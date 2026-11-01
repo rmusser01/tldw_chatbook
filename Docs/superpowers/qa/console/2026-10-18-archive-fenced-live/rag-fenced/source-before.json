@@ -1,0 +1,8 @@
+{
+  "head": "2391c827bb36f23ab7f517c281fc28bdff67d05f",
+  "hashes": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "c3782fa37547ac8b8a78d2826a7a736e00e6bfac8847ed50cf63a9f10888a8a7",
+    "tldw_chatbook/Agents/agent_runtime.py": "e3226987d1157f718ae1b3291eb3b852f359227bd8e62e585a6dedd1a495ea92",
+    "Tests/Chat/test_console_archive_recovery_followup.py": "dd44c53e7a8b3131a9e1a404ee8fca46e236b26f64219167aac053a5a1ab53b4"
+  }
+}

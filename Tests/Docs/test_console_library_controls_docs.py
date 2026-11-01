@@ -96,7 +96,9 @@ def test_console_library_control_docs_state_the_contract(
 
 
 @pytest.mark.parametrize("relative_path", DOC_CONTRACT)
-def test_console_library_control_docs_have_valid_local_links(relative_path: str) -> None:
+def test_console_library_control_docs_have_valid_local_links(
+    relative_path: str,
+) -> None:
     """Every local Markdown link in the governed pages resolves in the tree."""
     document = REPO_ROOT / relative_path
     text = document.read_text(encoding="utf-8")
@@ -111,7 +113,9 @@ def test_console_library_control_docs_have_valid_local_links(relative_path: str)
         else:
             target = target.split(maxsplit=1)[0]
         local_path = unquote(target.partition("#")[0])
-        resolved = document if not local_path else (document.parent / local_path).resolve()
+        resolved = (
+            document if not local_path else (document.parent / local_path).resolve()
+        )
         if not resolved.exists():
             missing.append(target)
 
@@ -120,9 +124,9 @@ def test_console_library_control_docs_have_valid_local_links(relative_path: str)
 
 def test_context_and_rag_has_no_superseded_automatic_retrieval_claims() -> None:
     """The current guide cannot retain behavior contradicted by ADR-079."""
-    text = (
-        REPO_ROOT / "Docs/User_Guide/console/context-and-rag.md"
-    ).read_text(encoding="utf-8")
+    text = (REPO_ROOT / "Docs/User_Guide/console/context-and-rag.md").read_text(
+        encoding="utf-8"
+    )
     normalized = " ".join(text.split())
 
     stale = [claim for claim in FORBIDDEN_CONTEXT_AND_RAG_CLAIMS if claim in normalized]

@@ -18,9 +18,11 @@ from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import daily_report_demo
 from tldw_chatbook.Subscriptions.daily_report_demo import (
     DEMO_CADENCE_SECONDS,
+    DEMO_SOURCE_CHECK_SECONDS,
     DEMO_SOURCES,
     DEMO_WATCHLIST_NAME,
     DailyReportDemoService,
+    daily_report_demo_consequences,
 )
 from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 from tldw_chatbook.TTS.profile_types import (
@@ -117,7 +119,9 @@ def _titles(spy):
 
 
 @pytest.mark.asyncio
-async def test_run_demo_seeds_watchlist_preset_schedule_and_briefs(tmp_path, monkeypatch):
+async def test_run_demo_seeds_watchlist_preset_schedule_and_briefs(
+    tmp_path, monkeypatch
+):
     service, db, spy = _service(tmp_path, monkeypatch)
 
     outcome = await service.run_demo()
@@ -147,6 +151,77 @@ async def test_run_demo_seeds_watchlist_preset_schedule_and_briefs(tmp_path, mon
     assert "Fetching today's stories" in _titles(spy)
     assert "Writing your brief" in _titles(spy)
     assert spy.calls[-1]["category"] == "briefing"
+    # TASK-34000.23: the completion toast names the removal path the
+    # consent copy disclosed, not just that it recurs.
+    assert "remove the Daily Brief watchlist in Watchlists" in spy.calls[-1]["message"]
+
+
+def test_consequences_name_every_feed_the_cadence_and_the_pair():
+    """TASK-34000.23 (AC#4): the one shared consequence copy names every
+    seeded feed, the hourly source check, the 24 h brief cadence, the
+    provider · model pair that will be billed, and where to remove it."""
+    lines = daily_report_demo_consequences(provider="openai", model="gpt-4.1-mini")
+    text = " ".join(lines)
+    for source in DEMO_SOURCES:
+        assert source["name"] in text
+    assert DEMO_SOURCE_CHECK_SECONDS == 3600 and "hourly" in text
+    assert DEMO_CADENCE_SECONDS == 86_400 and "every 24 h" in text
+    assert "openai · gpt-4.1-mini" in text
+    assert "API quota" in text
+    assert "Watchlists" in text
+    assert lines[0].startswith("This sets up a recurring Daily Brief")
+    # ADR-079: "LLM + TTS; CTA copy says so" -- the cast script is a second
+    # model call and the audio spends through the TTS provider (review 1 #3).
+    assert "cast script" in text and "second openai call" in text
+    assert "TTS provider" in text
+
+    # Final review (2026-10-20) F5: the app writes "—", never ASCII "--".
+    assert not [line for line in lines if " -- " in line], lines
+
+    existing = daily_report_demo_consequences(
+        provider="openai", model="gpt-4.1-mini", existing=True
+    )
+    assert existing[0].startswith("You already have a scheduled brief.")
+    assert "openai · gpt-4.1-mini" in existing[0] and "API quota" in existing[0]
+    assert "one call" not in " ".join(existing)
+    assert "cast script" in " ".join(existing) and "TTS provider" in " ".join(existing)
+    assert not [line for line in existing if " -- " in line], existing
+
+
+def test_reuse_consequences_name_the_watchlist_that_will_be_billed():
+    """Final review (2026-10-20) F3: `list_briefing_schedules()` returns ANY
+    watchlist with a briefing cadence and the demo reuses the first one, so a
+    user whose own "Tech news" watchlist is scheduled was told "You already
+    have a Daily Brief" and Confirm billed a brief on THEIR watchlist. The
+    reuse sentence names the watchlist it will actually run (its real name,
+    never an id), and so does the line that says how to stop it."""
+    existing = daily_report_demo_consequences(
+        provider="openai", model="gpt-4.1-mini", existing=True,
+        existing_name="Tech news",
+    )
+    assert existing[0].startswith("Your “Tech news” watchlist already has a scheduled brief.")
+    assert "Daily Brief" not in existing[0]
+    assert "openai · gpt-4.1-mini" in existing[0] and "API quota" in existing[0]
+    assert any("“Tech news”" in line and "Watchlists" in line for line in existing), existing
+    assert not any("Daily Brief watchlist" in line for line in existing), existing
+    # Final-fix re-review: the reused watchlist is the USER's own collection, so
+    # the stop line points at its Cadence (Off stops the brief and keeps the
+    # watchlist, its sources and history) -- never at deleting it.
+    stop = existing[-1]
+    assert "Cadence" in stop and "Off" in stop and "Watchlists (⌃5)" in stop, stop
+    assert "remove" not in stop.lower(), stop
+
+
+@pytest.mark.asyncio
+async def test_source_check_default_matches_the_constant(tmp_path):
+    """The seed passes no cadence, so every demo source inherits the
+    `subscriptions.check_frequency` column default; the disclosure's
+    "hourly" is pinned to what a real `create_source` row stores."""
+    db = _db(tmp_path)
+    local = LocalWatchlistsService(db_factory=lambda: db)
+    row = await local.create_source(dict(DEMO_SOURCES[0]))
+    stored = db.get_subscription(int(row["source_id"]))
+    assert stored["check_frequency"] == DEMO_SOURCE_CHECK_SECONDS
 
 
 @pytest.mark.asyncio
@@ -158,7 +233,9 @@ async def test_run_demo_is_idempotent_when_a_schedule_exists(tmp_path, monkeypat
 
     assert outcome["status"] == "complete"
     with db2.transaction() as conn:
-        n_watchlists = conn.execute("SELECT COUNT(*) AS n FROM watchlists").fetchone()["n"]
+        n_watchlists = conn.execute("SELECT COUNT(*) AS n FROM watchlists").fetchone()[
+            "n"
+        ]
         # Adaptation (disclosed in task-5-report): `resolve_or_create_watchlist`
         # case-insensitively reuses "Daily Brief", so a re-seeding second run
         # still leaves exactly ONE watchlist row -- the watchlist count alone
@@ -171,11 +248,15 @@ async def test_run_demo_is_idempotent_when_a_schedule_exists(tmp_path, monkeypat
     assert n_watchlists == 1, "second run must reuse, not re-seed"
     assert n_sources == len(DEMO_SOURCES), "second run must not re-seed sources"
     assert len(db2.list_briefing_schedules()) == 1
-    assert len(db2.list_briefings(outcome["watchlist_id"])) == 2  # ran again, once per demo
+    assert (
+        len(db2.list_briefings(outcome["watchlist_id"])) == 2
+    )  # ran again, once per demo
 
 
 @pytest.mark.asyncio
-async def test_run_demo_without_local_service_reports_unavailable(tmp_path, monkeypatch):
+async def test_run_demo_without_local_service_reports_unavailable(
+    tmp_path, monkeypatch
+):
     db = _db(tmp_path)
     spy = _DispatchSpy()
     service = DailyReportDemoService(
@@ -192,11 +273,15 @@ async def test_run_demo_without_local_service_reports_unavailable(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_run_demo_all_sources_failing_aborts_with_fetch_failed(tmp_path, monkeypatch):
+async def test_run_demo_all_sources_failing_aborts_with_fetch_failed(
+    tmp_path, monkeypatch
+):
     service, db, spy = _service(tmp_path, monkeypatch, fail_fetch=True)
     outcome = await service.run_demo()
     assert outcome["status"] == "fetch_failed"
-    assert db.list_briefings(outcome["watchlist_id"]) == [], "no briefing row on total fetch failure"
+    assert db.list_briefings(outcome["watchlist_id"]) == [], (
+        "no briefing row on total fetch failure"
+    )
 
 
 @pytest.mark.asyncio
@@ -225,8 +310,9 @@ async def test_reused_schedule_with_all_current_runs_failing_is_still_fetch_fail
             "SELECT COUNT(*) AS n FROM subscription_items"
         ).fetchone()["n"]
     assert n_items > 0
-    assert len(db2.list_briefings(outcome["watchlist_id"])) == 1, \
+    assert len(db2.list_briefings(outcome["watchlist_id"])) == 1, (
         "only the first, successful run's briefing row may exist"
+    )
 
 
 @pytest.mark.asyncio
@@ -260,9 +346,9 @@ async def test_run_demo_detached_rejects_a_second_start_and_seeds_once(
     assert service.demo_in_progress() is False
     # Exactly one seed happened: one watchlist, one set of sources.
     with db.transaction() as conn:
-        n_watchlists = conn.execute(
-            "SELECT COUNT(*) AS n FROM watchlists"
-        ).fetchone()["n"]
+        n_watchlists = conn.execute("SELECT COUNT(*) AS n FROM watchlists").fetchone()[
+            "n"
+        ]
         n_sources = conn.execute(
             "SELECT COUNT(*) AS n FROM watchlist_sources"
         ).fetchone()["n"]
@@ -298,9 +384,9 @@ async def test_concurrent_run_demo_calls_cannot_double_seed(tmp_path, monkeypatc
 
     assert {o["status"] for o in outcomes} <= {"complete", "in_flight"}
     with db.transaction() as conn:
-        n_watchlists = conn.execute(
-            "SELECT COUNT(*) AS n FROM watchlists"
-        ).fetchone()["n"]
+        n_watchlists = conn.execute("SELECT COUNT(*) AS n FROM watchlists").fetchone()[
+            "n"
+        ]
         n_sources = conn.execute(
             "SELECT COUNT(*) AS n FROM watchlist_sources"
         ).fetchone()["n"]
@@ -309,7 +395,9 @@ async def test_concurrent_run_demo_calls_cannot_double_seed(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_run_demo_reused_schedule_without_preset_skips_audio(tmp_path, monkeypatch):
+async def test_run_demo_reused_schedule_without_preset_skips_audio(
+    tmp_path, monkeypatch
+):
     """Qodo #12: a cleared default preset skips audio accurately.
 
     The old path fabricated `preset_id=0`, guaranteeing a cast failure. The
@@ -343,10 +431,18 @@ async def test_run_demo_reused_schedule_without_preset_skips_audio(tmp_path, mon
     def _profile(pid: uuid.UUID) -> TTSGenerationProfile:
         now = datetime.now(timezone.utc)
         return TTSGenerationProfile(
-            profile_id=pid, display_name="Host voice", normalized_name="host voice",
-            provider_id="openai", model_id="tts-1", voice_id="alloy",
-            response_format="wav", speed=1.0, options={}, revision=1,
-            created_at=now, updated_at=now,
+            profile_id=pid,
+            display_name="Host voice",
+            normalized_name="host voice",
+            provider_id="openai",
+            model_id="tts-1",
+            voice_id="alloy",
+            response_format="wav",
+            speed=1.0,
+            options={},
+            revision=1,
+            created_at=now,
+            updated_at=now,
         )
 
     service2, db2, spy2 = _service(
@@ -356,9 +452,7 @@ async def test_run_demo_reused_schedule_without_preset_skips_audio(tmp_path, mon
         "tldw_chatbook.Subscriptions.monitoring_engine.guarded_fetch_httpx_async",
         _variable_guarded,
     )
-    db2.set_watchlist_briefing_settings(
-        first["watchlist_id"], default_preset_id=None
-    )
+    db2.set_watchlist_briefing_settings(first["watchlist_id"], default_preset_id=None)
     feed["body"] = _RSS.replace("example.com/1", "example.com/2")
     outcome = await service2.run_demo()
 
@@ -366,8 +460,9 @@ async def test_run_demo_reused_schedule_without_preset_skips_audio(tmp_path, mon
     assert outcome["audio"] == "skipped"
     assert "audio:skipped:no-preset" in outcome["reasons"]
     assert db2.get_briefing(outcome["briefing_id"])["status"] == "complete"
-    assert db2.list_briefing_scripts(outcome["briefing_id"]) == [], \
+    assert db2.list_briefing_scripts(outcome["briefing_id"]) == [], (
         "no cast script may be generated without a preset"
+    )
     assert any("no default briefing preset" in c["message"] for c in spy2.calls)
 
 
@@ -384,10 +479,18 @@ async def test_run_demo_empty_window_skips_audio_calmly(tmp_path, monkeypatch):
     def _profile(pid: uuid.UUID) -> TTSGenerationProfile:
         now = datetime.now(timezone.utc)
         return TTSGenerationProfile(
-            profile_id=pid, display_name="Host voice", normalized_name="host voice",
-            provider_id="openai", model_id="tts-1", voice_id="alloy",
-            response_format="wav", speed=1.0, options={}, revision=1,
-            created_at=now, updated_at=now,
+            profile_id=pid,
+            display_name="Host voice",
+            normalized_name="host voice",
+            provider_id="openai",
+            model_id="tts-1",
+            voice_id="alloy",
+            response_format="wav",
+            speed=1.0,
+            options={},
+            revision=1,
+            created_at=now,
+            updated_at=now,
         )
 
     service, db, spy = _service(
@@ -401,17 +504,20 @@ async def test_run_demo_empty_window_skips_audio_calmly(tmp_path, monkeypatch):
     assert outcome["status"] == "complete"
     assert outcome["audio"] == "skipped"
     assert "audio:skipped:empty-window" in outcome["reasons"]
-    assert db.list_briefing_scripts(outcome["briefing_id"]) == [], \
+    assert db.list_briefing_scripts(outcome["briefing_id"]) == [], (
         "no cast script may be generated for an empty window"
-    assert not any(
-        "could not be synthesized" in c["title"] for c in spy.calls
-    ), "an empty window is not an audio failure"
+    )
+    assert not any("could not be synthesized" in c["title"] for c in spy.calls), (
+        "an empty window is not an audio failure"
+    )
     assert any("nothing new to read" in c["message"] for c in spy.calls)
 
 
 @pytest.mark.asyncio
 async def test_failed_briefing_dispatches_provider_guidance(tmp_path, monkeypatch):
-    service, db, spy = _service(tmp_path, monkeypatch, chat=_FakeChat(error=RuntimeError("401 unauthorized")))
+    service, db, spy = _service(
+        tmp_path, monkeypatch, chat=_FakeChat(error=RuntimeError("401 unauthorized"))
+    )
     outcome = await service.run_demo()
     assert outcome["status"] == "briefing_failed"
     last = spy.calls[-1]
@@ -426,8 +532,9 @@ async def test_run_demo_skips_audio_without_voice_profiles(tmp_path, monkeypatch
     outcome = await service.run_demo()
     assert outcome["status"] == "complete"
     assert outcome["audio"] == "skipped"
-    assert db.list_briefing_scripts(outcome["briefing_id"]) == [], \
+    assert db.list_briefing_scripts(outcome["briefing_id"]) == [], (
         "no cast script should be generated when it could not be voiced"
+    )
     assert any("Audio skipped" in t for t in _titles(spy))
 
 
@@ -438,10 +545,18 @@ async def test_run_demo_generates_audio_when_ready(tmp_path, monkeypatch):
     def _profile(pid: uuid.UUID) -> TTSGenerationProfile:
         now = datetime.now(timezone.utc)
         return TTSGenerationProfile(
-            profile_id=pid, display_name="Host voice", normalized_name="host voice",
-            provider_id="openai", model_id="tts-1", voice_id="alloy",
-            response_format="wav", speed=1.0, options={}, revision=1,
-            created_at=now, updated_at=now,
+            profile_id=pid,
+            display_name="Host voice",
+            normalized_name="host voice",
+            provider_id="openai",
+            model_id="tts-1",
+            voice_id="alloy",
+            response_format="wav",
+            speed=1.0,
+            options={},
+            revision=1,
+            created_at=now,
+            updated_at=now,
         )
 
     profiles = (_profile(uuid.uuid4()),)
@@ -453,7 +568,9 @@ async def test_run_demo_generates_audio_when_ready(tmp_path, monkeypatch):
 
     async def _fake_generate_script(db_, briefing_id, *, preset_id, **kwargs):
         script_id = db_.insert_briefing_script(
-            briefing_id, preset_id=preset_id, preset_name="Daily Brief",
+            briefing_id,
+            preset_id=preset_id,
+            preset_name="Daily Brief",
             roster_snapshot_json="[]",
         )
         db_.update_briefing_script(script_id, status="complete", turns_json="[]")
@@ -467,7 +584,9 @@ async def test_run_demo_generates_audio_when_ready(tmp_path, monkeypatch):
         return {"id": 1, "script_id": script_id, "status": "complete"}
 
     monkeypatch.setattr(daily_report_demo, "generate_script", _fake_generate_script)
-    monkeypatch.setattr(daily_report_demo, "generate_script_audio", _fake_generate_script_audio)
+    monkeypatch.setattr(
+        daily_report_demo, "generate_script_audio", _fake_generate_script_audio
+    )
 
     outcome = await service.run_demo()
 
@@ -485,10 +604,18 @@ async def test_run_demo_audio_failure_degrades_to_text_success(tmp_path, monkeyp
     def _profile(pid: uuid.UUID) -> TTSGenerationProfile:
         now = datetime.now(timezone.utc)
         return TTSGenerationProfile(
-            profile_id=pid, display_name="Host voice", normalized_name="host voice",
-            provider_id="openai", model_id="tts-1", voice_id="alloy",
-            response_format="wav", speed=1.0, options={}, revision=1,
-            created_at=now, updated_at=now,
+            profile_id=pid,
+            display_name="Host voice",
+            normalized_name="host voice",
+            provider_id="openai",
+            model_id="tts-1",
+            voice_id="alloy",
+            response_format="wav",
+            speed=1.0,
+            options={},
+            revision=1,
+            created_at=now,
+            updated_at=now,
         )
 
     service, db, spy = _service(
@@ -497,15 +624,21 @@ async def test_run_demo_audio_failure_degrades_to_text_success(tmp_path, monkeyp
 
     async def _fake_generate_script(db_, briefing_id, *, preset_id, **kwargs):
         script_id = db_.insert_briefing_script(
-            briefing_id, preset_id=preset_id, preset_name="Daily Brief",
+            briefing_id,
+            preset_id=preset_id,
+            preset_name="Daily Brief",
             roster_snapshot_json="[]",
         )
         db_.update_briefing_script(script_id, status="complete", turns_json="[]")
         return db_.get_briefing_script(script_id)
 
     async def _failing_audio(db_, script_id, **kwargs):
-        return {"id": 1, "script_id": script_id, "status": "failed",
-                "error": "pydub is not installed"}
+        return {
+            "id": 1,
+            "script_id": script_id,
+            "status": "failed",
+            "error": "pydub is not installed",
+        }
 
     monkeypatch.setattr(daily_report_demo, "generate_script", _fake_generate_script)
     monkeypatch.setattr(daily_report_demo, "generate_script_audio", _failing_audio)

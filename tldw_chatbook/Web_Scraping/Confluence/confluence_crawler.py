@@ -269,7 +269,9 @@ class ConfluenceCrawler:
         try:
             response = await asyncio.to_thread(
                 self.auth.make_request,
-                "GET", f"/rest/api/content/{page_id}/child/page", params={"limit": 100}
+                "GET",
+                f"/rest/api/content/{page_id}/child/page",
+                params={"limit": 100},
             )
 
             if response.status_code == 200:
@@ -290,7 +292,9 @@ class ConfluenceCrawler:
         try:
             response = await asyncio.to_thread(
                 self.auth.make_request,
-                "GET", f"/rest/api/content/{page_id}", params={"expand": "ancestors"}
+                "GET",
+                f"/rest/api/content/{page_id}",
+                params={"expand": "ancestors"},
             )
 
             if response.status_code == 200:

@@ -21,7 +21,7 @@ class ParagraphChunkingStrategy(BaseChunkingStrategy):
     Strategy for chunking text by paragraphs.
     """
 
-    def __init__(self, language: str = 'en'):
+    def __init__(self, language: str = "en"):
         """
         Initialize the paragraph chunking strategy.
 
@@ -31,11 +31,9 @@ class ParagraphChunkingStrategy(BaseChunkingStrategy):
         super().__init__(language)
         logger.debug(f"ParagraphChunkingStrategy initialized for language: {language}")
 
-    def chunk(self,
-              text: str,
-              max_size: int = 2,
-              overlap: int = 0,
-              **options) -> list[str]:
+    def chunk(
+        self, text: str, max_size: int = 2, overlap: int = 0, **options
+    ) -> list[str]:
         """
         Chunk text by paragraphs.
 
@@ -66,13 +64,15 @@ class ParagraphChunkingStrategy(BaseChunkingStrategy):
 
         if overlap >= max_size:
             # Align with other strategies: clamp to ensure forward progress
-            logger.warning(f"Overlap ({overlap}) >= max_size ({max_size}), setting to max_size - 1")
+            logger.warning(
+                f"Overlap ({overlap}) >= max_size ({max_size}), setting to max_size - 1"
+            )
             overlap = max_size - 1
 
         try:
             # Split text into paragraphs (handling various paragraph separators)
             # Use simple linear-time pattern: two or more newlines (avoids ReDoS with \s*)
-            paragraphs = re.split(r'\n{2,}', text.strip())
+            paragraphs = re.split(r"\n{2,}", text.strip())
 
             # Filter out empty paragraphs
             paragraphs = [p.strip() for p in paragraphs if p.strip()]
@@ -95,7 +95,7 @@ class ParagraphChunkingStrategy(BaseChunkingStrategy):
                 chunk_paragraphs = paragraphs[i:end_idx]
 
                 # Join paragraphs with double newline
-                chunk_text = '\n\n'.join(chunk_paragraphs)
+                chunk_text = "\n\n".join(chunk_paragraphs)
                 chunks.append(chunk_text)
 
                 chunk_index += 1
@@ -110,11 +110,9 @@ class ParagraphChunkingStrategy(BaseChunkingStrategy):
             logger.error(f"Error during paragraph chunking: {e}")
             raise ProcessingError(f"Failed to chunk by paragraphs: {str(e)}") from e
 
-    def chunk_with_metadata(self,
-                           text: str,
-                           max_size: int = 2,
-                           overlap: int = 0,
-                           **options) -> list[ChunkResult]:
+    def chunk_with_metadata(
+        self, text: str, max_size: int = 2, overlap: int = 0, **options
+    ) -> list[ChunkResult]:
         """
         Chunk text by paragraphs and return with metadata using accurate source offsets.
 
@@ -142,7 +140,9 @@ class ParagraphChunkingStrategy(BaseChunkingStrategy):
 
         if overlap >= max_size:
             # Align with other strategies: clamp to ensure forward progress
-            logger.warning(f"Overlap ({overlap}) >= max_size ({max_size}), setting to max_size - 1")
+            logger.warning(
+                f"Overlap ({overlap}) >= max_size ({max_size}), setting to max_size - 1"
+            )
             overlap = max_size - 1
 
         try:
@@ -195,15 +195,19 @@ class ParagraphChunkingStrategy(BaseChunkingStrategy):
             step = max(1, max_size - overlap)
             chunk_index = 0
             for i in range(0, len(spans), step):
-                window = spans[i:i + max_size]
+                window = spans[i : i + max_size]
                 if not window:
                     continue
                 start_char = window[0][0]
                 end_char = window[-1][1]
                 try:
-                    end_char = self._expand_end_to_grapheme_boundary(text, end_char, options=options)
+                    end_char = self._expand_end_to_grapheme_boundary(
+                        text, end_char, options=options
+                    )
                 except (IndexError, ValueError) as e:
-                    logger.debug(f"Grapheme expansion failed for paragraph chunk {chunk_index}: {e}")
+                    logger.debug(
+                        f"Grapheme expansion failed for paragraph chunk {chunk_index}: {e}"
+                    )
                 if align_text_to_source:
                     start_char = max(0, min(int(start_char), text_len))
                     end_char = max(start_char, min(int(end_char), text_len))
@@ -218,11 +222,11 @@ class ParagraphChunkingStrategy(BaseChunkingStrategy):
                     end_char=end_char,
                     word_count=len(chunk_text.split()) if chunk_text else 0,
                     language=self.language,
-                    method='paragraphs',
+                    method="paragraphs",
                     options={
-                        'max_paragraphs': max_size,
-                        'overlap': overlap,
-                        'paragraph_count': len(window),
+                        "max_paragraphs": max_size,
+                        "overlap": overlap,
+                        "paragraph_count": len(window),
                     },
                 )
                 results.append(ChunkResult(text=chunk_text, metadata=metadata))
@@ -248,7 +252,9 @@ class ParagraphChunkingStrategy(BaseChunkingStrategy):
         validated = super().validate_options(options)
 
         # Ensure max_size is reasonable for paragraphs
-        if 'max_size' in validated and validated['max_size'] > 100:
-            logger.warning(f"Very large max_size for paragraphs: {validated['max_size']}")
+        if "max_size" in validated and validated["max_size"] > 100:
+            logger.warning(
+                f"Very large max_size for paragraphs: {validated['max_size']}"
+            )
 
         return validated

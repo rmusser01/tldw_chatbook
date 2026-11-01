@@ -10,12 +10,15 @@ from collections import OrderedDict
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from time import monotonic
+from typing import Any
 
 import httpx
+from loguru import logger
 
 from tldw_chatbook.Utils.egress import (
     EgressBlockedError,
     check_url_or_raise_async,
+    log_origin,
     origin_set,
 )
 from tldw_chatbook.Utils.token_counter import (
@@ -32,6 +35,43 @@ METADATA_SUCCESS_TTL = 60
 # TASK-32923: a 5 s failure TTL re-probed an unreachable or slow endpoint on
 # nearly every send, each costing up to the 1 s timeout before the message left.
 METADATA_FAILURE_TTL = METADATA_SUCCESS_TTL
+#: The families whose server reports the loaded model's window to the probe
+#: below. Settings reads it too: it prints no assumed size for them
+#: (TASK-33007, review of #3057, R3 #4).
+SERVER_REPORTED_WINDOW_FAMILIES = frozenset(
+    {
+        "strata",
+        "polystrata",
+        "llama_cpp",
+        "local_llamacpp",
+        "llamafile",
+        "local_llamafile",
+        "vllm",
+        "local_vllm",
+        "ollama",
+        "local_ollama",
+        "custom",
+        "custom_2",
+        "tabbyapi",
+        "aphrodite",
+        "koboldcpp",
+        "oobabooga",
+        # Not "openrouter": its model list (~750 KB) always exceeds
+        # METADATA_MAX_BYTES, so the probe could only fail; the model
+        # catalog resolves OpenRouter windows instead (TASK-32923).
+    }
+)
+
+#: Flat model-record keys that may carry a serving context window.
+_WINDOW_KEYS = (
+    "max_model_len",
+    "context_length",
+    "context_window",
+    "max_context_length",
+)
+#: Nested ``meta`` object keys (llama.cpp's /v1/models shape): the serving
+#: window first, generic aliases, then the training bound (TASK-35079).
+_META_WINDOW_KEYS = ("n_ctx",) + _WINDOW_KEYS + ("n_ctx_train",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,29 +225,31 @@ class ContextWindowCache:
     async def _probe(
         self, target: ContextWindowTarget, client: httpx.AsyncClient
     ) -> int | None:
+        """One bounded probe, with a debug trail when it finds no window.
+
+        TASK-35079: "context size not detected" reports were undiagnosable
+        because every miss was silent; this line is TTL-throttled by the
+        cache, credential-free, and never fires for unprobed families.
+        """
+        if target.family not in SERVER_REPORTED_WINDOW_FAMILIES:
+            return None
+        capacity = await self._fetch_capacity(target, client)
+        if capacity is None:
+            logger.debug(
+                "Context-window metadata probe found no usable window "
+                "(family={} endpoint={})",
+                target.family,
+                log_origin(target.endpoint),
+            )
+        return capacity
+
+    async def _fetch_capacity(
+        self, target: ContextWindowTarget, client: httpx.AsyncClient
+    ) -> int | None:
         if not target.model or not target.endpoint:
             return None
         family = target.family
-        supported = {
-            "llama_cpp",
-            "local_llamacpp",
-            "llamafile",
-            "local_llamafile",
-            "vllm",
-            "local_vllm",
-            "ollama",
-            "local_ollama",
-            "custom",
-            "custom_2",
-            "tabbyapi",
-            "aphrodite",
-            "koboldcpp",
-            "oobabooga",
-            # Not "openrouter": its model list (~750 KB) always exceeds
-            # METADATA_MAX_BYTES, so the probe could only fail; the model
-            # catalog resolves OpenRouter windows instead (TASK-32923).
-        }
-        if family not in supported:
+        if family not in SERVER_REPORTED_WINDOW_FAMILIES:
             return None
         endpoint = resolve_provider_endpoint(
             "custom" if family == "openrouter" else family, target.endpoint
@@ -283,13 +325,57 @@ class ContextWindowCache:
                 record.get("model"),
             ):
                 continue
-            for name in (
-                "max_model_len",
-                "context_length",
-                "context_window",
-                "max_context_length",
-            ):
+            for name in _WINDOW_KEYS:
                 value = positive_window(record.get(name))
                 if value is not None:
                     return value
+            meta = record.get("meta")
+            if not isinstance(meta, dict):
+                continue
+            # TASK-35079: llama.cpp reports the serving window as meta.n_ctx
+            # (slot capacity) and the training bound as meta.n_ctx_train; the
+            # serving value wins, and the bound still beats the 32k fallback
+            # when only it is served (router mode, model not yet loaded).
+            for name in _META_WINDOW_KEYS:
+                value = positive_window(meta.get(name))
+                if value is not None:
+                    return value
         return None
+
+
+_CONTEXT_CAPACITY_CACHE_ORIGINAL = (
+    globals(), ContextWindowCache, ContextWindowCache.cached,
+    ContextWindowCache.cached.__code__,
+)
+
+
+async def resolve_gateway_context_window(
+    self, settings: Any
+) -> ContextWindowResolution:
+    """Refresh optional serving metadata without running a generation."""
+    from tldw_chatbook.Chat import console_provider_gateway as gateway
+
+    if isinstance(settings, gateway.ConsoleProviderResolution):
+        from .console_context_window import ContextWindowTarget
+
+        if (
+            not settings.ready
+            or settings.resolved_destination is None
+            or settings.resolved_destination
+            != gateway.resolve_console_destination(settings)
+            or (
+                settings.selected_provider
+                and settings.selected_provider != settings.resolved_destination.provider
+            )
+        ):
+            raise ValueError("review_metadata_target_changed")
+        target = ContextWindowTarget(
+            settings.selected_provider or settings.provider,
+            settings.readiness_key or settings.provider,
+            settings.base_url,
+            settings.model or "",
+            settings.api_key,
+        )
+    else:
+        target = self._context_window_target(settings)
+    return await self._get_context_windows().resolve(target, self._active_http_client())

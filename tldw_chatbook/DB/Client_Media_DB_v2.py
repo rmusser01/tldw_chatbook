@@ -44,13 +44,14 @@ from typing import Callable, List, Tuple, Dict, Any, Mapping, Optional, Sequence
 
 #
 # Third-Party Libraries (Ensure these are installed if used)
-import yaml
 from loguru import logger
 
 #
 # Local Imports
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from ..STT.persistence import dump_transcription_provenance_document
+from .keyword_store import KeywordStore, KeywordStoreSpec
+from .library_search_engine import LibrarySearchSpec, library_search_page
 from .sql_validation import (
     validate_column_name,
     validate_identifier,
@@ -260,6 +261,30 @@ def dispatch_media_post_delete(
 
 
 # --- Database Class ---
+# --- TASK-34903: shared keyword write path ---
+_MEDIA_KEYWORD_SPEC = KeywordStoreSpec(
+    keywords_table="Keywords",
+    fts_table="keyword_fts",
+    link_table="MediaKeywords",
+    entity_table="Media",
+    entity_fk="media_id",
+    entity_label="Media",
+    sync_entity="Keywords",
+    link_sync_entity="MediaKeywords",
+    entity_uuid_key="media_uuid",
+    normalize_keyword=lambda keyword: keyword.strip().lower(),
+    canonicalize_keywords=lambda keywords: sorted(
+        list(set([k.strip().lower() for k in keywords if k and k.strip()]))
+    ),
+    make_input_error=lambda message: InputError(message),
+    make_database_error=lambda message: DatabaseError(message),
+    # Preserves the original 2-positional construction exactly
+    # (message, entity) -- the attributes are observable; do not "fix".
+    make_conflict=lambda site, kw_id: ConflictError("Keywords", kw_id),
+    unlink_all_links=False,
+)
+
+
 class MediaDatabase:
     """
     Manages SQLite connection and operations for a specific database file,
@@ -547,10 +572,19 @@ class MediaDatabase:
             "template": {
                 "name": "academic_paper",
                 "preprocessing": [
-                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}},
-                    {"operation": "extract_sections", "config": {"pattern": r"^#+\s+(.+)$"}},
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 2},
+                    },
+                    {
+                        "operation": "extract_sections",
+                        "config": {"pattern": r"^#+\s+(.+)$"},
+                    },
                 ],
-                "chunking": {"method": "sentences", "config": {"max_size": 5, "overlap": 1}},
+                "chunking": {
+                    "method": "sentences",
+                    "config": {"max_size": 5, "overlap": 1},
+                },
                 "postprocessing": [
                     {"operation": "filter_empty", "config": {"min_length": 20}},
                     {"operation": "merge_small", "config": {"min_size": 200}},
@@ -589,11 +623,20 @@ class MediaDatabase:
             "template": {
                 "name": "chat_conversation",
                 "preprocessing": [
-                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 1}}
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 1},
+                    }
                 ],
-                "chunking": {"method": "sentences", "config": {"max_size": 10, "overlap": 2}},
+                "chunking": {
+                    "method": "sentences",
+                    "config": {"max_size": 10, "overlap": 2},
+                },
                 "postprocessing": [
-                    {"operation": "add_overlap", "config": {"size": 100, "marker": "---"}}
+                    {
+                        "operation": "add_overlap",
+                        "config": {"size": 100, "marker": "---"},
+                    }
                 ],
             },
         },
@@ -605,9 +648,15 @@ class MediaDatabase:
             "template": {
                 "name": "book_chapters",
                 "preprocessing": [
-                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}}
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 2},
+                    }
                 ],
-                "chunking": {"method": "ebook_chapters", "config": {"max_size": 1200, "overlap": 100}},
+                "chunking": {
+                    "method": "ebook_chapters",
+                    "config": {"max_size": 1200, "overlap": 100},
+                },
                 "postprocessing": [
                     {"operation": "filter_empty", "config": {"min_length": 50}}
                 ],
@@ -621,9 +670,15 @@ class MediaDatabase:
             "template": {
                 "name": "transcript_dialogue",
                 "preprocessing": [
-                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 1}}
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 1},
+                    }
                 ],
-                "chunking": {"method": "sentences", "config": {"max_size": 8, "overlap": 2}},
+                "chunking": {
+                    "method": "sentences",
+                    "config": {"max_size": 8, "overlap": 2},
+                },
                 "postprocessing": [
                     {"operation": "merge_small", "config": {"min_size": 80}}
                 ],
@@ -637,9 +692,15 @@ class MediaDatabase:
             "template": {
                 "name": "legal_document",
                 "preprocessing": [
-                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}}
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 2},
+                    }
                 ],
-                "chunking": {"method": "paragraphs", "config": {"max_size": 1, "overlap": 0}},
+                "chunking": {
+                    "method": "paragraphs",
+                    "config": {"max_size": 1, "overlap": 0},
+                },
                 "postprocessing": [
                     {"operation": "filter_empty", "config": {"min_length": 50}}
                 ],
@@ -1004,6 +1065,39 @@ class MediaDatabase:
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
+        # TASK-34904: shared library page-search engine.
+        self._library_search_spec = LibrarySearchSpec(
+            table="Media",
+            base_filter="deleted = 0 AND is_trash = 0",
+            exact_column="title",
+            substring_branches=(
+                ("title LIKE ? ESCAPE '\\'", "title"),
+                ("content LIKE ? ESCAPE '\\'", "content"),
+            ),
+            fts_branches=(
+                (
+                    "id IN (SELECT rowid FROM media_fts WHERE media_fts MATCH ?)",
+                    "content",
+                ),
+            ),
+            keyword_branch=(
+                "id IN (SELECT mk.media_id FROM MediaKeywords mk "
+                "JOIN Keywords k ON mk.keyword_id = k.id "
+                "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+            ),
+            page_columns=(
+                "id, uuid, title, type, author, ingestion_date, "
+                "last_modified, version, substr(content, 1, ?) AS preview"
+            ),
+            tiebreaker="id DESC",
+            fetch_keywords=self._library_keywords_for_media,
+            make_item=self._library_media_item,
+            make_database_error=lambda message: DatabaseError(message),
+            error_prefix="Failed to search library media: ",
+            preview_first=True,
+            log_label="library media search",
+        )
+        self._keywords = KeywordStore(self, _MEDIA_KEYWORD_SPEC)
 
         logging.info(
             f"Initializing Database object for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -1380,9 +1474,7 @@ class MediaDatabase:
             raise
 
     @staticmethod
-    def _execute_transactional_script(
-        conn: sqlite3.Connection, script: str
-    ) -> None:
+    def _execute_transactional_script(conn: sqlite3.Connection, script: str) -> None:
         """Execute a multi-statement SQL script without implicit commits.
 
         ``sqlite3.Connection.executescript`` commits a pending transaction
@@ -1399,9 +1491,7 @@ class MediaDatabase:
             sqlite3.Error: If SQLite rejects any complete statement.
         """
         if not conn.in_transaction:
-            raise SchemaError(
-                "Transactional SQL script requires an active transaction"
-            )
+            raise SchemaError("Transactional SQL script requires an active transaction")
         statement = ""
         for character in script:
             statement += character
@@ -1925,8 +2015,7 @@ class MediaDatabase:
                 )
 
                 builtin_names = {
-                    seed["name"]
-                    for seed in self._SERVER_BUILTIN_CHUNKING_TEMPLATES
+                    seed["name"] for seed in self._SERVER_BUILTIN_CHUNKING_TEMPLATES
                 }
                 insert_sql = (
                     "INSERT INTO ChunkingTemplates_v7 "
@@ -1975,8 +2064,7 @@ class MediaDatabase:
                 self._seed_server_builtin_chunking_templates(conn, builtin_names)
 
             logging.info(
-                "[Migration v6->v7] ChunkingTemplates rebuild applied "
-                "successfully."
+                "[Migration v6->v7] ChunkingTemplates rebuild applied successfully."
             )
         except sqlite3.Error as e:
             logging.error(
@@ -2059,9 +2147,7 @@ class MediaDatabase:
             ) from error
 
     @staticmethod
-    def _assert_no_foreign_keys_reference(
-        conn: sqlite3.Connection, table: str
-    ) -> None:
+    def _assert_no_foreign_keys_reference(conn: sqlite3.Connection, table: str) -> None:
         """Guard rebuild DROPs: fail before touching anything if any table
         holds a foreign key targeting ``table``.
 
@@ -2090,8 +2176,7 @@ class MediaDatabase:
                     offenders.append(other)
         if offenders:
             raise SchemaError(
-                f"Cannot rebuild {table}: foreign keys from {offenders} "
-                f"reference it"
+                f"Cannot rebuild {table}: foreign keys from {offenders} reference it"
             )
 
     def _seed_server_builtin_chunking_templates(
@@ -2446,76 +2531,11 @@ class MediaDatabase:
             )
         except sqlite3.Error as e:
             logging.error(
-                "Media FTS mutation operation=delete status=failed count=0 "
-                "category=%s",
+                "Media FTS mutation operation=delete status=failed count=0 category=%s",
                 type(e).__name__,
             )
             raise DatabaseError(
                 f"Failed to delete FTS for Media ID {media_id}: {e}"
-            ) from e
-
-    def _update_fts_keyword(
-        self, conn: sqlite3.Connection, keyword_id: int, keyword: str
-    ):
-        """
-        Internal helper to update or insert into the keyword_fts table.
-
-        Uses INSERT OR REPLACE based on the Keywords.id (rowid). Should be
-        called within a transaction after Keywords insert/update/undelete.
-
-        Args:
-            conn (sqlite3.Connection): The database connection (within transaction).
-            keyword_id (int): The ID (rowid) of the Keywords item.
-            keyword (str): The keyword text.
-
-        Raises:
-            DatabaseError: If the FTS update fails.
-        """
-        # Remove null bytes from keyword as they break FTS indexing
-        keyword = keyword.replace("\x00", " ")
-        try:
-            # Use INSERT OR REPLACE
-            conn.execute(
-                "INSERT OR REPLACE INTO keyword_fts (rowid, keyword) VALUES (?, ?)",
-                (keyword_id, keyword),
-            )
-            logging.debug(
-                f"Updated FTS (insert or replace) for Keyword ID {keyword_id}"
-            )
-        except sqlite3.Error as e:
-            logging.error(
-                f"Failed to update keyword_fts for Keyword ID {keyword_id}: {e}",
-                exc_info=True,
-            )
-            raise DatabaseError(
-                f"Failed to update FTS for Keyword ID {keyword_id}: {e}"
-            ) from e
-
-    def _delete_fts_keyword(self, conn: sqlite3.Connection, keyword_id: int):
-        """
-        Internal helper to delete from the keyword_fts table.
-
-        Deletes the FTS entry corresponding to the given Keyword ID (rowid).
-        Should be called within a transaction after Keyword soft delete.
-        Ignores if the entry doesn't exist.
-
-        Args:
-            conn (sqlite3.Connection): The database connection (within transaction).
-            keyword_id (int): The ID (rowid) of the Keyword whose FTS entry to delete.
-
-        Raises:
-            DatabaseError: If the FTS deletion fails (excluding 'not found').
-        """
-        try:
-            conn.execute("DELETE FROM keyword_fts WHERE rowid = ?", (keyword_id,))
-            logging.debug(f"Deleted FTS entry for Keyword ID {keyword_id}")
-        except sqlite3.Error as e:
-            logging.error(
-                f"Failed to delete from keyword_fts for Keyword ID {keyword_id}: {e}",
-                exc_info=True,
-            )
-            raise DatabaseError(
-                f"Failed to delete FTS for Keyword ID {keyword_id}: {e}"
             ) from e
 
         # In Media_DB_v2.py (within the Database class)
@@ -2722,7 +2742,14 @@ class MediaDatabase:
             if library_summary
             else broad_select_parts
         )
-        count_select = "COUNT(DISTINCT m.id)"
+        # No DISTINCT needed here: every JOIN this builder can emit is 1:1
+        # (the single possible join is `media_fts fts ON fts.rowid = m.id`;
+        # media_fts is external-content FTS5 with content_rowid='id', so its
+        # rowid space IS Media.id, trigger-maintained). All keyword filters
+        # are correlated EXISTS/scalar subqueries and cannot multiply rows.
+        # A plain COUNT lets the index serve the scan without a dedup pass
+        # (B9).
+        count_select = "COUNT(m.id)"
         base_from = "FROM Media m"
         joins = []
         conditions = []
@@ -3086,7 +3113,9 @@ class MediaDatabase:
             ):
                 base_select_parts.append("fts.rank AS relevance_score")
             relevance_column = "fts.rank" if library_summary else "relevance_score"
-            order_by_clause_str = f"ORDER BY {relevance_column} DESC, m.last_modified DESC, m.id DESC"
+            order_by_clause_str = (
+                f"ORDER BY {relevance_column} DESC, m.last_modified DESC, m.id DESC"
+            )
             resolved_sort_by = "relevance"
         else:
             if sort_by == "date_desc":
@@ -3114,8 +3143,11 @@ class MediaDatabase:
             else:  # Unrecognized sort_by or default
                 order_by_clause_str = default_order_by
 
-        # Finalize SELECT statement
-        final_select_stmt = f"SELECT DISTINCT {', '.join(base_select_parts)}"
+        # Finalize SELECT statement. No DISTINCT: the only join the builder
+        # emits is the 1:1 media_fts lookup (see the count_select comment),
+        # so DISTINCT only added a dedup pass that ran before LIMIT could
+        # short-circuit (B9).
+        final_select_stmt = f"SELECT {', '.join(base_select_parts)}"
 
         # --- Construct and Execute Queries ---
         join_clause = " ".join(list(dict.fromkeys(joins)))  # Unique joins
@@ -3158,12 +3190,12 @@ class MediaDatabase:
                     page_params = tuple(params + [results_per_page, resolved_offset])
                     results_list = [
                         dict(row)
-                        for row in connection.execute(results_sql, page_params).fetchall()
+                        for row in connection.execute(
+                            results_sql, page_params
+                        ).fetchall()
                     ]
         except Exception as error:
-            logger.error(
-                "Media search failed (error_type=%s).", type(error).__name__
-            )
+            logger.error("Media search failed (error_type=%s).", type(error).__name__)
             raise DatabaseError("Media search failed.") from None
 
         if library_summary:
@@ -3269,287 +3301,13 @@ class MediaDatabase:
 
     # --- Public Mutating Methods (Modified for Python Sync/FTS Logging) ---
     def add_keyword(self, keyword: str) -> Tuple[Optional[int], Optional[str]]:
-        """
-        Adds a new keyword or undeletes an existing soft-deleted one.
-
-        Handles case-insensitivity (stores lowercase) and ensures uniqueness.
-        Logs a 'create' or 'update' (for undelete) sync event.
-        Updates the `keyword_fts` table accordingly.
-
-        Args:
-            keyword (str): The keyword text to add or activate.
-
-        Returns:
-            Tuple[Optional[int], Optional[str]]: A tuple containing the keyword's
-                database ID and UUID. Returns (None, None) or raises error on failure.
-
-        Raises:
-            InputError: If the keyword is empty or whitespace only.
-            ConflictError: If an update (undelete) fails due to version mismatch.
-            DatabaseError: For other database errors during insert/update or sync logging.
-        """
-        if not keyword or not keyword.strip():
-            raise InputError("Keyword cannot be empty.")
-        keyword = keyword.strip().lower()
-        current_time = self._get_current_utc_timestamp_str()  # Get current time once
-        client_id = self.client_id
-
+        """Add (or undelete) a keyword; see KeywordStore.add_keyword_full."""
         try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT id, uuid, deleted, version FROM Keywords WHERE keyword = ?",
-                    (keyword,),
-                )
-                existing = cursor.fetchone()
-
-                if existing:
-                    kw_id, kw_uuid, is_deleted, current_version = (
-                        existing["id"],
-                        existing["uuid"],
-                        existing["deleted"],
-                        existing["version"],
-                    )
-                    if is_deleted:
-                        new_version = current_version + 1
-                        logger.info(
-                            f"Undeleting keyword '{keyword}' (ID: {kw_id}). New ver: {new_version}"
-                        )
-                        # Pass current_time for last_modified
-                        cursor.execute(
-                            "UPDATE Keywords SET deleted=0, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
-                            (
-                                current_time,
-                                new_version,
-                                client_id,
-                                kw_id,
-                                current_version,
-                            ),
-                        )
-                        if cursor.rowcount == 0:
-                            raise ConflictError("Keywords", kw_id)
-
-                        # Fetch data for payload AFTER update to get correct last_modified
-                        cursor.execute("SELECT * FROM Keywords WHERE id=?", (kw_id,))
-                        payload_data = dict(cursor.fetchone())
-                        self._log_sync_event(
-                            conn,
-                            "Keywords",
-                            kw_uuid,
-                            "update",
-                            new_version,
-                            payload_data,
-                        )
-                        self._update_fts_keyword(conn, kw_id, keyword)
-                        return kw_id, kw_uuid
-                    else:
-                        logger.debug(f"Keyword '{keyword}' already active.")
-                        return kw_id, kw_uuid
-                else:
-                    new_uuid = self._generate_uuid()
-                    new_version = 1
-                    logger.info(f"Adding new keyword '{keyword}' UUID {new_uuid}")
-                    # Pass current_time for last_modified
-                    cursor.execute(
-                        "INSERT INTO Keywords (keyword, uuid, last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, 0)",
-                        (keyword, new_uuid, current_time, new_version, client_id),
-                    )
-                    kw_id = cursor.lastrowid
-                    if not kw_id:
-                        raise DatabaseError(
-                            "Failed to get last row ID for new keyword."
-                        )
-
-                    # Fetch data for payload AFTER insert to get correct last_modified
-                    cursor.execute("SELECT * FROM Keywords WHERE id=?", (kw_id,))
-                    payload_data = dict(cursor.fetchone())
-                    self._log_sync_event(
-                        conn, "Keywords", new_uuid, "create", new_version, payload_data
-                    )
-                    self._update_fts_keyword(conn, kw_id, keyword)
-                    return kw_id, new_uuid
-        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=isinstance(e, (DatabaseError, sqlite3.Error))).error(
-                f"Error in add_keyword for '{keyword}': {e}"
-            )
-            if isinstance(e, (InputError, ConflictError, DatabaseError)):
-                raise e
-            else:
-                raise DatabaseError(f"Failed to add/update keyword: {e}") from e
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected error in add_keyword for '{keyword}': {e}"
-            )
-            raise DatabaseError(f"Unexpected error adding/updating keyword: {e}") from e
-
-    def fetch_media_for_keywords(
-        self, keywords: List[str], include_trash: bool = False
-    ) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Fetches all active, non-deleted media items associated with each of the
-        provided active keywords.
-
-        The media items themselves are filtered based on their `deleted` status (must be 0)
-        and optionally their `is_trash` status. Keywords are always filtered for `deleted = 0`.
-
-        Args:
-            keywords (List[str]): A list of keyword strings to search for.
-                                  The search is case-insensitive.
-            include_trash (bool): If True, include media items marked as trash
-                                  (Media.is_trash = 1). Defaults to False.
-
-        Returns:
-            Dict[str, List[Dict[str, Any]]]: A dictionary where keys are the
-                unique, cleaned (lowercase, stripped) input keywords that were found
-                active in the database and have associated media matching the criteria.
-                Values are lists of dictionaries, each representing a media item.
-                Media items include: 'id', 'uuid', 'title', 'type', 'url',
-                'content_hash', 'last_modified', 'ingestion_date', 'author'.
-                Returns an empty dictionary if no keywords are provided or if
-                no matching media is found for any of the provided keywords under
-                the given criteria.
-
-        Raises:
-            TypeError: If `keywords` is not a list.
-            DatabaseError: For database query errors.
-        """
-        if not isinstance(keywords, list):
-            raise TypeError("Input 'keywords' must be a list of strings.")
-
-        if not keywords:
-            logger.debug(
-                "fetch_media_for_keywords called with an empty list of keywords."
-            )
-            return {}
-
-        # Normalize keywords: lowercase, strip whitespace, filter out empty strings, and ensure uniqueness.
-        # Sort for consistent query parameter order (good for logging/debugging, though IN order doesn't matter for SQL).
-        potential_keywords = [k.strip().lower() for k in keywords if k and k.strip()]
-        if not potential_keywords:
-            logger.debug(
-                "fetch_media_for_keywords: no valid keywords after initial cleaning and stripping."
-            )
-            return {}
-
-        unique_clean_keywords = sorted(list(set(potential_keywords)))
-
-        if (
-            not unique_clean_keywords
-        ):  # Should be redundant due to above check, but defensive.
-            logger.debug("fetch_media_for_keywords: no unique valid keywords remain.")
-            return {}
-
-        placeholders = ",".join("?" * len(unique_clean_keywords))
-
-        media_conditions = ["m.deleted = 0"]  # Always exclude soft-deleted media
-        if not include_trash:
-            media_conditions.append("m.is_trash = 0")
-        media_where_clause = " AND ".join(media_conditions)
-
-        # Select desired fields from Media table
-        media_fields = (
-            "m.id AS media_id, m.uuid AS media_uuid, m.title AS media_title, "
-            "m.type AS media_type, m.url AS media_url, m.content_hash AS media_content_hash, "
-            "m.last_modified AS media_last_modified, m.ingestion_date AS media_ingestion_date, "
-            "m.author AS media_author"
-        )
-
-        query = f"""
-            SELECT
-                k.keyword AS keyword_text,
-                {media_fields}
-            FROM Keywords k
-            JOIN MediaKeywords mk ON k.id = mk.keyword_id
-            JOIN Media m ON mk.media_id = m.id
-            WHERE k.keyword IN ({placeholders})
-              AND k.deleted = 0               -- Only active keywords
-              AND {media_where_clause}        -- Media status filters
-            ORDER BY k.keyword, m.last_modified DESC, m.id DESC
-        """
-
-        params = tuple(unique_clean_keywords)
-
-        logger.debug(
-            f"Executing fetch_media_for_keywords query for keywords: {unique_clean_keywords}, include_trash: {include_trash}"
-        )
-
-        # Initialize results dictionary. Keys will be the cleaned, unique input keywords.
-        # If a keyword has no matching media, its list will remain empty.
-        results_by_keyword: Dict[str, List[Dict[str, Any]]] = {
-            kw: [] for kw in unique_clean_keywords
-        }
-
-        try:
-            cursor = self.execute_query(query, params)
-            rows = cursor.fetchall()
-
-            for row in rows:
-                # keyword_text from DB is the canonical version (e.g. "recipe")
-                # It will be one of the unique_clean_keywords due to the IN clause and
-                # case-insensitive matching + storage of keywords as lowercase.
-                db_keyword = row["keyword_text"]
-
-                media_item = {
-                    "id": row["media_id"],
-                    "uuid": row["media_uuid"],
-                    "title": row["media_title"],
-                    "type": row["media_type"],
-                    "url": row["media_url"],
-                    "content_hash": row["media_content_hash"],
-                    "last_modified": row["media_last_modified"],
-                    "ingestion_date": row["media_ingestion_date"],
-                    "author": row["media_author"],
-                }
-
-                # db_keyword should be a key in results_by_keyword because unique_clean_keywords
-                # are already lowercase, and keywords in DB are stored lowercase.
-                if db_keyword in results_by_keyword:
-                    results_by_keyword[db_keyword].append(media_item)
-                else:
-                    # This case should not be reached if keyword handling (storage, cleaning, query) is consistent.
-                    # Logging an error if it occurs.
-                    logger.error(
-                        f"Data consistency alert in fetch_media_for_keywords: "
-                        f"Keyword '{db_keyword}' from DB results was not in the "
-                        f"expected set of unique_clean_keywords: {unique_clean_keywords}. "
-                        f"This may indicate a mismatch in case handling or normalization."
-                    )
-                    # Fallback: add it as a new key to avoid losing data, though it signals an issue.
-                    results_by_keyword[db_keyword] = [media_item]
-
-            # Filter out keywords that ended up with no media, if preferred.
-            # The current approach returns all queried (unique, clean) keywords as keys.
-            # To only return keywords that *had* media:
-            # final_results = {k: v for k, v in results_by_keyword.items() if v}
-
-            num_keywords_with_media = len(
-                [k for k, v in results_by_keyword.items() if v]
-            )
-            total_media_items_found = sum(len(v) for v in results_by_keyword.values())
-            logger.info(
-                f"Fetched media for keywords. Queried unique keywords: {len(unique_clean_keywords)}. "
-                f"Keywords with media found: {num_keywords_with_media}. "
-                f"Total media items grouped: {total_media_items_found}"
-            )
-
-            return results_by_keyword
-
-        except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"SQLite error fetching media for keywords from DB {self.db_path_str}: {e}"
-            )
-            raise DatabaseError(
-                f"Failed to fetch media for keywords due to SQLite error: {e}"
-            ) from e
-        except DatabaseError:  # Re-raise DatabaseError if execute_query raised it
+            return self._keywords.add_keyword_full(keyword)
+        except (InputError, ConflictError, DatabaseError):
             raise
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected error fetching media for keywords from DB {self.db_path_str}: {e}"
-            )
-            raise DatabaseError(
-                f"An unexpected error occurred while fetching media for keywords: {e}"
-            ) from e
+            raise DatabaseError(f"Unexpected error adding/updating keyword: {e}") from e
 
     def get_sync_log_entries(
         self, since_change_id: int = 0, limit: Optional[int] = None
@@ -3683,6 +3441,60 @@ class MediaDatabase:
             )
             raise DatabaseError(
                 f"Unexpected error deleting sync log entries before threshold: {e}"
+            ) from e
+
+    def delete_sync_log_entries_older_than(self, cutoff_timestamp: str) -> int:
+        """
+        Deletes sync log entries whose timestamp predates a cutoff.
+
+        Time-based retention (task-34389, ADR-229): parity with
+        ``ChaChaNotes_DB.delete_sync_log_entries_older_than``. One
+        parameterized ``DELETE`` over the indexed ``timestamp`` column, so a
+        media/chunk sync event older than the configured window leaves the
+        database regardless of reachability.
+
+        ``sync_log.timestamp`` rows are ISO-8601 UTC strings in the
+        ``YYYY-MM-DDTHH:MM:SS.mmmZ`` shape ``_log_sync_event`` emits, so the
+        comparison is a plain lexicographic string compare and the caller
+        passes the cutoff in that same shape. Rows at or after the cutoff are
+        never touched, which keeps change_id-cursor readers (the only
+        production reader) seeing every unpruned change.
+
+        Args:
+            cutoff_timestamp: Cutoff in the ``YYYY-MM-DDTHH:MM:SS.mmmZ`` form;
+                rows strictly older are deleted.
+
+        Returns:
+            int: The number of sync log entries actually deleted.
+
+        Raises:
+            ValueError: If `cutoff_timestamp` is not a non-empty string.
+            DatabaseError: If the deletion fails.
+        """
+        if not isinstance(cutoff_timestamp, str) or not cutoff_timestamp:
+            raise ValueError("cutoff_timestamp must be a non-empty string.")
+        query = "DELETE FROM sync_log WHERE timestamp < ?"
+        try:
+            with self.transaction():
+                cursor = self.execute_query(query, (cutoff_timestamp,), commit=False)
+                deleted_count = cursor.rowcount
+                logger.info(
+                    f"Deleted {deleted_count} sync log entries older than {cutoff_timestamp} from DB '{self.db_path_str}'."
+                )
+                return deleted_count
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(
+                f"Error deleting sync log entries older than cutoff from DB '{self.db_path_str}': {e}"
+            )
+            raise DatabaseError(
+                "Failed to delete sync log entries older than cutoff"
+            ) from e
+        except Exception as e:
+            logger.error(
+                f"Unexpected error deleting sync log entries older than cutoff from DB '{self.db_path_str}': {e}"
+            )
+            raise DatabaseError(
+                f"Unexpected error deleting sync log entries older than cutoff: {e}"
             ) from e
 
     def get_reading_progress(self, media_id: int) -> Optional[Dict[str, Any]]:
@@ -4719,6 +4531,19 @@ class MediaDatabase:
                 return
 
             created = self._get_current_utc_timestamp_str()
+            # task-34399: build all row params first, then one executemany --
+            # the shape process_unvectorized_chunks already uses -- instead
+            # of one round-trip per chunk. `idx` stays the position in the
+            # CALLER's list (invalid entries still consume their index), and
+            # the sync-event payloads are byte-identical to the per-chunk
+            # loop this replaces.
+            insert_sql = """INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, chunk_index, start_char, end_char,
+                                                            chunk_type, creation_date, last_modified_orig, is_processed,
+                                                            metadata, chunk_engine_version, uuid, last_modified, version, client_id, deleted,
+                                                            prev_version, merge_parent_uuid)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+            chunk_params: List[tuple] = []
+            sync_events: List[Dict[str, Any]] = []
             for idx, ch in enumerate(chunks):
                 if not isinstance(ch, dict) or ch.get("text") is None:
                     logging.warning(
@@ -4727,12 +4552,7 @@ class MediaDatabase:
                     continue
 
                 chunk_uuid = self._generate_uuid()
-                cnx.execute(
-                    """INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, chunk_index, start_char, end_char,
-                                                            chunk_type, creation_date, last_modified_orig, is_processed,
-                                                            metadata, chunk_engine_version, uuid, last_modified, version, client_id, deleted,
-                                                            prev_version, merge_parent_uuid)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                chunk_params.append(
                     (
                         media_id,
                         ch["text"],
@@ -4757,25 +4577,39 @@ class MediaDatabase:
                         0,
                         None,
                         None,
-                    ),
+                    )
                 )
+                sync_events.append(
+                    {
+                        "uuid": chunk_uuid,
+                        "chunk_index": idx,
+                        "payload": {
+                            **ch,
+                            "media_id": media_id,
+                            "uuid": chunk_uuid,
+                            "chunk_index": idx,
+                            "creation_date": created,
+                            "last_modified": created,
+                            "version": 1,
+                            "client_id": client_id,
+                            "deleted": 0,
+                        },
+                    }
+                )
+
+            if chunk_params:
+                cnx.executemany(insert_sql, chunk_params)
+            # _log_sync_event serializes each event's own payload (they all
+            # differ, embedding the chunk text) and has no batched variant,
+            # so the events stay per-chunk INSERTs inside this transaction.
+            for event in sync_events:
                 self._log_sync_event(
                     cnx,
                     "UnvectorizedMediaChunks",
-                    chunk_uuid,
+                    event["uuid"],
                     "create",
                     1,
-                    {
-                        **ch,
-                        "media_id": media_id,
-                        "uuid": chunk_uuid,
-                        "chunk_index": idx,
-                        "creation_date": created,
-                        "last_modified": created,
-                        "version": 1,
-                        "client_id": client_id,
-                        "deleted": 0,
-                    },
+                    event["payload"],
                 )
 
         # ------------------------------------------------------------------
@@ -4955,7 +4789,9 @@ class MediaDatabase:
                                     # already-canonical source url (e.g. the
                                     # https:// the row was first imported
                                     # from).
-                                    update_fields.extend(["is_trash = ?", "trash_date = ?"])
+                                    update_fields.extend(
+                                        ["is_trash = ?", "trash_date = ?"]
+                                    )
                                     update_params.extend([0, None])
                                     if restore_canonicalizes_url:
                                         update_fields.append("url = ?")
@@ -5447,7 +5283,9 @@ class MediaDatabase:
                 )  # Ensure parent active
                 media_info = cursor.fetchone()
                 if not media_info:
-                    raise InputError(f"Parent Media ID {media_id} not found or deleted.")
+                    raise InputError(
+                        f"Parent Media ID {media_id} not found or deleted."
+                    )
                 media_uuid = media_info["uuid"]
 
                 cursor.execute(
@@ -5497,7 +5335,12 @@ class MediaDatabase:
                     )
 
                 self._log_sync_event(
-                    conn, "DocumentVersions", new_uuid, "create", new_version, insert_data
+                    conn,
+                    "DocumentVersions",
+                    new_uuid,
+                    "create",
+                    new_version,
+                    insert_data,
                 )
                 return {
                     "id": version_id,
@@ -5528,151 +5371,13 @@ class MediaDatabase:
                 f"Unexpected error creating document version: {e}"
             ) from e
 
-    def update_keywords_for_media(self, media_id: int, keywords: List[str]):
-        """
-        Synchronizes the keywords linked to a specific media item.
-
-        Compares the provided list of keywords with the currently linked active
-        keywords. Adds missing links (calling `add_keyword` if needed for the
-        keyword itself) and removes outdated links. Logs 'link' and 'unlink'
-        sync events for changes in the `MediaKeywords` junction table.
-
-        Assumes it's called within an existing transaction context.
-
-        Args:
-            media_id (int): The ID of the Media item whose keywords to update.
-            keywords (List[str]): The desired list of keyword strings for the media item.
-                                  Empty list removes all keywords.
-
-        Returns:
-            bool: True if the operation completed (even if no changes were needed).
-
-        Raises:
-            InputError: If the parent `media_id` does not exist or is deleted.
-            DatabaseError: For underlying database errors, issues adding keywords,
-                           or sync logging failures.
-            ConflictError: If `add_keyword` encounters a conflict during undelete.
-        """
-        valid_keywords = sorted(
-            list(set([k.strip().lower() for k in keywords if k and k.strip()]))
-        )
-        # TASK-32801.1: this used to say "assumes called within an existing
-        # transaction" and take the raw connection. The connection keeps the
-        # legacy isolation level, so a caller that opened none left an IMPLICIT
-        # transaction open here that nothing committed -- and `transaction()`
-        # then saw `in_transaction` already True, treated itself as nested, and
-        # skipped its own commit. Every later Media write on that thread rode
-        # the uncommitted transaction and was rolled back at close. The shipped
-        # reading-list re-import is exactly such a caller
-        # (`local_media_reading_service.py:3525`).
-        #
-        # `transaction()` joins an already-open outer transaction and leaves the
-        # commit to it, so callers that DO wrap this keep their all-or-nothing
-        # behaviour; the assumption is now enforced instead of documented.
+    def update_keywords_for_media(self, media_id: int, keywords: List[str]) -> bool:
+        """Synchronize the Media row's keyword links; see KeywordStore."""
         try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT uuid FROM Media WHERE id = ? AND deleted = 0", (media_id,)
-                )  # Check parent active
-                media_info = cursor.fetchone()
-                if not media_info:
-                    raise InputError(
-                        f"Cannot update keywords: Media ID {media_id} not found or deleted."
-                    )
-                media_uuid = media_info["uuid"]
-
-                cursor.execute(
-                    "SELECT mk.keyword_id, k.uuid AS keyword_uuid FROM MediaKeywords mk JOIN Keywords k ON k.id = mk.keyword_id WHERE mk.media_id = ? AND k.deleted = 0",
-                    (media_id,),
-                )
-                current_links = {
-                    row["keyword_id"]: row["keyword_uuid"] for row in cursor.fetchall()
-                }
-                current_keyword_ids = set(current_links.keys())
-
-                target_keyword_data = {}
-                if valid_keywords:
-                    for kw_text in valid_keywords:
-                        kw_id, kw_uuid = self.add_keyword(
-                            kw_text
-                        )  # Handles create/undelete/logging/FTS for Keywords
-                        if kw_id and kw_uuid:
-                            target_keyword_data[kw_id] = kw_uuid
-                        else:
-                            raise DatabaseError(f"Failed get/add keyword '{kw_text}'")
-
-                target_keyword_ids = set(target_keyword_data.keys())
-                ids_to_add = target_keyword_ids - current_keyword_ids
-                ids_to_remove = current_keyword_ids - target_keyword_ids
-                link_sync_version = 1
-
-                if ids_to_remove:
-                    remove_placeholders = ",".join("?" * len(ids_to_remove))
-                    cursor.execute(
-                        f"DELETE FROM MediaKeywords WHERE media_id = ? AND keyword_id IN ({remove_placeholders})",
-                        (media_id, *list(ids_to_remove)),
-                    )
-                    for removed_id in ids_to_remove:
-                        keyword_uuid = current_links.get(removed_id)
-                        if keyword_uuid:
-                            link_uuid = f"{media_uuid}_{keyword_uuid}"
-                            payload = {
-                                "media_uuid": media_uuid,
-                                "keyword_uuid": keyword_uuid,
-                            }
-                            self._log_sync_event(
-                                conn,
-                                "MediaKeywords",
-                                link_uuid,
-                                "unlink",
-                                link_sync_version,
-                                payload,
-                            )
-
-                if ids_to_add:
-                    insert_params = [(media_id, kid) for kid in ids_to_add]
-                    cursor.executemany(
-                        "INSERT OR IGNORE INTO MediaKeywords (media_id, keyword_id) VALUES (?, ?)",
-                        insert_params,
-                    )
-                    # Log links - Note: IGNORE means we might log links that weren't actually inserted if race condition. Robust check is complex.
-                    for added_id in ids_to_add:
-                        keyword_uuid = target_keyword_data.get(added_id)
-                        if keyword_uuid:
-                            link_uuid = f"{media_uuid}_{keyword_uuid}"
-                            payload = {
-                                "media_uuid": media_uuid,
-                                "keyword_uuid": keyword_uuid,
-                            }
-                            self._log_sync_event(
-                                conn,
-                                "MediaKeywords",
-                                link_uuid,
-                                "link",
-                                link_sync_version,
-                                payload,
-                            )
-
-                if ids_to_add or ids_to_remove:
-                    logger.debug(
-                        f"Keywords updated media {media_id}. Added: {len(ids_to_add)}, Removed: {len(ids_to_remove)}."
-                    )
-                else:
-                    logger.debug(f"No keyword changes media {media_id}.")
-                return True
-        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(
-                f"Error updating keywords media {media_id}: {e}"
-            )
-            if isinstance(e, (InputError, ConflictError, DatabaseError)):
-                raise e
-            else:
-                raise DatabaseError(f"Keyword update failed: {e}") from e
+            return self._keywords.update_keywords_for_entity(media_id, keywords)
+        except (InputError, ConflictError, DatabaseError):
+            raise
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected keywords error media {media_id}: {e}"
-            )
             raise DatabaseError(f"Unexpected keyword update error: {e}") from e
 
     def update_media_metadata(
@@ -5913,412 +5618,19 @@ class MediaDatabase:
             raise DatabaseError(f"Unexpected error: {e}") from e
 
     def soft_delete_keyword(self, keyword: str) -> bool:
-        """
-        Soft deletes a keyword by setting its 'deleted' flag to 1.
-
-        Handles case-insensitivity. Increments the version number, updates
-        `last_modified`, logs a 'delete' sync event for the Keyword, and removes
-        its FTS entry. It also removes all links between this keyword and any
-        media items in the `MediaKeywords` table, logging 'unlink' events for each.
-
-        Args:
-            keyword (str): The keyword text to soft delete (case-insensitive).
-
-        Returns:
-            bool: True if the keyword was successfully soft-deleted,
-                  False if the keyword was not found or already deleted.
-
-        Raises:
-            InputError: If the keyword string is empty or whitespace only.
-            ConflictError: If the keyword's version has changed since being read.
-            DatabaseError: For other database errors or sync logging failures.
-        """
+        """Soft-delete a keyword and unlink it; see KeywordStore."""
         if not keyword or not keyword.strip():
             raise InputError("Keyword cannot be empty.")
-        keyword = keyword.strip().lower()
-        current_time = self._get_current_utc_timestamp_str()  # Get time
-        client_id = self.client_id
-
         try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT id, uuid, version FROM Keywords WHERE keyword = ? AND deleted = 0",
-                    (keyword,),
-                )
-                keyword_info = cursor.fetchone()
-                if not keyword_info:
-                    logger.warning(f"Keyword '{keyword}' not found/deleted.")
-                    return False
-                keyword_id, keyword_uuid, current_version = (
-                    keyword_info["id"],
-                    keyword_info["uuid"],
-                    keyword_info["version"],
-                )
-                new_version = current_version + 1
-
-                logger.info(
-                    f"Soft deleting keyword '{keyword}' (ID: {keyword_id}). New ver: {new_version}"
-                )
-                # Pass current_time for last_modified
-                cursor.execute(
-                    "UPDATE Keywords SET deleted=1, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
-                    (current_time, new_version, client_id, keyword_id, current_version),
-                )
-                if cursor.rowcount == 0:
-                    raise ConflictError("Keywords", keyword_id)
-
-                # Payload reflects the state *after* the update
-                delete_payload = {
-                    "uuid": keyword_uuid,
-                    "last_modified": current_time,
-                    "version": new_version,
-                    "client_id": client_id,
-                    "deleted": 1,
-                }
-                self._log_sync_event(
-                    conn,
-                    "Keywords",
-                    keyword_uuid,
-                    "delete",
-                    new_version,
-                    delete_payload,
-                )
-                self._delete_fts_keyword(conn, keyword_id)
-
-                # Unlinking logic remains the same
-                cursor.execute(
-                    "SELECT mk.media_id, m.uuid AS media_uuid FROM MediaKeywords mk JOIN Media m ON mk.media_id = m.id WHERE mk.keyword_id = ? AND m.deleted = 0",
-                    (keyword_id,),
-                )
-                media_to_unlink = cursor.fetchall()
-                if media_to_unlink:
-                    media_ids = [m["media_id"] for m in media_to_unlink]
-                    placeholders = ",".join("?" * len(media_ids))
-                    cursor.execute(
-                        f"DELETE FROM MediaKeywords WHERE keyword_id = ? AND media_id IN ({placeholders})",
-                        (keyword_id, *media_ids),
-                    )
-                    unlink_version = 1
-                    deleted_link_count = (
-                        cursor.rowcount
-                    )  # Get actual count of deleted links
-                    for media_link in media_to_unlink:
-                        link_uuid = f"{media_link['media_uuid']}_{keyword_uuid}"
-                        unlink_payload = {
-                            "media_uuid": media_link["media_uuid"],
-                            "keyword_uuid": keyword_uuid,
-                        }
-                        self._log_sync_event(
-                            conn,
-                            "MediaKeywords",
-                            link_uuid,
-                            "unlink",
-                            unlink_version,
-                            unlink_payload,
-                        )
-                    logger.info(
-                        f"Unlinked keyword '{keyword}' from {deleted_link_count} items."
-                    )
-            return True
-        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(
-                f"Error soft delete keyword '{keyword}': {e}"
-            )
-            if isinstance(e, (InputError, ConflictError, DatabaseError)):
-                raise e
-            else:
-                raise DatabaseError(f"Failed soft delete keyword: {e}") from e
+            return self._keywords.soft_delete_keyword(keyword)
+        except (InputError, ConflictError, DatabaseError):
+            raise
         except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected soft delete keyword error '{keyword}': {e}"
-            )
             raise DatabaseError(f"Unexpected soft delete keyword error: {e}") from e
 
-    def rename_keyword(self, keyword_id: int, new_keyword: str) -> bool:
-        """
-        Rename a keyword to a new name.
-
-        Args:
-            keyword_id (int): ID of the keyword to rename
-            new_keyword (str): New keyword name
-
-        Returns:
-            bool: True if successful, False otherwise
-
-        Raises:
-            ValueError: If new_keyword is empty or already exists
-            DatabaseError: For database operation errors
-        """
-        new_keyword = new_keyword.strip().lower()
-        if not new_keyword:
-            raise ValueError("New keyword cannot be empty")
-
-        current_time = self._get_current_utc_timestamp_str()
-        client_id = self.client_id
-
-        try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-
-                # Check if keyword exists and is not deleted
-                cursor.execute(
-                    "SELECT keyword, uuid, version FROM Keywords WHERE id = ? AND deleted = 0",
-                    (keyword_id,),
-                )
-                keyword_info = cursor.fetchone()
-                if not keyword_info:
-                    logger.warning(f"Keyword ID {keyword_id} not found or deleted")
-                    return False
-
-                old_keyword = keyword_info["keyword"]
-                keyword_uuid = keyword_info["uuid"]
-                current_version = keyword_info["version"]
-
-                # Check if new keyword already exists
-                cursor.execute(
-                    "SELECT id FROM Keywords WHERE keyword = ? AND deleted = 0 AND id != ?",
-                    (new_keyword, keyword_id),
-                )
-                if cursor.fetchone():
-                    raise ValueError(f"Keyword '{new_keyword}' already exists")
-
-                new_version = current_version + 1
-
-                # Update the keyword
-                cursor.execute(
-                    """
-                    UPDATE Keywords 
-                    SET keyword = ?, last_modified = ?, version = ?, client_id = ?
-                    WHERE id = ? AND version = ?
-                """,
-                    (
-                        new_keyword,
-                        current_time,
-                        new_version,
-                        client_id,
-                        keyword_id,
-                        current_version,
-                    ),
-                )
-
-                if cursor.rowcount == 0:
-                    raise ConflictError("Keywords", keyword_id)
-
-                # Update FTS
-                self._update_fts_keyword(conn, keyword_id, new_keyword)
-
-                # Log sync event
-                update_payload = {
-                    "uuid": keyword_uuid,
-                    "keyword": new_keyword,
-                    "last_modified": current_time,
-                    "version": new_version,
-                    "client_id": client_id,
-                }
-                self._log_sync_event(
-                    conn,
-                    "Keywords",
-                    keyword_uuid,
-                    "update",
-                    new_version,
-                    update_payload,
-                )
-
-                logger.info(
-                    f"Renamed keyword '{old_keyword}' to '{new_keyword}' (ID: {keyword_id})"
-                )
-                return True
-
-        except (ValueError, ConflictError, DatabaseError) as e:
-            logger.error(f"Error renaming keyword ID {keyword_id}: {e}")
-            raise
-        except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"SQLite error renaming keyword ID {keyword_id}: {e}"
-            )
-            raise DatabaseError(f"Failed to rename keyword: {e}") from e
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected error renaming keyword ID {keyword_id}: {e}"
-            )
-            raise DatabaseError(f"Unexpected rename error: {e}") from e
-
-    def merge_keywords(
-        self,
-        source_keyword_ids: List[int],
-        target_keyword: str,
-        create_if_not_exists: bool = True,
-    ) -> bool:
-        """
-        Merge multiple keywords into a single target keyword.
-
-        Args:
-            source_keyword_ids (List[int]): IDs of keywords to merge
-            target_keyword (str): Target keyword to merge into
-            create_if_not_exists (bool): Create target keyword if it doesn't exist
-
-        Returns:
-            bool: True if successful, False otherwise
-
-        Raises:
-            ValueError: If source_keyword_ids is empty or target_keyword is empty
-            DatabaseError: For database operation errors
-        """
-        if not source_keyword_ids:
-            raise ValueError("Source keyword IDs cannot be empty")
-
-        target_keyword = target_keyword.strip().lower()
-        if not target_keyword:
-            raise ValueError("Target keyword cannot be empty")
-
-        current_time = self._get_current_utc_timestamp_str()
-        client_id = self.client_id
-
-        try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-
-                # Get or create target keyword
-                cursor.execute(
-                    "SELECT id FROM Keywords WHERE keyword = ? AND deleted = 0",
-                    (target_keyword,),
-                )
-                target_result = cursor.fetchone()
-
-                if target_result:
-                    target_keyword_id = target_result["id"]
-                elif create_if_not_exists:
-                    # Create new keyword
-                    result = self.add_keyword(target_keyword)
-                    if result[0] is None:
-                        raise DatabaseError(
-                            f"Failed to create target keyword: {result[1]}"
-                        )
-                    target_keyword_id = result[0]
-                else:
-                    raise ValueError(
-                        f"Target keyword '{target_keyword}' does not exist"
-                    )
-
-                # Get all media items associated with source keywords
-                placeholders = ",".join("?" * len(source_keyword_ids))
-                cursor.execute(
-                    f"""
-                    SELECT DISTINCT mk.media_id 
-                    FROM MediaKeywords mk
-                    JOIN Keywords k ON mk.keyword_id = k.id
-                    WHERE k.id IN ({placeholders}) AND k.deleted = 0
-                """,
-                    source_keyword_ids,
-                )
-
-                media_ids = [row["media_id"] for row in cursor.fetchall()]
-
-                # Add target keyword to all media items
-                for media_id in media_ids:
-                    # Check if link already exists
-                    cursor.execute(
-                        """
-                        SELECT id FROM MediaKeywords 
-                        WHERE media_id = ? AND keyword_id = ?
-                    """,
-                        (media_id, target_keyword_id),
-                    )
-
-                    if not cursor.fetchone():
-                        # Create new link
-                        cursor.execute(
-                            """
-                            INSERT INTO MediaKeywords (media_id, keyword_id)
-                            VALUES (?, ?)
-                        """,
-                            (media_id, target_keyword_id),
-                        )
-
-                # Remove source keywords from media items
-                cursor.execute(
-                    f"""
-                    DELETE FROM MediaKeywords 
-                    WHERE keyword_id IN ({placeholders})
-                """,
-                    source_keyword_ids,
-                )
-
-                # Soft delete source keywords
-                for keyword_id in source_keyword_ids:
-                    if (
-                        keyword_id != target_keyword_id
-                    ):  # Don't delete if merging into itself
-                        cursor.execute(
-                            """
-                            UPDATE Keywords 
-                            SET deleted = 1, last_modified = ?, version = version + 1, client_id = ?
-                            WHERE id = ? AND deleted = 0
-                        """,
-                            (current_time, client_id, keyword_id),
-                        )
-
-                        # Update FTS
-                        self._delete_fts_keyword(conn, keyword_id)
-
-                logger.info(
-                    f"Merged {len(source_keyword_ids)} keywords into '{target_keyword}' affecting {len(media_ids)} media items"
-                )
-                return True
-
-        except (ValueError, DatabaseError) as e:
-            logger.error(f"Error merging keywords: {e}")
-            raise
-        except sqlite3.Error as e:
-            logger.opt(exception=True).error(f"SQLite error merging keywords: {e}")
-            raise DatabaseError(f"Failed to merge keywords: {e}") from e
-        except Exception as e:
-            logger.opt(exception=True).error(f"Unexpected error merging keywords: {e}")
-            raise DatabaseError(f"Unexpected merge error: {e}") from e
-
     def get_keyword_usage_stats(self) -> List[Dict[str, Any]]:
-        """
-        Get usage statistics for all keywords.
-
-        Returns:
-            List[Dict[str, Any]]: List of dictionaries containing keyword info and usage count
-                Each dict contains: id, keyword, uuid, usage_count, last_modified
-
-        Raises:
-            DatabaseError: For database operation errors
-        """
-        try:
-            query = """
-                SELECT 
-                    k.id,
-                    k.keyword,
-                    k.uuid,
-                    k.last_modified,
-                    COUNT(DISTINCT mk.media_id) as usage_count
-                FROM Keywords k
-                LEFT JOIN MediaKeywords mk ON k.id = mk.keyword_id
-                WHERE k.deleted = 0
-                GROUP BY k.id, k.keyword, k.uuid, k.last_modified
-                ORDER BY usage_count DESC, k.keyword COLLATE NOCASE
-            """
-
-            cursor = self.execute_query(query)
-            results = [dict(row) for row in cursor.fetchall()]
-
-            logger.debug(f"Retrieved usage stats for {len(results)} keywords")
-            return results
-
-        except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                f"SQLite error getting keyword usage stats: {e}"
-            )
-            raise DatabaseError(f"Failed to get keyword usage stats: {e}") from e
-        except Exception as e:
-            logger.opt(exception=True).error(
-                f"Unexpected error getting keyword usage stats: {e}"
-            )
-            raise DatabaseError(f"Unexpected stats error: {e}") from e
+        """Per-keyword usage counts across active media; see KeywordStore."""
+        return self._keywords.usage_stats()
 
     def soft_delete_document_version(self, version_uuid: str) -> bool:
         """
@@ -8564,6 +7876,68 @@ class MediaDatabase:
     # ============================= End of Embedding-related Functions ===================================================
 
     # ============================= Chat UI Functions for Search ===================================================
+    def fetch_content_prefixes_for_media_batch(
+        self, media_ids: List[int], prefix_chars: int = 500
+    ) -> Dict[int, str]:
+        """
+        Fetches a bounded content prefix for a batch of media IDs.
+
+        TASK-407: ``search_media_db``'s broad row deliberately omits
+        ``content`` (a single transcript can be megabytes), which left the
+        RAG media leg building ``SearchResult(content="")`` for every hit --
+        and the pipeline's content-prefix dedup key then collapsed ALL
+        unscoped media results into one. This batched SQL-side ``substr``
+        fetch hands that leg a distinct, bounded snippet per media ID
+        without ever hauling a full document off disk.
+
+        Args:
+            media_ids: List of media IDs (already vetted by a prior search's
+                deleted/trash filtering) to fetch content prefixes for.
+            prefix_chars: Maximum number of characters per prefix. Callers
+                sizing for ``deduplicate_results``' 200-char key should stay
+                comfortably above 200 so distinct documents keep distinct
+                keys.
+
+        Returns:
+            A dictionary mapping each media ID that carries non-empty
+            content to its content prefix. IDs whose content is NULL or
+            empty are omitted (the caller's title fallback covers them).
+
+        Raises:
+            ValueError: If ``prefix_chars`` is not a positive integer.
+            DatabaseError: If a database error occurs.
+        """
+        if not media_ids:
+            return {}
+        if (
+            not isinstance(prefix_chars, int)
+            or isinstance(prefix_chars, bool)
+            or prefix_chars < 1
+        ):
+            raise ValueError("prefix_chars must be a positive integer")
+
+        placeholders = ",".join("?" * len(media_ids))
+        query = f"""
+            SELECT id, substr(content, 1, ?) AS content_prefix
+            FROM Media
+            WHERE id IN ({placeholders})
+        """
+        params: Tuple[Any, ...] = (prefix_chars, *media_ids)
+        try:
+            cursor = self.execute_query(query, params)
+            return {
+                row["id"]: row["content_prefix"]
+                for row in cursor.fetchall()
+                if row["content_prefix"]
+            }
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"Error fetching content prefixes for media batch: {e}"
+            )
+            raise DatabaseError(
+                f"Failed to fetch content prefixes for media batch: {e}"
+            ) from e
+
     def fetch_keywords_for_media_batch(
         self, media_ids: List[int]
     ) -> Dict[int, List[str]]:
@@ -8642,29 +8016,11 @@ class MediaDatabase:
 
     _LIBRARY_PREVIEW_CHARS = 241
     _LIBRARY_KEYWORD_CAP = 20
-    _LIBRARY_FTS_TOKEN_LIMIT = 20
 
     @staticmethod
     def _escape_library_like(value: str) -> str:
         """Escape LIKE metacharacters so user input matches literally."""
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-    @classmethod
-    def _library_fts_query(cls, raw_query: str) -> Optional[str]:
-        """Build a safe FTS5 MATCH query from raw user text.
-
-        The AND-of-quoted-tokens form, not a phrase: tokens are extracted
-        with a word-character regex, each is double-quoted (so FTS operators
-        in the raw input are inert) and they are space-joined, which is
-        FTS5's implicit AND -- every token must appear, in any order and not
-        necessarily adjacent. Returns None when the input contains no usable
-        tokens.
-        """
-        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
-        if not tokens:
-            return None
-        tokens = tokens[: cls._LIBRARY_FTS_TOKEN_LIMIT]
-        return " ".join(quote_fts5_token(token) for token in tokens)
 
     def _library_keywords_for_media(
         self, conn: sqlite3.Connection, media_ids: List[int]
@@ -8869,109 +8225,15 @@ class MediaDatabase:
 
         Match branches (OR, deduplicated by Media row): case-insensitive exact
         title, title substring, content substring, FTS over title/content, and
-        keyword substring via the MediaKeywords relation. LIKE input is escaped
-        and FTS input is tokenized/quoted, so wildcards and FTS operators in
-        ``query`` match literally. Exact-title hits rank first, then recency,
-        then id.
-
-        Args:
-            query: Raw user search text.
-            limit: Maximum number of items to return.
-            offset: Number of items to skip.
-
-        Returns:
-            Dict with ``items`` (library projections plus ``matched_fields``
-            and ``matched_keywords``) and ``total``.
-
-        Raises:
-            DatabaseError: If a database error occurs.
+        keyword substring via the MediaKeywords relation.
         """
-        like_pattern = f"%{self._escape_library_like(query)}%"
-        fts_query = self._library_fts_query(query)
-        keyword_branch = (
-            "id IN (SELECT mk.media_id FROM MediaKeywords mk "
-            "JOIN Keywords k ON mk.keyword_id = k.id "
-            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+        return library_search_page(
+            self,
+            self._library_search_spec,
+            query=query,
+            limit=limit,
+            offset=offset,
         )
-
-        branches = [
-            "LOWER(title) = LOWER(?)",
-            "title LIKE ? ESCAPE '\\'",
-            "content LIKE ? ESCAPE '\\'",
-        ]
-        params: List[Any] = [query, like_pattern, like_pattern]
-        if fts_query is not None:
-            branches.append(
-                "id IN (SELECT rowid FROM media_fts WHERE media_fts MATCH ?)"
-            )
-            params.append(fts_query)
-        branches.append(keyword_branch)
-        params.append(like_pattern)
-
-        where_clause = " OR ".join(f"({branch})" for branch in branches)
-        # Re-evaluate branch hits per row so matched_fields is evidence-based.
-        hit_selects = ", ".join(
-            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
-        )
-        hit_params = list(params)
-
-        try:
-            with self.transaction() as conn:
-                total = conn.execute(
-                    f"SELECT COUNT(*) AS count FROM Media "
-                    f"WHERE deleted = 0 AND is_trash = 0 AND ({where_clause})",
-                    tuple(params),
-                ).fetchone()["count"]
-                cursor = conn.execute(
-                    f"""
-                    SELECT id, uuid, title, type, author, ingestion_date,
-                           last_modified, version,
-                           substr(content, 1, ?) AS preview,
-                           {hit_selects}
-                    FROM Media
-                    WHERE deleted = 0 AND is_trash = 0 AND ({where_clause})
-                    ORDER BY (LOWER(title) = LOWER(?)) DESC,
-                             last_modified DESC, id DESC
-                    LIMIT ? OFFSET ?
-                    """,
-                    tuple(
-                        [self._LIBRARY_PREVIEW_CHARS]
-                        + hit_params
-                        + params
-                        + [query, limit, offset]
-                    ),
-                )
-                rows = cursor.fetchall()
-                keywords_by_media = self._library_keywords_for_media(
-                    conn, [row["id"] for row in rows]
-                )
-            lowered_query = query.lower()
-            items = []
-            for row in rows:
-                item = self._library_media_item(row, keywords_by_media)
-                matched_fields = set()
-                if row["hit_0"] or row["hit_1"]:
-                    matched_fields.add("title")
-                content_hit_indexes = [2] + ([3] if fts_query is not None else [])
-                keyword_hit_index = 4 if fts_query is not None else 3
-                if any(row[f"hit_{index}"] for index in content_hit_indexes):
-                    matched_fields.add("content")
-                if row[f"hit_{keyword_hit_index}"]:
-                    matched_fields.add("keywords")
-                item["matched_fields"] = sorted(matched_fields)
-                item["matched_keywords"] = [
-                    keyword
-                    for keyword in keywords_by_media.get(row["id"], [])
-                    if lowered_query in keyword.lower()
-                ][: self._LIBRARY_KEYWORD_CAP]
-                items.append(item)
-            return {"items": items, "total": total}
-        except sqlite3.Error as e:
-            logger.opt(exception=True).error(
-                "Error searching library media "
-                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
-            )
-            raise DatabaseError(f"Failed to search library media: {e}") from e
 
     def get_library_media_text(
         self, media_uuid: str, *, start: int, max_chars: int
@@ -9396,47 +8658,6 @@ def get_unprocessed_media(db_instance: MediaDatabase) -> List[Dict]:
         raise DatabaseError("Failed get unprocessed media") from e
 
 
-def mark_media_as_processed(db_instance: MediaDatabase, media_id: int):
-    """
-    Marks a media item's vector processing status as complete (`vector_processing = 1`).
-
-    Important: This function ONLY updates the `vector_processing` flag. It DOES NOT
-    update the `last_modified` timestamp, increment the sync `version`, or log a
-    sync event. It's intended for internal state tracking after a potentially long
-    vector processing task, assuming a separate mechanism handles the main media
-    updates and sync logging if content/vectors were added.
-
-    Args:
-        db_instance (MediaDatabase): An initialized Database instance.
-        media_id (int): The ID of the media item to mark as processed.
-
-    Raises:
-        TypeError: If `db_instance` is not a Database object.
-        DatabaseError: For database query errors.
-    """
-    if not isinstance(db_instance, MediaDatabase):
-        raise TypeError("db_instance required.")
-    logger.debug(
-        f"Marking media {media_id} vector_processing=1 on DB '{db_instance.db_path_str}'."
-    )
-    try:
-        cursor = db_instance.execute_query(
-            "UPDATE Media SET vector_processing = 1 WHERE id = ? AND deleted = 0",
-            (media_id,),
-            commit=True,
-        )
-        if cursor.rowcount == 0:
-            logger.warning(
-                f"Attempted mark media {media_id} processed, but not found/deleted."
-            )
-    except (DatabaseError, sqlite3.Error) as e:
-        logger.error(
-            f"Error marking media {media_id} processed '{db_instance.db_path_str}': {e}"
-        )
-        raise DatabaseError(f"Failed mark media {media_id} processed") from e
-
-
-# Ingestion wrappers call instance methods
 def ingest_article_to_db_new(
     db_instance: MediaDatabase,
     *,
@@ -9496,69 +8717,6 @@ def ingest_article_to_db_new(
     )
 
 
-def import_obsidian_note_to_db(
-    db_instance: MediaDatabase, note_data: Dict[str, Any]
-) -> Tuple[Optional[int], Optional[str], str]:
-    """
-    Wrapper function to add or update an Obsidian note using `add_media_with_keywords`.
-
-    Extracts relevant fields from the `note_data` dictionary. Uses Obsidian tags
-    as keywords and YAML frontmatter (if present and valid) as `analysis_content`.
-    Constructs a default URL like 'obsidian://note/TITLE'.
-
-    Requires `pyyaml` to be installed to parse frontmatter.
-
-    Args:
-        db_instance (MediaDatabase): An initialized Database instance.
-        note_data (Dict[str, Any]): A dictionary containing note information.
-            Expected keys: 'title' (str, required), 'content' (str, required).
-            Optional keys: 'tags' (List[str|int]), 'frontmatter' (Dict),
-            'file_created_date' (str, ISO 8601 UTC), 'overwrite' (bool).
-
-    Returns:
-        Tuple[Optional[int], Optional[str], str]: Result from `add_media_with_keywords`:
-            (media_id, media_uuid, message).
-
-    Raises:
-        TypeError: If `db_instance` is not a Database object or `note_data` is not a dict.
-        InputError: If required keys ('title', 'content') are missing or invalid in `note_data`.
-        ConflictError: If overwrite=True and update fails due to version conflict.
-        DatabaseError: For underlying database or sync/FTS errors.
-        ImportError: If `yaml` library is needed but not installed.
-    """
-    if not isinstance(db_instance, MediaDatabase):
-        raise TypeError("db_instance required.")
-    required = ["title", "content"]
-    missing = [k for k in required if k not in note_data or note_data[k] is None]
-    if missing:
-        raise InputError(f"Obsidian note missing required keys: {missing}")
-    url_id = f"obsidian://note/{note_data['title']}"
-    kw = note_data.get("tags", [])
-    kw = [str(k) for k in kw if isinstance(k, (str, int))]
-    fm_str = None
-    fm = note_data.get("frontmatter")
-    author = None
-    if isinstance(fm, dict):
-        author = fm.get("author")
-        try:
-            fm_str = yaml.dump(fm, default_flow_style=False)
-        except Exception as e:
-            logger.error(f"Error dumping frontmatter: {e}")
-    return db_instance.add_media_with_keywords(
-        url=url_id,
-        title=note_data["title"],
-        media_type="obsidian_note",
-        content=note_data["content"],
-        keywords=kw,
-        author=author,
-        prompt="Obsidian Frontmatter" if fm_str else None,
-        analysis_content=fm_str,
-        ingestion_date=note_data.get("file_created_date"),
-        overwrite=note_data.get("overwrite", False),
-    )
-
-
-# Read functions call instance methods or query directly with filters
 def get_media_transcripts(db_instance: MediaDatabase, media_id: int) -> List[Dict]:
     """
     Retrieves all active transcripts associated with an active media item.
@@ -10166,15 +9324,12 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
     """
     if not isinstance(db_instance, MediaDatabase):
         raise TypeError("db_instance required.")
-    logger.warning(
-        "Media mutation operation=permanent_delete status=started count=1"
-    )
+    logger.warning("Media mutation operation=permanent_delete status=started count=1")
     try:
         with db_instance.transaction(immediate=True) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "DELETE FROM Media "
-                "WHERE id = ? AND deleted = 0 AND is_trash = 1",
+                "DELETE FROM Media WHERE id = ? AND deleted = 0 AND is_trash = 1",
                 (media_id,),
             )
             deleted_count = cursor.rowcount
@@ -10182,8 +9337,7 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
                 cursor.execute("SELECT 1 FROM Media WHERE id = ?", (media_id,))
                 status = "not_in_trash" if cursor.fetchone() else "not_found"
                 logger.warning(
-                    "Media mutation operation=permanent_delete "
-                    "status={} count=0",
+                    "Media mutation operation=permanent_delete status={} count=0",
                     status,
                 )
                 return False
@@ -10191,14 +9345,12 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
             db_instance._delete_fts_media(conn, media_id)
         if deleted_count > 0:
             logger.info(
-                "Media mutation operation=permanent_delete "
-                "status=committed count=1"
+                "Media mutation operation=permanent_delete status=committed count=1"
             )
             return True
         else:
             logger.error(
-                "Media mutation operation=permanent_delete "
-                "status=no_rows count=0"
+                "Media mutation operation=permanent_delete status=no_rows count=0"
             )
             return False
     except sqlite3.Error as e:
@@ -10218,41 +9370,6 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
 
 
 # Keyword read functions use instance methods or query directly
-def fetch_keywords_for_media(db_instance: MediaDatabase, media_id: int) -> List[str]:
-    """
-    Fetches all active keywords associated with a specific active media item.
-
-    Filters results to only include keywords where both the Keyword itself and
-    the parent Media item are not soft-deleted (`deleted = 0`).
-    Results are sorted alphabetically (case-insensitive).
-
-    Args:
-        media_id (int): The ID of the Media item.
-        db_instance (MediaDatabase): An initialized Database instance.
-
-    Returns:
-        List[str]: A sorted list of active keyword strings linked to the media item.
-                   Returns an empty list if none are found or if the media item
-                   is inactive.
-
-    Raises:
-        TypeError: If `db_instance` is not Database object or `media_id` not int.
-        DatabaseError: For database query errors.
-    """
-    if not isinstance(db_instance, MediaDatabase):
-        raise TypeError("db_instance required.")
-    logger.debug(f"Fetching keywords media_id={media_id} DB: {db_instance.db_path_str}")
-    try:
-        query = "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id JOIN Media m ON mk.media_id = m.id WHERE mk.media_id = ? AND k.deleted = 0 AND m.deleted = 0 ORDER BY k.keyword COLLATE NOCASE"
-        cursor = db_instance.execute_query(query, (media_id,))
-        return [row["keyword"] for row in cursor.fetchall()]
-    except (DatabaseError, sqlite3.Error) as e:
-        logger.opt(exception=True).error(
-            f"Error fetching keywords media_id {media_id} '{db_instance.db_path_str}': {e}"
-        )
-        raise DatabaseError(f"Failed fetch keywords {media_id}") from e
-
-
 def fetch_keywords_for_media_batch(
     db_instance: MediaDatabase, media_ids: List[int]
 ) -> Dict[int, List[str]]:

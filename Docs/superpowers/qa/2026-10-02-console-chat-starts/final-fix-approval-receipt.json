@@ -1,0 +1,50 @@
+{
+  "conversation": {
+    "id": "47374f59-af78-42c6-8320-1ace7e17bf0f",
+    "title": "LIVE_FINAL_APPROVAL",
+    "scope_type": "global",
+    "workspace_id": null,
+    "assistant_kind": "generic",
+    "assistant_id": "console",
+    "system_prompt": "Use brief plain replies.",
+    "metadata": {
+      "console_agent_handoff": {
+        "created_via": "new_chat",
+        "draft": "Reply only LIVE_DRAFT_TEXT.",
+        "draft_revision": 1,
+        "launch": {
+          "mode": "draft",
+          "reason": null,
+          "status": "draft"
+        },
+        "source_run_id": "9c719a94-6d71-41bd-8ae6-c3f18d37770a",
+        "state": "pending",
+        "version": 2
+      },
+      "console_generation_settings": {
+        "frequency_penalty": null,
+        "max_tokens": 1024,
+        "min_p": 0.05,
+        "model": "local-model",
+        "presence_penalty": null,
+        "provider": "llama_cpp",
+        "reasoning_effort": null,
+        "reasoning_summary": null,
+        "seed": null,
+        "streaming": false,
+        "temperature": 0.6,
+        "thinking_budget_tokens": null,
+        "thinking_effort": null,
+        "top_k": 50,
+        "top_p": 0.95,
+        "verbosity": null,
+        "version": 1
+      }
+    },
+    "version": 1,
+    "messages": [],
+    "checkpoints": []
+  },
+  "target_native_attempts": [],
+  "total_native_attempts": 6
+}

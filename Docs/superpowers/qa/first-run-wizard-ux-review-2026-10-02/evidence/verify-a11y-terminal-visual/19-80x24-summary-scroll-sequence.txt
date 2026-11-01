@@ -1,0 +1,65 @@
+== wheel-down x0
+│                                                                              │
+│                               Setup summary                                  │
+│                                                                              │
+│  Left at recommended defaults: tools off, RAG off, default theme, notes  ▅▅  │
+== wheel-down x1
+│                                                                              │
+│  Left at recommended defaults: tools off, RAG off, default theme, notes  ▄▄  │
+│  sync off — each lives in Settings when you want it.                         │
+│                                                                          ▁▁  │
+== wheel-down x2
+│                                                                              │
+│                                                                              │
+│  ✗ Provider — no credentials or saved endpoint                           ▇▇  │
+│  – Default model — not selected                                              │
+== wheel-down x3
+│                                                                              │
+│  – Default model — not selected                                              │
+│  – RAG — off by default — embedding model e5-small-v2                    ▂▂  │
+│  – Speech transcription — not set up (optional)                              │
+== wheel-down x4
+│                                                                              │
+│  – Speech transcription — not set up (optional)                              │
+│  ✓ Voice — PocketTTS (default voice)                                         │
+│  – Tools — all off; turn them on under MCP ▸ Servers ▸ built-in row ▸    ▆▆  │
+== wheel-down x5
+│                                                                              │
+│  – Tools — all off; turn them on under MCP ▸ Servers ▸ built-in row ▸        │
+│  Tool gates                                                                  │
+│  – Notes folder sync — set up later in Library                           ▁▁  │
+== wheel-down x6
+│                                                                              │
+│  – Notes folder sync — set up later in Library                               │
+│  – Theme — textual-dark                                                      │
+│  – Key encryption — off                                                      │
+== wheel-down x7
+│                                                                              │
+│  – Key encryption — off                                                      │
+│  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔    │
+│  ▊ ▐ ▌ Keep model lists fresh — checks your configured providers online a    │
+== wheel-down x8
+│                                                                              │
+│  ▊ ▐ ▌ Keep model lists fresh — checks your configured providers online a    │
+│  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁    │
+│  Config file: /Users/macbook-dev/Documents/GitHub/tldw_cha…config.toml       │
+== wheel-down x9
+│                                                                              │
+│  Config file: /Users/macbook-dev/Documents/GitHub/tldw_cha…config.toml       │
+│  Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard.           │
+│                                                                              │
+== wheel-down x10
+│                                                                              │
+│  Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard.           │
+│                                                                              │
+│  ▐X▌ Get to know you after setup                                             │
+== wheel-down x11
+│                                                                              │
+│  Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard.           │
+│                                                                              │
+│  ▐X▌ Get to know you after setup                                             │
+== wheel-down x12
+│                                                                              │
+│  Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard.           │
+│                                                                              │
+│  ▐X▌ Get to know you after setup                                             │

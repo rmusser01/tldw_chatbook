@@ -52,7 +52,8 @@ def page_persona_profiles(
     term = (search_term or "").strip().lower()
     if term:
         rows = [
-            p for p in rows
+            p
+            for p in rows
             if term in str(p.get("name") or "").lower()
             or term in str(p.get("description") or "").lower()
         ]
@@ -60,4 +61,4 @@ def page_persona_profiles(
     key, reverse = _SORTS.get(sort_key, _SORTS["name_asc"])
     rows = sorted(rows, key=key, reverse=reverse)
     start = max(0, offset)
-    return rows[start:start + page_size], filtered_total
+    return rows[start : start + page_size], filtered_total

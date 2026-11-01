@@ -27,6 +27,7 @@ _UI = (
 from types import SimpleNamespace
 from textual.app import App
 from textual.widgets import Button,Input,Static
+from tldw_chatbook.css.Themes.themes import ThemeVariableDefaultsMixin
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_skills_canvas import LibrarySkillsListCanvas
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_SKILLS
@@ -55,28 +56,39 @@ notices=[]
 instance=SimpleNamespace(app_config={},local_skill_trust_service=trust,skills_scope_service=scope,notify=lambda message,**kwargs:notices.append(message))
 class Subject(LibraryScreen):
  def compose(self):
-  yield LibrarySkillsListCanvas(state=self._build_library_skills_state(),trust_posture=self._library_skills_trust_posture,id='library-skills-canvas')
+  yield LibrarySkillsListCanvas(state=self._build_library_skills_state(),trust_posture=self._skills_state.trust_posture,id='library-skills-canvas')
  def on_mount(self,event):
   event.prevent_default()
   self._refresh_library_skills_trust_posture()
  async def on_unmount(self):pass
-class Host(App):
+# TASK-33641.7: the Library sheet names $tldw-boundary, which no tcss defines;
+# the mixin supplies the guard names, as it does for TldwCli.
+class Host(ThemeVariableDefaultsMixin,App):
  def on_mount(self):
   self.subject=Subject(instance)
   self.subject._library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS
-  self.subject._library_skills_view='list'
+  self.subject._skills_state.view='list'
   self.subject._local_source_records['skills']=(None,context)
   self.push_screen(self.subject)
+# A wall-clock deadline, not a poll count: under a parallel run 250 polls ran
+# out waiting for the review modal. 20 s stays inside the 45 s process limit.
 async def wait_for(predicate):
- for _ in range(250):
-  if predicate():return
+ clock=asyncio.get_running_loop().time;deadline=clock()+20
+ while not predicate():
+  assert clock()<deadline,'Skills UI checkpoint did not settle'
   await asyncio.sleep(.02)
- raise AssertionError('Skills UI checkpoint did not settle')
+# Each posture load (on mount, then after the source snapshot) recomposes the
+# header, and a press on a Button a later load replaced is dropped with it: in
+# 3 of 400 [empty] runs the review never opened (PR #3169's CI run 2). So wait
+# for no worker left and let the last recompose land before pressing.
+async def settled_action(pilot,host):
+ await wait_for(lambda:hasattr(host,'subject') and bool(host.subject.query('#library-skills-trust-action')) and not host.workers)
+ await pilot.pause()
+ return host.subject.query_one('#library-skills-trust-action',Button)
 async def run():
  host=Host()
  async with host.run_test(size=(110,44)) as pilot:
-  await wait_for(lambda:hasattr(host,'subject') and bool(host.subject.query('#library-skills-trust-action')))
-  subject=host.subject;button=subject.query_one('#library-skills-trust-action',Button)
+  button=await settled_action(pilot,host);subject=host.subject
   assert str(button.label)=='Review restored skills',str(button.label)
   button.press()
   await wait_for(lambda:bool(host.screen.query('#skills-recovery-files')))
@@ -92,7 +104,7 @@ async def run():
   if action in ('service','root','navigation'):
    if action=='service':instance.local_skill_trust_service=service(restored)
    elif action=='root':trust.skills_dir=restored/'other-skills'
-   else:subject._library_skills_view='editor'
+   else:subject._skills_state.view='editor'
    await wait_for(lambda:host.screen.query_one('#skills-recovery-continue',Button).disabled)
    assert 'Selection changed' in str(host.screen.query_one('#skills-recovery-status',Static).content)
    await pilot.press('escape')
@@ -100,7 +112,8 @@ async def run():
    assert not trust.trust_store.store_dir.exists()
    return
   host.screen.query_one('#skills-recovery-continue',Button).press()
-  await wait_for(lambda:bool(host.screen.query('#skill-trust-bootstrap-input')))
+  # The Submit button mounts one container level after the inputs.
+  await wait_for(lambda:bool(host.screen.query('#skill-trust-bootstrap-submit')))
   if action=='cancel-passphrase':
    await pilot.press('escape')
    await wait_for(lambda:host.screen is subject)
@@ -190,13 +203,13 @@ history={p.relative_to(old).as_posix():p.read_bytes() for p in old.rglob('*') if
         + r"""
 async def run():
  host=Host()
- async with host.run_test(size=(110,44)):
+ async with host.run_test(size=(110,44)) as pilot:
   assert context.get('available_skills') or context.get('blocked_skills'),context
-  await wait_for(lambda:hasattr(host,'subject') and bool(host.subject.query('#library-skills-trust-action')))
-  button=host.subject.query_one('#library-skills-trust-action',Button)
+  button=await settled_action(pilot,host)
   assert str(button.label)=='Unlock',str(button.label)
   button.press()
-  await wait_for(lambda:bool(host.screen.query('#skill-trust-passphrase-input')))
+  # As above: Submit mounts one container level after the input.
+  await wait_for(lambda:bool(host.screen.query('#skill-trust-passphrase-submit')))
   host.screen.query_one('#skill-trust-passphrase-input',Input).value='old-passphrase'
   host.screen.query_one('#skill-trust-passphrase-submit',Button).press()
   await wait_for(lambda:trust.recovery_posture()=='ready')

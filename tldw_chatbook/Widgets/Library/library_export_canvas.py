@@ -75,6 +75,7 @@ def apply_library_export_submit_gate(
             reason.update(state.submit_blocked_reason)
             reason.display = bool(state.submit_blocked_reason)
 
+
 class LibraryExportCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library export canvas: scope summary + chatbook export form.
 
@@ -155,9 +156,7 @@ class LibraryExportCanvas(PostRecomposeCallback, VerticalScroll):
                 id="library-export-quality",
                 classes="library-canvas-action",
                 compact=True,
-                tooltip=library_choice_tooltip(
-                    "media quality", MEDIA_QUALITY_OPTIONS
-                ),
+                tooltip=library_choice_tooltip("media quality", MEDIA_QUALITY_OPTIONS),
             )
             if state.quality_choices_visible:
                 # Unlike the list canvases, the opener stays visible (the
@@ -189,7 +188,9 @@ class LibraryExportCanvas(PostRecomposeCallback, VerticalScroll):
         # under the button that was just pressed -- not as a toast that has
         # already gone by the time the eye gets back.
         yield Static(
-            state.destination or state.destination_error or DESTINATION_PLACEHOLDER_COPY,
+            state.destination
+            or state.destination_error
+            or DESTINATION_PLACEHOLDER_COPY,
             id="library-export-destination-line",
             classes="destination-purpose" if state.destination_error else "",
             markup=False,

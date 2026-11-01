@@ -1,0 +1,51 @@
+{
+  "target": {
+    "id": "2bacf615-8da4-4b9e-a0b1-595c9f3b2a75",
+    "title": "LIVE_REFUSED_FIXED",
+    "scope_type": "global",
+    "workspace_id": null,
+    "assistant_kind": "generic",
+    "assistant_id": "console",
+    "system_prompt": null,
+    "metadata": {
+      "console_agent_handoff": {
+        "created_via": "new_chat",
+        "draft": "Reply only FIXED_SHOULD_NOT_RUN.",
+        "draft_revision": 1,
+        "launch": {
+          "mode": "start",
+          "status": "not_started",
+          "reason": "runtime_disabled"
+        },
+        "source_run_id": "8f3af4d1-4b3f-49d6-8f2e-8ba0ddf4b49e",
+        "state": "pending",
+        "version": 2
+      },
+      "console_generation_settings": {
+        "frequency_penalty": null,
+        "max_tokens": 1024,
+        "min_p": 0.05,
+        "model": "local-model",
+        "presence_penalty": null,
+        "provider": "llama_cpp",
+        "reasoning_effort": null,
+        "reasoning_summary": null,
+        "seed": null,
+        "streaming": false,
+        "temperature": 0.6,
+        "thinking_budget_tokens": null,
+        "thinking_effort": null,
+        "top_k": 50,
+        "top_p": 0.95,
+        "verbosity": null,
+        "version": 1
+      }
+    },
+    "version": 2,
+    "messages": [],
+    "checkpoints": []
+  },
+  "total_native_attempts_before_restart": 6,
+  "total_native_attempts_after_restart": 6,
+  "target_native_attempts": 0
+}

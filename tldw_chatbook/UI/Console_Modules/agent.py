@@ -134,7 +134,8 @@ straight from `ConsoleAgentBridge.fleet_snapshot`/`historical_snapshot`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
@@ -142,6 +143,7 @@ from typing import Any, Dict, Iterable, TYPE_CHECKING
 
 import re
 import time
+from types import SimpleNamespace
 from time import monotonic as _run_log_clock
 
 from loguru import logger
@@ -170,6 +172,11 @@ from textual.worker import get_current_worker
 
 from ...Widgets.Console.console_transcript import CONSOLE_GENERATING_PLACEHOLDER
 
+#: TASK-33620.15: while a run is active the badge counts are re-queried at
+#: most this often (each query is a storage-admitted AgentRunsDB read on the
+#: UI thread); the run's first sync still refreshes at once.
+CONSOLE_SUBAGENT_COUNTS_ACTIVE_REFRESH_SECONDS = 1.0
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...Agents.fleet_coordinator import FleetHandle
     from ...Chat.console_agent_bridge import AgentLiveSnapshot, SubAgentSummary
@@ -187,6 +194,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: renders statuses with one glyph language. Same keys, same marks; the
 #: shared map additionally covers "blocked" (Environment/Tasks rows).
 _AGENT_STATUS_GLYPHS: Dict[str, str] = dict(STATUS_GLYPHS)
+_SUBAGENT_COUNTS_ROW_SET_CACHE_LIMIT = 16
 
 #: TASK-31429: the rail's Agent status line ("Agent: running · step 3",
 #: "Sub-agent · done") carries its run status as the first word after the
@@ -431,6 +439,9 @@ def console_turn_activity_text(
     children: Sequence[Any] = (),
     pending_approval: bool = False,
     pending_copy: str = "",
+    turn_started_at: float | None = None,
+    self_hosted: bool = False,
+    reply_streaming: bool = False,
 ) -> str:
     """Return the live activity line for one in-flight Console turn.
 
@@ -501,6 +512,12 @@ def console_turn_activity_text(
         pending_approval: Whether an approval-like round is outstanding for
             this session (``ConsoleChatController.has_pending_approval_
             round``) -- never inferred from a tool name.
+        turn_started_at: TASK-34100.5 -- when the view first saw this
+            turn running; the elapsed base before any call usage exists.
+        self_hosted: Whether the session's provider is self-hosted; only
+            then does a long first-token wait add the cold-load hint.
+        reply_streaming: Review A-F6 -- with nothing published, whether the
+            viewed transcript already streams a real answer (no wait copy).
         pending_copy: Qodo #4 -- the waiting label for the KIND of round
             actually outstanding (``console_chat_models.console_pending_
             round_copy_for``): "Waiting for your answer" for an ask_user
@@ -528,7 +545,11 @@ def console_turn_activity_text(
             else CONSOLE_TURN_ACTIVITY_SETUP
         )
     if getattr(snapshot, "status", "idle") != "running":
-        return ""
+        if turn_started_at is None or getattr(snapshot, "status", "idle") != "idle":
+            return ""
+        # TASK-34100.5: nothing published for this conversation yet (its
+        # first send) -- still time the wait from when the view saw it run.
+        snapshot = SimpleNamespace(status="running", steps=(), turn_usage=None)
     step = next(
         (
             candidate
@@ -553,15 +574,37 @@ def console_turn_activity_text(
         if fleet:
             return fleet
     usage = getattr(snapshot, "turn_usage", None)
+    if usage is None and turn_started_at is not None:
+        usage = SimpleNamespace(
+            started_at=turn_started_at, output_tokens=0, source="local"
+        )
     usage_label = _live_usage_label(usage)
     if step is None:
         label = CONSOLE_GENERATING_PLACEHOLDER
         started_at = getattr(usage, "started_at", None)
-        elapsed = (
-            _format_fleet_elapsed(max(0.0, now - started_at))
-            if started_at is not None
-            else ""
-        )
+        waited = max(0.0, now - started_at) if started_at is not None else None
+        elapsed = _format_fleet_elapsed(waited) if waited is not None else ""
+        output = getattr(usage, "output_tokens", 0)
+        if (
+            waited is not None
+            and waited >= _FIRST_TOKEN_HINT_AFTER_SECONDS
+            and (type(output) is not int or output < _FIRST_TOKEN_MIN_OUTPUT)
+            and not reply_streaming
+        ):
+            # TASK-34100.5 AC#5: the answer has not started (a cold local
+            # model still processing the prompt streams at most a stray
+            # delta) -- say so; a self-hosted model gets the cold-load hint.
+            # The line rides the reply's one-line header (64 cells at
+            # 120x40), so it stays short; the composer's Stop ends the wait.
+            return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
+                segment
+                for segment in (
+                    CONSOLE_TURN_ACTIVITY_FIRST_TOKEN,
+                    elapsed,
+                    _FIRST_TOKEN_HINT if self_hosted else "",
+                )
+                if segment
+            )
         segments = (label, elapsed, usage_label)
         return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
             segment for segment in segments if segment
@@ -584,6 +627,109 @@ def console_turn_activity_text(
     return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
         segment for segment in segments if segment
     )
+
+
+def project_console_run_feedback(screen: Any, copy: str) -> None:
+    """Paint resident run feedback without configuration or authority reads."""
+    from textual.css.query import QueryError
+    from ...Widgets.Console.console_status_chips import ConsoleStatusChips
+
+    try:
+        screen.query_one("#console-status-chips", ConsoleStatusChips).sync_run_chip(
+            bool(copy), copy
+        )
+    except QueryError:
+        pass
+
+
+def console_send_activity_copy(
+    run_state: Any, *, snapshot: Any = None, reply_started: bool = False
+) -> str:
+    """Project current send feedback without implying remote receipt."""
+    status = getattr(run_state.status, "value", run_state.status)
+    if status == "validating":
+        return "Sending…"
+    if status in {"retrying", "checking_citations"}:
+        return run_state.visible_copy or status
+    if status != "streaming":
+        return ""
+    if getattr(snapshot, "status", None) == "setup":
+        return CONSOLE_TURN_ACTIVITY_SETUP
+    step = next(
+        (
+            item
+            for item in reversed(tuple(getattr(snapshot, "steps", ()) or ()))
+            if getattr(item, "agent_kind", "") == AGENT_KIND_PRIMARY
+        ),
+        None,
+    )
+    if (
+        getattr(snapshot, "status", None) == "running"
+        and getattr(step, "kind", None) == STEP_TOOL_CALL
+    ):
+        return f"{CONSOLE_TURN_ACTIVITY_TOOL_GLYPH} {step.text}"
+    return "Streaming reply…" if reply_started else "Waiting for reply…"
+
+
+def _viewed_provider_is_self_hosted(controller: Any, session_id: Any) -> bool:
+    """Whether the viewed session's provider is self-hosted (review A-F6)."""
+    store = getattr(controller, "store", None)
+    read = getattr(store, "session_settings", None)
+    if not callable(read) or not session_id:
+        return False
+    try:
+        provider = getattr(read(session_id), "provider", None)
+    except Exception:  # noqa: BLE001 -- the hint is optional copy
+        return False
+    from tldw_chatbook.Chat.provider_readiness import is_self_hosted_provider
+
+    return is_self_hosted_provider(provider)
+
+
+def _viewed_reply_is_streaming(controller: Any, session_id: Any) -> bool:
+    """Whether the viewed transcript already streams a real answer (A-F6).
+
+    Read only when the bridge published nothing for the turn, so the view
+    has no output count: the newest assistant row must be streaming and
+    hold the published path's floor (``_FIRST_TOKEN_MIN_OUTPUT`` tokens,
+    ~4 characters each, whitespace ignored -- a stray delta is not one).
+    Thinking counts as the answer under way (review round 2, R2-F2): it
+    streams into the row's thinking envelope while the row stays
+    ``pending`` with no content, and the published path counts it too.
+    """
+    store = getattr(controller, "store", None)
+    read = getattr(store, "read_only_messages_for_session", None)
+    if not callable(read) or not session_id:
+        return False
+    try:
+        messages = read(session_id)
+    except Exception:  # noqa: BLE001 -- the wait copy is optional
+        return False
+    for message in reversed(messages):
+        if getattr(message, "role", None) is ConsoleMessageRole.ASSISTANT:
+            status = getattr(message, "status", "")
+            text = "".join(str(getattr(message, "content", "") or "").split())
+            blocks = getattr(getattr(message, "thinking", None), "blocks", ()) or ()
+            thought = "".join(
+                "".join(str(getattr(block, "text", "") or "").split())
+                for block in blocks
+            )
+            floor = _FIRST_TOKEN_MIN_OUTPUT * 4
+            return (status == "streaming" and len(text) >= floor) or (
+                status in ("pending", "streaming") and len(thought) >= floor
+            )
+    return False
+
+
+#: TASK-34100.5 AC#5: the first-token wait copy and when it replaces
+#: "Generating…" (a warm model answers well inside this).
+_FIRST_TOKEN_HINT_AFTER_SECONDS = 15.0
+#: Live run (llama.cpp, CPU, 4.4k-token prompt, 2026-10-03): stray deltas
+#: during prompt processing read "~1-2 local output tok" for 3+ minutes.
+_FIRST_TOKEN_MIN_OUTPUT = 8
+CONSOLE_TURN_ACTIVITY_FIRST_TOKEN = "Waiting for a reply"
+#: Live at 120x40 the header fits ~58 cells of activity (review round 1).
+_FIRST_TOKEN_HINT = "model may be loading"
 
 
 def _live_usage_label(usage: Any) -> str:
@@ -641,7 +787,13 @@ def _fleet_row_from_handle(
         elapsed = _format_fleet_elapsed(max(0.0, end - handle.started_at))
         if elapsed:
             primary = f"{primary} · {elapsed}"
-    secondary = (handle.error or handle.result or handle.task or "").strip()
+    target = (
+        f"{handle.resolved_provider} · {handle.resolved_model}"
+        if handle.resolved_provider and handle.resolved_model
+        else "Target unavailable"
+    )
+    detail = (handle.error or handle.result or handle.task or "").strip()
+    secondary = f"{target} · {detail}" if detail else target
     usage_segment = ""
     if status not in TERMINAL_RUN_STATUSES:
         usage_segment = _live_usage_label(getattr(live_snapshot, "turn_usage", None))
@@ -680,9 +832,7 @@ def _fleet_row_from_handle(
         row_id=handle.handle_id,
         primary_text=primary,
         secondary_text=secondary,
-        wrap_secondary=bool(
-            usage_segment or (unread and status in TERMINAL_RUN_STATUSES)
-        ),
+        wrap_secondary=True,
         status=status,
         clickable=bool(handle.run_id),
         cancellable=status not in TERMINAL_RUN_STATUSES,
@@ -727,11 +877,18 @@ def _fleet_row_from_summary(
         f"{glyph} ~{elapsed} · {summary.text}" if elapsed else f"{glyph} {summary.text}"
     )
     budget = _budget_token_label(summary.budget_tokens)
-    secondary = f"{summary.detail} · {budget}" if summary.detail else budget
+    target = (
+        f"{summary.resolved_provider} · {summary.resolved_model}"
+        if summary.resolved_provider and summary.resolved_model
+        else "Target unavailable"
+    )
+    detail = f"{summary.detail} · {budget}" if summary.detail else budget
+    secondary = f"{target} · {detail}"
     return InspectorSectionRow(
         row_id=row_id,
         primary_text=primary.strip(),
         secondary_text=secondary,
+        wrap_secondary=True,
         status=status,
         clickable=bool(summary.run_id),
     )
@@ -856,12 +1013,25 @@ class ConsoleAgentController:
         self._console_agent_full_log_probe_generation = 0
         self._console_agent_full_log_probe_pending: int | None = None
         self._console_agent_full_log_probe_worker: Any = None
+        #: TASK-34100.5 AC#5: when this view first saw the viewed session's
+        #: run active -- the elapsed base while the bridge has published no
+        #: usage yet (a just-created conversation's first send).
+        self._console_turn_seen_active: tuple[Any, float] | None = None
         self._console_agent_full_log_retry_at = 0.0
         #: The batched `[N Sub-Agents]` badge-count cache and its two
         #: invalidation keys. Also cluster-private.
         self._console_subagent_counts_cache: Dict[str, int] = {}
         self._console_subagent_counts_cache_row_ids: frozenset = frozenset()
         self._console_subagent_counts_cache_at: float = 0.0
+        #: Whether that cache was filled while a run was active (TASK-33620.15).
+        self._console_subagent_counts_cache_during_run = False
+        self._console_subagent_counts_read: dict[frozenset[str], dict[str, Any]] = {}
+        self._console_subagent_counts_read_owner: tuple[Any, Any] | None = None
+        self._console_historical_read: dict[str, Any] | None = None
+        self._historical_reads_held = False  # TASK-33620.15.1 input reads.
+        #: TASK-33620.15.1.1: the drilled sub-agent run reads one poll tick
+        #: made, as ``(bridge, run_id, record)``; None outside a tick.
+        self._tick_drill_reads: list[tuple[Any, str, Any]] | None = None
         #: TASK-915: sticky suppression of the fleet force-open for the rest
         #: of THIS busy window. Written by the screen's own `_toggle_console_
         #: rail_section`, so it is proxied read-write there.
@@ -989,6 +1159,29 @@ class ConsoleAgentController:
         )
         return self._console_agent_bridge
 
+    def console_run_feedback_copy(self, run_state: Any) -> str:
+        """Read only resident viewed-session messages and current bridge activity."""
+        if getattr(run_state.status, "value", run_state.status) != "streaming":
+            return console_send_activity_copy(run_state)
+        controller = self._console_chat_controller
+        store = getattr(controller, "store", None)
+        session_id = getattr(store, "active_session_id", None)
+        runtime = getattr(self._screen, "_console_runtime_ref", None)
+        bridge = getattr(runtime, "agent_bridge", None)
+        read = getattr(bridge, "live_snapshot", None)
+        snapshot = (
+            read(self._current_console_rail_conversation_id() or "")
+            if callable(read)
+            else None
+        )
+        has_output = getattr(store, "has_live_reply_output", None)
+        reply_started = bool(
+            callable(has_output) and session_id and has_output(session_id)
+        )
+        return console_send_activity_copy(
+            run_state, snapshot=snapshot, reply_started=reply_started
+        )
+
     def console_turn_activity(self) -> str:
         """The viewed session's live turn-activity line, or ``""``.
 
@@ -1022,8 +1215,14 @@ class ConsoleAgentController:
 
         controller = self._console_chat_controller
         run_state = getattr(controller, "run_state", None) if controller else None
+        # getattr/vars: partial gate doubles call this unbound (see below).
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
+            vars(self)["_console_turn_seen_active"] = None
             return ""
+        viewed = getattr(getattr(controller, "store", None), "active_session_id", None)
+        seen = getattr(self, "_console_turn_seen_active", None)
+        if seen is None or seen[0] != viewed:
+            seen = vars(self)["_console_turn_seen_active"] = (viewed, time.monotonic())
         bridge = self._console_agent_bridge
         if bridge is None:
             return ""
@@ -1063,12 +1262,20 @@ class ConsoleAgentController:
                 pending_copy = console_pending_round_copy_for(
                     controller, session_id or ""
                 )
+        now = time.monotonic()
         return console_turn_activity_text(
             snapshot,
-            now=time.monotonic(),
+            now=now,
             children=children,
             pending_approval=pending_approval,
             pending_copy=pending_copy,
+            turn_started_at=seen[1],
+            self_hosted=_viewed_provider_is_self_hosted(controller, viewed),
+            reply_streaming=(
+                getattr(snapshot, "status", "idle") == "idle"
+                and now - seen[1] >= _FIRST_TOKEN_HINT_AFTER_SECONDS
+                and _viewed_reply_is_streaming(controller, viewed)
+            ),
         )
 
     def console_turn_activity_abandon_action(self) -> str:
@@ -1113,7 +1320,9 @@ class ConsoleAgentController:
         sub-agent, that run's durable record) via the Console agent bridge --
         the same bridge whose ``AgentRunsDB`` backs resume re-derivation, so
         this always reflects the latest known state without any extra event
-        plumbing (the 0.2s Console poll re-calls this on every tick).
+        plumbing: every 0.2s poll tick reads this (with the fleet rows) as a
+        projection input and re-renders the rail on the tick it changes
+        (``config_sync._projection_inputs``, TASK-33620.15.1).
 
         Finding B: none of this text is escaped -- every string returned
         here is rendered into a ``markup=False`` Static (see the compose
@@ -1154,7 +1363,7 @@ class ConsoleAgentController:
             self._console_agent_drilldown_conversation_id = conversation_id
         drill = self._console_agent_drilldown_run_id
         if drill:
-            record = bridge.subagent_run(drill)
+            record = self._drilled_run_record(bridge, drill)
             if record is not None and record.get("conversation_id") == conversation_id:
                 # Finding A (review round 2): this used to slice the raw
                 # `summary`/`result` field to a hardcoded 80 characters,
@@ -1247,7 +1456,7 @@ class ConsoleAgentController:
             # test double that only implements ``live_snapshot``.
             historical = getattr(bridge, "historical_snapshot", None)
             if historical is not None:
-                snapshot = historical(conversation_id)
+                snapshot = self._presentation_historical_snapshot(bridge, conversation_id)
         status = f"Agent: {snapshot.status}"
         if snapshot.status == "running":
             status = f"Agent: running · step {snapshot.step}"
@@ -1368,14 +1577,20 @@ class ConsoleAgentController:
         worker = get_current_worker()
         run_id = None
         try:
-            run_id = bridge.resolve_run_log_target(selection[0], selection[1])
-            available = bool(
-                run_id
-                and not worker.is_cancelled
-                and bridge.run_log_available(
-                    run_id, cancelled=lambda: worker.is_cancelled
+            from .run_log_probe_scope import finite_stock_probe
+
+            def read():
+                nonlocal run_id
+                run_id = bridge.resolve_run_log_target(selection[0], selection[1])
+                return bool(
+                    run_id
+                    and not worker.is_cancelled
+                    and bridge.run_log_available(
+                        run_id, cancelled=lambda: worker.is_cancelled
+                    )
                 )
-            )
+
+            available = finite_stock_probe(bridge, read)
         except Exception as error:  # noqa: BLE001 - optional log reads fail closed.
             logger.error("Run-log availability failed ({})", type(error).__name__)
             available = False
@@ -1505,17 +1720,35 @@ class ConsoleAgentController:
         )
 
         bridge = self._ensure_console_agent_bridge()
-        conversation_id = self._progress_owner_id()
-        native_session_id = self._console_chat_controller.store.active_session_id
-        store = getattr(bridge, "message_store", None)
-        inbox = store.get_inbox(conversation_id) if store and conversation_id else None
+        controller = self._console_chat_controller
+        if controller is None:
+            return
+        native = controller.store
+        native_session_id = native.active_session_id
+        conversation_id = (
+            native.progress_owner_id(native_session_id) if native_session_id else None
+        )
+        store = None
+        inbox = None
+
+        def prepare() -> None:
+            nonlocal inbox, store
+            store = getattr(bridge, "message_store", None)
+            native.prepare_progress_inbox(native_session_id, message_store=store)
+            with native.progress_owner_scope(
+                native_session_id, message_store=store
+            ) as owner:
+                if owner != conversation_id:
+                    raise MessageError("unavailable")
+                inbox = store.get_inbox(owner) if store and owner else None
 
         def require_current_owner() -> None:
             if (
                 inbox is None
                 or not self._screen.is_mounted
-                or self._console_chat_controller.store.active_session_id
-                != native_session_id
+                or self._console_chat_controller is None
+                or self._console_chat_controller.store is not native
+                or native.active_session_id != native_session_id
                 or self._progress_owner_id() != conversation_id
                 or store.get_inbox(conversation_id) is not inbox
             ):
@@ -1535,6 +1768,7 @@ class ConsoleAgentController:
                     conversation_id=conversation_id,
                     load=load,
                     discard=discard,
+                    prepare=prepare,
                 )
             )
 
@@ -1697,12 +1931,13 @@ class ConsoleAgentController:
            THIS process -- real per-child status, plus ``started_at``/
            ``finished_at`` (monotonic floats), which is the only source
            that can render an "elapsed" segment.
-        2. ``bridge.historical_snapshot(conversation_id).subagents``: the
-           durable, DB-re-derived fallback for a resumed conversation (no
-           live coordinator this process has ever seen) -- cached by the
-           bridge itself, so this costs no extra DB round trip beyond what
-           ``_console_agent_section_lines`` already pays each tick.
-        3. ``bridge.subagent_runs(conversation_id)``: a last-resort raw-
+        2. The exact standard bridge's process-owned setup or bound running
+           primary snapshot, including a meaningful empty child list.
+        3. ``bridge.historical_snapshot(conversation_id).subagents``: the
+           durable fallback for a resumed or terminal conversation. Exact file-backed
+           bridges share a finite owned projection with the overview; cold
+           reads defer instead of admitting database work on the UI thread.
+        4. ``bridge.subagent_runs(conversation_id)``: a last-resort raw-
            record fallback for a bridge stub that implements only the
            oldest surface (no ``historical_snapshot``) -- several test
            doubles in ``Tests/UI/test_console_agent_rail.py`` predate
@@ -1721,9 +1956,17 @@ class ConsoleAgentController:
         """
         bridge = self._ensure_console_agent_bridge()
         if bridge is None:
+            self._console_historical_read = None
             return ()
         conversation_id = self._current_console_rail_conversation_id() or ""
         if not conversation_id:
+            state = self._console_historical_read
+            if state is not None and (
+                state["key"][0] is not bridge
+                or state["key"]
+                != self._historical_presentation_key(bridge, conversation_id)
+            ):
+                self._console_historical_read = None
             return ()
         fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
         handles = fleet_snapshot(conversation_id) if fleet_snapshot is not None else []
@@ -1742,12 +1985,38 @@ class ConsoleAgentController:
                 )
                 for handle in handles
             )
+        from ...Chat.console_agent_bridge import ConsoleAgentBridge
+        from ...DB.AgentRuns_DB import AgentRunsDB
+
+        database = getattr(bridge, "_db", None)
+        if (
+            type(bridge) is ConsoleAgentBridge
+            and type(database) is AgentRunsDB
+            and not database.is_memory_db
+        ):
+            live = bridge.live_snapshot(conversation_id)
+            established = (
+                live.status == "setup"
+                and bridge._setup_started_at.get(conversation_id) is not None
+            ) or (
+                live.status == "running"
+                and bool(bridge.live_primary_run_id(conversation_id))
+            )
+            if established:
+                # Empty is meaningful for this actual process-owned turn.
+                # Previous durable children must not overlay current setup.
+                return tuple(
+                    _fleet_row_from_summary(summary, index)
+                    for index, summary in enumerate(live.subagents)
+                )
         historical_snapshot = getattr(bridge, "historical_snapshot", None)
         if historical_snapshot is not None:
             return tuple(
                 _fleet_row_from_summary(summary, index)
                 for index, summary in enumerate(
-                    historical_snapshot(conversation_id).subagents
+                    self._presentation_historical_snapshot(
+                        bridge, conversation_id
+                    ).subagents
                 )
             )
         subagent_runs = getattr(bridge, "subagent_runs", None)
@@ -1756,6 +2025,7 @@ class ConsoleAgentController:
         return tuple(
             _fleet_row_from_record(record) for record in subagent_runs(conversation_id)
         )
+
 
     def _console_agent_fleet_token_total(self) -> int:
         """Sum the active conversation's LIVE fleet's run-budget counters.
@@ -2161,7 +2431,10 @@ class ConsoleAgentController:
            rows may need counts we have never cached.
         2. A run is actively streaming/validating/retrying for this
            screen -- a just-spawned sub-agent's count should show up
-           promptly rather than wait out the full TTL.
+           promptly rather than wait out the full TTL. The run's first sync
+           refreshes, then at most once per
+           ``CONSOLE_SUBAGENT_COUNTS_ACTIVE_REFRESH_SECONDS``, and the first
+           idle sync after it once more (TASK-33620.15).
         3. The cache has aged past ``CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS``
            -- a fallback bound covering counts that changed from a
            different Console session/tab or a resumed run, where neither
@@ -2185,14 +2458,25 @@ class ConsoleAgentController:
 
         if row_ids != self._console_subagent_counts_cache_row_ids:
             return True
-        controller = self._console_chat_controller
-        if (
-            controller is not None
-            and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
-        ):
-            return True
         age = time.monotonic() - self._console_subagent_counts_cache_at
-        return age >= CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+        if self._console_run_active(CONSOLE_ACTIVE_RUN_STATUSES):
+            # TASK-33620.15: the run's first sync refreshes, then at most once
+            # a second -- not every sync (the 0.2 s tick plus each event).
+            return (
+                not self._console_subagent_counts_cache_during_run
+                or age >= CONSOLE_SUBAGENT_COUNTS_ACTIVE_REFRESH_SECONDS
+            )
+        # The first idle sync after a run refreshes once: its last counts can
+        # be up to a second old. Then the next active sync is a new run's first.
+        return (
+            self._console_subagent_counts_cache_during_run
+            or age >= CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+        )
+
+    def _console_run_active(self, active_statuses: Iterable[Any]) -> bool:
+        """Whether the viewed session's run is in one of ``active_statuses``."""
+        controller = self._console_chat_controller
+        return controller is not None and controller.run_state.status in active_statuses
 
     def _console_subagent_counts_for_rows(
         self,
@@ -2223,13 +2507,468 @@ class ConsoleAgentController:
         row_ids = frozenset(
             cid for row in rows if (cid := getattr(row, "conversation_id", None))
         )
+        from ...DB.AgentRuns_DB import AgentRunsDB
+
+        database = getattr(bridge, "_db", None)
+        if type(database) is AgentRunsDB and not database.is_memory_db:
+            authority = getattr(self.app_instance, "chachanotes_db", None)
+            query, query_definition, query_key, stock_query = (
+                self._subagent_count_query(bridge, database)
+            )
+            key = (
+                bridge,
+                row_ids,
+                self._subagent_count_live_token(
+                    bridge, row_ids, stock_query=stock_query
+                ),
+                authority,
+                query_key,
+                database,
+            )
+            owner = self._console_subagent_counts_read_owner
+            if owner is None or owner[0] is not bridge or owner[1] is not authority:
+                self._console_subagent_counts_read.clear()
+                self._console_subagent_counts_read_owner = (bridge, authority)
+            state = self._console_subagent_counts_read.get(row_ids)
+            if state is None or state["key"] != key:
+                state = {
+                    "key": key,
+                    "values": {},
+                    "pending": False,
+                    "at": 0.0,
+                    "database": authority,
+                    "query": query,
+                    # Keep the original function/Code/namespace alive while its
+                    # identity IDs participate in the pending input key.
+                    "query_definition": query_definition,
+                    "stock_query": stock_query,
+                }
+                self._console_subagent_counts_read[row_ids] = state
+                # Browser and workspace projections may alternate subsets.
+                # Keep their pending owners rather than cancelling each other;
+                # this small process-local memo contains only IDs and counts.
+                while (
+                    len(self._console_subagent_counts_read)
+                    > _SUBAGENT_COUNTS_ROW_SET_CACHE_LIMIT
+                ):
+                    self._console_subagent_counts_read.pop(
+                        next(iter(self._console_subagent_counts_read))
+                    )
+            # Live run/child/owner tokens invalidate immediately; unchanged
+            # display counts share the existing two-second observation window.
+            from ..Screens.chat_screen import (
+                CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS,
+            )
+
+            ttl = CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+            if (
+                row_ids
+                and not state["pending"]
+                and (not state["at"] or time.monotonic() - state["at"] >= ttl)
+            ):
+                state["pending"] = True
+                self.run_worker(
+                    self._load_subagent_counts(bridge, database, state),
+                    exclusive=False,
+                    group="console-subagent-counts",
+                )
+            return state["values"]
         if self._console_subagent_counts_refresh_needed(row_ids):
+            from ..Screens.chat_screen import CONSOLE_ACTIVE_RUN_STATUSES
+
             self._console_subagent_counts_cache = (
                 bridge.subagent_counts(list(row_ids)) if row_ids else {}
             )
             self._console_subagent_counts_cache_row_ids = row_ids
             self._console_subagent_counts_cache_at = time.monotonic()
+            self._console_subagent_counts_cache_during_run = self._console_run_active(
+                CONSOLE_ACTIVE_RUN_STATUSES
+            )
         return self._console_subagent_counts_cache
+
+    def _historical_presentation_key(self, bridge: Any, conversation_id: str) -> tuple:
+        """Capture only process-local source and display ownership identities."""
+        from tldw_chatbook import config
+
+        store = getattr(self._screen, "_console_chat_store", None)
+        session_id = getattr(store, "active_session_id", None)
+        owner = (
+            next((item for item in store.sessions() if item.id == session_id), None)
+            if store is not None
+            else None
+        )
+        live = bridge.live_snapshot(conversation_id)
+        return (
+            bridge,
+            bridge._db,
+            getattr(self.app_instance, "chachanotes_db", None),
+            config.current_config_identity(),
+            store,
+            session_id,
+            getattr(owner, "workspace_id", None),
+            conversation_id,
+            bridge.run_log_target_token(conversation_id),
+            live.status,
+            tuple((child.run_id, child.status) for child in live.subagents),
+        )
+
+
+    @contextmanager
+    def tick_reads_shared(self) -> Iterator[None]:
+        """Read the drilled sub-agent run once for one synchronous poll tick.
+
+        TASK-33620.15.1.1: the config-sync cadence reads the rail's section
+        lines as a projection input on every tick, and a tick that projects
+        computes them again to render them. While drilled into a sub-agent
+        each computation read that run's durable record, so a projecting
+        tick read it twice. The tick (``config_sync.project_console_tick``)
+        runs both inside this scope, which hands the render the durable
+        record the input read, so the lines it renders come from the record
+        the cadence recorded. Only that record is shared: the live-slot
+        fallback (``live_run_snapshot``, used while the record has no steps
+        yet) is still read on each computation, and the next tick
+        re-projects whatever moved. Nothing awaits inside a tick; outside
+        one, every computation reads the record afresh, as before.
+        """
+        if self._tick_drill_reads is not None:  # The outer tick owns them.
+            yield
+            return
+        self._tick_drill_reads = []
+        try:
+            yield
+        finally:
+            self._tick_drill_reads = None
+
+    def _drilled_run_record(self, bridge: Any, run_id: str) -> Any:
+        """``bridge.subagent_run(run_id)``, read once per poll tick."""
+        reads = self._tick_drill_reads
+        if reads is None:
+            return bridge.subagent_run(run_id)
+        for owner, read_id, record in reads:
+            if owner is bridge and read_id == run_id:
+                return record
+        record = bridge.subagent_run(run_id)
+        reads.append((bridge, run_id, record))
+        return record
+
+    @contextmanager
+    def historical_reads_held(self) -> Iterator[None]:
+        """Read the rail's presentation without starting a cold historical read.
+
+        For the config-sync cadence's input read (TASK-33620.15.1): the
+        projection after it starts that read, as before the cadence, so the
+        read's publication (the fleet sync and the Environment refresh it
+        nudges) does not run ahead of a deferred projection's replay.
+        """
+        self._historical_reads_held = True
+        try:
+            yield
+        finally:
+            self._historical_reads_held = False
+
+    def _presentation_historical_snapshot(
+        self, bridge: Any, conversation_id: str
+    ) -> Any:
+        """Share one finite historical read across rail and fleet presentation."""
+        from ...Chat.console_agent_bridge import AgentLiveSnapshot, ConsoleAgentBridge
+        from ...DB.AgentRuns_DB import AgentRunsDB
+
+        database = getattr(bridge, "_db", None)
+        if (
+            type(bridge) is not ConsoleAgentBridge
+            or type(database) is not AgentRunsDB
+            or database.is_memory_db
+        ):
+            self._console_historical_read = None
+            return bridge.historical_snapshot(conversation_id)
+        key = self._historical_presentation_key(bridge, conversation_id)
+        state = self._console_historical_read
+        if self._historical_reads_held:
+            current = state is not None and state["key"] == key
+            return (current and state["value"]) or AgentLiveSnapshot()
+        if state is None or state["key"] != key:
+            state = {"key": key, "value": None, "pending": False}
+            self._console_historical_read = state
+        if state["value"] is None and not state["pending"]:
+            state["pending"] = True
+            state["worker"] = self.run_worker(
+                self._load_historical_presentation(
+                    bridge, database, conversation_id, state
+                ),
+                exclusive=False,
+                group="console-agent-history",
+            )
+        return state["value"] or AgentLiveSnapshot()
+
+
+    async def _load_historical_presentation(
+        self, bridge: Any, database: Any, conversation_id: str, state: dict
+    ) -> None:
+        """Retire the captured callback before any current-owner publication."""
+        import asyncio
+
+        from ...DB.base_db import run_owned_db_call
+
+        try:
+            operation = run_owned_db_call(
+                database,
+                bridge._derive_historical_snapshot,
+                conversation_id,
+                database=database,
+            )
+            try:
+                worker = asyncio.create_task(operation)
+            except BaseException:
+                # A factory may issue this exact coroutine before raising.
+                # Do not cancel its Task: the original to_thread callback must
+                # physically retire before the defining owner returns its error.
+                issued = tuple(
+                    task for task in asyncio.all_tasks(asyncio.get_running_loop())
+                    if task.get_coro() is operation
+                )
+                if not issued:
+                    operation.close()
+                for task in issued:
+                    while not task.done():
+                        try:
+                            await asyncio.shield(task)
+                        except asyncio.CancelledError:
+                            continue
+                        except BaseException:  # noqa: BLE001 - preserve the original factory error after its issued work settles.
+                            break
+                    if not task.cancelled():
+                        task.exception()
+                raise
+            try:
+                try:
+                    value = await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    while not worker.done():
+                        try:
+                            await asyncio.shield(worker)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:  # noqa: BLE001 - retain cancellation identity.
+                            break
+                    if not worker.cancelled():
+                        worker.exception()
+                    raise
+                if (
+                    self._console_historical_read is not state
+                    or self._console_agent_bridge is not bridge
+                    or (self._current_console_rail_conversation_id() or "")
+                    != conversation_id
+                    or state["key"]
+                    != self._historical_presentation_key(bridge, conversation_id)
+                ):
+                    if self._console_historical_read is state:
+                        self._console_historical_read = None
+                    return
+                state["value"] = value
+            except asyncio.CancelledError:
+                if self._console_historical_read is state:
+                    self._console_historical_read = None
+                raise
+            except Exception:  # noqa: BLE001 - failed historical reads remain retryable.
+                return
+        finally:
+            state["pending"] = False
+        from ...Chat.console_agent_bridge import AgentLiveSnapshot
+
+        if value == AgentLiveSnapshot():
+            return
+        repaint = getattr(self._screen, "_request_console_agent_fleet_sync", None)
+        if callable(repaint):
+            repaint()
+        else:
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=False)
+
+
+    @staticmethod
+    def _subagent_count_query(bridge: Any, database: Any) -> tuple:
+        """Capture one selected callable and its disposable semantic identity."""
+        import inspect
+        from types import FunctionType, MethodType
+
+        from ...Chat.console_agent_bridge import _SUBAGENT_BADGE_COUNT_CALLBACK
+        from ...DB.AgentRuns_DB import _CONVERSATION_SUBAGENT_COUNT_CALLBACK
+
+        def definition_current(receiver, record):
+            owner, name, function, code, namespace, lookup, dictionary = record
+            return (
+                type(receiver) is owner
+                and inspect.getattr_static(owner, "__getattribute__") is lookup
+                and inspect.getattr_static(owner, "__dict__") is dictionary
+                and inspect.getattr_static(owner, "__getattr__", None) is None
+                and inspect.getattr_static(receiver, name, None) is function
+                and function.__code__ is code
+                and function.__globals__ is namespace
+            )
+
+        def bound_current(method, receiver, record):
+            return (
+                type(method) is MethodType
+                and method.__self__ is receiver
+                and method.__func__ is record[2]
+            )
+
+        bridge_record = _SUBAGENT_BADGE_COUNT_CALLBACK
+        database_record = _CONVERSATION_SUBAGENT_COUNT_CALLBACK
+        bridge_stock = definition_current(bridge, bridge_record)
+        bridge_query = bridge.subagent_counts
+        bridge_stock = bridge_stock and bound_current(
+            bridge_query, bridge, bridge_record
+        )
+        database_stock = definition_current(database, database_record)
+        query = (
+            database.count_subagents_by_conversation if bridge_stock else bridge_query
+        )
+        stock = (
+            bridge_stock
+            and database_stock
+            and bound_current(query, database, database_record)
+        )
+        if type(query) is MethodType:
+            receiver, function = query.__self__, query.__func__
+        elif type(query) is FunctionType:
+            receiver, function = None, query
+        else:
+            # Preserve arbitrary callable ABI without probing its properties.
+            receiver = query
+            function = inspect.getattr_static(type(query), "__call__", None)
+        code = function.__code__ if type(function) is FunctionType else None
+        namespace = function.__globals__ if type(function) is FunctionType else None
+        definition = receiver, function, code, namespace
+        return query, definition, tuple(id(item) for item in definition), stock
+
+
+    @staticmethod
+    def _subagent_count_live_token(
+        bridge: Any, row_ids: frozenset[str], *, stock_query: bool = False
+    ) -> tuple:
+        """Read process-local run/child identities without database work."""
+        import inspect
+        from types import MethodType
+
+        from ...Chat.console_agent_bridge import (
+            _SUBAGENT_BADGE_LIVE_CALLBACKS,
+            ConsoleAgentBridge,
+        )
+
+        lookup, dictionary, callbacks = _SUBAGENT_BADGE_LIVE_CALLBACKS
+        stock = (
+            type(bridge) is ConsoleAgentBridge
+            and inspect.getattr_static(ConsoleAgentBridge, "__getattribute__") is lookup
+            and inspect.getattr_static(ConsoleAgentBridge, "__dict__") is dictionary
+            and inspect.getattr_static(ConsoleAgentBridge, "__getattr__", None) is None
+            and all(
+                inspect.getattr_static(bridge, name, None) is function
+                and function.__code__ is code
+                and function.__globals__ is namespace
+                for name, function, code, namespace in callbacks
+            )
+        )
+        snapshot = getattr(bridge, "live_snapshot", None)
+        target = getattr(bridge, "run_log_target_token", None)
+        stock = stock and all(
+            type(method) is MethodType
+            and method.__self__ is bridge
+            and method.__func__ is record[1]
+            for method, record in zip((snapshot, target), callbacks)
+        )
+        # Primary turn/run publication cannot change the sub-agent-only count.
+        # Custom callbacks keep their preceding primary-token contract.
+        if stock and stock_query:
+            target = None
+        return tuple(
+            (
+                cid,
+                target(cid) if callable(target) else None,
+                tuple(
+                    (getattr(child, "run_id", None), getattr(child, "handle_id", None))
+                    for child in getattr(snapshot(cid), "subagents", ())
+                )
+                if callable(snapshot)
+                else (),
+            )
+            for cid in sorted(row_ids)
+        )
+
+
+    async def _load_subagent_counts(
+        self, bridge: Any, database: Any, state: dict
+    ) -> None:
+        """Retire a finite worker read before publishing to its exact input owner."""
+        import asyncio
+
+        from ...DB.base_db import run_owned_db_call
+
+        operation = run_owned_db_call(
+            database,
+            state["query"],
+            list(state["key"][1]),
+        )
+        try:
+            if state.get("stock_query", False):
+                # The stock finite worker owns its callback until the native
+                # connection retires; cancellation must not detach that read.
+                worker = asyncio.Task(operation)
+                try:
+                    values = await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    while not worker.done():
+                        try:
+                            await asyncio.shield(worker)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:  # noqa: BLE001 - cancellation wins.
+                            break
+                    if not worker.cancelled():
+                        worker.exception()
+                    raise
+            else:
+                values = await operation
+        except Exception:  # noqa: BLE001 - counts remain retryable.
+            return
+        finally:
+            if self._console_subagent_counts_read.get(state["key"][1]) is state:
+                state["pending"] = False
+        if self._console_subagent_counts_read.get(state["key"][1]) is not state:
+            return
+        if (
+            self._console_agent_bridge is not bridge
+            or bridge._db is not database
+            or getattr(self.app_instance, "chachanotes_db", None)
+            is not state["database"]
+        ):
+            return
+        try:
+            _query, _definition, query_key, stock_query = self._subagent_count_query(
+                bridge, database
+            )
+        except Exception:  # noqa: BLE001 - changed custom getter remains retryable.
+            return
+        if state["key"] != (
+            bridge,
+            state["key"][1],
+            self._subagent_count_live_token(
+                bridge, state["key"][1], stock_query=stock_query
+            ),
+            getattr(self.app_instance, "chachanotes_db", None),
+            query_key,
+            database,
+        ):
+            return
+        changed = state["values"] != values
+        state["values"] = values
+        state["at"] = time.monotonic()
+        if changed:
+            self.run_worker(
+                self._sync_native_console_chat_ui_accessor()(),
+                exclusive=False,
+                group="console-subagent-count-publication",
+            )
+
 
     def _inject_resume_agent_markers(
         self,

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from typing import Any
 
 from tldw_chatbook.Agents.agent_models import AgentDefinition, validate_agent_definition
 
@@ -32,17 +33,18 @@ def agent_definition(
     eligible: frozenset[str],
     *,
     parent_provider: str = "",
+    registry: Any = None,
 ) -> AgentDefinition:
     """Build an ephemeral preset; declared model references require host mapping."""
     component = snapshot.inspection.inventory[component_id]
     definition = json.loads(component.definition_json)
     if component.kind != "agent":
         raise PluginUnavailable("plugin_agent_unavailable")
-    from .host_references import mapped_model, mapped_tools
+    from .host_references import mapped_model, mapped_tools, resolve_tool_ceiling
 
     mappings = json.loads(snapshot.mappings_json)
     declared = mapped_tools(snapshot.installation_id, component, mappings)
-    tools = eligible if declared is None else frozenset(declared) & eligible
+    tools = resolve_tool_ceiling(declared, registry, eligible)
     provider, model = mapped_model(component, mappings)
     if model:
         from tldw_chatbook.Chat.provider_readiness import provider_config_key

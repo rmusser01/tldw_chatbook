@@ -1,0 +1,34 @@
+{
+  "before_head": "27a7aca284394852cb37a80deb6db55ba5319be7",
+  "zip_sha256": "acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84",
+  "zip_bytes": 63166118,
+  "original_git_blobs_and_zip_entry_hashes_verified": 2118,
+  "kept_original_paths_verified": 99,
+  "qualified_source_test_hashes_verified": 8123,
+  "historical_qa_final_blobs_verified": 12337,
+  "original_whole_file_qa_exact": 12336,
+  "original_prefix_upstream_append_exception_preserved": true,
+  "new_packing_files": {
+    "qualification-evidence.zip": {
+      "bytes": 63166118,
+      "sha256": "acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84"
+    },
+    "evidence-packing.json": {
+      "bytes": 387064,
+      "sha256": "83102184dcb5a0f433434a16c51489f416094139425235f32c44ee73c4cde459"
+    },
+    "EVIDENCE-PACKAGING.md": {
+      "bytes": 1503,
+      "sha256": "c517ddfff572be63a136a8629d464ad6f9f09e1a21d1c0f6a2d8b62a2442477c"
+    },
+    "complete-ledger-after-evidence-packing.md": {
+      "bytes": 93142,
+      "sha256": "bf15b13f584b4ad1ac811a5f91c744d1af86da8f6f4008ae34948613597f3ac4"
+    },
+    "rulings-i-made-complete-after-evidence-packing.md": {
+      "bytes": 32543,
+      "sha256": "f9ea12c38ef4ae63745f27229522f16ed1c477e262d210408978a2dc96a79333"
+    }
+  },
+  "verification_scope": "Metadata packaging only; no test replay, source/workflow/test/permission/budget mutation; new current-head review and normal checks still required."
+}

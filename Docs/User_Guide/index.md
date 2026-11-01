@@ -40,7 +40,7 @@ can sync with a tldw server you configure).
 | Ctrl+6 | [Artifacts](artifacts.md) 🚧 | Generated outputs, bundles, reports, datasets, and Chatbooks. |
 | Ctrl+7 | [Schedules](schedules.md) 🚧 | When jobs, watchlists, and workflows run. |
 | Ctrl+8 | [Workflows](workflows.md) 🚧 | Reusable procedures, recipes, dry-runs, and outputs. |
-| Ctrl+9 | [MCP](mcp.md) 🚧 | MCP servers, tools, permissions, auth, and audit. |
+| Ctrl+9 | [Settings ▸ Tools & MCP](mcp.md) 🚧 | MCP servers, tools, permissions, auth, and history. Not a screen of its own: Ctrl+9 opens this Settings category, and it has no nav label. |
 | Ctrl+0 | [ACP](acp.md) 🚧 | Agent Client Protocol agents, sessions, runtimes, diffs, and terminals. |
 | F2 | [Lab](lab.md) 🚧 | Models, speech, and evaluation runs. |
 | F3 | [Logs](logs.md) 🚧 | Application logs and diagnostics. |
@@ -96,8 +96,8 @@ letters **c / p / d / l**).
 |-----|--------|
 | F1 | Open the current screen's keyboard-shortcuts list (content is screen-specific) |
 | Ctrl+P | Open the command palette — search and jump to any screen or command from anywhere |
-| Ctrl+Q | Quit the app — also while a dialog or picker is open. It asks first when quitting would cancel Console runs or queued prompts, discard unsaved Settings ▸ Theme edits, or discard work that a dialog asks about before closing (a Schedules form, a generated video still waiting for a storage choice, or a memory-only profile interview, for example). If that question closes before you answer it, Chatbook stays open and says "Quit cancelled." |
-| Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above) — works from every screen, [Roleplay](roleplay-chat-dictionaries.md) included |
+| Ctrl+Q | Quit the app — also while a dialog or picker is open. It asks first when quitting would discard unsent Console work (a composer draft, a Temporary chat or other unsaved messages, a staged attachment, an unsent turn waiting on the shelf) or cancel Console runs or queued prompts, naming the affected tabs (see [Sessions & tabs](console/sessions-tabs-workspaces.md)); it also asks when quitting would discard unsaved Settings changes (from any screen, including a draft you left in Settings), unsaved Settings ▸ Theme edits or unsaved [Roleplay](roleplay-chat-dictionaries.md) drafts, discard [Library](library/notes.md) work it could not save for you (in Library, Ctrl+Q first saves the open note or Folder files edit, and asks only about one it cannot save and about an unsaved Prompt or Skill draft), or discard work that a dialog asks about before closing (a Schedules form, a generated video still waiting for a storage choice or in its Save to disk picker, or a memory-only profile interview, for example). If a dialog is still finishing something it will not let you close it during — creating a fork, saving a policy or collection change, writing an export, importing skills — Ctrl+Q stays open, says what is still working, and works on the next press once it finishes; pressed again before then, it asks **Quit while still working?** (**Quit anyway** quits; **Wait** returns to the dialog. A dialog that closes itself when done — fork, Trace export, profile review or interview, Prompt Workbench apply — still closes as usual if it finished in the meantime; a character chat that finished opening from the session switcher meanwhile is rolled back instead, with **Could not open chat** and **Retry**). If that question closes before you answer it, Chatbook stays open and says "Quit cancelled." |
+| Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above; Ctrl+9 opens Settings ▸ Tools & MCP) — works from every screen, [Roleplay](roleplay-chat-dictionaries.md) included |
 | F2 / F3 / F4 / F5 / F7 | Switch to Lab / Logs / Settings / Research / Meetings — the five destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords (F6 is skipped: Next Pane) |
 | F6 | Cycle through the current screen's panes; on screens without a pane cycle it only shows a notice |
 | Shift+F6 | Cycle panes backward — bound only on [Console](console.md) and [Roleplay](roleplay-chat-dictionaries.md); elsewhere it does nothing |
@@ -158,7 +158,8 @@ Full detail on runs, approvals, and tools:
 | Chatbooks | [Artifacts](artifacts.md) 🚧 |
 | Characters / Roleplay | [Roleplay](roleplay-chat-dictionaries.md) |
 | Speech (STTS) / Evals | [Lab](lab.md) 🚧 |
-| Tools & Settings | [MCP](mcp.md) 🚧 |
+| Tools & Settings | [Settings ▸ Tools & MCP](mcp.md) 🚧 |
+| MCP | [Settings ▸ Tools & MCP](mcp.md) 🚧 — Ctrl+9 still opens it |
 | Stats | [Settings](settings.md) (the palette's "Show Database Stats" opens the separate Statistics screen) |
 | Customize | [Settings](settings.md) — the Theme editor specifically |
 

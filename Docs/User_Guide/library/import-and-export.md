@@ -52,7 +52,23 @@ In server mode the **Export** rail row is disabled, with the tooltip
   time), any "⚠" warnings about missing tooling, and — if some files
   can't be handled — "2 unsupported files will be skipped: …" (importing
   on the server, the same line reads "will fail", because that backend
-  records a failure row rather than skipping quietly). The pre-check does
+  records a failure row rather than skipping quietly). A path may start
+  with `~` (`~/Documents/paper.pdf` is read as your home folder's
+  `Documents/paper.pdf`). A path that cannot be found shows one line under
+  the field — "Can't find that path — check it, or use Browse… to pick a
+  file or folder." — with a "Choose a file…" button. Enter (and Start
+  import) start an import only once the pre-check for what is in the field
+  has finished; pressing Enter while "Checking…" is shown starts the import
+  when the check lands, and never when the check says the path is wrong.
+  When the check has refused what is in the field — it could not find the
+  path, or the folder is empty or holds nothing it can import — the footer
+  reads "enter check this path": Enter re-runs the check (so a file you
+  have just created or added to the folder is picked up) and imports if it
+  now passes. Leaving the Import canvas, picking a different file with
+  Browse…, or any screen that opens over the Library — F1 help, the Ctrl+P
+  palette, any dialog, and the Browse… picker even when you cancel it —
+  cancels a waiting Enter: nothing imports until you press again.
+  The pre-check does
   **not** contact a URL: it reads the address, not the site, so nothing is
   fetched while you are still typing one. A URL that turns out not to be
   fetchable is reported by the import job itself, where the failure carries
@@ -164,13 +180,17 @@ only loses content when you ask it to (task-32353).
 
 Directly above the submit button, two quiet lines say what pressing it
 will write, before you press it (task-32353): a **bundle line** —
-"Bundle: 2 media items · text only · about 4 KB before compression" —
+"Bundle: 2 media items · text + keywords only · about 4 KB before compression" —
 naming how many items are going in, what the archive holds for each of
 them, and how much content that is (the written `.zip` is smaller; the
-receipt after the run reports that file's own size). "text only" is not a
-summary of the quality chooser: whatever that control is set to, a bundle
-holds each item's stored text plus its details, never the original media
-file — the Library does not keep a path to one. The line is absent when
+receipt after the run reports that file's own size). "text + keywords only"
+is not a summary of the quality chooser: whatever that control is set to, a
+bundle holds each item's stored text, its details and its keywords, never
+the original media file — the Library does not keep a path to one. Keywords
+on media, notes and conversations travel in the bundle and come back on
+import. Every scope that can include media — Media and Everything — keeps
+the "only"; the Notes, Conversations and Prompts scopes, which carry no
+media, read "text + keywords". The line is absent when
 the scope is empty, where "Nothing to export in this scope." is the only
 thing worth saying. And a
 **contents list** naming the items themselves, up to 20 of them, then
@@ -256,7 +276,7 @@ checkpoint before any tool is allowed to run, as required by
 | "Chunking template" — "Auto" | The picker's other choice, listed right after "None (manual settings)": let the app pick the chunking scheme per item. Auto decides in three steps and always lands somewhere: (1) if one of your templates carries a **classifier block** that matches the item (its `media_types`, plus optional `filename_regex` / `title_regex` / `url_regex`, cleared its `min_score`), the highest-scoring match wins and runs in full — preprocessing, chunking and postprocessing, indistinguishable from picking it by hand; (2) otherwise a media-type-aware plan from the same auto planner the server uses derives the method/size/overlap; (3) if that declines too, today's plain defaults apply — Auto never fails an import, it can only explain why it declined. Templates opt in by carrying a classifier block: a template without one is never auto-picked (the built-ins ship without blocks, so nothing changes until you author one), and blocks are added through the template authoring path in RAG Admin / the service layer. The name "auto" is reserved — you cannot create or rename a template to it — so the choice can never be shadowed by a row. The decision is recorded per item and **re-decided, not replayed**: a later re-chunk re-runs the selection against the current template store (add, delete or re-score classifier blocks and the re-chunk follows the new outcome), and the item's stored record is re-stamped to say what the re-chunk actually used. Auto is exclusively this picker choice — the `[chunking] default_template` config key never triggers it (a configured default is an ordinary template name). |
 | "Encoding" | How plain text and HTML files are decoded: "Auto-detect (UTF-8 first)" (strict UTF-8, then detection) or an explicit UTF-8 / UTF-16 / "Latin-1 (ISO-8859-1)" / "Windows-1252 (Western)". A wrong explicit choice shows up as replacement characters rather than failing the import. |
 | "Install verified Parakeet v2 INT8 (630.6 MiB)…" | In the Audio & video fold, enabled when the provider is parakeet-onnx (under any other provider the button is inert and its label ends "— needs the parakeet-onnx provider"). Opens a consent dialog listing Source, Revision, License, Download size, and Destination, ending "All four files are checked against pinned sizes and SHA-256 digests before the bundle becomes usable." Buttons: "Cancel" / "Install". |
-| "Start import" | Queues everything the pre-check found. If "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Importing on the server adds one more: a selection this machine reads perfectly well but that backend will not take at all (a folder of nothing but images) gates Start with "Nothing in this selection can be sent to the server — 3 files unsupported by the server. Switch to importing on this machine, or choose video, audio, document, PDF or e-book files." — a different sentence from the one above, because the files are fine and the destination is the problem. None of these leaves a failed row behind: the import never starts. |
+| "Start import" | Queues everything the pre-check found. If overridable "⚠" tooling warnings are outstanding, the first press doesn't submit — the line beside Start turns into "⚠ Press Start again to import anyway — N files will fail without more tooling." (or "… N files may fail." when the missing package is only an optional enhancement) and a second press (or a second Enter in the path field) starts the import. See "Consent for risky imports" below. Missing selected transcription runtimes block Start; unavailable model files or VAD block queue creation with a repair instruction. These requirements cannot be overridden by a second Start press. Start is unavailable, with the reason stated at the button, when the selection has nothing importable: "This folder is empty — there's nothing to import. Choose a folder with files, or a single file." for a folder that really is empty, "Nothing in this folder could be scanned — 2 entries were skipped: folder imports pass over hidden files, links, and folders they can't read. Import a file directly, or choose another folder." for a folder whose entries the scan passed over, and "Nothing in this selection can be imported — N unsupported files." when nothing in it has a handler. Importing on the server adds one more: a selection this machine reads perfectly well but that backend will not take at all (a folder of nothing but images) gates Start with "Nothing in this selection can be sent to the server — 3 files unsupported by the server. Switch to importing on this machine, or choose video, audio, document, PDF or e-book files." — a different sentence from the one above, because the files are fine and the destination is the problem. None of these leaves a failed row behind: the import never starts. |
 | Queue rows | "● queued / parsing / writing · name" while working, "✓ done · name · 4s" on success, "✗ failed · name · reason" (plus " · retry 1" after a retry) on failure, "– skipped · name · reason" for a file the pipeline never attempted (an unsupported type), "⊘ cancelled · name" when stopped on purpose. The reason is always plain language and carries its next step on the same line where one exists — a worker that cannot start on this machine reads "The import worker couldn't start on this machine (system resource limit) · Restart the app, then Retry", never a raw errno. Server jobs carry an " · on server" suffix. |
 | Row actions | "Open in Library" (done, local) jumps to the new media item; "View on server" (done, server); "Show details" shows the full error — offered on **every** failed row that has one, including failures with no structured reason; "Retry" re-queues a failed job; "Cancel" stops an in-flight server job; "Dismiss" removes a failed row. A skipped row is never offered Retry: the file would be skipped again. |
 | "Show details" | Opens inline under the row: a plain-language reason ("Reason: No text could be extracted." / "The file couldn't be read." / "The file is empty." / "The Library couldn't be written to."), the full message when it says more than the row line, the underlying tool output once (never repeated between the message and the chain), and — only when a retry could actually change the outcome — one line of advice derived from that same reason. A deterministic failure whose text actually named a remedy says so ("Retrying now will fail the same way — install the tooling named above first, then Retry."); when nothing on screen named one, the advice states the determinism without inventing a remedy ("Retrying now will fail the same way — this file's content, or the tooling for it, has to change first."); a named missing package is named ("Missing dependency: pymupdf. Install it, then Retry."); and a cause we can't classify says nothing rather than encouraging a retry that would repeat itself. When a failure carries no structured reason at all, the expansion shows the underlying text verbatim — that is where an errno, a spawn error, or a tool's own output lives, out of the row line but one press away. Pressing it keeps the keyboard on the button you pressed — it toggles to "Hide details" under your finger and Tab from there walks on into the queue, never back up to the "Keywords (optional)" field of the next import. The same holds for a grouped row's "Show the N files". |
@@ -275,6 +295,16 @@ choosing an unusable model leaves it failed. If the retry removes the focused
 row action, focus returns to the source field. A newer focus move or navigation
 away from Import is respected when model validation finishes.
 
+For local audio/video imports, the summary beside **Start import** names the
+transcription backend and effective model. **Auto** uses
+`[transcription] default_model`: fresh installs use `base`; existing configured
+choices, including `distil-large-v3`, are preserved. Choosing **Faster Whisper**
+explicitly uses the **Transcription model** selection instead. Custom model paths
+are shown as “custom model” in the summary; server imports use server settings.
+Each local Auto submission keeps the model shown when Library was opened,
+including while queued. Restart Chatbook after editing `default_model` externally
+to load the new choice; saved settings and the Auto selection stay unchanged.
+
 **Parakeet setup:** Installing the Python package adds the transcription runtime;
 it does not download the model files. In the Audio & video options, select
 "Parakeet (ONNX)", then press "Install verified Parakeet v2 INT8 (630.6 MiB)…"
@@ -284,6 +314,22 @@ the model installed through Chatbook; that field is an optional override for
 model files you already have. The install button downloads v2 INT8 specifically,
 so use English and INT8 with that bundle.
 
+Before a local audio/video import starts, Chatbook checks the selected runtime
+and model files. A missing selected runtime blocks Start and provides an install
+command for Chatbook's Python environment. Selecting a different installed
+provider does not require installing the alternatives. Restart after installing
+packages so the running app can detect them.
+
+Model files are separate from Python packages. Missing or incomplete Faster
+Whisper caches (including missing vocabulary files) report a model-download
+remedy; catalog model IDs, including distilled and community models, include an
+explicit download command. These checks do not download anything automatically.
+Missing Parakeet models point to **Lab > Models** or the matching local folder;
+a missing **Silero VAD** is identified separately with its install remedy.
+External Parakeet folders still offer the existing VAD install-consent dialog.
+An unsuccessful check keeps your import draft and queues no jobs. Server-targeted
+imports use the server's environment and are not blocked by missing local STT tools.
+
 For native clipboard copying on Fedora Wayland, install
 [`wl-clipboard`](https://packages.fedoraproject.org/pkgs/wl-clipboard/wl-clipboard/)
 (`sudo dnf install wl-clipboard`). X11 sessions can use `xclip` or `xsel`.
@@ -291,7 +337,7 @@ SSH and browser sessions use the client-facing clipboard route; terminal or
 browser permissions can prevent delivery. An unconfirmed-copy warning leaves
 the command visible for manual selection.
 
-**Consent for risky imports** — starting with "⚠" tooling warnings
+**Consent for risky imports** — starting with overridable "⚠" tooling warnings
 outstanding takes two presses, right at the Start button (task-3314
 retired the old "Some files may fail to import:" dialog). The first press
 converts the line beside Start into "⚠ Press Start again to import anyway
@@ -304,8 +350,10 @@ press — button or Enter,
 they behave identically — starts the import. You can arm with Enter in
 the path field and confirm with the Start button, or the other way
 round; moving focus between the two presses does not cancel anything.
-Starting anyway is safe: affected files simply fail individually and show
-up as ✗ rows you can retry after installing. Esc backs out of the pending
+Selected transcription runtime, model and VAD requirements must be repaired
+before queue creation; this confirmation cannot override them. For the remaining
+tooling warnings, starting anyway is safe: affected files simply fail individually
+and show up as ✗ rows you can retry after installing. Esc backs out of the pending
 confirm (and stays on the form); editing the path, changing an option,
 picking a different file with "Browse…", or a pre-check that comes back
 different also cancels it. The "Copy install command" buttons stay under
@@ -326,7 +374,7 @@ destination, or leaving the Import canvas cancels pending consent.
 |---|---|
 | "Export name" | Pre-filled "Library export 2026-07-31" (today's date); becomes the bundle's display name. |
 | "quality: original" | Opens on "original" (full fidelity, task-32353). Press to open a one-row strip of thumbnail / compressed / original (✓ on the active one) right under the button; pick one directly, or press the button again / Escape to close without changing. The helper line underneath always describes the option currently showing. Only "original" copies full media files into the zip; the others keep the package small. |
-| "Bundle: N media items · text only · about X KB before compression" | What pressing Export will actually write: how many items go in, what the archive holds for each (stored text and details — never the original media file, whatever the quality chooser says), and how much content that is. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. The count is the items still exportable, so a selection whose item was trashed underneath reports what will really be written. Absent for an empty scope. Appears once counting finishes. |
+| "Bundle: N media items · text + keywords only · about X KB before compression" | What pressing Export will actually write: how many items go in, what the archive holds for each (stored text, details and keywords — never the original media file, whatever the quality chooser says — the "only" stays on every scope that can include media, Everything included; the Notes, Conversations and Prompts scopes read "text + keywords"), and how much content that is. Keywords on media, notes and conversations travel in the bundle and come back on import. The archive itself is smaller — the receipt after the run stats the written `.zip`. Reads "size known once it runs" when the scope's size cannot be measured up front. The count is the items still exportable, so a selection whose item was trashed underneath reports what will really be written. Absent for an empty scope. Appears once counting finishes. |
 | The contents list | The titles of the items going into the bundle, up to 20, then "+ N more". Absent when the scope's items cannot be enumerated before the run. |
 | "Choose destination…" | Opens "Choose Export Destination". Whatever you pick is normalized to end in `.zip`; if that file already exists, an "Overwrites <name>" note appears (informational — exporting proceeds and replaces it). A destination that cannot be written is refused right there, with the reason on the line under the button and nothing accepted — "Can't save there: The folder \<path\> does not exist.", "… \<name\> is a file, not a folder.", "… That name is a folder." |
 | "Export bundle (.zip)" | Enabled once counting has finished, the scope is non-empty, and a destination is chosen. "Nothing to export in this scope." appears when the scope is empty; either way, the reason is printed on the line directly below the button AND repeated in its tooltip (or "Write the bundle to the chosen destination." once it's ready) — a disabled press can never look like it silently did nothing. |

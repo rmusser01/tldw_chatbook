@@ -6,19 +6,28 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from functools import partial
 
+from loguru import logger
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
+from textual.geometry import Region
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets.input import Selection
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_setup_persistence import (
+    MAX_MODEL_ID_CHARS,
+    is_writable_model_id,
+)
+from tldw_chatbook.config import load_settings
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
+    load_model_catalog_settings,
 )
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
@@ -35,6 +44,8 @@ MODEL_ID_MAX_LENGTH = 256
 #: The committed model's row says so in words, not colour alone (shared with
 #: Switch model).
 CURRENT_MARK = "● CURRENT"
+#: The status line until a provider's first catalog load ends.
+LOADING_STATUS = "Loading models..."
 _BLUR_RESTORE_DELAY_SECONDS = 0.05
 _PROVENANCE_GROUP_LABELS = {
     ConsoleModelProvenance.SERVED_NOW: "Served now",
@@ -66,26 +77,101 @@ def normalize_model_id(value: object | None) -> str | None:
     return text
 
 
+def normalize_custom_model_id(value: object | None) -> str | None:
+    """Return a typed Custom ID, or None unless Settings' save writes it.
+
+    TASK-35712: this picker's only host is Settings ▸ Providers & Models, and
+    the combined provider save refuses some ids ``normalize_model_id``
+    admits: one over ``MAX_MODEL_ID_CHARS`` characters, or one holding a
+    character the save cannot write. Typed ids get the save's own check, so
+    they are refused as they are typed instead of when s is pressed. A
+    listed or saved id keeps the plain check, so it still shows.
+    """
+    model = normalize_model_id(value)
+    return model if model is not None and is_writable_model_id(model) else None
+
+
 def _count(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
 
 
-class PickerSearchInput(Input):
-    """Combobox input whose focusing click selects its value, as Tab does.
+def _catalog_refresh_off(provider_key: str) -> bool:
+    """Whether catalog refresh skips this provider: off, or opted out.
 
-    ``select_on_focus`` selects the committed value, but ``Input._on_mouse_down``
-    then moves the caret to the click point, so click-then-type edited the
-    value instead of replacing it (TASK-33001.7). Same mechanism as the Library
-    rail's ``SelectAllOnFocusingClickInput``, which is off the UI-ready path.
+    Args:
+        provider_key: A ``provider_config_key`` name.
+
+    Returns:
+        True when ``[model_catalog]`` turns refresh off or lists the
+        provider in ``auto_refresh_disabled``; False when the config
+        cannot be read.
+    """
+    try:
+        settings = load_model_catalog_settings(load_settings())
+    except Exception as exc:  # noqa: BLE001 - the status line then names no cause
+        # Type only: diagnose=True would print the config's values.
+        logger.debug(
+            f"Model picker could not read [model_catalog] settings: {type(exc).__name__}"
+        )
+        return False
+    return (
+        not settings.auto_refresh_enabled
+        or provider_key in settings.auto_refresh_disabled
+    )
+
+
+class PickerSearchInput(Input):
+    """Combobox input whose focus selects its value from the head.
+
+    Tab, the click that focuses it and the window regaining focus all select
+    the committed value, so the next key replaces it. Compose it with
+    ``select_on_focus=False``: Input's own select-on-focus leaves the caret
+    after the value, and this field selects with the caret at the head
+    (``select_all``).
+
+    ``Input._on_mouse_down`` moves the caret to the click point, so
+    click-then-type edited the value instead of replacing it (TASK-33001.7).
+    Same mechanism as the Library rail's ``SelectAllOnFocusingClickInput``,
+    which is off the UI-ready path.
     """
 
     _select_on_focusing_click = False
+
+    def select_all(self) -> None:
+        """Select the whole value with the caret at its head.
+
+        Input keeps one cell for the caret after the last character and
+        scrolls to it, so a caret at the end pushes the head of a value as
+        wide as the field out of view (TASK-33007.9). Typing still replaces
+        the selection.
+        """
+        self.selection = Selection(len(self.value), 0)
+
+    def _typing(self) -> bool:
+        """Whether the field holds text its user is still typing.
+
+        Returns:
+            False here. A subclass says True while its owner has not put the
+            committed value back, e.g. while it holds a typed filter.
+        """
+        return False
 
     def _on_focus(self, event: events.Focus) -> None:
         # Screen focuses a widget before forwarding the click that focused it,
         # so that MouseDown is the next message; the refresh disarms a Tab focus.
         self._select_on_focusing_click = True
         self.call_after_refresh(self._disarm_focusing_click)
+        # Input keeps the caret when the window regains focus. Here the owner
+        # has put the committed value back by then, so that focus selects too,
+        # unless the text is still the user's to finish (TASK-33007.9).
+        if not (event.from_app_focus and self._typing()):
+            self.select_all()
+        else:  # back to the caret the blur's rest at the head scrolled away
+            self.scroll_to_region(
+                Region(self._cursor_offset, 0, width=1, height=1),
+                force=True,
+                animate=False,
+            )
 
     def _disarm_focusing_click(self) -> None:
         self._select_on_focusing_click = False
@@ -106,6 +192,13 @@ class ModelPickerInput(PickerSearchInput):
     class EscapePressed(Message):
         """Posted before Input consumes Escape as an edit rollback."""
 
+    def _typing(self) -> bool:
+        # A Custom ID stays as typed; a filter (even one that matches nothing
+        # and so hides the list) is held until the picker's blur timer puts
+        # the committed model back.
+        picker = self.query_ancestor(ModelSearchPicker)
+        return picker.custom_mode or self.value != (picker.value or "")
+
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "escape":
             event.stop()
@@ -116,7 +209,11 @@ class ModelPickerInput(PickerSearchInput):
 
 
 class ModelSearchPicker(Widget):
-    """One keyboard-first model control shared by Console settings surfaces.
+    """The keyboard-first searchable model control.
+
+    Hosted by Settings ▸ Providers & Models (``DefaultModelPicker``); the
+    Console's Switch model shares ``normalize_model_id`` and ``CURRENT_MARK``,
+    not the widget.
 
     The uncapped provider catalog is loaded once per provider and retained for
     the lifetime of the widget. Input changes only filter that in-memory list;
@@ -171,13 +268,6 @@ class ModelSearchPicker(Widget):
             self.model_id = model_id
             self.custom = custom
 
-    class ProvenanceOptionsChanged(Message):
-        """Posted when source-aware options become available for a provider."""
-
-        def __init__(self, provider: str) -> None:
-            super().__init__()
-            self.provider = provider
-
     def __init__(
         self,
         *,
@@ -187,6 +277,7 @@ class ModelSearchPicker(Widget):
         providers_models: Mapping[str, object] | None = None,
         show_custom_button: bool = True,
         show_provenance: bool = False,
+        catalog_scope_service: object | None = None,
     ) -> None:
         """Initialize the controlled picker.
 
@@ -197,16 +288,21 @@ class ModelSearchPicker(Widget):
             providers_models: Optional catalog mapping supplied by the surface.
                 The app catalog remains the fallback and the discovery scope is
                 still used to obtain the full uncapped endpoint snapshot.
-            show_custom_button: Whether this widget renders its own custom-ID
-                action. Full settings reuses its existing adjacent action.
-            show_provenance: Whether to group resolved options by their typed
-                model provenance. Existing callers retain flat results.
+            show_custom_button: Whether the Custom ID button is displayed.
+                Settings keeps it; its stylesheet shows it while the picker
+                holds focus.
+            show_provenance: Whether the catalog load groups its options by
+                where each id came from (Settings does). The list is flat
+                without it.
+            catalog_scope_service: The catalog service a surface owns; the
+                app's ``llm_provider_catalog_scope_service`` is the fallback.
         """
         super().__init__(id=id)
         self._provider_select_id = provider_select_id
         self._initial_providers_models = providers_models
         self._show_custom_button = show_custom_button
         self._show_provenance = show_provenance
+        self._catalog_scope_service = catalog_scope_service
         self._provider = ""
         self._selected_model = self._normalize_model(current_model)
         self._model_before_custom = self._selected_model
@@ -217,7 +313,11 @@ class ModelSearchPicker(Widget):
         self._provenance_provider_keys: set[str] = set()
         self._result_model_ids_by_option_id: dict[str, str] = {}
         self._committed_index: int | None = None
+        #: The filter typed for the shown list ("" for none, or the committed
+        #: id echoed back).
+        self._shown_query = ""
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
+        self._served_now_provider_keys: set[str] = set()
         self._load_errors: dict[str, bool] = {}
         self._load_counts: dict[str, int] = {}
         self._preserve_committed_on_next_input_focus = False
@@ -226,7 +326,7 @@ class ModelSearchPicker(Widget):
     def value(self) -> str | None:
         """Return the committed catalog model or current custom model ID."""
         if self._custom_mode and self.is_mounted:
-            return self._normalize_model(
+            return normalize_custom_model_id(
                 self.query_one("#model-search-picker-input", Input).value
             )
         return self._selected_model
@@ -245,6 +345,7 @@ class ModelSearchPicker(Widget):
                 id="model-search-picker-input",
                 name="model-search",
                 tooltip="Choose or search the model for this provider.",
+                select_on_focus=False,
             )
             custom_button = Button(
                 "Custom ID",
@@ -253,9 +354,12 @@ class ModelSearchPicker(Widget):
                 compact=True,
                 tooltip="Enter an exact model ID that is not in the list.",
             )
-            custom_button.display = self._show_custom_button
+            if not self._show_custom_button:
+                # Only the hidden state is inline, so a host's stylesheet can
+                # still decide when a shown button is displayed (Settings).
+                custom_button.display = False
             yield custom_button
-        yield Static("Loading models...", id="model-search-picker-status", markup=False)
+        yield Static(LOADING_STATUS, id="model-search-picker-status", markup=False)
         results = OptionList(
             id="model-search-picker-results",
             name="model-options",
@@ -320,11 +424,9 @@ class ModelSearchPicker(Widget):
         cache_key = provider_config_key(normalized_provider)
         if not force and cache_key in self._options_by_provider:
             self._render_catalog_status()
-            if self._show_provenance:
-                self.post_message(self.ProvenanceOptionsChanged(normalized_provider))
             return
 
-        self._set_status("Loading models...")
+        self._set_status(LOADING_STATUS)
         self._load_counts[cache_key] = self._load_counts.get(cache_key, 0) + 1
         try:
             from tldw_chatbook.UI.Screens.provider_model_resolution import (
@@ -333,7 +435,8 @@ class ModelSearchPicker(Widget):
 
             options = await resolve_provider_model_options(
                 self._providers_models(),
-                getattr(self.app, "llm_provider_catalog_scope_service", None),
+                self._catalog_scope_service
+                or getattr(self.app, "llm_provider_catalog_scope_service", None),
                 provider=normalized_provider,
                 current_model=self._selected_model,
                 merge_cap=None,
@@ -345,21 +448,16 @@ class ModelSearchPicker(Widget):
             self._load_errors[cache_key] = False
         if provider_config_key(self._provider) != cache_key:
             return
-        if self._show_provenance:
-            self.set_provenance_options(normalized_provider, options)
-        else:
-            self._options_by_provider[cache_key] = tuple(options)
-        self._render_catalog_status()
-        input_widget = self.query_one("#model-search-picker-input", Input)
-        input_shows_committed_model = bool(self._selected_model) and (
-            input_widget.value == self._selected_model
-        )
-        if (
-            input_widget.has_focus
-            and not self._custom_mode
-            and not input_shows_committed_model
-        ):
-            self._render_matches(input_widget.value, show_empty_query=True)
+        try:
+            if self._show_provenance:
+                self.set_provenance_options(normalized_provider, options)
+            else:
+                self._options_by_provider[cache_key] = tuple(options)
+                self._render_catalog_status()
+                self._rerender_focused_list()
+        except NoMatches:
+            # Teardown prunes the field before Unmount cancels this worker.
+            return
 
     def refresh_provider(
         self,
@@ -394,35 +492,31 @@ class ModelSearchPicker(Widget):
         self._hide_results()
         self._render_catalog_status()
 
-    def set_custom_value(self, model_id: str | None) -> None:
-        """Synchronize a custom model draft from a compatibility adapter."""
-        self._custom_mode = True
-        self._selected_model = self._normalize_model(model_id)
-        self._set_input_value(self._selected_model or "")
-        self._sync_custom_button()
-        self._hide_results()
-        self._render_catalog_status()
-
     def set_discovered_models(
         self,
         provider: str,
         model_ids: tuple[str, ...] | list[str],
         *,
-        notify: bool = True,
+        served_now: bool = False,
     ) -> None:
         """Merge models returned by an explicit endpoint probe into the picker.
 
-        Manual discovery in Console settings probes the user's unsaved base URL,
-        so those results are not yet present in the application catalog service.
-        Keep them as a provider-scoped overlay without reloading the endpoint.
+        Discover in Settings probes the endpoint the form holds, saved or not,
+        so its results are not in the application catalog service. They are
+        kept as a provider-scoped overlay; the endpoint is not read again.
 
         Args:
             provider: Provider whose overlay is changing.
             model_ids: Discovered model identifiers.
-            notify: Post a parent-facing provenance refresh message. The modal
-                disables this only for its own derived overlay updates.
+            served_now: The listing is the current endpoint's own, dropped by
+                its host whenever that endpoint changes (Settings), so its
+                new ids group as "Served now" instead of custom.
         """
         cache_key = provider_config_key(provider)
+        if served_now:
+            self._served_now_provider_keys.add(cache_key)
+        else:
+            self._served_now_provider_keys.discard(cache_key)
         normalized_ids: list[str] = []
         for model_id in model_ids:
             normalized = self._normalize_model(model_id)
@@ -432,11 +526,7 @@ class ModelSearchPicker(Widget):
         if provider_config_key(self._provider) != cache_key:
             return
         self._render_catalog_status()
-        input_widget = self.query_one("#model-search-picker-input", Input)
-        if input_widget.has_focus and not self._custom_mode:
-            self._render_matches(input_widget.value, show_empty_query=True)
-        if notify and self._uses_provenance_options():
-            self.post_message(self.ProvenanceOptionsChanged(provider))
+        self._rerender_focused_list()
 
     def provenance_for_model(
         self,
@@ -474,24 +564,19 @@ class ModelSearchPicker(Widget):
         return option.provenance
 
     def set_provenance_options(
-        self,
-        provider: str,
-        options: Sequence[ResolvedProviderModelOption],
-        *,
-        notify: bool = True,
+        self, provider: str, options: Sequence[ResolvedProviderModelOption]
     ) -> None:
         """Replace one provider's results with source-aware model choices.
 
-        This opt-in path leaves existing catalog-loading callers on their
-        original flat result list. Model IDs are normalized and deduplicated,
-        while the complete typed option remains available for grouping and
-        selection provenance.
+        The grouped list: the catalog load takes this path when the picker
+        was built with ``show_provenance``, and a host may hand in options it
+        resolved itself. Model IDs are normalized and deduplicated, while the
+        complete typed option remains available for grouping and selection
+        provenance.
 
         Args:
             provider: Provider whose source-aware options are changing.
             options: Complete typed model projection.
-            notify: Post a parent-facing refresh message. The modal disables
-                this only while applying its own derived provenance overlay.
         """
         cache_key = provider_config_key(provider)
         normalized_options: list[ResolvedProviderModelOption] = []
@@ -516,17 +601,13 @@ class ModelSearchPicker(Widget):
         if provider_config_key(self._provider) != cache_key:
             return
         self._render_catalog_status()
-        input_widget = self.query_one("#model-search-picker-input", Input)
-        if input_widget.has_focus and not self._custom_mode:
-            self._render_matches(input_widget.value, show_empty_query=True)
-        if notify:
-            self.post_message(self.ProvenanceOptionsChanged(provider))
+        self._rerender_focused_list()
 
     def toggle_custom_mode(self) -> None:
         """Toggle the explicit custom-ID escape hatch."""
         if self._custom_mode:
             self._custom_mode = False
-            self._selected_model = self._normalize_model(
+            self._selected_model = normalize_custom_model_id(
                 self.query_one("#model-search-picker-input", Input).value
             )
             self._model_before_custom = self._selected_model
@@ -546,26 +627,43 @@ class ModelSearchPicker(Widget):
         return provider_config_key(self._provider) in self._provenance_provider_keys
 
     def _typed_provider_options(self) -> list[ResolvedProviderModelOption]:
+        cache_key = provider_config_key(self._provider)
+        served_now = cache_key in self._served_now_provider_keys
+        discovered = self._discovered_model_ids.get(cache_key, ())
         options = [
-            option
+            # Capture finding 9 (TASK-33007): an id the endpoint serves now
+            # is "Served now", also when the catalog or config lists it.
+            replace(
+                option,
+                provenance=ConsoleModelProvenance.SERVED_NOW,
+                verified_for_connection=True,
+            )
+            if served_now and option.model_id in discovered
+            else option
             for option in self._provider_options()
             if isinstance(option, ResolvedProviderModelOption)
         ]
         seen_model_ids = {option.model_id for option in options}
-        for model_id in self._discovered_model_ids.get(
-            provider_config_key(self._provider), ()
-        ):
+        for model_id in discovered:
             if model_id in seen_model_ids:
                 continue
             options.append(
                 ResolvedProviderModelOption(
                     label=model_id,
                     model_id=model_id,
-                    source="manual_discovery_unfenced",
+                    source=(
+                        "manual_discovery_exact"
+                        if served_now
+                        else "manual_discovery_unfenced"
+                    ),
                     capability_status="unknown",
                     persisted=False,
-                    provenance=ConsoleModelProvenance.CUSTOM_UNVERIFIED,
-                    verified_for_connection=False,
+                    provenance=(
+                        ConsoleModelProvenance.SERVED_NOW
+                        if served_now
+                        else ConsoleModelProvenance.CUSTOM_UNVERIFIED
+                    ),
+                    verified_for_connection=served_now,
                 )
             )
             seen_model_ids.add(model_id)
@@ -594,10 +692,11 @@ class ModelSearchPicker(Widget):
         if self._custom_mode:
             if self.is_mounted:
                 custom_value = self.query_one("#model-search-picker-input", Input).value
-                if custom_value and self._normalize_model(custom_value) is None:
+                if custom_value and normalize_custom_model_id(custom_value) is None:
                     self._set_status(
                         "Invalid model ID. Use a single-line value of at most "
-                        f"{MODEL_ID_MAX_LENGTH} characters."
+                        f"{MAX_MODEL_ID_CHARS} characters, with no invisible or "
+                        "control characters."
                     )
                     return
             self._set_status(
@@ -612,6 +711,13 @@ class ModelSearchPicker(Widget):
             return
         options = self._provider_options()
         model_ids = self._catalog_model_ids()
+        if not model_ids and self._provider and (
+            cache_key not in self._options_by_provider
+        ):
+            # The provider's first load is still in flight (it sets the key
+            # when it ends, failed or not): nothing was reported yet.
+            self._set_status(LOADING_STATUS)
+            return
         if not model_ids:
             self._set_status(
                 "No models reported for this provider. Use Custom ID if needed."
@@ -634,18 +740,27 @@ class ModelSearchPicker(Widget):
             and sources
             and sources <= {"saved"}
         ):
+            # Capture finding 20: with refresh off, "unavailable" read as a fault.
+            cause = (
+                "Catalog refresh is off"
+                if _catalog_refresh_off(cache_key)
+                else "Live catalog unavailable"
+            )
             self._set_status(
-                f"Live catalog unavailable. Showing {_count(len(model_ids), 'configured model')}."
+                f"{cause}. Showing {_count(len(model_ids), 'configured model')}."
             )
             return
         if matched is not None:
-            self._set_status(
-                f"Showing {len(self._matches)} of {matched} matching models. "
-                "Type to narrow the list."
-            )
+            self._set_status(self._cap_note(matched))
             return
         self._set_status(
             f"{_count(len(model_ids), 'model')} available. Type to filter."
+        )
+
+    def _cap_note(self, matched: int) -> str:
+        return (
+            f"Showing {len(self._matches)} of {matched} matching models. "
+            "Type to narrow the list."
         )
 
     def _set_status(self, copy: str) -> None:
@@ -661,6 +776,21 @@ class ModelSearchPicker(Widget):
                 input_widget.value = value
         finally:
             self._suppress_input_events = False
+        if not input_widget.has_focus:
+            self._rest_at_head(input_widget)
+        else:
+            # Every focused caller puts a committed value back (a choice, Esc,
+            # a mode switch, a provider re-scope or a host sync), so the next
+            # key replaces it, even when Enter chose exactly the text typed,
+            # not lands at the filter's caret (TASK-33007.9). A new caller
+            # that sets an uncommitted value under focus is selected too.
+            input_widget.select_all()
+
+    @staticmethod
+    def _rest_at_head(input_widget: Input) -> None:
+        # At rest the id reads from its head, wherever the caret was left
+        # (force: Textual does not scroll a disabled widget without it).
+        input_widget.scroll_to(x=0, animate=False, force=True)
 
     def _hide_results(self) -> None:
         if not self.is_mounted:
@@ -669,64 +799,127 @@ class ModelSearchPicker(Widget):
         self._matches = []
         self._result_model_ids_by_option_id = {}
         self._committed_index = None
+        self._shown_query = ""
         results.clear_options()
         results.display = False
+
+    def _rerender_focused_list(self) -> None:
+        """Show the list for a focused field after its options changed.
+
+        The committed id the field echoes is no filter, as on focus: a list
+        open on every model stays whole. A typed filter (a short window blur,
+        Tab to Custom ID and back) keeps its own list, empty or not.
+        """
+        input_widget = self.query_one("#model-search-picker-input", Input)
+        if input_widget.has_focus and not self._custom_mode:
+            value = input_widget.value
+            self._render_matches(
+                "" if value == (self._selected_model or "") else value,
+                show_empty_query=True,
+            )
 
     def _render_matches(self, query: str, *, show_empty_query: bool = False) -> None:
         results = self.query_one("#model-search-picker-results", OptionList)
         normalized_query = query.strip().lower()
-        if self._uses_provenance_options():
-            self._render_provenance_matches(
-                results,
-                normalized_query,
-                show_empty_query=show_empty_query,
-            )
+        if not normalized_query and not show_empty_query:
+            # The filter was deleted: its list closes and its count goes too.
+            self._hide_results()
+            self._render_catalog_status()
             return
-        catalog_model_ids = self._catalog_model_ids()
-        model_ids = catalog_model_ids
+        if self._uses_provenance_options():
+            self._render_provenance_matches(results, normalized_query)
+            return
+        model_ids = self._catalog_model_ids()
         if normalized_query:
             model_ids = [
                 model_id
                 for model_id in model_ids
                 if normalized_query in model_id.lower()
             ]
-        elif not show_empty_query:
-            self._hide_results()
-            return
-        self._matches = self._capped(model_ids, str)
+        self._matches = self._capped(model_ids, str, normalized_query)
         self._result_model_ids_by_option_id = {}
         self._committed_index = None
         results.clear_options()
         for model_id in self._matches:
             self._add_result(results, model_id)
         results.display = bool(self._matches)
-        self._render_match_status(normalized_query, len(model_ids))
+        self._show_typed_filter(results, normalized_query, len(model_ids))
+
+    def _show_typed_filter(
+        self, results: OptionList, normalized_query: str, matched: int
+    ) -> None:
+        """Highlight and count a typed filter; the committed id echoed is none.
+
+        Args:
+            results: The rendered list.
+            normalized_query: The filter the list was built for.
+            matched: How many rows matched it, before the MAX_RESULTS cap.
+        """
+        committed = (self._selected_model or "").lower()
+        self._shown_query = "" if normalized_query == committed else normalized_query
+        self._highlight_typed_match(results)
+        self._render_match_status(self._shown_query, matched)
 
     def _render_match_status(self, normalized_query: str, matched: int) -> None:
-        """Name an empty filter, or a list the MAX_RESULTS cap cut short."""
-        if (
+        """Count a typed filter's matches; with none typed, the catalog line.
+
+        TASK-33007 capture fix 8: a typed filter says how many rows match,
+        as Settings' Provider list does, instead of the whole catalog's line.
+        """
+        capped = matched > len(self._matches)
+        if normalized_query and capped:
+            self._set_status(self._cap_note(matched))
+        elif normalized_query and matched:
+            self._set_status(f"{matched} found · Enter picks · Esc cancels")
+        elif (
             normalized_query
-            and not matched
             and self._catalog_model_ids()
             and not self._load_errors.get(provider_config_key(self._provider), False)
         ):
             self._set_status("No matching models. Clear the filter or use Custom ID.")
         else:
-            self._render_catalog_status(
-                matched if matched > len(self._matches) else None
-            )
+            self._render_catalog_status(matched if capped else None)
+
+    def _option_model_id(self, option: Option, index: int | None) -> str | None:
+        """Return the model id a result row stands for (None for a heading)."""
+        if option.id is not None:
+            return self._result_model_ids_by_option_id.get(option.id)
+        if index is None or not 0 <= index < len(self._matches):
+            return None
+        match = self._matches[index]
+        return (
+            match.model_id if isinstance(match, ResolvedProviderModelOption) else match
+        )
+
+    def _highlight_typed_match(self, results: OptionList) -> bool:
+        """Highlight the row Enter picks while a filter is typed.
+
+        An id typed in full, else the first match (TASK-33007 capture fix 8).
+
+        Returns:
+            Whether a row was highlighted.
+        """
+        rows = [
+            (index, self._option_model_id(option, index) or "")
+            for index, option in enumerate(results.options)
+            if not option.disabled
+        ]
+        if not self._shown_query or not rows:
+            return False
+        results.highlighted = next(
+            (
+                index
+                for index, model_id in rows
+                if model_id.lower() == self._shown_query
+            ),
+            rows[0][0],
+        )
+        return True
 
     def _render_provenance_matches(
-        self,
-        results: OptionList,
-        normalized_query: str,
-        *,
-        show_empty_query: bool,
+        self, results: OptionList, normalized_query: str
     ) -> None:
         """Render only populated provenance groups with stable option IDs."""
-        if not normalized_query and not show_empty_query:
-            self._hide_results()
-            return
         options = self._typed_provider_options()
         if normalized_query:
             options = [
@@ -741,7 +934,9 @@ class ModelSearchPicker(Widget):
             for option in options
             if self._display_provenance(option) == provenance
         ]
-        self._matches = self._capped(ordered_options, lambda option: option.model_id)
+        self._matches = self._capped(
+            ordered_options, lambda option: option.model_id, normalized_query
+        )
         self._result_model_ids_by_option_id = {}
         self._committed_index = None
         results.clear_options()
@@ -765,24 +960,27 @@ class ModelSearchPicker(Widget):
                 self._result_model_ids_by_option_id[option_id] = option.model_id
                 self._add_result(results, option.model_id, option_id)
         results.display = bool(self._matches)
-        self._render_match_status(normalized_query, len(ordered_options))
+        self._show_typed_filter(results, normalized_query, len(ordered_options))
 
-    def _capped(self, entries: list, model_id_of) -> list:
-        """The first MAX_RESULTS entries; a committed model past the cap takes
-        the last slot, so large catalogs keep its mark and Down (C7(b))."""
+    def _capped(self, entries: list, model_id_of, normalized_query: str) -> list:
+        """The first MAX_RESULTS entries, with the last free slots given to
+        rows past the cap that must stay reachable: the committed model, so
+        large catalogs keep its mark and Down (C7(b)), and an id typed in
+        full, so the row Enter picks is the one typed and is on the list. A
+        slot is free when its own row is neither of those."""
+
+        def must_stay(entry) -> bool:
+            model_id = model_id_of(entry)
+            return (
+                model_id == self._selected_model
+                or model_id.lower() == normalized_query
+            )
+
         shown = entries[: self.MAX_RESULTS]
-        committed = next(
-            (
-                entry
-                for entry in entries[self.MAX_RESULTS :]
-                if model_id_of(entry) == self._selected_model
-            ),
-            None,
-        )
-        if committed is not None and self._selected_model not in map(
-            model_id_of, shown
-        ):
-            shown[-1] = committed
+        kept = [entry for entry in entries[self.MAX_RESULTS :] if must_stay(entry)]
+        free = [index for index, entry in enumerate(shown) if not must_stay(entry)]
+        for index, entry in zip(free[-len(kept) :] if kept else (), kept):
+            shown[index] = entry
         return shown
 
     def _add_result(
@@ -820,16 +1018,22 @@ class ModelSearchPicker(Widget):
             )
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        if getattr(event.control, "id", None) != "model-search-picker-input":
+        control_id = getattr(event.control, "id", None)
+        if control_id == "model-search-picker-custom":
+            # #3057 capture round 2, finding 24: Tab from the field stopped on
+            # the open list after Custom ID. Closed here, Tab skips it, and
+            # the list stays focusable, so a press on a row still picks it.
+            self._hide_results()
+            self._render_catalog_status()  # no "Enter picks" without a list
+            return
+        if control_id != "model-search-picker-input":
             return
         if self._preserve_committed_on_next_input_focus:
             self._preserve_committed_on_next_input_focus = False
             return
-        if self._custom_mode:
-            return
-        # TASK-33001.7: keep the committed model painted. Input's own
-        # select_on_focus selects it, so the first keystroke replaces it.
-        self._render_matches("", show_empty_query=True)
+        # TASK-33001.7: keep the committed model painted. The input selects
+        # it on focus, so the first keystroke replaces it (TASK-33007.9).
+        self._rerender_focused_list()
 
     def on_descendant_blur(self, event: events.DescendantBlur) -> None:
         """Restore committed copy after focus leaves the compound picker."""
@@ -840,12 +1044,15 @@ class ModelSearchPicker(Widget):
 
     def _restore_committed_display_after_blur(self) -> None:
         """Keep visible and committed catalog values aligned after an edit."""
-        if self._custom_mode or not self.is_mounted:
+        if not self.is_mounted:
             return
         focused = self.app.focused
         if focused is not None and self in focused.ancestors_with_self:
             return
         input_widget = self.query_one("#model-search-picker-input", Input)
+        self._rest_at_head(input_widget)  # a Custom ID too
+        if self._custom_mode:
+            return
         if input_widget.value != (self._selected_model or "") or self._matches:
             self._set_input_value(self._selected_model or "")
             self._hide_results()
@@ -856,7 +1063,7 @@ class ModelSearchPicker(Widget):
         if self._suppress_input_events:
             return
         if self._custom_mode:
-            self._selected_model = self._normalize_model(event.value)
+            self._selected_model = normalize_custom_model_id(event.value)
             self._hide_results()
             self._render_catalog_status()
             self.post_message(self.ModelValueChanged(self._selected_model, custom=True))
@@ -866,7 +1073,7 @@ class ModelSearchPicker(Widget):
     @on(Input.Submitted, "#model-search-picker-input")
     def _input_submitted(self, event: Input.Submitted) -> None:
         if self._custom_mode:
-            self._selected_model = self._normalize_model(event.value)
+            self._selected_model = normalize_custom_model_id(event.value)
             self.post_message(self.ModelValueChanged(self._selected_model, custom=True))
             return
         query = event.value.strip().lower()
@@ -880,26 +1087,18 @@ class ModelSearchPicker(Widget):
             (model_id for model_id in match_model_ids if model_id.lower() == query),
             None,
         )
+        results = self.query_one("#model-search-picker-results", OptionList)
         if exact is not None:
             self._commit_catalog_model(exact)
-        elif len(match_model_ids) == 1:
-            self._commit_catalog_model(match_model_ids[0])
+        elif results.display and results.highlighted is not None:
+            # The typed filter's highlighted row (TASK-33007 capture fix 8).
+            results.action_select()
 
     @on(OptionList.OptionSelected, "#model-search-picker-results")
     def _handle_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option.id is not None:
-            model_id = self._result_model_ids_by_option_id.get(event.option.id)
-            if model_id is not None:
-                self._commit_catalog_model(model_id)
-            return
-        index = event.option_index
-        if index is None or not (0 <= index < len(self._matches)):
-            return
-        model = self._matches[index]
-        if isinstance(model, ResolvedProviderModelOption):
-            self._commit_catalog_model(model.model_id)
-        else:
-            self._commit_catalog_model(model)
+        model_id = self._option_model_id(event.option, event.option_index)
+        if model_id is not None:
+            self._commit_catalog_model(model_id)
 
     @on(Button.Pressed, "#model-search-picker-custom")
     def _toggle_custom(self, event: Button.Pressed) -> None:
@@ -942,7 +1141,12 @@ class ModelSearchPicker(Widget):
     def _handle_key(self, event: events.Key) -> None:
         if event.key == "down" and self._matches:
             results = self.query_one("#model-search-picker-results", OptionList)
+            if results.has_focus:
+                return  # the list's own binding moves its cursor
             results.focus()
+            if self._highlight_typed_match(results):
+                event.stop()
+                return
             # The committed model first (C7(b)), else the first enabled row.
             results.highlighted = next(
                 (

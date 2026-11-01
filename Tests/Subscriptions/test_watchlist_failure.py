@@ -75,7 +75,12 @@ def _http_error(
 @pytest.mark.parametrize(
     ("error", "category", "status", "retryable"),
     [
-        (AuthenticationError("raw auth detail"), "authentication_required", None, False),
+        (
+            AuthenticationError("raw auth detail"),
+            "authentication_required",
+            None,
+            False,
+        ),
         (_http_error(401), "authentication_required", 401, False),
         (_http_error(403), "access_denied", 403, False),
         (RateLimitError("raw retry detail"), "rate_limited", None, True),
@@ -85,8 +90,18 @@ def _http_error(
         (_http_error(503), "temporary_server_error", 503, True),
         (_http_error(504), "temporary_server_error", 504, True),
         (_http_error(404), "connection_failure", None, True),
-        (TimeoutError("signed query and certificate detail"), "connection_failure", None, True),
-        (ConnectionError("dns failed for secret.example"), "connection_failure", None, True),
+        (
+            TimeoutError("signed query and certificate detail"),
+            "connection_failure",
+            None,
+            True,
+        ),
+        (
+            ConnectionError("dns failed for secret.example"),
+            "connection_failure",
+            None,
+            True,
+        ),
         (socket.gaierror("private DNS detail"), "connection_failure", None, True),
         (
             httpx.ConnectError(
@@ -111,9 +126,7 @@ def _http_error(
         ),
         (ElementTree.ParseError("raw XML body"), "invalid_feed", None, False),
         (
-            EgressBlockedError(
-                "http://127.0.0.1/feed?token=SIGNED-QUERY", "private"
-            ),
+            EgressBlockedError("http://127.0.0.1/feed?token=SIGNED-QUERY", "private"),
             "policy_blocked",
             None,
             False,
@@ -366,7 +379,13 @@ def test_classifier_redaction_is_anti_vacuous() -> None:
 @pytest.mark.parametrize(
     ("error_factory", "category", "retryable", "status", "retry_after"),
     [
-        (lambda: _http_error(403, message="DURABLE-CANARY"), "access_denied", False, 403, None),
+        (
+            lambda: _http_error(403, message="DURABLE-CANARY"),
+            "access_denied",
+            False,
+            403,
+            None,
+        ),
         (
             lambda: _http_error(401, message="DURABLE-CANARY"),
             "authentication_required",
@@ -445,7 +464,9 @@ async def test_service_persists_each_classification_without_raw_failure_data(
         ).fetchone()
     )
     stats = json.loads(stored_run["stats_json"])
-    expected_message, expected_action = EXPECTED_COPY[WatchlistFailureCategory(category)]
+    expected_message, expected_action = EXPECTED_COPY[
+        WatchlistFailureCategory(category)
+    ]
     assert {
         "failure_category": stats["failure_category"],
         "retryable": stats["retryable"],
@@ -476,7 +497,9 @@ async def test_service_persists_each_classification_without_raw_failure_data(
 
 
 @pytest.mark.asyncio
-async def test_manual_and_accepted_checks_share_the_same_failure_projection(tmp_path) -> None:
+async def test_manual_and_accepted_checks_share_the_same_failure_projection(
+    tmp_path,
+) -> None:
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
 
     async def fail(_subscription):
@@ -568,7 +591,9 @@ async def test_failed_executor_payload_is_sanitized_before_source_and_run_writes
 
 
 @pytest.mark.asyncio
-async def test_legacy_and_tampered_failure_rows_normalize_to_fixed_safe_copy(tmp_path) -> None:
+async def test_legacy_and_tampered_failure_rows_normalize_to_fixed_safe_copy(
+    tmp_path,
+) -> None:
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
     source = await service.create_source(
@@ -650,16 +675,19 @@ async def test_legacy_and_tampered_failure_rows_normalize_to_fixed_safe_copy(tmp
     assert legacy["failure_category"] is None
     assert legacy["retryable"] is False
     assert legacy["error_msg"] == "Watchlists source check failed."
-    assert legacy["next_action"] == "Review the source configuration before trying again."
+    assert (
+        legacy["next_action"] == "Review the source configuration before trying again."
+    )
     assert tampered["failure_category"] == "policy_blocked"
     assert tampered["retryable"] is False
     assert tampered["http_status"] is None
     assert tampered["retry_after_seconds"] is None
     assert tampered["stats"]["items_found"] == 3
     assert tampered["stats"]["dispositions"] == {"error": 1}
-    assert tampered["next_action"] == EXPECTED_COPY[
-        WatchlistFailureCategory.POLICY_BLOCKED
-    ][1]
+    assert (
+        tampered["next_action"]
+        == EXPECTED_COPY[WatchlistFailureCategory.POLICY_BLOCKED][1]
+    )
     public = json.dumps({"legacy": legacy, "tampered": tampered}, default=str)
     for canary in (
         "LEGACY-RAW",
@@ -852,11 +880,7 @@ async def test_malformed_and_nonfeed_payloads_are_invalid_feed_failures(
         {"items": [{"authors": "NESTED-AUTHORS-LIST-CANARY-22865"}]},
         {"items": [{"authors": ["NESTED-AUTHORS-ENTRY-CANARY-22865"]}]},
         {"items": [{"attachments": "NESTED-ATTACHMENTS-LIST-CANARY-22865"}]},
-        {
-            "items": [
-                {"attachments": ["NESTED-ATTACHMENTS-ENTRY-CANARY-22865"]}
-            ]
-        },
+        {"items": [{"attachments": ["NESTED-ATTACHMENTS-ENTRY-CANARY-22865"]}]},
     ],
 )
 async def test_malformed_nested_json_feed_shapes_are_safe_invalid_feed_failures(
@@ -999,7 +1023,9 @@ async def test_failure_bookkeeping_log_does_not_include_resolution_exception(
 
 
 @pytest.mark.asyncio
-async def test_all_fetch_paths_send_the_exact_product_user_agent(monkeypatch, tmp_path) -> None:
+async def test_all_fetch_paths_send_the_exact_product_user_agent(
+    monkeypatch, tmp_path
+) -> None:
     from tldw_chatbook.Subscriptions import monitoring_engine as me
 
     _allow_mock_hosts(monkeypatch)
@@ -1022,8 +1048,7 @@ async def test_all_fetch_paths_send_the_exact_product_user_agent(monkeypatch, tm
             return httpx.Response(
                 200,
                 text=(
-                    "<urlset><url><loc>https://source.example/page</loc>"
-                    "</url></urlset>"
+                    "<urlset><url><loc>https://source.example/page</loc></url></urlset>"
                 ),
                 request=request,
             )
@@ -1239,12 +1264,8 @@ async def test_uniform_url_list_category_carries_only_unanimous_per_url_metadata
         launched = await service.launch_run(source_id=source["source_id"])
         return await service.execute_run(launched["run_id"])
 
-    forward = await run(
-        ["https://source.example/a", "https://source.example/b"]
-    )
-    reverse = await run(
-        ["https://source.example/b", "https://source.example/a"]
-    )
+    forward = await run(["https://source.example/a", "https://source.example/b"])
+    reverse = await run(["https://source.example/b", "https://source.example/a"])
 
     for completed in (forward, reverse):
         expected_category = (
@@ -1342,12 +1363,8 @@ async def test_mixed_category_url_list_failure_is_generic_and_order_independent(
         launched = await service.launch_run(source_id=source["source_id"])
         return await service.execute_run(launched["run_id"])
 
-    forward = await run(
-        ["https://source.example/a", "https://source.example/b"]
-    )
-    reverse = await run(
-        ["https://source.example/b", "https://source.example/a"]
-    )
+    forward = await run(["https://source.example/a", "https://source.example/b"])
+    reverse = await run(["https://source.example/b", "https://source.example/a"])
 
     for completed in (forward, reverse):
         assert completed["status"] == "failed"

@@ -337,7 +337,10 @@ def test_reranker_provider_options_are_enumerated_from_the_dispatch_table():
     # NAME -- picking it must really write openai back over a profile
     # currently set to another provider (a blank sentinel there would leave
     # the old provider in place: blank means "leave the default alone").
-    assert options[0] == (f"{DEFAULT_RERANKER_PROVIDER} (default)", DEFAULT_RERANKER_PROVIDER)
+    assert options[0] == (
+        f"{DEFAULT_RERANKER_PROVIDER} (default)",
+        DEFAULT_RERANKER_PROVIDER,
+    )
     assert {value for _label, value in options[1:]} == (
         set(API_CALL_HANDLERS) - {DEFAULT_RERANKER_PROVIDER}
     )

@@ -44,6 +44,8 @@ from .Chat_Deps import (  # noqa: E402
     ChatProviderError,
     ChatRateLimitError,
     ChatAuthenticationError,
+    ChatModelUnavailableError,
+    model_unavailable_error,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     CharactersRAGDB,
@@ -121,7 +123,10 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
     safe_llm_exception_message,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
-from tldw_chatbook.config import load_settings  # noqa: E402
+from tldw_chatbook.config import (  # noqa: E402
+    is_encrypted_config_value,
+    load_settings,
+)
 from .console_project_instructions import EPHEMERAL_ORIGIN_KEY  # noqa: E402
 from .provider_continuation import (  # noqa: E402
     ProviderContinuationCheckpoint,
@@ -244,6 +249,8 @@ API_CALL_HANDLERS = {
     # named legacy slots above stay untouched (kill-switch fallback).
     "custom-hosted": _LazyHostedChatHandler(CUSTOM_HOSTED),
     "llama_cpp": chat_with_llama,
+    "strata": chat_with_llama,
+    "polystrata": chat_with_llama,
     "koboldcpp": chat_with_kobold,
     "oobabooga": chat_with_oobabooga,
     "tabbyapi": chat_with_tabbyapi,
@@ -266,6 +273,8 @@ EPHEMERAL_GROUPING_ENDPOINTS = frozenset({"anthropic", "google"})
 PROVIDERS_WITH_PROVIDER_NAME = frozenset(
     {
         "llama_cpp",
+        "strata",
+        "polystrata",
         "vllm",
         "ollama",
         "mlx_lm",
@@ -432,6 +441,7 @@ PROVIDER_PARAM_MAP = {
         "tools": "tools",
         "tool_choice": "tool_choice",
         "max_tokens": "max_tokens",
+        "response_format": "response_format",
         "logit_bias": "logit_bias",
         "presence_penalty": "presence_penalty",
         "frequency_penalty": "frequency_penalty",
@@ -461,6 +471,8 @@ PROVIDER_PARAM_MAP = {
         "top_logprobs": "top_logprobs",
     },
     "deepseek": {
+        "reasoning_effort": "reasoning_effort",
+        "api_mode": "api_mode",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temp",  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)
@@ -960,9 +972,14 @@ PROVIDER_PARAM_MAP = {
     # Add other providers here
 }
 
+# These independent providers share the local compatible adapter, not the
+# Console's direct llama.cpp execution path or its thinking wire format.
+PROVIDER_PARAM_MAP["strata"] = dict(PROVIDER_PARAM_MAP["llama_cpp"])
+PROVIDER_PARAM_MAP["polystrata"] = dict(PROVIDER_PARAM_MAP["llama_cpp"])
+
 # Custom-endpoint engine surface (ADR-179 Phase 2 Task 6): the legacy
 # "custom-openai-api" map, copied verbatim so the swapped "custom-hosted"
-# execution key accepts exactly the generic kwargs the legacy handler did
+# execution key accepts the legacy kwargs plus durable continuation groups
 # (set/value parity is pinned by Tests/Chat/test_custom_endpoint_engine_swap.py;
 # the engine closure accepts every mapped provider-side name, including
 # ``user_identifier`` and the gateway's ``api_key_resolved`` decision flag).
@@ -992,6 +1009,7 @@ CUSTOM_PROVIDER_PARAM_MAP = {
     "top_logprobs": "top_logprobs",
     "reasoning_effort": "reasoning_effort",
     "thinking_budget_tokens": "thinking_budget_tokens",
+    "provider_continuations": "provider_continuations",
 }
 PROVIDER_PARAM_MAP["custom-hosted"] = CUSTOM_PROVIDER_PARAM_MAP
 """
@@ -1232,6 +1250,16 @@ def chat_api_call(
         endpoint_lower, messages_payload
     )
 
+    # TASK-34100.4: still-encrypted `enc:` ciphertext (a locked or undecrypted
+    # config) is never a credential. Dropping it lets the handler report the
+    # key as missing instead of sending ciphertext as a bearer token.
+    if is_encrypted_config_value(api_key):
+        logger.warning(
+            "Chat API Call - ignoring an API key that is still encrypted; "
+            "unlock or re-enter the key."
+        )
+        api_key = None
+
     # Generic parameters available from chat_api_call, derived from the
     # function's own signature so the dispatcher can never drift from it —
     # a hand-maintained dict here previously allowed map keys that existed
@@ -1346,6 +1374,14 @@ def chat_api_call(
     # --- Exception Mapping (copied from your original, ensure it's still relevant) ---
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, "status_code", 500)
+        if status_code in {400, 404}:
+            try:
+                payload = e.response.json()
+            except (ValueError, AttributeError):
+                payload = None
+            unavailable = model_unavailable_error(endpoint_lower, status_code, payload)
+            if unavailable is not None:
+                raise unavailable from None
         raw_error_text = getattr(e.response, "text", None)
         if raw_error_text is None:
             raw_error_text = safe_llm_exception_message(e)
@@ -1444,11 +1480,16 @@ def chat_api_call(
                 # task-32342: keep the carried status. Dropping it here
                 # restored the 500 default under the sensitive policy, and a
                 # client-side request-preparation failure carries none.
+                # TASK-32369 (Qodo #2974): keep the failed field too, or a
+                # sensitive run's local refusal loses the field Console names.
                 raise ChatConfigurationError(
                     provider=endpoint_lower,
                     message=safe_message,
                     status_code=status_code,
+                    field=getattr(e_chat_direct, "field", None),
                 ) from None
+            if isinstance(e_chat_direct, ChatModelUnavailableError):
+                raise ChatModelUnavailableError(provider=endpoint_lower, status_code=status_code) from None
             if isinstance(e_chat_direct, ChatProviderError):
                 raise ChatProviderError(
                     provider=endpoint_lower,
@@ -1591,6 +1632,41 @@ def project_chat_handler_kwargs(
     if endpoint in PROVIDERS_WITH_PROVIDER_NAME:
         projected["provider_name"] = endpoint
     return projected
+
+
+def _debug_dump_llm_payload_summary(
+    llm_messages_payload: List[Dict[str, Any]],
+) -> None:
+    """Emit the DEBUG-only per-message summary of the final LLM payload (task-20b).
+
+    The call site guards this with the root logger's DEBUG level so the
+    per-message summary work (part scans + ``", ".join``) is skipped entirely
+    when DEBUG is disabled; module-level ``logging.debug`` delegates to that
+    same root logger, so the guard suppresses exactly the emissions the
+    unguarded loop would have dropped anyway.
+    """
+
+    logging.debug("Debug - Chat Function - Final LLM payload structure:")
+    for i, msg_p in enumerate(llm_messages_payload):
+        content_log = []
+        if isinstance(msg_p.get("content"), list):
+            for part_c in msg_p["content"]:
+                if part_c.get("type") == "text":
+                    content_log.append(f"text(length={len(part_c.get('text', ''))})")
+                elif part_c.get("type") == "image_url":
+                    image_url_value = part_c.get("image_url", {}).get("url", "")
+                    content_log.append(f"image_url(length={len(image_url_value)})")
+        logging.debug(
+            "  Msg %d: content_type=%s; parts=[%s]",
+            i,
+            type(msg_p.get("content")).__name__,
+            ", ".join(content_log),
+        )
+
+
+def _load_post_gen_dict_entries(dict_path: str) -> Dict[str, str]:
+    """Load cached replacements through the parser's current source admission."""
+    return parse_user_dict_markdown_file(str(dict_path))
 
 
 def chat(
@@ -2003,24 +2079,8 @@ def chat(
                 "Invalid temperature; reason=value_error; using_default=0.7"
             )
 
-        logging.debug("Debug - Chat Function - Final LLM payload structure:")
-        for i, msg_p in enumerate(llm_messages_payload):
-            content_log = []
-            if isinstance(msg_p.get("content"), list):
-                for part_c in msg_p["content"]:
-                    if part_c.get("type") == "text":
-                        content_log.append(
-                            f"text(length={len(part_c.get('text', ''))})"
-                        )
-                    elif part_c.get("type") == "image_url":
-                        image_url_value = part_c.get("image_url", {}).get("url", "")
-                        content_log.append(f"image_url(length={len(image_url_value)})")
-            logging.debug(
-                "  Msg %d: content_type=%s; parts=[%s]",
-                i,
-                type(msg_p.get("content")).__name__,
-                ", ".join(content_log),
-            )
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            _debug_dump_llm_payload_summary(llm_messages_payload)
 
         logging.debug(
             "Debug - Chat Function - Temperature configured: %s",
@@ -2162,7 +2222,7 @@ def chat(
                     post_gen_replacement_dict_path
                 ):
                     try:
-                        parsed_dict_entries = parse_user_dict_markdown_file(
+                        parsed_dict_entries = _load_post_gen_dict_entries(
                             post_gen_replacement_dict_path
                         )
                         if parsed_dict_entries:

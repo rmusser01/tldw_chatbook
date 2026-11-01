@@ -26,7 +26,13 @@ from loguru import logger
 
 from ...DB.Evals_DB import EvalsDB
 from .models import (
-    BenchConfig, CellCapture, CellError, PreflightResult, PromptMode, Snippet, Target,
+    BenchConfig,
+    CellCapture,
+    CellError,
+    PreflightResult,
+    PromptMode,
+    Snippet,
+    Target,
 )
 from .storage import create_run_group, save_cell
 
@@ -267,13 +273,18 @@ class WordBenchRunner:
         def _mark_cancelled(reason: str) -> RunOutcome:
             logger.info(
                 "Word bench run group {} cancelled ({}) after {}/{} cells",
-                group_id, reason, state["done"], total,
+                group_id,
+                reason,
+                state["done"],
+                total,
             )
             for run_id in run_ids.values():
                 self._db.update_run_status(run_id, "cancelled")
             return RunOutcome(group_id=group_id, preflight=results)
 
-        semaphore = asyncio.Semaphore(config.concurrency) if config.concurrency > 1 else None
+        semaphore = (
+            asyncio.Semaphore(config.concurrency) if config.concurrency > 1 else None
+        )
 
         try:
             for snippet in snippets:  # row-major
@@ -327,7 +338,9 @@ class WordBenchRunner:
             # cancellation propagate; it must never be swallowed here.
             logger.info(
                 "Word bench run group {} hard-cancelled after {}/{} cells",
-                group_id, state["done"], total,
+                group_id,
+                state["done"],
+                total,
             )
             for run_id in run_ids.values():
                 self._db.update_run_status(run_id, "cancelled")
@@ -387,7 +400,9 @@ class WordBenchRunner:
             from).
         """
         if not config.capture_continuations:
-            return await client.capture(snippet.text, target, config.prompt_mode, config.top_k)
+            return await client.capture(
+                snippet.text, target, config.prompt_mode, config.top_k
+            )
         result, continuation = await client.capture_with_continuation(
             snippet.text, target, config.prompt_mode, config.top_k
         )

@@ -862,3 +862,244 @@ async def test_live_tool_completion_does_not_pull_reader_out_of_history():
         await transcript.refresh_messages()
         await pilot.pause()
         assert transcript.scroll_y == before == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "activity-remove",
+        "activity-mount",
+        "action-remove",
+        "action-mount",
+        "detail-remove",
+        "detail-mount",
+        "detail-tail-remove",
+        "detail-tail-mount",
+        "adjunct-remove",
+        "adjunct-mount",
+    ],
+)
+async def test_transcript_update_stops_after_real_owner_removal(monkeypatch, boundary):
+    """Every nested await must retire without mounts or committed row signatures."""
+    import asyncio
+    from dataclasses import replace
+
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="Answer", id="detach-answer"
+    )
+    tool = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="Old detail",
+        id="detach-tool",
+        activity_presentation=ConsoleActivityPresentation(
+            "feedback", "Question answered", "done"
+        ),
+    )
+    if boundary.startswith("detail-tail"):
+        tool = replace(
+            tool,
+            activity_presentation=ConsoleActivityPresentation(
+                "tool", "fs_read", "success", call_id="read"
+            ),
+        )
+    if boundary == "detail-mount":
+        tool = replace(tool, content="")
+    app = StyledTranscriptHarness()
+    async with app.run_test(size=(100, 32)):
+        transcript = app.transcript
+        initial_tools = [] if boundary == "activity-mount" else [tool]
+        transcript.set_messages([assistant, *initial_tools])
+        if boundary == "action-remove":
+            transcript.selected_message_id = tool.id
+        if boundary == "adjunct-remove":
+            transcript.set_original_attempt_previews({assistant.id: "Old attempt"})
+        if boundary == "detail-tail-remove":
+            transcript.set_annotation_previews({tool.id: ("Old annotation",)})
+        await transcript.refresh_messages()
+        turn = transcript.query_one(ConsoleAssistantTurnWidget)
+        old_signature = transcript._row_signatures[f"assistant-turn:{assistant.id}"]
+        disclosure = next(iter(turn.activity_stack.children), None)
+        if boundary.startswith("activity"):
+            target = turn.activity_stack
+        elif boundary.startswith("adjunct"):
+            target = turn.adjunct_stack
+        elif boundary.startswith("action"):
+            target = disclosure.action_stack
+        else:
+            target = disclosure.detail_stack
+        method = "remove_children" if boundary.endswith("remove") else "mount"
+        original_operation = getattr(target, method)
+        original_mount = target.mount
+        mounts_after_detach = []
+        detached = False
+
+        async def observed_mount(*widgets, **kwargs):
+            if not target.is_attached:
+                mounts_after_detach.extend(widget.id for widget in widgets)
+            return await original_mount(*widgets, **kwargs)
+
+        monkeypatch.setattr(target, "mount", observed_mount)
+        if method == "mount":
+            original_operation = observed_mount
+
+        async def mutate_then_detach(*args, **kwargs):
+            nonlocal detached
+            result = await original_operation(*args, **kwargs)
+            if not detached:
+                detached = True
+                await transcript.remove()
+            return result
+
+        monkeypatch.setattr(target, method, mutate_then_detach)
+        if boundary == "activity-remove":
+            transcript.set_messages([assistant, replace(tool, id="new-detach-tool")])
+        elif boundary == "activity-mount":
+            transcript.set_messages(
+                [assistant, tool, replace(tool, id="second-detach-tool")]
+            )
+        elif boundary == "action-remove":
+            transcript.selected_message_id = None
+        elif boundary == "action-mount":
+            transcript.selected_message_id = tool.id
+        elif boundary.startswith("adjunct"):
+            transcript.set_original_attempt_previews({assistant.id: "New attempt"})
+        elif boundary.startswith("detail-tail"):
+            transcript.set_annotation_previews({tool.id: ("New annotation",)})
+        else:
+            transcript.set_messages([assistant, replace(tool, content="New detail")])
+        await asyncio.wait_for(transcript.refresh_messages(), 5)
+        assert detached, f"{boundary} did not reach its real mutation"
+        assert not transcript.is_attached
+        assert mounts_after_detach == []
+        assert (
+            transcript._row_signatures[f"assistant-turn:{assistant.id}"]
+            == old_signature
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_transcript_refresh_lock_resume_stops_after_real_removal(monkeypatch):
+    import asyncio
+
+    app = StyledTranscriptHarness()
+    async with app.run_test(size=(100, 32)):
+        transcript = app.transcript
+        assistant = ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="Answer", id="lock-answer"
+        )
+        transcript.set_messages([assistant])
+        await transcript.refresh_messages()
+        transcript.set_messages(
+            [
+                assistant,
+                ConsoleChatMessage(
+                    role=ConsoleMessageRole.TOOL,
+                    content="Question answered",
+                    id="lock-tool",
+                ),
+            ]
+        )
+        entered = asyncio.Event()
+        original_acquire = transcript._refresh_lock.acquire
+
+        async def observed_acquire():
+            entered.set()
+            return await original_acquire()
+
+        async with transcript._refresh_lock:
+            monkeypatch.setattr(transcript._refresh_lock, "acquire", observed_acquire)
+            refresh = asyncio.create_task(transcript.refresh_messages())
+            await asyncio.wait_for(entered.wait(), 5)
+            await transcript.remove()
+        await asyncio.wait_for(refresh, 5)
+        assert not transcript.is_attached
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("initial_mount", [False, True])
+async def test_activity_projection_during_child_composition_eventually_renders(
+    monkeypatch, initial_mount
+):
+    """A composing view must keep the changed projection without an external retry."""
+    import asyncio
+
+    entered, release, refresh_entered = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+    original_compose = ConsoleAssistantTurnWidget.mount_composed_widgets
+    hold = initial_mount
+    refresh = None
+    assistant = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="Answer", id="composing-answer"
+    )
+    tool = ConsoleChatMessage(
+        role=ConsoleMessageRole.TOOL,
+        content="Question answered",
+        id="composing-tool",
+        activity_presentation=ConsoleActivityPresentation(
+            "feedback", "Question answered", "done"
+        ),
+    )
+    app = StyledTranscriptHarness()
+    transcript = app.transcript
+    transcript.set_messages([assistant])
+    original_acquire = transcript._refresh_lock.acquire
+
+    async def observed_acquire():
+        refresh_entered.set()
+        return await original_acquire()
+
+    monkeypatch.setattr(transcript._refresh_lock, "acquire", observed_acquire)
+
+    async def held_child_mount(turn, widgets):
+        nonlocal hold, refresh
+        if hold:
+            hold = False
+            assert transcript.is_attached and turn.is_attached
+            assert not turn.activity_stack.is_attached
+            entered.set()
+            if initial_mount:
+                # Inherit the real app context from Textual's composition task.
+                transcript.set_messages([assistant, tool])
+                refresh = asyncio.create_task(transcript.refresh_messages())
+                await asyncio.wait_for(refresh_entered.wait(), 5)
+            else:
+                await release.wait()
+        await original_compose(turn, widgets)
+
+    monkeypatch.setattr(
+        ConsoleAssistantTurnWidget, "mount_composed_widgets", held_child_mount
+    )
+    async with app.run_test(size=(100, 32)) as pilot:
+        if not initial_mount:
+            hold = True
+            refresh_entered.clear()
+            recompose = asyncio.create_task(transcript.recompose())
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                refresh_entered.clear()
+                transcript.set_messages([assistant, tool])
+                refresh = asyncio.create_task(transcript.refresh_messages())
+                await asyncio.wait_for(refresh_entered.wait(), 5)
+                assert not refresh.done(), (
+                    "refresh must wait for real child composition"
+                )
+            finally:
+                release.set()
+            await asyncio.wait_for(recompose, 5)
+        assert refresh is not None
+        await asyncio.wait_for(refresh, 5)
+        await pilot.pause()
+        disclosure = transcript.query_one(
+            "#console-activity-disclosure-composing-tool", ConsoleActivityDisclosure
+        )
+        assert disclosure.is_attached
+        assert "Question answered" in str(
+            disclosure.detail_stack.children[0].renderable
+        )

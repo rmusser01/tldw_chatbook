@@ -1,0 +1,1 @@
+HEAD WORKTREE: 70 Python files (prior 68 plus session.py and affected session-controller tests) compile and pass fatal Ruff; committed equality checked when a SHA is supplied; obsolete additions absent.

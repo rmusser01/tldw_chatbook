@@ -112,24 +112,95 @@ app-level dependency in this decomposition. That exception is over.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
 import asyncio
-from importlib import import_module
 import inspect
 import threading
 import time
-from typing import Any, TYPE_CHECKING
+from collections.abc import Callable
+from dataclasses import dataclass
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from loguru import logger
 
-from ...Chat import console_voice_input
-from ...Chat.console_voice_input import (
-    acoustic_barge_in_enabled,
-    handsfree_send_delay_seconds,
-    resolve_handsfree_engine,
-    realtime_enabled,
+if TYPE_CHECKING:
+    from tldw_chatbook.Audio.speech_presentation import (
+        SpeechPresentation,
+    )
+
+# TASK-22504: `console_voice_input` (and its STT-stack closure) is loaded
+# on FIRST VOICE USE, not at module import -- this module rides the Chat
+# first-paint leg. `console_voice_input.probe()` keeps working through the
+# forwarding proxy; the helpers are bound into this module's globals by
+# `_load_console_voice_input` so their call sites keep the bare names.
+if TYPE_CHECKING:
+    from ...Chat.console_voice_input import (
+        acoustic_barge_in_enabled,  # noqa: TC004
+        handsfree_send_delay_seconds,  # noqa: TC004
+        realtime_enabled,  # noqa: TC004
+        resolve_handsfree_engine,  # noqa: TC004
+    )
+
+_CONSOLE_VOICE_INPUT_NAMES = (
+    "acoustic_barge_in_enabled",
+    "handsfree_send_delay_seconds",
+    "resolve_handsfree_engine",
+    "realtime_enabled",
 )
+
+
+class _LazyConsoleVoiceInput:
+    """Forward attribute access to the real module, loading it on first use."""
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(_load_console_voice_input(), name)
+
+
+console_voice_input = _LazyConsoleVoiceInput()
+
+
+class _LazyVoiceFunction:
+    """Call-time lazy binding for one `console_voice_input` helper.
+
+    Bound under its real name at import so tests can ``monkeypatch.setattr``
+    this module's attribute exactly as before (the attribute exists from
+    import; a patched value is called directly and never triggers a load).
+    While still the stub, a call loads the real module, REBINDS every lazy
+    name still pointing at its stub, and then re-resolves the name -- so
+    the load cannot clobber a patch, and a patch cannot be mistaken for a
+    stub.
+    """
+
+    __slots__ = ("_name",)
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        _load_console_voice_input()
+        return globals()[self._name](*args, **kwargs)
+
+
+def _install_lazy_voice_stubs() -> None:
+    for name in _CONSOLE_VOICE_INPUT_NAMES:
+        globals()[name] = _LazyVoiceFunction(name)
+
+
+_install_lazy_voice_stubs()
+
+
+def _load_console_voice_input():
+    """Import `console_voice_input` and rebind the still-stubbed names."""
+    from ...Chat import console_voice_input as _module
+
+    module_globals = globals()
+    for name in _CONSOLE_VOICE_INPUT_NAMES:
+        current = module_globals.get(name)
+        if isinstance(current, _LazyVoiceFunction):
+            module_globals[name] = getattr(_module, name)
+    module_globals["console_voice_input"] = _module
+    return _module
 from ...Chat.console_chat_models import ConsoleMessageRole
 from ...Chat.console_hands_free import (
     CloseCapture,
@@ -149,15 +220,15 @@ from ...Widgets.Console import ConsoleComposerBar
 if TYPE_CHECKING:
     from ...Chat.console_voice_controls import ControlKind
     from ...TTS.profile_types import CharacterRef
-    from ...Widgets.Console.console_voice_preview import (
-        VoicePreviewProjection,
-        VoiceStatusAnnouncementThrottle,
-    )
     from ...Widgets.Console.console_control_bar import (
         ConsoleAutoSpeakResumeRequested,
         ConsoleAutoSpeakRetryRequested,
     )
     from ...Widgets.Console.console_speech_controls import ConsoleAutoSpeakChanged
+    from ...Widgets.Console.console_voice_preview import (
+        VoicePreviewProjection,
+        VoiceStatusAnnouncementThrottle,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
@@ -353,6 +424,12 @@ class ConsoleSpeculativeHandsFreeSession:
     generation: int
 
 
+def _meeting_in_progress(app_instance: Any) -> bool:
+    """Read the lazy meeting owner afresh for each voice-entry check."""
+    owner = getattr(app_instance, "meeting_session_owner", None)
+    return owner is not None and bool(getattr(owner, "is_active", False))
+
+
 class ConsoleHandsFreeController:
     """Owns the Console shell's V3 pipeline hands-free loop, plus the
     engine-fork/action coordination shared with the V4 realtime loop.
@@ -396,10 +473,16 @@ class ConsoleHandsFreeController:
         request_auto_speak_resume: Callable[[], None],
         request_auto_speak_retry: Callable[[], None],
         sync_auto_speak_controls: Callable[[bool, bool, bool], None],
-        sync_hands_free_state: Callable[[bool], None],
+        sync_hands_free_state: Callable[[bool, bool], None],
         runtime_accessor: Callable[[], Any],
         project_voice_preview: Callable[[VoicePreviewProjection], None],
         clear_voice_preview: Callable[[], None],
+        bind_speech_presentation: Callable[
+            [SpeechPresentation, Callable[[], bool]], Callable[[], bool]
+        ]
+        | None = None,
+        request_dictation_cancel: Callable[[], None] | None = None,
+        request_hands_free_consent: Callable[..., bool] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -472,6 +555,13 @@ class ConsoleHandsFreeController:
                 orphan-supervisor authorities.
             project_voice_preview: View-only provisional transcript projection.
             clear_voice_preview: View-only provisional transcript removal.
+            request_dictation_cancel: Quietly abandons a `starting` capture
+                (TASK-33626.1: every Hands-free exit cancels model
+                preparation, so a late start can never open the microphone).
+            request_hands_free_consent: The Speak replies consent, asked
+                before Hands-free turns on: ``(on_accepted, on_declined, *,
+                realtime_label)`` -> whether it was asked. ``None`` refuses
+                entry rather than starting the microphone unasked.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -495,6 +585,9 @@ class ConsoleHandsFreeController:
         self._runtime_accessor = runtime_accessor
         self._project_voice_preview_fn = project_voice_preview
         self._clear_voice_preview_fn = clear_voice_preview
+        self._bind_speech_presentation = bind_speech_presentation
+        self._request_dictation_cancel_fn = request_dictation_cancel
+        self._request_hands_free_consent_fn = request_hands_free_consent
         self._voice_status_announcer: VoiceStatusAnnouncementThrottle | None = None
 
         # The pipeline engine's own state, moved verbatim from
@@ -529,8 +622,20 @@ class ConsoleHandsFreeController:
         entry/exit for the mode; every session lifecycle change repaints it
         so it never disagrees with reality. No-op when the header controls
         are not mounted (pre-mount, mid-teardown).
+
+        TASK-33626.1: an active pipeline loop whose capture is still
+        `starting` (speech-model preparation) reads "Starting…".
         """
-        self._sync_hands_free_state_fn(active)
+        starting = (
+            active
+            and isinstance(self._console_hands_free, ConsoleHandsFreeSession)
+            and self._console_dictation_state == "starting"
+        )
+        self._sync_hands_free_state_fn(active, starting)
+
+    def sync_console_hands_free_presentation(self) -> None:
+        """Repaint the header control after a dictation state change."""
+        self._sync_hands_free_switch(self.console_hands_free_exit_available())
 
     def _run_qualified_console_voice_result(self, result: Any) -> bool:
         """Supervise optional async view cleanup without retaining text."""
@@ -605,7 +710,9 @@ class ConsoleHandsFreeController:
             return
         try:
             if self._voice_status_announcer is None:
-                from ...Widgets.Console.console_voice_preview import VoiceStatusAnnouncementThrottle
+                from ...Widgets.Console.console_voice_preview import (
+                    VoiceStatusAnnouncementThrottle,
+                )
 
                 self._voice_status_announcer = VoiceStatusAnnouncementThrottle(
                     self._announce_qualified_voice_status
@@ -995,7 +1102,108 @@ class ConsoleHandsFreeController:
         )
         if (enabled is True) == active:
             return
-        self.action_toggle_console_hands_free()
+        self.request_console_hands_free_toggle()
+
+    def request_console_hands_free_toggle(self) -> None:
+        """A user's Hands-free gesture: exit at once, or ask before entering.
+
+        TASK-33626.1. The header control and Ctrl+Shift+H come here; the
+        spoken "hands free" command reaches `request_console_hands_free_
+        entry` directly. `action_toggle_console_hands_free` stays the
+        consent-free mechanism those gestures end in.
+        """
+        if self.console_hands_free_exit_available():
+            self.action_toggle_console_hands_free()
+            return
+        self.request_console_hands_free_entry(
+            capture_live=self._console_dictation_state == "recording"
+        )
+
+    def request_console_hands_free_entry(self, *, capture_live: bool) -> None:
+        """Turn Hands-free on only after the Speak replies consent.
+
+        Entry used to start dictation, audio and the speech-model load at
+        once, although Hands-free speaks every reply through the TTS
+        provider Speak replies asks about. Refusals that need no audio run
+        first, so the question is never asked for a mode that cannot start;
+        then the consent; nothing of the speech pipeline starts before
+        Enable, and declining leaves Hands-free Off.
+
+        Args:
+            capture_live: Whether a live one-shot capture should become the
+                loop's first turn. Re-read at acceptance, since the capture
+                can end while the question is open.
+        """
+        if self.console_hands_free_exit_available():
+            # Re-entry (a spoken "hands free" mid-loop): no new consent.
+            self._enter_console_hands_free_loop(capture_live=capture_live)
+            return
+        refusal = self._console_hands_free_entry_refusal()
+        if refusal is not None:
+            message, severity = refusal
+            self.app_instance.notify(message, severity=severity, markup=False)
+            self._sync_hands_free_switch(False)
+            return
+
+        def accepted() -> None:
+            if self.console_hands_free_exit_available():
+                return
+            self._enter_console_hands_free_loop(
+                capture_live=self._console_dictation_state == "recording"
+            )
+
+        def declined() -> None:
+            self._sync_hands_free_switch(self.console_hands_free_exit_available())
+
+        ask = self._request_hands_free_consent_fn
+        if ask is None or not ask(
+            accepted, declined, realtime_label=self._console_realtime_consent_label()
+        ):
+            # Not asked: another speech question or a Speak replies enable is
+            # in flight, no conversation is active, or the Console is
+            # tearing down. The copy claims none of those in particular.
+            self.app_instance.notify(
+                "Hands-free couldn't ask for the speech consent just now, so "
+                "it stays Off. Try again in a moment.",
+                severity="warning",
+            )
+            declined()
+
+    def _console_hands_free_entry_refusal(self) -> tuple[str, str] | None:
+        """Why Hands-free cannot start at all, from checks that need no audio.
+
+        Returns:
+            ``(message, severity)``, or None when entry may ask for consent.
+            The engine paths repeat these checks after acceptance.
+        """
+        if _meeting_in_progress(self.app_instance):
+            return (
+                "Meeting in progress: stop it in Meetings before using hands-free.",
+                "warning",
+            )
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
+        if resolve_handsfree_engine() == "realtime":
+            if not realtime_enabled():
+                return CONSOLE_REALTIME_FORCED_UNCONFIGURED_MESSAGE, "warning"
+            return None
+        try:
+            availability = console_voice_input.probe()
+        except Exception:  # noqa: BLE001 - a probe crash is not a refusal
+            return None
+        if availability.ok:
+            return None
+        reason = availability.reason or "dictation is unavailable"
+        remedy = str(availability.remedy or "").strip()
+        return f"{reason} {remedy}".strip(), "error"
+
+    def _console_realtime_consent_label(self) -> str | None:
+        """The realtime engine's provider, when it is the one that will run."""
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
+        if resolve_handsfree_engine() != "realtime":
+            return None
+        provider = console_voice_input.realtime_provider()
+        model = console_voice_input.realtime_model()
+        return f"{provider} realtime voice ({model})"
 
     async def _resolve_console_auto_speak_destination(
         self,
@@ -1175,8 +1383,7 @@ class ConsoleHandsFreeController:
         if self._console_realtime is not None:
             self._console_realtime.controller.on_exit_request()
             return
-        owner = getattr(self.app_instance, "meeting_session_owner", None)
-        if owner is not None and getattr(owner, "is_active", False):
+        if _meeting_in_progress(self.app_instance):
             self.app_instance.notify(
                 "Meeting in progress: stop it in Meetings before using hands-free.",
                 severity="warning",
@@ -1210,6 +1417,7 @@ class ConsoleHandsFreeController:
                 is already open and should be adopted as the loop's first
                 turn; forwarded verbatim to whichever engine is selected.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         if self._qualified_voice_startup_generation is not None:
             return
         if self._console_hands_free is not None:
@@ -1252,6 +1460,7 @@ class ConsoleHandsFreeController:
                 semantics trust its own `capture_open` bookkeeping instead
                 of a possibly-stale argument (see that method's docstring).
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         existing = self._console_hands_free
         if existing is not None:
             existing.controller.enter(capture_live=capture_live)
@@ -1530,9 +1739,19 @@ class ConsoleHandsFreeController:
 
     def _console_hands_free_close_capture(self) -> None:
         """`CloseCapture`: idempotent-safe via `_request_console_dictation_
-        stop`'s own guard -- a no-op unless genuinely `recording`."""
-        if self._console_dictation_state == "recording":
+        stop`'s own guard -- a no-op unless genuinely `recording`.
+
+        TASK-33626.1: a capture still `starting` (the speech model loading)
+        is cancelled, not left running. Before, Esc ended the loop while the
+        chip read "Preparing speech model…" 80 s later and a late start could
+        still open the microphone; the cancel drops the session, so the
+        start worker releases whatever it opens instead of recording.
+        """
+        state = self._console_dictation_state
+        if state == "recording":
             self._request_console_dictation_stop()
+        elif state == "starting" and self._request_dictation_cancel_fn is not None:
+            self._request_dictation_cancel_fn()
 
     def _console_hands_free_countdown_tick(self, remaining: float) -> None:
         """`CountdownTick`: record the remaining seconds for the chip."""
@@ -2017,8 +2236,52 @@ class ConsoleHandsFreeController:
         session.controller.on_first_utterance()
         session.utterances_dispatched += 1
         token = session.sequencer.current_utterance_token
+        presentation = None
+        validator = None
+        if self._bind_speech_presentation is not None:
+            store = self._ensure_console_chat_store()
+            active = store.ensure_session()
+            session_id, epoch = active.id, store.active_session_epoch()
+            scope = getattr(self.app_instance, "chachanotes_db", None)
+            character_id = active.local_character_id()
+            reply_id = session.reply_id
+
+            def current() -> bool:
+                return (
+                    self._console_hands_free is session
+                    and session.reply_id == reply_id
+                    and session.sequencer.current_utterance_token == token
+                    and store.active_session_id == session_id
+                    and store.active_session_epoch() == epoch
+                    and active.local_character_id() == character_id
+                    and getattr(self.app_instance, "chachanotes_db", None) is scope
+                )
+
+            from tldw_chatbook.Audio.speech_presentation import (
+                SpeechPresentation,
+                SpeechPresentationOwner,
+            )
+
+            presentation = SpeechPresentation(
+                SpeechPresentationOwner(
+                    uuid4().hex,
+                    scope,
+                    session_id,
+                    epoch,
+                    character_id,
+                    reply_id,
+                    token,
+                )
+            )
+            validator = self._bind_speech_presentation(presentation, current)
         self.run_worker(
-            self._speak_console_hands_free_utterance(text, token, session),
+            self._speak_console_hands_free_utterance(
+                text,
+                token,
+                session,
+                presentation=presentation,
+                validator=validator,
+            ),
             exclusive=False,
             group="console-hands-free-speech",
             exit_on_error=False,
@@ -2029,6 +2292,9 @@ class ConsoleHandsFreeController:
         text: str,
         token: int | None,
         dispatching_session: "ConsoleHandsFreeSession",
+        *,
+        presentation: SpeechPresentation | None = None,
+        validator: Callable[[], bool] | None = None,
     ) -> None:
         """Speak one utterance via the cooldown-free `speak_utterance` entry.
 
@@ -2049,39 +2315,52 @@ class ConsoleHandsFreeController:
         reply then passes `quiet=True` and only logs.
         """
         session = dispatching_session
-        if self._console_hands_free is not session:
-            # The loop that dispatched this utterance is gone (exited, or
-            # replaced by a re-entry); its sequencer was torn down with it,
-            # so there is nothing live to report into. Touch no session.
-            return
-        handler = await self.app_instance._ensure_tts_handler()
-        if self._console_hands_free is not session:
-            return
-        if handler is None:
-            # PR #2638 Qodo #1: a missing TTS handler is a failure for THIS
-            # utterance like any other. Without recording it here, a reply
-            # whose handler never initializes drains with zero counted
-            # failures and never reaches `_maybe_escalate_all_failed_reply`
-            # -- a fully silent reply with no visible notice.
-            session.toast_shown_for_reply = True
-            session.utterances_failed += 1
-            session.sequencer.utterance_finished(False, token=token)
-            return
-        quiet = session.toast_shown_for_reply
+        finished = False
 
         def _on_finished(ok: bool) -> None:
-            current = self._console_hands_free
-            if current is not session:
-                # A different loop entry (or none at all) owns the screen's
-                # hands-free state now; this utterance's own sequencer/token
-                # bookkeeping is no longer live to report back into.
+            nonlocal finished
+            if finished:
+                return
+            finished = True
+            if (
+                self._console_hands_free is not session
+                or session.sequencer.current_utterance_token != token
+            ):
                 return
             if not ok:
                 session.toast_shown_for_reply = True
                 session.utterances_failed += 1
             session.sequencer.utterance_finished(ok, token=token)
 
-        await handler.speak_utterance(text, on_finished=_on_finished, quiet=quiet)
+        if self._console_hands_free is not session or (
+            validator is not None and not validator()
+        ):
+            if presentation is not None:
+                presentation.set_transport("stopped")
+            _on_finished(False)
+            return
+        handler = await self.app_instance._ensure_tts_handler()
+        if self._console_hands_free is not session or (
+            validator is not None and not validator()
+        ):
+            if presentation is not None:
+                presentation.set_transport("stopped")
+            _on_finished(False)
+            return
+        if handler is None:
+            if presentation is not None:
+                presentation.set_transport("failed")
+            _on_finished(False)
+            return
+        quiet = session.toast_shown_for_reply
+
+        await handler.speak_utterance(
+            text,
+            on_finished=_on_finished,
+            quiet=quiet,
+            presentation=presentation,
+            validator=validator,
+        )
 
     def _stop_console_hands_free_speech(self) -> None:
         """`SentenceSequencer`'s `stop_speech` callable: the existing

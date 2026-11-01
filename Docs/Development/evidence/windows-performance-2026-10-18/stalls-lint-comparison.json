@@ -1,0 +1,37 @@
+{
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "baseline_count": 22,
+    "current_count": 22,
+    "new": [],
+    "baseline_formatted": false,
+    "current_formatted": false
+  },
+  "tldw_chatbook/UI/Screens/home_screen.py": {
+    "baseline_count": 0,
+    "current_count": 0,
+    "new": [],
+    "baseline_formatted": true,
+    "current_formatted": true
+  },
+  "tldw_chatbook/UI/Console_Modules/console_spend_projection.py": {
+    "baseline_count": 1,
+    "current_count": 1,
+    "new": [],
+    "baseline_formatted": false,
+    "current_formatted": false
+  },
+  "tldw_chatbook/UI/Console_Modules/config_sync.py": {
+    "baseline_count": 0,
+    "current_count": 0,
+    "new": [],
+    "baseline_formatted": true,
+    "current_formatted": true
+  },
+  "Tests/UI/test_console_right_rail.py": {
+    "baseline_count": 0,
+    "current_count": 0,
+    "new": [],
+    "baseline_formatted": false,
+    "current_formatted": false
+  }
+}

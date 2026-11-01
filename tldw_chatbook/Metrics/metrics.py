@@ -121,8 +121,12 @@ def log_counter(metric_name, value=1, labels=None, documentation=""):
     Documentation is only used during the initial creation of the metric.
     """
     if not PROMETHEUS_AVAILABLE:
+        # task-34399: %-style args keep this lazy -- stdlib logging formats
+        # them only if a sink actually admits DEBUG (root.isEnabledFor
+        # short-circuits before the record is built), so an absent
+        # prometheus_client costs no f-string formatting per call.
         logging.debug(
-            f"Prometheus not available. Would have logged counter: {metric_name}"
+            "Prometheus not available. Would have logged counter: %s", metric_name
         )
         return
     try:
@@ -145,8 +149,11 @@ def log_histogram(metric_name, value, labels=None, documentation=""):
     Documentation is only used during the initial creation of the metric.
     """
     if not PROMETHEUS_AVAILABLE:
+        # Lazy like log_counter above -- see the task-34399 note there.
         logging.debug(
-            f"Prometheus not available. Would have logged histogram: {metric_name} = {value}"
+            "Prometheus not available. Would have logged histogram: %s = %s",
+            metric_name,
+            value,
         )
         return
     try:
@@ -170,8 +177,11 @@ def log_gauge(metric_name, value, labels=None, documentation=""):
     Documentation is only used during the initial creation of the metric.
     """
     if not PROMETHEUS_AVAILABLE:
+        # Lazy like log_counter above -- see the task-34399 note there.
         logging.debug(
-            f"Prometheus not available. Would have logged gauge: {metric_name} = {value}"
+            "Prometheus not available. Would have logged gauge: %s = %s",
+            metric_name,
+            value,
         )
         return
     try:

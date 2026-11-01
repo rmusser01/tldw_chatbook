@@ -23,7 +23,9 @@ from Tests.Image_Generation.test_comfyui_workflow_assets import (
     EXPECTED_NODE_CLASSES,
 )
 from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
-from tldw_chatbook.Image_Generation.adapters import comfyui_image_adapter as adapter_module
+from tldw_chatbook.Image_Generation.adapters import (
+    comfyui_image_adapter as adapter_module,
+)
 from tldw_chatbook.Image_Generation.capabilities import ResolvedReferenceImage
 from tldw_chatbook.Image_Generation.config import get_image_generation_config
 from tldw_chatbook.Image_Generation.exceptions import (
@@ -141,7 +143,9 @@ def _png_with_dimensions(width: int, height: int) -> bytes:
     return bytes(encoded)
 
 
-def _reference(*, mime: str = "image/png", width: int = 5, height: int = 4) -> ResolvedReferenceImage:
+def _reference(
+    *, mime: str = "image/png", width: int = 5, height: int = 4
+) -> ResolvedReferenceImage:
     data = _png(width, height)
     return ResolvedReferenceImage(
         file_id="runtime-only-id",
@@ -288,9 +292,7 @@ def _object_info(
         class_type = node["class_type"]
         if class_type in result:
             continue
-        required = {
-            name: _input_spec(class_type, name) for name in node["inputs"]
-        }
+        required = {name: _input_spec(class_type, name) for name in node["inputs"]}
         result[class_type] = {
             "input": {"required": required},
             "input_order": {"required": list(required)},
@@ -392,7 +394,9 @@ def _object_info(
     return result
 
 
-def _json_response(payload: Any, *, status: int = 200, headers: dict[str, str] | None = None):
+def _json_response(
+    payload: Any, *, status: int = 200, headers: dict[str, str] | None = None
+):
     body = json.dumps(payload, separators=(",", ":")).encode()
     return httpx.Response(status, content=body, headers=headers)
 
@@ -471,7 +475,10 @@ class SuccessfulScript:
             return httpx.Response(
                 200,
                 content=self.output,
-                headers={"content-type": "image/png", "content-length": str(len(self.output))},
+                headers={
+                    "content-type": "image/png",
+                    "content-length": str(len(self.output)),
+                },
             )
         if path == "/queue":
             return _json_response({})
@@ -592,7 +599,9 @@ def test_prepare_uses_exact_topology_direct_links_and_id_targets() -> None:
         upload_name="opaque.png",
     )
 
-    assert {node_id: node["class_type"] for node_id, node in prepared.graph.items()} == EXPECTED_NODE_CLASSES
+    assert {
+        node_id: node["class_type"] for node_id, node in prepared.graph.items()
+    } == EXPECTED_NODE_CLASSES
     links = {
         f"{node_id}.{name}": tuple(value)
         for node_id, node in prepared.graph.items()
@@ -613,12 +622,18 @@ def test_prepare_uses_exact_topology_direct_links_and_id_targets() -> None:
     "mutate",
     [
         lambda graph: graph.pop("114"),
-        lambda graph: graph.__setitem__("114", {**graph["114"], "class_type": "SaveImage"}),
+        lambda graph: graph.__setitem__(
+            "114", {**graph["114"], "class_type": "SaveImage"}
+        ),
         lambda graph: graph.__setitem__("999", copy.deepcopy(graph["114"])),
         lambda graph: graph["165"]["inputs"].__setitem__("images", ["114", 0]),
         lambda graph: graph.__setitem__(
             "999",
-            {"class_type": "LoadImage", "inputs": {"image": "decoy.png"}, "_meta": {"title": "Load Image"}},
+            {
+                "class_type": "LoadImage",
+                "inputs": {"image": "decoy.png"},
+                "_meta": {"title": "Load Image"},
+            },
         ),
     ],
     ids=["missing", "wrong-class", "unexpected-output", "link-drift", "title-decoy"],
@@ -635,7 +650,9 @@ def test_prepare_rejects_malformed_topology_without_mutating_input(mutate) -> No
     assert graph == before
 
 
-def test_prepare_precedence_unset_literals_and_seed_minus_one_resolves_once(monkeypatch) -> None:
+def test_prepare_precedence_unset_literals_and_seed_minus_one_resolves_once(
+    monkeypatch,
+) -> None:
     calls: list[int] = []
 
     def randbits(bits: int) -> int:
@@ -645,7 +662,9 @@ def test_prepare_precedence_unset_literals_and_seed_minus_one_resolves_once(monk
     monkeypatch.setattr(adapter_module.secrets, "randbits", randbits)
     graph = adapter_module._load_packaged_workflow()
     packaged_seed = graph["131"]["inputs"]["noise_seed"]
-    retained = adapter_module._prepare_workflow(_request(), config=_config(), graph=graph)
+    retained = adapter_module._prepare_workflow(
+        _request(), config=_config(), graph=graph
+    )
     defaults = adapter_module._prepare_workflow(
         _request(),
         config=_config(
@@ -676,7 +695,9 @@ def test_prepare_precedence_unset_literals_and_seed_minus_one_resolves_once(monk
     assert calls == [64]
 
 
-def test_generate_resolves_seed_minus_one_once_for_queued_graph_and_result(monkeypatch) -> None:
+def test_generate_resolves_seed_minus_one_once_for_queued_graph_and_result(
+    monkeypatch,
+) -> None:
     calls: list[int] = []
 
     def randbits(bits: int) -> int:
@@ -724,7 +745,9 @@ def test_object_info_preflight_precedes_upload_and_validates_choices() -> None:
     graph = adapter_module._load_packaged_workflow()
     schema = _object_info(graph)
     sampler = graph["125"]["inputs"]["sampler_name"]
-    schema["KSamplerSelect"]["input"]["required"]["sampler_name"] = [["not-the-sampler"]]
+    schema["KSamplerSelect"]["input"]["required"]["sampler_name"] = [
+        ["not-the-sampler"]
+    ]
     calls: list[str] = []
 
     def script(request: httpx.Request) -> httpx.Response:
@@ -739,13 +762,16 @@ def test_object_info_preflight_precedes_upload_and_validates_choices() -> None:
     assert calls == ["/object_info"]
 
 
-def test_object_info_accepts_real_load_image_upload_schema_without_placeholder_choice() -> None:
+def test_object_info_accepts_real_load_image_upload_schema_without_placeholder_choice() -> (
+    None
+):
     prepared = adapter_module._prepare_workflow(_request(), config=_config())
     schema = _object_info(prepared.graph)
 
-    assert prepared.graph["114"]["inputs"]["image"] not in schema["LoadImage"][
-        "input"
-    ]["required"]["image"][0]
+    assert (
+        prepared.graph["114"]["inputs"]["image"]
+        not in schema["LoadImage"]["input"]["required"]["image"][0]
+    )
     adapter_module._validate_object_info(prepared, schema)
 
 
@@ -766,9 +792,9 @@ def test_object_info_rejects_unprovided_server_required_input_before_upload(
     if required_kind == "top-level":
         schema["BasicScheduler"]["input"]["required"]["future_required"] = ["INT"]
     else:
-        schema["ResizeImageMaskNode"]["input"]["required"]["resize_type"][1][
-            "options"
-        ][0]["inputs"]["required"]["future_required"] = ["INT"]
+        schema["ResizeImageMaskNode"]["input"]["required"]["resize_type"][1]["options"][
+            0
+        ]["inputs"]["required"]["future_required"] = ["INT"]
     calls: list[str] = []
 
     def script(request: httpx.Request) -> httpx.Response:
@@ -785,15 +811,15 @@ def test_object_info_rejects_unprovided_server_required_input_before_upload(
 def test_object_info_ignores_optional_hidden_and_unselected_dynamic_inputs() -> None:
     prepared = adapter_module._prepare_workflow(_request(), config=_config())
     schema = _object_info(prepared.graph)
-    schema["BasicScheduler"]["input"].setdefault("optional", {})[
-        "future_optional"
-    ] = ["INT"]
+    schema["BasicScheduler"]["input"].setdefault("optional", {})["future_optional"] = [
+        "INT"
+    ]
     schema["BasicScheduler"]["input"]["hidden"] = {
         "internal_value": "UNSUPPORTED_HIDDEN"
     }
-    schema["ResizeImageMaskNode"]["input"]["required"]["resize_type"][1][
-        "options"
-    ][1]["inputs"]["required"]["unselected_required"] = ["UNSUPPORTED"]
+    schema["ResizeImageMaskNode"]["input"]["required"]["resize_type"][1]["options"][1][
+        "inputs"
+    ]["required"]["unselected_required"] = ["UNSUPPORTED"]
 
     adapter_module._validate_object_info(prepared, schema)
 
@@ -977,7 +1003,9 @@ def test_object_info_rejects_direct_link_output_schema_mismatches_before_upload(
 
 
 @pytest.mark.parametrize("damage", ["class", "input", "loader", "save-image"])
-def test_object_info_rejects_missing_classes_inputs_loader_choices_and_png_output(damage) -> None:
+def test_object_info_rejects_missing_classes_inputs_loader_choices_and_png_output(
+    damage,
+) -> None:
     graph = adapter_module._load_packaged_workflow()
     schema = _object_info(graph)
     if damage == "class":
@@ -1001,9 +1029,13 @@ def test_object_info_rejects_missing_classes_inputs_loader_choices_and_png_outpu
     assert calls == ["/object_info"]
 
 
-def test_bounded_json_rejects_declared_and_streamed_overflow_before_loads(monkeypatch) -> None:
+def test_bounded_json_rejects_declared_and_streamed_overflow_before_loads(
+    monkeypatch,
+) -> None:
     loads_calls: list[object] = []
-    monkeypatch.setattr(adapter_module.json, "loads", lambda value: loads_calls.append(value))
+    monkeypatch.setattr(
+        adapter_module.json, "loads", lambda value: loads_calls.append(value)
+    )
     declared = httpx.Response(
         200,
         headers={"content-length": str(adapter_module.COMFYUI_MAX_JSON_BYTES + 1)},
@@ -1011,7 +1043,9 @@ def test_bounded_json_rejects_declared_and_streamed_overflow_before_loads(monkey
     )
     streamed = httpx.Response(
         200,
-        stream=ChunkStream([b"a" * (adapter_module.COMFYUI_MAX_JSON_BYTES // 2 + 1)] * 2),
+        stream=ChunkStream(
+            [b"a" * (adapter_module.COMFYUI_MAX_JSON_BYTES // 2 + 1)] * 2
+        ),
     )
 
     with pytest.raises(ValueError):
@@ -1029,7 +1063,9 @@ def test_json_rejects_non_identity_content_encoding_before_iteration_or_parse(
 ) -> None:
     stream = GuardedChunkStream([b"{}"])
     loads_calls: list[object] = []
-    monkeypatch.setattr(adapter_module.json, "loads", lambda value: loads_calls.append(value))
+    monkeypatch.setattr(
+        adapter_module.json, "loads", lambda value: loads_calls.append(value)
+    )
     response = httpx.Response(
         200,
         stream=stream,
@@ -1057,7 +1093,9 @@ def test_json_oversized_single_chunk_never_extends_bounded_buffer_or_parses(
             max_buffer_len = max(max_buffer_len, len(self))
 
     monkeypatch.setattr(adapter_module, "bytearray", TrackingBytearray, raising=False)
-    monkeypatch.setattr(adapter_module.json, "loads", lambda value: loads_calls.append(value))
+    monkeypatch.setattr(
+        adapter_module.json, "loads", lambda value: loads_calls.append(value)
+    )
     response = httpx.Response(
         200,
         stream=ChunkStream([b"x" * (adapter_module.COMFYUI_MAX_JSON_BYTES + 1)]),
@@ -1077,7 +1115,12 @@ def test_json_drip_stream_hits_absolute_deadline_before_prompt_without_delete(
     monkeypatch.setattr(adapter_module.time, "monotonic", clock.monotonic)
     body = json.dumps(_object_info(), separators=(",", ":")).encode()
     size = len(body) // 4
-    chunks = [body[:size], body[size : size * 2], body[size * 2 : size * 3], body[size * 3 :]]
+    chunks = [
+        body[:size],
+        body[size : size * 2],
+        body[size * 2 : size * 3],
+        body[size * 3 :],
+    ]
     yielded: list[int] = []
     calls: list[str] = []
 
@@ -1117,7 +1160,12 @@ def test_json_stream_cancellation_after_prompt_stops_and_deletes_once() -> None:
     }
     body = json.dumps(history, separators=(",", ":")).encode()
     size = len(body) // 4
-    chunks = [body[:size], body[size : size * 2], body[size * 2 : size * 3], body[size * 3 :]]
+    chunks = [
+        body[:size],
+        body[size : size * 2],
+        body[size * 2 : size * 3],
+        body[size * 3 :],
+    ]
 
     def cancel(index: int) -> None:
         yielded.append(index)
@@ -1129,7 +1177,9 @@ def test_json_stream_cancellation_after_prompt_stops_and_deletes_once() -> None:
         if request.url.path == "/object_info":
             return _json_response(_object_info())
         if request.url.path == "/upload/image":
-            return _json_response({"name": "opaque.png", "subfolder": "", "type": "input"})
+            return _json_response(
+                {"name": "opaque.png", "subfolder": "", "type": "input"}
+            )
         if request.url.path == "/prompt":
             return _json_response({"prompt_id": "opaque-prompt-id"})
         if request.url.path == "/history/opaque-prompt-id":
@@ -1146,7 +1196,9 @@ def test_json_stream_cancellation_after_prompt_stops_and_deletes_once() -> None:
     assert calls.count("/queue") == 1
 
 
-def test_success_uses_opaque_mime_extension_exact_origin_node165_and_effective_params(monkeypatch) -> None:
+def test_success_uses_opaque_mime_extension_exact_origin_node165_and_effective_params(
+    monkeypatch,
+) -> None:
     script = SuccessfulScript(previews=2)
     checks: list[tuple[str, frozenset[str]]] = []
 
@@ -1175,8 +1227,14 @@ def test_success_uses_opaque_mime_extension_exact_origin_node165_and_effective_p
     assert script.queued_graph is not None
     assert script.queued_graph["114"]["inputs"]["image"] == "opaque-upload.png"
     assert script.queued_graph["131"]["inputs"]["noise_seed"] == result.resolved_seed
-    assert script.queued_graph["126"]["inputs"]["steps"] == result.effective_params["steps"]
-    assert script.queued_graph["125"]["inputs"]["sampler_name"] == result.effective_params["sampler"]
+    assert (
+        script.queued_graph["126"]["inputs"]["steps"]
+        == result.effective_params["steps"]
+    )
+    assert (
+        script.queued_graph["125"]["inputs"]["sampler_name"]
+        == result.effective_params["sampler"]
+    )
     assert b"private-source-name" not in script.upload_body
     assert re.search(rb'filename="[0-9a-f]{32}\.png"', script.upload_body)
     assert all(url.startswith("http://127.0.0.1:8188/") for url, _ in checks)
@@ -1200,7 +1258,9 @@ def test_redirects_are_not_followed() -> None:
 
     def script(request: httpx.Request) -> httpx.Response:
         calls.append(str(request.url))
-        return httpx.Response(302, headers={"location": "http://127.0.0.1:8288/object_info"})
+        return httpx.Response(
+            302, headers={"location": "http://127.0.0.1:8288/object_info"}
+        )
 
     with pytest.raises(ComfyUIImageEditError) as exc:
         _make_adapter(script).generate(_request())
@@ -1441,7 +1501,9 @@ def test_factory_clients_close_blocked_sends_without_thread_accumulation() -> No
     assert len({id(client) for client, _transport in records}) == 3
 
 
-def test_blocked_response_headers_recheck_cancellation_and_delete_known_prompt() -> None:
+def test_blocked_response_headers_recheck_cancellation_and_delete_known_prompt() -> (
+    None
+):
     event = threading.Event()
     base = SuccessfulScript()
     transport = BlockingResponseTransport(
@@ -1452,9 +1514,7 @@ def test_blocked_response_headers_recheck_cancellation_and_delete_known_prompt()
 
     started = time.perf_counter()
     with pytest.raises(ImageGenerationCancelled):
-        _make_adapter_with_transport(transport).generate(
-            _request(cancel_event=event)
-        )
+        _make_adapter_with_transport(transport).generate(_request(cancel_event=event))
     elapsed = time.perf_counter() - started
 
     assert elapsed < 0.25
@@ -1531,7 +1591,11 @@ def test_output_descriptor_is_safe_node165_only_and_query_only(descriptor) -> No
         "opaque-prompt-id": {
             "status": {"completed": True, "status_str": "success"},
             "outputs": {
-                "114": {"images": [{"filename": "source.png", "subfolder": "", "type": "output"}]},
+                "114": {
+                    "images": [
+                        {"filename": "source.png", "subfolder": "", "type": "output"}
+                    ]
+                },
                 "165": {"images": [descriptor]},
             },
         }
@@ -1552,14 +1616,20 @@ def test_terminal_execution_error_is_sanitized_and_not_polled_forever() -> None:
         if request.url.path == "/object_info":
             return _json_response(_object_info())
         if request.url.path == "/upload/image":
-            return _json_response({"name": "opaque.png", "subfolder": "", "type": "input"})
+            return _json_response(
+                {"name": "opaque.png", "subfolder": "", "type": "input"}
+            )
         if request.url.path == "/prompt":
             return _json_response({"prompt_id": "opaque-prompt-id"})
         if request.url.path == "/history/opaque-prompt-id":
             return _json_response(
                 {
                     "opaque-prompt-id": {
-                        "status": {"completed": True, "status_str": "error", "messages": [["error", {"details": secret_body}]]},
+                        "status": {
+                            "completed": True,
+                            "status_str": "error",
+                            "messages": [["error", {"details": secret_body}]],
+                        },
                         "outputs": {},
                     }
                 }
@@ -1568,7 +1638,9 @@ def test_terminal_execution_error_is_sanitized_and_not_polled_forever() -> None:
 
     try:
         with pytest.raises(ComfyUIImageEditError) as exc:
-            _make_adapter(script).generate(_request(prompt="sentinel-private-instruction"))
+            _make_adapter(script).generate(
+                _request(prompt="sentinel-private-instruction")
+            )
     finally:
         logger.remove(sink)
 
@@ -1579,7 +1651,9 @@ def test_terminal_execution_error_is_sanitized_and_not_polled_forever() -> None:
     assert "opaque-prompt-id" not in rendered
 
 
-@pytest.mark.parametrize("kind", ["declared", "actual", "mime", "signature", "decode", "mode", "dimensions"])
+@pytest.mark.parametrize(
+    "kind", ["declared", "actual", "mime", "signature", "decode", "mode", "dimensions"]
+)
 def test_png_download_is_bounded_and_validated(kind) -> None:
     good = _png()
 
@@ -1587,7 +1661,11 @@ def test_png_download_is_bounded_and_validated(kind) -> None:
         if request.url.path != "/view":
             return SuccessfulScript()(request)
         if kind == "declared":
-            return httpx.Response(200, content=b"x", headers={"content-type": "image/png", "content-length": "101"})
+            return httpx.Response(
+                200,
+                content=b"x",
+                headers={"content-type": "image/png", "content-length": "101"},
+            )
         if kind == "actual":
             midpoint = len(good) // 2
             return httpx.Response(
@@ -1596,18 +1674,32 @@ def test_png_download_is_bounded_and_validated(kind) -> None:
                 headers={"content-type": "image/png"},
             )
         if kind == "mime":
-            return httpx.Response(200, content=good, headers={"content-type": "image/jpeg"})
+            return httpx.Response(
+                200, content=good, headers={"content-type": "image/jpeg"}
+            )
         if kind == "signature":
-            return httpx.Response(200, content=b"not-a-png", headers={"content-type": "image/png"})
+            return httpx.Response(
+                200, content=b"not-a-png", headers={"content-type": "image/png"}
+            )
         if kind == "decode":
-            return httpx.Response(200, content=PNG_SIGNATURE + b"broken", headers={"content-type": "image/png"})
+            return httpx.Response(
+                200,
+                content=PNG_SIGNATURE + b"broken",
+                headers={"content-type": "image/png"},
+            )
         if kind == "mode":
-            return httpx.Response(200, content=_png(mode="I;16"), headers={"content-type": "image/png"})
-        return httpx.Response(200, content=_png(6, 4), headers={"content-type": "image/png"})
+            return httpx.Response(
+                200, content=_png(mode="I;16"), headers={"content-type": "image/png"}
+            )
+        return httpx.Response(
+            200, content=_png(6, 4), headers={"content-type": "image/png"}
+        )
 
     byte_limit = len(good) - 1 if kind == "actual" else 100
     with pytest.raises(ComfyUIImageEditError) as exc:
-        _make_adapter(script, config=_config(inline_max_bytes=byte_limit)).generate(_request())
+        _make_adapter(script, config=_config(inline_max_bytes=byte_limit)).generate(
+            _request()
+        )
 
     _assert_phase(exc, "output_download")
 
@@ -1898,7 +1990,9 @@ def test_cancellation_is_checked_before_each_following_network_phase(
     queue_deletes: int,
 ) -> None:
     event = threading.Event()
-    script = SuccessfulScript(previews=1 if cancel_after == "/history/opaque-prompt-id" else 0)
+    script = SuccessfulScript(
+        previews=1 if cancel_after == "/history/opaque-prompt-id" else 0
+    )
 
     def cancel_between_phases(request: httpx.Request) -> httpx.Response:
         response = script(request)
@@ -1949,7 +2043,9 @@ def test_prompt_full_id_chunk_cancellation_captures_id_and_deletes_once() -> Non
     assert yielded == [0]
 
 
-def test_prompt_full_id_chunk_deadline_captures_id_and_deletes_once(monkeypatch) -> None:
+def test_prompt_full_id_chunk_deadline_captures_id_and_deletes_once(
+    monkeypatch,
+) -> None:
     clock = AdvancingClock()
     monkeypatch.setattr(adapter_module.time, "monotonic", clock.monotonic)
     base = SuccessfulScript()
@@ -2024,7 +2120,9 @@ def test_poll_wait_uses_event_and_cancellation_deletes_exact_prompt_once() -> No
         if request.url.path == "/object_info":
             return _json_response(_object_info())
         if request.url.path == "/upload/image":
-            return _json_response({"name": "opaque.png", "subfolder": "", "type": "input"})
+            return _json_response(
+                {"name": "opaque.png", "subfolder": "", "type": "input"}
+            )
         if request.url.path == "/prompt":
             return _json_response({"prompt_id": "opaque-prompt-id"})
         if request.url.path == "/history/opaque-prompt-id":
@@ -2050,7 +2148,9 @@ def test_queue_delete_failure_cannot_mask_cancellation() -> None:
         if request.url.path == "/object_info":
             return _json_response(_object_info())
         if request.url.path == "/upload/image":
-            return _json_response({"name": "opaque.png", "subfolder": "", "type": "input"})
+            return _json_response(
+                {"name": "opaque.png", "subfolder": "", "type": "input"}
+            )
         if request.url.path == "/prompt":
             return _json_response({"prompt_id": "opaque-prompt-id"})
         if request.url.path == "/history/opaque-prompt-id":
@@ -2073,7 +2173,9 @@ def test_timeout_uses_monotonic_remaining_time_and_deletes_once(monkeypatch) -> 
         if request.url.path == "/object_info":
             return _json_response(_object_info())
         if request.url.path == "/upload/image":
-            return _json_response({"name": "opaque.png", "subfolder": "", "type": "input"})
+            return _json_response(
+                {"name": "opaque.png", "subfolder": "", "type": "input"}
+            )
         if request.url.path == "/prompt":
             return _json_response({"prompt_id": "opaque-prompt-id"})
         if request.url.path == "/history/opaque-prompt-id":
@@ -2232,7 +2334,9 @@ def test_body_iterator_read_timeout_before_deadline_stays_phase_transport_error(
     assert base.calls.count(("POST", "/queue")) == 0
 
 
-def test_body_iterator_transport_failure_rechecks_cancellation_before_deadline() -> None:
+def test_body_iterator_transport_failure_rechecks_cancellation_before_deadline() -> (
+    None
+):
     event = threading.Event()
     base = SuccessfulScript()
     private_detail = "sentinel-private-cancelled-iterator-detail"

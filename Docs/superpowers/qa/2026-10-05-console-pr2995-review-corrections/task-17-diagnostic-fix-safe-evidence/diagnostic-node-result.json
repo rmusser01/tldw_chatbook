@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-vv",
+    "-p",
+    "no:randomly",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pr2995-task17-diagnostic-fix-_20iu7p9/pytest",
+    "Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-diagnostic-fix-safe-evidence/diagnostic-node.xml"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 85.588141791,
+  "pid_and_pgid": 67682,
+  "process_closed": true,
+  "actual_cases": [
+    {
+      "classname": "Tests.Architecture.test_persistent_diagnostic_inventory",
+      "name": "test_production_diagnostic_inventory_and_sink_topology_are_unchanged",
+      "time": "82.915"
+    }
+  ],
+  "failed_cases": [],
+  "skipped_cases": [],
+  "source_after_exact": true,
+  "head_after": "408453025fc58383b81cb018b01134579cb3141a"
+}

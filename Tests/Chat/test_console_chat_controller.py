@@ -1804,6 +1804,7 @@ async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_shutdown_stops_and_awaits_active_stream_task():
     """Verify controller shutdown stops and drains an active stream task."""
 
@@ -3143,6 +3144,7 @@ def test_image_budget_counts_images_newest_first(monkeypatch):
     assert decoded == b"old-0"
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_messages_for_next_send_estimate_uses_lightweight_projection_without_media_serialization(
     monkeypatch,
 ):
@@ -5094,6 +5096,15 @@ def _controller_active_history_checkpoint(call_state: str):
 
 
 @pytest.mark.asyncio
+# TASK-18313: submit_draft's hook admission gate reads the saved hooks
+# config through the guarded config loader, which under the per-test
+# sandbox redirect fails closed with RecoveryRequired("raw_source_
+# selection_changed"); the gate's broad except turns that into a
+# "Hooks unavailable" refusal before any payload assertion runs. Keep
+# the collection-time profile (ADR-126 admission; per-node marker per
+# the TASK-32873 pattern) so the read succeeds and the test exercises
+# the real continuation contracts.
+@pytest.mark.bootstrap_profile
 async def test_controller_real_gateway_budgets_active_continuation_owner_atomically():
     store = ConsoleChatStore()
     session = _arm_session(store)
@@ -5258,6 +5269,11 @@ def test_controller_thinking_sidecars_exclude_opaque_application_copy() -> None:
 
 
 @pytest.mark.asyncio
+# TASK-18313: same config-admission class as the budget test above --
+# the bridge send path also crosses submit_draft's hook admission gate
+# before dispatch, so the per-test sandbox redirect would refuse the
+# send ("Hooks unavailable") before the prepared-payload assertions.
+@pytest.mark.bootstrap_profile
 async def test_controller_bridge_agent_service_bound_private_history_on_real_send(
     tmp_path, monkeypatch
 ):
@@ -8667,6 +8683,9 @@ async def test_agent_controller_retry_anyway_preserves_explicit_recovery(
     )
 
 
+# The real gateway reads compaction config during construction. Keep the private
+# collection-time config participant instead of reselecting it per test.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("next_fresh", [True, False], ids=["fresh", "agent"])
 async def test_controller_retry_retains_reservation_after_repreparation_failure(
@@ -9467,7 +9486,9 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
                 _tool_dict(name)
                 for name in sorted(CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS)
             ),
-            _tool_dict("chat_with_llm"),
+            # TASK-34100.5: ``chat_with_llm`` is never offered (the direct
+            # runtime refuses it), so the surviving sample is another built-in.
+            _tool_dict("chat_with_character"),
         ]
     }
     service = FakeMCPService(
@@ -9483,7 +9504,7 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
     assert provider is not None
     names = {entry.name for entry in provider.list_catalog()}
     assert names == {
-        "mcp__tldw_chatbook__chat_with_llm",
+        "mcp__tldw_chatbook__chat_with_character",
         "mcp__docs__library_list_media",
     }
 
@@ -11160,6 +11181,7 @@ async def test_agent_cancellation_before_worker_start_retires_and_rejects_handof
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_agent_teardown_refusal_occurs_before_generation_issuance(
     monkeypatch,
 ) -> None:

@@ -97,3 +97,43 @@ def test_invalid_saved_provider_keeps_warnings_and_blocks_start(monkeypatch, pro
         error[:2] == ("audio_video", "transcription_provider")
         for error in state.option_errors
     )
+
+
+@pytest.mark.parametrize(
+    "provider,feature",
+    [
+        ("default", "faster_whisper"),
+        ("faster-whisper", "faster_whisper"),
+        ("parakeet-onnx", "parakeet_onnx"),
+        ("transcribe-cpp", "transcribe_cpp"),
+    ],
+)
+def test_missing_selected_runtime_blocks_start_with_install_remedy(
+    monkeypatch, provider, feature
+):
+    monkeypatch.setattr(capabilities, "_is_installed", lambda name: name != feature)
+    preflight = analyze_path(URL, probe_url=False)
+    form = LibraryIngestFormState(
+        path=URL,
+        preflight=preflight,
+        type_options={"audio_video": {"transcription_provider": provider}},
+    )
+    state = build_library_ingest_state((), form=form)
+    assert not state.start_enabled
+    assert "install" in state.start_quiet_line.lower()
+    assert state.warning_commands
+    assert state.forecast.will_fail_tooling == 1
+
+
+def test_server_import_ignores_missing_local_runtime(monkeypatch):
+    monkeypatch.setattr(capabilities, "_is_installed", lambda name: False)
+    preflight = analyze_path(URL, probe_url=False)
+    form = LibraryIngestFormState(path=URL, preflight=preflight)
+    state = build_library_ingest_state(
+        (),
+        form=form,
+        runtime_source="server",
+        ingest_backend="server",
+        server_ingest_available=True,
+    )
+    assert state.start_enabled

@@ -1,0 +1,58 @@
+{
+  "production_commit": "90f9f51fba7b2b84bc6dca0d03789a5c3cf1ec13",
+  "python": "3.9.6",
+  "installed_artifacts": {
+    "installed-journey": {
+      "wheel": "tldw_chatbook-0.2.3-py3-none-any.whl",
+      "wheel_sha256": "61552d08d7c1188c9dc5d1102ad2bd27f998f4983aa61e96711fb3a07174b18d",
+      "installed_files": 3226,
+      "verified_production_files": {
+        "tldw_chatbook/Character_Chat/expression_generation.py": "daf2d4f0a6a5d1ee1464642b8114d285045eecd81e2152f32ab0175bb7f45a25",
+        "tldw_chatbook/Character_Chat/portrait_compositing.py": "7233dd53ba2df3d06b86d269626ffa03c6f90f99b597fb024946d8973577f9c2",
+        "tldw_chatbook/Character_Chat/portrait_performance.py": "a794dbfd9ad2b8d643152d4ebe279f646c44ef9f68c4f0950738441401390dcd",
+        "tldw_chatbook/Character_Chat/portrait_performance_authoring.py": "82df90f4d8ee8898427526d560ab13d69338713aba2960380ecd92a979ddba2b",
+        "tldw_chatbook/DB/ChaChaNotes_DB.py": "d227ca64f7a64bbb84457f01da35aa163743b6548b4f9e29e1681cdfd8b02e3e",
+        "tldw_chatbook/DB/migrations/chachanotes_v82_to_v83_portrait_regions.sql": "d14cc8659526c656df2fd8117c2ed20f8c65dad47990909944bd30a29e24e1d5",
+        "tldw_chatbook/DB/portrait_region_settings.py": "8543b2cd5cc9a29c36f5e2781aa1426897fb3e4ac7f699492d4a0fa5cccdac13",
+        "tldw_chatbook/DB/recovery_core.py": "e2a981aaab27115e2ab22ac9a407e8986cc3e6c0a67af82a65d35d550baeb258",
+        "tldw_chatbook/DB/recovery_core_schema.py": "8ac92dd4264b33c75d57cbd7e27733761cd1e50701c33fe6623375405f3d998d",
+        "tldw_chatbook/DB/sql_validation.py": "2a502590681089586df7b44ebe3b18ae1b803b0fed1236161f713bd36d81846a",
+        "tldw_chatbook/UI/Persona_Modules/portrait_composition_generation.py": "93d8b04b775ae754fa8261a086f535cfd9cacdd28c521a1974da2f438a4b10a0",
+        "tldw_chatbook/UI/Persona_Modules/portrait_performance.py": "f15e8a2dbcdcc38c5ee519d4015160526f827a8c0e25d4296a39cbe7754e0997",
+        "tldw_chatbook/UI/Persona_Modules/portrait_regions.py": "7403a6c9b910b07ef4abe1fd6651b57feb05fbd8c8a6cce4502bd037cd08140e",
+        "tldw_chatbook/Utils/mosaic_render.py": "b87f203cd3d3da47c6d5b4b225c7399e8d4eb5853de5d5bbb2bd8294bacf6293",
+        "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py": "d58102100d587d01ef8a1d854124677166d627a0b918da34991555ecd922e6ad",
+        "tldw_chatbook/Widgets/Persona_Widgets/portrait_performance_editor.py": "d868d2519b957f629caadbe1a9cc5bb30eaa8e587a86e2ad1e1d848d054e5632",
+        "tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py": "43bee9455dd34b4af7284103e941dc6de5984f0c8f30691e24acaacce73f9e7b",
+        "tldw_chatbook/css/widget_defaults_self.tcss": "bae8c6215954ae276e63011e7075a4690265d67b10f30f04b437f60c8404fdc1"
+      },
+      "v83_sql_packaged": true
+    },
+    "native-restored-edit": {
+      "wheel": "tldw_chatbook-0.2.3-py3-none-any.whl",
+      "wheel_sha256": "0b0b7076a7ba773837dacae068f47a9a59754e9ca320269e151dd3f74d0bfc55",
+      "installed_files": 3226,
+      "verified_production_files": {
+        "tldw_chatbook/Character_Chat/expression_generation.py": "daf2d4f0a6a5d1ee1464642b8114d285045eecd81e2152f32ab0175bb7f45a25",
+        "tldw_chatbook/Character_Chat/portrait_compositing.py": "7233dd53ba2df3d06b86d269626ffa03c6f90f99b597fb024946d8973577f9c2",
+        "tldw_chatbook/Character_Chat/portrait_performance.py": "a794dbfd9ad2b8d643152d4ebe279f646c44ef9f68c4f0950738441401390dcd",
+        "tldw_chatbook/Character_Chat/portrait_performance_authoring.py": "82df90f4d8ee8898427526d560ab13d69338713aba2960380ecd92a979ddba2b",
+        "tldw_chatbook/DB/ChaChaNotes_DB.py": "d227ca64f7a64bbb84457f01da35aa163743b6548b4f9e29e1681cdfd8b02e3e",
+        "tldw_chatbook/DB/migrations/chachanotes_v82_to_v83_portrait_regions.sql": "d14cc8659526c656df2fd8117c2ed20f8c65dad47990909944bd30a29e24e1d5",
+        "tldw_chatbook/DB/portrait_region_settings.py": "8543b2cd5cc9a29c36f5e2781aa1426897fb3e4ac7f699492d4a0fa5cccdac13",
+        "tldw_chatbook/DB/recovery_core.py": "e2a981aaab27115e2ab22ac9a407e8986cc3e6c0a67af82a65d35d550baeb258",
+        "tldw_chatbook/DB/recovery_core_schema.py": "8ac92dd4264b33c75d57cbd7e27733761cd1e50701c33fe6623375405f3d998d",
+        "tldw_chatbook/DB/sql_validation.py": "2a502590681089586df7b44ebe3b18ae1b803b0fed1236161f713bd36d81846a",
+        "tldw_chatbook/UI/Persona_Modules/portrait_composition_generation.py": "93d8b04b775ae754fa8261a086f535cfd9cacdd28c521a1974da2f438a4b10a0",
+        "tldw_chatbook/UI/Persona_Modules/portrait_performance.py": "f15e8a2dbcdcc38c5ee519d4015160526f827a8c0e25d4296a39cbe7754e0997",
+        "tldw_chatbook/UI/Persona_Modules/portrait_regions.py": "7403a6c9b910b07ef4abe1fd6651b57feb05fbd8c8a6cce4502bd037cd08140e",
+        "tldw_chatbook/Utils/mosaic_render.py": "b87f203cd3d3da47c6d5b4b225c7399e8d4eb5853de5d5bbb2bd8294bacf6293",
+        "tldw_chatbook/Widgets/Persona_Widgets/portrait_composition_review.py": "d58102100d587d01ef8a1d854124677166d627a0b918da34991555ecd922e6ad",
+        "tldw_chatbook/Widgets/Persona_Widgets/portrait_performance_editor.py": "d868d2519b957f629caadbe1a9cc5bb30eaa8e587a86e2ad1e1d848d054e5632",
+        "tldw_chatbook/Widgets/Persona_Widgets/portrait_region_editor.py": "43bee9455dd34b4af7284103e941dc6de5984f0c8f30691e24acaacce73f9e7b",
+        "tldw_chatbook/css/widget_defaults_self.tcss": "bae8c6215954ae276e63011e7075a4690265d67b10f30f04b437f60c8404fdc1"
+      },
+      "v83_sql_packaged": true
+    }
+  }
+}

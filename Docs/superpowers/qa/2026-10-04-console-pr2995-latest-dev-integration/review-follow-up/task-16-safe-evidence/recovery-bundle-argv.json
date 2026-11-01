@@ -1,0 +1,14 @@
+{
+  "HEAD": "6cd44c72ffef6d19fca21eab3a05bdcade7c1811",
+  "argv": [
+    "git",
+    "bundle",
+    "create",
+    "/private/tmp/pr2995-task16-recovery-6cd44c72.bundle",
+    "refs/recovery/pr2995-task16-6cd44c72",
+    "^49206beea90d35ea9e6842ffa44e4b274db29d8a"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "environment_overrides": {},
+  "source_sha256": {}
+}

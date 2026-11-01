@@ -65,9 +65,7 @@ def test_a_binding_exists_for_the_inspect_rail():
 def test_a_binding_exists_for_the_context_rail():
     """TASK-32320: the Context rail gets the keyboard dignity alt+i gave
     the Inspector."""
-    assert "alt+c" in _binding_keys(), (
-        "no Binding opens or closes the Context rail"
-    )
+    assert "alt+c" in _binding_keys(), "no Binding opens or closes the Context rail"
 
 
 def test_the_context_shortcut_is_advertised():
@@ -313,7 +311,8 @@ def test_the_inspect_route_is_in_the_f1_reference_not_only_the_footer():
     assert any(key == "Alt+I" for key, _ in CONSOLE_WORKBENCH_SHORTCUTS)
 
     panes = next(
-        entries for title, entries in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        entries
+        for title, entries in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
         if title == "Panes"
     )
     inspect = [entry for entry in panes if entry[0] == "Alt+I"]
@@ -342,7 +341,8 @@ def test_the_approval_route_is_in_the_f1_reference_not_only_the_footer():
     assert any(key == "Alt+A" for key, _ in CONSOLE_WORKBENCH_SHORTCUTS)
 
     panes = next(
-        entries for title, entries in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
+        entries
+        for title, entries in CONSOLE_WORKBENCH_SHORTCUT_GROUPS
         if title == "Panes"
     )
     approval = [entry for entry in panes if entry[0] == "Alt+A"]

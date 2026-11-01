@@ -41,6 +41,8 @@ SNAPSHOT_FILES = {
     "ui-ready-census": "ui_ready_modules.txt",
     "boot-css-bytes": "boot_css_bytes.json",
     "preimport-payload": "preimport_payload.json",
+    # TASK-33620.15.13: the pass's first-send warm-up, its own row.
+    "first-send-warmup": "first_send_warmup.json",
 }
 
 

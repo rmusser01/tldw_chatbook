@@ -87,8 +87,6 @@ def save_region_layout(layout: RegionLayout) -> bool:
         The configuration writer's Boolean result, or ``False`` if it raises.
     """
     values = [
-        region.value
-        for region in COLLAPSIBLE_REGIONS
-        if region in layout.collapsed
+        region.value for region in COLLAPSIBLE_REGIONS if region in layout.collapsed
     ]
     return _write_values(values)

@@ -53,7 +53,9 @@ def _make_briefing(db: SubscriptionsDB, watchlist_id: int, *, created_at: str) -
     return briefing_id
 
 
-def _make_script(db: SubscriptionsDB, briefing_id: int, *, preset_name: str = "p") -> int:
+def _make_script(
+    db: SubscriptionsDB, briefing_id: int, *, preset_name: str = "p"
+) -> int:
     return db.insert_briefing_script(
         briefing_id, preset_id=None, preset_name=preset_name, roster_snapshot_json="[]"
     )
@@ -68,7 +70,9 @@ def _make_complete_audio(
     turn_count: int = 4,
 ) -> int:
     """Create a `briefing_audio` row that qualifies as a playable episode."""
-    audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]", status="complete")
+    audio_id = db.create_briefing_audio(
+        script_id, voice_snapshot_json="[]", status="complete"
+    )
     db.update_briefing_audio(
         audio_id,
         file_path=file_path,
@@ -127,8 +131,12 @@ def test_orders_by_briefings_created_at_not_audio_created_at():
     db = SubscriptionsDB(":memory:", "test")
     watchlist_id = _make_watchlist(db)
 
-    newer_briefing_id = _make_briefing(db, watchlist_id, created_at="2026-01-02 00:00:00")
-    older_briefing_id = _make_briefing(db, watchlist_id, created_at="2026-01-01 00:00:00")
+    newer_briefing_id = _make_briefing(
+        db, watchlist_id, created_at="2026-01-02 00:00:00"
+    )
+    older_briefing_id = _make_briefing(
+        db, watchlist_id, created_at="2026-01-01 00:00:00"
+    )
 
     newer_briefing_script = _make_script(db, newer_briefing_id)
     newer_briefing_audio = _make_complete_audio(db, newer_briefing_script)
@@ -141,7 +149,10 @@ def test_orders_by_briefings_created_at_not_audio_created_at():
 
     result = db.list_watchlist_audio_episodes(watchlist_id)
 
-    assert [row["audio_id"] for row in result] == [newer_briefing_audio, older_briefing_audio]
+    assert [row["audio_id"] for row in result] == [
+        newer_briefing_audio,
+        older_briefing_audio,
+    ]
 
 
 def test_tiebreaks_same_briefing_multiple_audio_by_audio_id_desc():
@@ -175,7 +186,9 @@ def test_excludes_a_non_complete_audio_row_even_with_a_file_path():
     briefing_id = _make_briefing(db, watchlist_id, created_at="2026-01-01 00:00:00")
     script_id = _make_script(db, briefing_id)
 
-    failed_audio = db.create_briefing_audio(script_id, voice_snapshot_json="[]", status="failed")
+    failed_audio = db.create_briefing_audio(
+        script_id, voice_snapshot_json="[]", status="failed"
+    )
     db.update_briefing_audio(failed_audio, file_path="/tmp/failed.mp3")
 
     assert db.list_watchlist_audio_episodes(watchlist_id) == []
@@ -332,7 +345,11 @@ def test_row_shape_carries_every_documented_alias_with_correct_values():
     )
     script_id = _make_script(db, briefing_id, preset_name="Two Host Debate")
     audio_id = _make_complete_audio(
-        db, script_id, file_path="/tmp/episode.mp3", duration_seconds=321.5, turn_count=9
+        db,
+        script_id,
+        file_path="/tmp/episode.mp3",
+        duration_seconds=321.5,
+        turn_count=9,
     )
 
     result = db.list_watchlist_audio_episodes(watchlist_id)

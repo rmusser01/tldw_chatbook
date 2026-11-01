@@ -261,9 +261,7 @@ async def test_local_first_sync_service_injects_notes_organization_repository(
     state = _repo_with_profile(
         tmp_path, capabilities={"supported_domains": ["notes.keyword"]}
     )
-    notes_db = CharactersRAGDB(
-        tmp_path / "notes.sqlite", client_id="local-first-tests"
-    )
+    notes_db = CharactersRAGDB(tmp_path / "notes.sqlite", client_id="local-first-tests")
     try:
         service = LocalFirstSyncService(
             server_service=FakeLocalFirstServer(
@@ -285,9 +283,11 @@ async def test_local_first_sync_service_injects_notes_organization_repository(
         )
 
         assert result["applied_envelopes"] == 1
-        row = notes_db.get_connection().execute(
-            "SELECT keyword FROM keywords WHERE sync_id = ?", (object_id,)
-        ).fetchone()
+        row = (
+            notes_db.get_connection()
+            .execute("SELECT keyword FROM keywords WHERE sync_id = ?", (object_id,))
+            .fetchone()
+        )
         assert row["keyword"] == "Research"
     finally:
         notes_db.close_connection()
@@ -411,19 +411,29 @@ async def test_organization_sync_scopes_heads_and_reviews_by_runtime_profile(
             domains=["notes.keyword"],
         )
 
-        assert result["conflicts"][0]["conflict_type"] == "local_representation_collision"
-        heads = notes_db.get_connection().execute(
-            "SELECT server_profile_id, object_id FROM notes_organization_heads "
-            "ORDER BY server_profile_id"
-        ).fetchall()
+        assert (
+            result["conflicts"][0]["conflict_type"] == "local_representation_collision"
+        )
+        heads = (
+            notes_db.get_connection()
+            .execute(
+                "SELECT server_profile_id, object_id FROM notes_organization_heads "
+                "ORDER BY server_profile_id"
+            )
+            .fetchall()
+        )
         assert [tuple(row) for row in heads] == [
             ("server-a", first_id),
             ("server-b", first_id),
         ]
-        reviews = notes_db.get_connection().execute(
-            "SELECT server_profile_id, remote_object_id "
-            "FROM notes_organization_adoption_reviews"
-        ).fetchall()
+        reviews = (
+            notes_db.get_connection()
+            .execute(
+                "SELECT server_profile_id, remote_object_id "
+                "FROM notes_organization_adoption_reviews"
+            )
+            .fetchall()
+        )
         assert [tuple(row) for row in reviews] == [("server-b", second_id)]
     finally:
         notes_db.close_connection()
@@ -2299,9 +2309,7 @@ async def test_local_first_personal_context_sync_fails_closed_without_compositio
         dataset_keys={"dataset-1": dataset_key},
     )
 
-    with pytest.raises(
-        ValueError, match="personal_context_sync_transport_unavailable"
-    ):
+    with pytest.raises(ValueError, match="personal_context_sync_transport_unavailable"):
         await service.sync_once(
             server_profile_id="server-a",
             authenticated_principal_id="user-a",

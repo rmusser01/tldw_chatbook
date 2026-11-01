@@ -9,10 +9,12 @@ media library before ranking by lexical topic overlap.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import re
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import wraps
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -45,12 +47,22 @@ class Candidate:
         url: Source URL (original, un-normalized).
         snippet: Search-result snippet, or a watchlist item's leading content.
         source: Which pool produced it: ``'web'`` or ``'watchlist'``.
+        query: The search query that surfaced it, verbatim; ``""`` for a
+            watchlist item (no query found it). This is the candidate's
+            provenance: the story written from it records this query, and
+            through it the goal the query was written for, exactly --
+            never a guess by word overlap.
+        goal: The goal ``query`` was written for, or ``None``. Stamped by
+            the cycle (which knows the query rows); it rides the
+            candidate so that merging duplicate URLs can keep it.
     """
 
     title: str
     url: str
     snippet: str
     source: str  # 'web' | 'watchlist'
+    query: str = ""
+    goal: str | None = None
 
 
 #: Query parameters that only track the click, never identify the page.
@@ -120,6 +132,43 @@ def _extract_results(payload: Any) -> list[dict]:
     return out
 
 
+class InvocationSuppressed(RuntimeError):
+    """An admitted callback lost authority before its actual invocation."""
+
+
+def guard_invocation(
+    function: Callable[..., Any], allowed: Callable[[], bool], *,
+    async_allowed: Callable[[], Awaitable[bool]] | None = None,
+) -> Callable[..., Any]:
+    """Recheck at the callable body, after executor queueing and other waits."""
+    async def permitted_async():
+        return await async_allowed() if async_allowed is not None else allowed()
+
+    if inspect.iscoroutinefunction(function):
+        @wraps(function)
+        async def guarded_async(*args, **kwargs):
+            if not await permitted_async():
+                raise InvocationSuppressed("dreams invocation no longer authorized")
+            return await function(*args, **kwargs)
+        return guarded_async
+
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        if not allowed():
+            raise InvocationSuppressed("dreams invocation no longer authorized")
+        result = function(*args, **kwargs)
+        if inspect.isawaitable(result):
+            async def await_current():
+                if not await permitted_async():
+                    if inspect.iscoroutine(result):
+                        result.close()
+                    raise InvocationSuppressed("dreams invocation no longer authorized")
+                return await result
+            return await_current()
+        return result
+    return guarded
+
+
 async def run_queries(
     perform: Callable[..., Any],
     *,
@@ -127,8 +176,9 @@ async def run_queries(
     queries: list[str],
     result_count: int = 8,
     date_range: str | None = "m",
+    before_each: Callable[[], Awaitable[bool]] | None = None,
 ) -> tuple[list[Candidate], int]:
-    """Run every query through the injected ``perform_websearch`` seam.
+    """Run the queries, in order, through the injected ``perform_websearch`` seam.
 
     Each search is blocking network I/O, so it runs under
     ``asyncio.to_thread`` (repo-global constraint) — never on the event
@@ -144,14 +194,24 @@ async def run_queries(
         result_count: Results to request per query.
         date_range: Recency filter passed through (``'m'``, ``'w'``,
             ``'y'``, or ``None`` for no filter).
+        before_each: Awaited before EACH query; a falsy answer ends the
+            batch there. This is where a caller decides, one search at a
+            time, whether the next may go out — the cycle reads the master
+            switch and takes one daily-budget slot in it (review of #2921,
+            round 3, item 2) — so nothing is committed for a search that
+            is never sent.
 
     Returns:
-        ``(candidates, searches_used)`` — flattened non-error candidates
-        in query order, and the number of searches attempted
-        (``len(queries)``).
+        ``(candidates, searches_sent)`` — flattened non-error candidates
+        in query order, each carrying the ``query`` that surfaced it, and
+        the number of searches actually attempted: ``len(queries)`` unless
+        ``before_each`` ended the batch early.
     """
     candidates: list[Candidate] = []
+    sent = 0
     for query in queries:
+        if before_each is not None and not await before_each():
+            break
         try:
             payload = await asyncio.to_thread(
                 perform, engine, query,
@@ -161,17 +221,21 @@ async def run_queries(
                 result_count=result_count,
                 date_range=date_range,
             )
+        except InvocationSuppressed:
+            break
         except Exception as exc:  # noqa: BLE001 - one dead engine is degradation
+            sent += 1
             # Type name only: the query is built from the user's interest
             # profile (notes keywords, Personal Context), never logged.
             logger.warning("Dreams search failed: {}", type(exc).__name__)
             continue
+        sent += 1
         for item in _extract_results(payload):
             candidates.append(Candidate(
                 title=item["title"], url=item["url"], snippet=item["snippet"],
-                source="web",
+                source="web", query=query,
             ))
-    return candidates, len(queries)
+    return candidates, sent
 
 
 def fetch_watchlist_candidates(
@@ -270,9 +334,14 @@ def dedupe_and_rank(
     (host case-folded, tracking parameters dropped, trailing slash stripped) for both the
     seen/library membership checks and exact-duplicate detection; the
     surviving candidate keeps its original URL verbatim and the FIRST
-    occurrence wins. Ranking is lexical topic overlap (see
+    occurrence wins -- except that a goal is never lost in the merge: when
+    the first occurrence names no goal and a later one does, the survivor
+    takes that occurrence's goal and query. Ranking is lexical topic
+    overlap (see
     ``_overlap_score``) over title + snippet; ties keep original order
-    (stable sort), so zero-overlap pools fall back to arrival order.
+    (stable sort), so zero-overlap pools fall back to arrival order. With at
+    least two selected candidates, one place goes to the highest-ranked goal
+    result if topic ranking would otherwise exclude every goal result.
 
     Args:
         candidates: Both pools' candidates, web and watchlist interleaved.
@@ -287,16 +356,32 @@ def dedupe_and_rank(
     excluded = {normalize_url(u) for u in seen_urls}
     excluded |= {normalize_url(u) for u in library_urls}
     kept: list[Candidate] = []
-    seen_keys: set[str] = set()
+    kept_at: dict[str, int] = {}
     for cand in candidates:
         key = normalize_url(cand.url)
-        if key in excluded or key in seen_keys:
+        if key in excluded:
             continue
-        seen_keys.add(key)
-        kept.append(cand)
+        first = kept_at.get(key)
+        if first is None:
+            kept_at[key] = len(kept)
+            kept.append(cand)
+        elif cand.goal and not kept[first].goal:
+            # The same page, found again by a goal's query (review of
+            # #2921, round 3, N2): the survivor keeps its place and URL
+            # and gains that goal -- with the query that goes with it, so
+            # the story's query and goal stay one consistent provenance.
+            kept[first] = replace(
+                kept[first], goal=cand.goal, query=cand.query)
     scored = [
         (_overlap_score(f"{cand.title} {cand.snippet}".lower(), topics), index, cand)
         for index, cand in enumerate(kept)
     ]
     scored.sort(key=lambda entry: (-entry[0], entry[1]))
-    return [cand for _, _, cand in scored[:limit]]
+    selected = [cand for _, _, cand in scored[:limit]]
+    if len(selected) >= 2 and not any(cand.goal for cand in selected):
+        # A goal's own query can have no topic overlap. Keep one opportunity
+        # without changing weights, the other topic choices or the budget.
+        goal_candidate = next((cand for _, _, cand in scored if cand.goal), None)
+        if goal_candidate is not None:
+            selected[-1] = goal_candidate
+    return selected

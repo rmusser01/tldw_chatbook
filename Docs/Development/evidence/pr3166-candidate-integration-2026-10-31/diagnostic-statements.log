@@ -1,0 +1,41 @@
+tldw_chatbook/Chat/console_runtime.py: 41 -> 42 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 1
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + debug b27dc3b5130ab96b (now line 1723)
+      | logger.debug(
+      |     "Console terminal-attention query failed (exception_type={})",
+      |     type(exc).__name__,
+      | )
+
+tldw_chatbook/UI/Console_Modules/workspace.py: 54 -> 55 diagnostic call(s)
+  moved/re-indented only: 0   removed: 1   added: 2
+
+- REMOVED -- these statements no longer exist:
+  - debug 196269600ac2d6e6 (was line 5894)
+      | logger.opt(exception=True).debug(
+      |     "Unable to read active workspace during Console resume reconcile"
+      | )
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + debug 3243f564506e3fec (now line 5952)
+      | logger.debug(
+      |     "Unable to read active workspace during Console resume reconcile"
+      | )
+  + debug 3243f564506e3fec (now line 6029)
+      | logger.debug(
+      |     "Unable to read active workspace during Console resume reconcile"
+      | )
+
+tldw_chatbook/UI/Screens/chat_screen.py: 117 -> 118 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 1
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning 6266e02fd89db16d (now line 16904)
+      | logger.warning("Console effective-memory presentation selection failed")
+
+tldw_chatbook/app_service_wiring.py: 24 -> 24 diagnostic call(s)
+  moved/re-indented only: 1   removed: 0   added: 0
+
+= moved or re-indented -- statement text is unchanged, NO review needed:
+  = error 61df6b7873b587bc -> 90aa92849eac3e82  (line 1096 -> 1105)

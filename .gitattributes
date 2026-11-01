@@ -1,5 +1,8 @@
 tldw_chatbook/Backup_Recovery/age_worker.py text eol=lf
 
+# Native build provenance hashes this patch's exact bytes on Windows too.
+Packaging/windows/portable/wezterm/portable-roots.patch text eol=lf whitespace=-blank-at-eol
+
 # Canvas manifests verify these exact packaged bytes across platforms.
 tldw_chatbook/Canvas/static/MERMAID_THIRD_PARTY_LICENSES.txt -text
 tldw_chatbook/Canvas/static/THIRD_PARTY_LICENSES.txt -text
@@ -11,6 +14,12 @@ tldw_chatbook/Canvas/static/mermaid-runtime-manifest.json -text
 tldw_chatbook/Canvas/static/mermaid-subset.json -text
 tldw_chatbook/Canvas/static/quickjs-runtime.js -text
 tldw_chatbook/Canvas/static/runtime-manifest.json -text
+tldw_chatbook/Canvas/static/canvas_shell.js -text
+tldw_chatbook/Canvas/static/canvas_shell.css -text
+tldw_chatbook/Canvas/static/canvas_shell.html -text
+
+# Original build inputs have manifest-pinned bytes on every checkout platform.
+vendor/canvas-mermaid-inputs/** -text
 
 # Built-in skills are SHA-256 pinned (Skills_Interop/builtin_skills.py); a CRLF
 # checkout would block them as builtin_modified.

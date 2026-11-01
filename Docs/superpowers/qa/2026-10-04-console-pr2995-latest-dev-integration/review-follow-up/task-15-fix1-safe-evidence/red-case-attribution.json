@@ -1,0 +1,71 @@
+{
+  "cases": [
+    {
+      "id": "Tests.DB.test_automatic_chat_starts::test_restriction_identity_is_captured_for_aliases_and_memory_peers[False]",
+      "result": "failed",
+      "message": "tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_restriction_identity_is_c0/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]"
+    },
+    {
+      "id": "Tests.DB.test_automatic_chat_starts::test_restriction_identity_is_captured_for_aliases_and_memory_peers[True]",
+      "result": "passed",
+      "message": null
+    },
+    {
+      "id": "Tests.DB.test_automatic_chat_starts::test_initial_restriction_identity_failure_refuses_automatic_authority",
+      "result": "failed",
+      "message": "Failed: DID NOT RAISE <class 'OSError'>"
+    },
+    {
+      "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-canonical_resolution]",
+      "result": "failed",
+      "message": "tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a0/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]"
+    },
+    {
+      "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-persistent_registration]",
+      "result": "failed",
+      "message": "tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a1/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]"
+    },
+    {
+      "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-canonical_resolution]",
+      "result": "failed",
+      "message": "tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a2/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]"
+    },
+    {
+      "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-persistent_registration]",
+      "result": "failed",
+      "message": "tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a3/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]"
+    },
+    {
+      "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-canonical_resolution]",
+      "result": "failed",
+      "message": "tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a4/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]"
+    },
+    {
+      "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-persistent_registration]",
+      "result": "failed",
+      "message": "tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a5/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]"
+    },
+    {
+      "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-canonical_resolution]",
+      "result": "failed",
+      "message": "tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a6/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]"
+    },
+    {
+      "id": "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-persistent_registration]",
+      "result": "failed",
+      "message": "tldw_chatbook.Utils.private_paths.PrivatePathError: link_or_non_regular: NotADirectoryError [/private/tmp/pr2995-task15-fix1/red/test_persistent_registration_a7/alias (mode lrwxr-xr-x (0o755), owner macbook-dev (uid=501), group wheel (gid=0))]"
+    }
+  ],
+  "setup_failures": [
+    "Tests.DB.test_automatic_chat_starts::test_restriction_identity_is_captured_for_aliases_and_memory_peers[False]",
+    "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-canonical_resolution]",
+    "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-persistent_registration]",
+    "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-canonical_resolution]",
+    "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-persistent_registration]",
+    "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-canonical_resolution]",
+    "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-persistent_registration]",
+    "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-canonical_resolution]",
+    "Tests.Chat.test_console_chat_start::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-persistent_registration]"
+  ],
+  "setup_cause": "Symlink alias is prohibited by existing private-path guard; corrected to existing directory/../database alias pattern. No authority or guard changes."
+}

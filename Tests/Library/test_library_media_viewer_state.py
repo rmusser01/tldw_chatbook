@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from tldw_chatbook.Library.library_media_viewer_state import (
     MAX_MARKDOWN_SNIFF_CHARS,
     MAX_MARKDOWN_SNIFF_LINES,
@@ -918,3 +920,55 @@ def test_info_keywords_line_drops_a_lone_half_flag_but_keeps_whole_pairs():
         line for line in odd.metadata_lines if line.startswith("Keywords: ")
     )
     assert odd_line == "Keywords: " + jp, odd_line
+
+
+# ---------------------------------------------------------------------------
+# TASK-34000.22: the two dirty predicates every Media-form exit reads
+# ---------------------------------------------------------------------------
+
+
+def test_media_edit_form_dirty_is_false_for_no_draft_or_an_untouched_one():
+    from tldw_chatbook.Library.library_media_viewer_state import media_edit_form_dirty
+
+    baseline = {"title": "T", "author": "A", "url": "u", "keywords": "k1, k2"}
+
+    assert media_edit_form_dirty(None, baseline) is False
+    assert media_edit_form_dirty(dict(baseline), baseline) is False
+    # A draft seeded from an EMPTY baseline (a new item with no fields) is
+    # clean too.
+    assert media_edit_form_dirty({}, {}) is False
+
+
+@pytest.mark.parametrize("key", ["title", "author", "url", "keywords"])
+def test_media_edit_form_dirty_is_true_for_a_one_character_change_in_any_key(key):
+    from tldw_chatbook.Library.library_media_viewer_state import media_edit_form_dirty
+
+    baseline = {"title": "T", "author": "A", "url": "u", "keywords": "k1, k2"}
+    draft = dict(baseline)
+    draft[key] = baseline[key] + "!"
+
+    assert media_edit_form_dirty(draft, baseline) is True
+
+
+def test_media_edit_form_dirty_compares_raw_strings_without_stripping():
+    """ADR-027: persistence never strips; neither does the predicate, so a
+    trailing space the user typed is a change the exit must not drop."""
+    from tldw_chatbook.Library.library_media_viewer_state import media_edit_form_dirty
+
+    baseline = {"title": "T", "author": "A", "url": "u", "keywords": "k"}
+    draft = dict(baseline, title="T ")
+
+    assert media_edit_form_dirty(draft, baseline) is True
+
+
+def test_media_analysis_dirty_tracks_the_text_back_to_the_baseline():
+    from tldw_chatbook.Library.library_media_viewer_state import media_analysis_dirty
+
+    assert media_analysis_dirty(None, "") is False
+    assert media_analysis_dirty("", "") is False
+    assert media_analysis_dirty("Saved", "Saved") is False
+    assert media_analysis_dirty("K", "") is True
+    assert media_analysis_dirty("Saved!", "Saved") is True
+    # Typed, then deleted back to the baseline: clean again.
+    assert media_analysis_dirty("Saved", "Saved") is False
+    assert media_analysis_dirty("Saved ", "Saved") is True

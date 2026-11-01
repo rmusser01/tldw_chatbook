@@ -8,9 +8,15 @@
   <title>__CHATBOOK_TITLE__</title>
   <link rel="stylesheet" href="/static/css/xterm.css">
   <link rel="stylesheet" href="/static/chatbook/served-shell.css">
-  <script src="/static/js/chatbook-auth.js"></script>
+  <style>
+    /* Phone-companion discovery (ADR-234): the link is offered only on
+       narrow viewports via CSS, never via User-Agent sniffing. */
+    .phone-view-link { display: none; }
+    @media (max-width: 720px) { .phone-view-link { display: inline; } }
+  </style>
+  <script src="/static/js/chatbook-auth.js?v=__AUTH_JS_VERSION__"></script>
   <script src="/static/js/textual.js?v=__TEXTUAL_JS_VERSION__"></script>
-  <script src="/static/chatbook/served-shell.js" defer></script>
+  <script src="/static/chatbook/served-shell.js?v=__SHELL_JS_VERSION__" defer></script>
 </head>
 <body>
   <main id="served-workbench" class="served-workbench terminal-only">
@@ -21,6 +27,7 @@
         <span id="served-canvas-state" role="status" aria-live="polite">Terminal only</span>
       </div>
       <div class="served-actions">
+        <a class="phone-view-link" href="/m">Phone view</a>
         <button id="served-open-canvas" type="button" hidden>Open Canvas</button>
         <button id="served-close-canvas" type="button" hidden>Hide Canvas</button>
       </div>
@@ -40,6 +47,7 @@
       </div>
       <div
         id="terminal"
+        data-terminal-id="__TERMINAL_PAGE_ID__"
         class="textual-terminal"
         data-session-websocket-url="__APP_WEBSOCKET_URL__"
         data-font-size="__FONT_SIZE__"

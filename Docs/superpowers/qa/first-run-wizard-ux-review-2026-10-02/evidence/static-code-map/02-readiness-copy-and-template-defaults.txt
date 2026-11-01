@@ -1,0 +1,44 @@
+# Readiness copy the Provider step surfaces + fresh-template defaults the wizard reads
+# Generated Fri Oct  2 19:49:08 PDT 2026 against 2d34cbf80d, isolated HOME/TLDW_CONFIG_PATH, empty environment (no *_API_KEY).
+## ProviderStep.commit() refusal = "API key required. " + readiness.recovery (FirstRunSetupWizard.py:3262-3263), then _advance appends "  Retry with Next, or go Back." (9874)
+openai        ready=False requires_key=True  recovery='Set OPENAI_API_KEY or add api_key under [api_settings.openai].'
+   -> pinned refusal text: 'API key required. Set OPENAI_API_KEY or add api_key under [api_settings.openai].  Retry with Next, or go Back.'
+anthropic     ready=False requires_key=True  recovery='Set ANTHROPIC_API_KEY or add api_key under [api_settings.anthropic].'
+   -> pinned refusal text: 'API key required. Set ANTHROPIC_API_KEY or add api_key under [api_settings.anthropic].  Retry with Next, or go Back.'
+azure         ready=False requires_key=True  recovery='Set AZURE_OPENAI_API_KEY or add api_key under [api_settings.azure].'
+   -> pinned refusal text: 'API key required. Set AZURE_OPENAI_API_KEY or add api_key under [api_settings.azure].  Retry with Next, or go Back.'
+google        ready=False requires_key=True  recovery='Set GOOGLE_API_KEY or add api_key under [api_settings.google].'
+   -> pinned refusal text: 'API key required. Set GOOGLE_API_KEY or add api_key under [api_settings.google].  Retry with Next, or go Back.'
+openrouter    ready=False requires_key=True  recovery='Set OPENROUTER_API_KEY or add api_key under [api_settings.openrouter].'
+   -> pinned refusal text: 'API key required. Set OPENROUTER_API_KEY or add api_key under [api_settings.openrouter].  Retry with Next, or go Back.'
+ollama        ready=True  requires_key=False recovery=None
+llama_cpp     ready=True  requires_key=False recovery=None
+local_mlx_lm  ready=True  requires_key=False recovery=None
+custom        ready=True  requires_key=False recovery=None
+
+## Fresh-template values the wizard treats as prefill
+should_offer_wizard(fresh, {}): True
+chat_defaults.provider/model: OpenAI / gpt-5.6-terra
+rerun_model_prefill(cfg, provider_value="openai") on a FIRST run: 'gpt-5.6-terra'
+rerun_model_prefill(cfg, provider_value="anthropic"): ''
+embedding_config.models (RAG step radio list, sorted): ['all-MiniLM-L6-v2', 'all-mpnet-base-v2', 'bge-base-en-v1', 'bge-small-en-v1', 'e5-base-v2', 'e5-large-v2', 'e5-small-v2', 'gte-small', 'local-llama-cpp-embeddings', 'multilingual-e5-large-instruct', 'my-local-nomic-model', 'openai-ada-002', 'openai-text-embedding-3-large', 'openai-text-embedding-3-small']
+embedding_config.default_model_id: e5-small-v2
+transcription defaults: {'default_provider': 'parakeet-mlx', 'default_model': 'distil-large-v3', 'default_language': 'en', 'default_source_language': '', 'default_target_language': ''}
+general.default_theme: textual-dark  splash card_selection: random
+tools section: {}
+model_catalog: {'use_models_dev': False, 'auto_refresh_enabled': True, 'refresh_consent_recorded': False, 'stale_after_hours': 24, 'auto_refresh_disabled': [], 'write_to_config': []}
+app_tts in raw template: False
+
+## Summary rows on an untouched fresh config (build_summary_rows, rag deps assumed installed)
+  ✗ Provider — no credentials or saved endpoint
+  – Default model — not selected
+  – RAG — off by default — embedding model e5-small-v2
+  – Speech transcription — not set up (optional)
+  – Voice — not set up (optional)
+  – Tools — all off; turn them on under MCP ▸ Servers ▸ built-in row ▸ Tool gates
+  – Notes folder sync — set up later in Library
+  – Theme — textual-dark
+  – Key encryption — off
+
+## Speech prefill copy on a fresh template (speech_prefill_status)
+'Currently configured: parakeet-mlx — installing or activating here will switch your default to Parakeet v2 (English, INT8).'

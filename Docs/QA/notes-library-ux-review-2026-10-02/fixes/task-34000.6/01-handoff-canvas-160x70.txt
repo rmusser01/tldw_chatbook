@@ -1,0 +1,70 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation        Collapse     ││ Study decks                                                                                                            │ │
+│ │     Import…                    ││ Plan study decks from Library sources.                                                                                 │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ ││ Carries forward: Ideas inbox, Reading list, Thesis outline — retrieval-augmented tutoring and 7 more.                  │ │
+│ │ ▊ Search Library…         ▎▊x▎ ││ This page shows what carries over; generation and review run in Study.                                                 │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ ││ Generating a pack from sources needs a tldw server; you can still make cards by hand in Study.                         │ │
+│ │                                ││    Continue in Study                                                                                                   │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Browse                     ▾   ││                                                                                                                        │ │
+│ │    Media (23) — your files     ││                                                                                                                        │ │
+│ │    Conversations (12)          ││                                                                                                                        │ │
+│ │    Notes (122)                 ││                                                                                                                        │ │
+│ │    Prompts (10) — reuse        ││                                                                                                                        │ │
+│ │    Skills (4) — AI add-ons     ││                                                                                                                        │ │
+│ │    Collections (6)             ││                                                                                                                        │ │
+│ │    Search / RAG — find all     ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Artifacts                  ▾   ││                                                                                                                        │ │
+│ │    All artifacts               ││                                                                                                                        │ │
+│ │    Chatbooks                   ││                                                                                                                        │ │
+│ │    Reports                     ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Create                     ▾   ││                                                                                                                        │ │
+│ │    New note                    ││                                                                                                                        │ │
+│ │    New prompt                  ││                                                                                                                        │ │
+│ │    New skill                   ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Study                      ▾   ││                                                                                                                        │ │
+│ │ █▸ Study decks (0)             ││                                                                                                                        │ │
+│ │    Flashcards due: 0           ││                                                                                                                        │ │
+│ │    Quizzes (0)                 ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Import / Export            ▾   ││                                                                                                                        │ │
+│ │    Import…                     ││                                                                                                                        │ │
+│ │    Export                      ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Details                    ▸   ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ │                                ││                                                                                                                        │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to hub | F1 help · Ctrl+P palette · Ctrl+Q quit

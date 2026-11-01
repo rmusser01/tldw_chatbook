@@ -1,0 +1,19 @@
+{
+  "verified_receipts": [
+    "cadence-combined-trace.json",
+    "cadence-decision-followup.json",
+    "cadence-decision-red.json",
+    "cadence-deterministic-inputs.json",
+    "cadence-original-tail-window.json",
+    "tabs-current-red.json",
+    "tabs-loop-retirement.json",
+    "tabs-native-child-after-close.json",
+    "tabs-native-owner-trace.json",
+    "tabs-setup-state.json",
+    "tokenizer-age-green.json",
+    "tokenizer-age-red.json"
+  ],
+  "patch_hashes_match": true,
+  "final_product_sha256": "b4ede033e4e7f3e1093cee57859afe2d1fcb4283b90b460b1d0bfd70e546a330",
+  "original_tab_blob_unchanged": true
+}

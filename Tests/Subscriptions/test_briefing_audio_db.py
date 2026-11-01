@@ -228,8 +228,7 @@ def test_list_briefing_audio_offset_pages_through_every_row_without_gaps_or_repe
     db = SubscriptionsDB(":memory:", "test")
     script_id = _make_script(db)
     ids = [
-        db.create_briefing_audio(script_id, voice_snapshot_json="[]")
-        for _ in range(7)
+        db.create_briefing_audio(script_id, voice_snapshot_json="[]") for _ in range(7)
     ]
     expected_newest_first = list(reversed(ids))
 

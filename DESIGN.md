@@ -83,6 +83,12 @@ components:
     textColor: "{colors.text-primary}"
     rounded: "{rounded.terminal-tall}"
     padding: "1 2 cells"
+  destination-header-inline:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.none}"
+    padding: "0 1 cell"
+    height: "1 cell"
   panel:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.text-primary}"
@@ -149,7 +155,7 @@ The palette is semantic and restrained: surfaces follow the active terminal them
 - **Application Canvas** (`$background`): root terminal canvas and major unused space.
 - **Panel Surface** (`$panel`): headers, footers, primary panel backgrounds, and stable control surfaces.
 - **Raised Surface** (`$surface`, `$surface-lighten-1`): cards, inputs, collapsible headers, toolbars, and list rows.
-- **Grid Line** (`$surface-lighten-1`, `$surface-lighten-2`): panel borders, dividers, table lines, and structural separators.
+- **Grid Line** (`$tldw-boundary`, 3:1 on surface and panel in every theme): panel borders, dividers, table lines, and structural separators.
 - **Readable Text** (`$text`): default foreground.
 - **Secondary Text** (`$text-muted`): metadata, footer hints, secondary help, and inactive controls.
 - **Disabled Text** (`$text-disabled`): disabled action labels only.
@@ -264,14 +270,24 @@ fields (task-1586):
   carrier — a structural marker separating controls from prose — so
   color is reinforcement, never the sole signal. Quieter than text at
   rest, but at least 3:1 against both surfaces in every theme
-  (TASK-33003.6): `$ds-control-edge` and `$ds-grid-line` resolve to
-  `$tldw-boundary`, which `ensure_readable_text_hues` (themes.py) works out
+  (TASK-33003.6): `$ds-control-edge`, `$ds-grid-line` and `$ds-column-line`
+  resolve to `$tldw-boundary`, which `ensure_readable_text_hues` (themes.py) works out
   per theme, user themes included.
-- **Focus:** the edge flips to `thick $ds-action-focus` and the
+- **Focus:** the edge flips to `thick $ds-active-fg` and the
   background swaps to `$ds-focus-bg` (the task-345 focus surface) with
   bold text. Three concurrent signals: edge weight, background, weight.
-  The Settings category rail uses the same thick edge, in `$ds-active-fg`
-  (3:1 on every row fill). A variant Button (primary, success, warning,
+  `$ds-active-fg` is the house focus-edge colour (the Settings category
+  rail's and the Roleplay list's too). TASK-36479 moved the focus edges
+  drawn with `$ds-action-focus` (`$primary`, under 3:1 on `$surface` in 27
+  of the 89 measurable themes) to it; those edges read at 3:1 against
+  `$surface`, `$panel` and their own rule's fill in every theme.
+  `Tests/UI/test_theme_contrast.py` measures every focus edge the CSS
+  draws, except the 152 still under 3:1 on dev, which are tracked debt:
+  one row each in `Tests/UI/focus_edge_shortfall_on_dev.tsv`, fixed by
+  TASK-36663 (other `$primary`/`$accent` aliases including the `*:focus`
+  fallback and the Input/TextArea focus frames). A Button whose focus
+  rule paints no fill sits on the generic `Button:focus` fill, where
+  `$ds-active-fg` reads 2.33-2.88:1 in four themes (also TASK-36663). A variant Button (primary, success, warning,
   error) keeps its fill on focus; the focus tint would make it darker. A
   default Button's focus fill is `$tldw-focus-fill`: the focus tint where
   that sits at least as far from a `$panel` card as the resting `$surface`
@@ -291,7 +307,7 @@ fields (task-1586):
 - **Persistence badge:** the State bar leads with the category's save
   model in the same position everywhere ("Draft — save with s" /
   "Applies immediately" / "Auto-saved" / "Managed in editor" /
-  "Per-item Save/Reset" / "Validate, then Save" / "Read-only here") —
+  "Per-item Save/Reset" / "Validate, then Save" / "Read-only") —
   five save models coexist on the Settings screen, and the badge is what
   keeps their differing footer keys from reading as inconsistency
   (task-1717). Unsaved edits keep the badge and add the unsaved count
@@ -323,11 +339,19 @@ fields (task-1586):
 - **Default:** `$panel` background and `$text-muted` labels.
 - **Hover:** `$panel-lighten-1` background and `$text`.
 - **Active:** `$accent` background or `$accent` text with bold weight, depending on whether the nav is button-based or link-based.
+- **Top tab bar lines (TASK-33641.1):** the bar paints `$surface` and its separator is `$ds-grid-line`. The active tab keeps its `$primary-darken-1` fill hovered and focused (bold underline carries focus), and its outline is `$tldw-active-edge`, which `ensure_readable_text_hues` (themes.py `ACTIVE_EDGE_VARIABLE`) works out per theme at 3:1 on that fill.
 - **Overflow:** use command palette or explicit compact hints, never hidden mystery navigation.
 
 ### Destination Header
 
 The destination header is a product contract, not decoration. It carries title, one-line purpose, readiness, authority, primary action, and blocked recovery when needed. It uses `$ds-surface-panel`, `border: tall $ds-action-focus`, `padding: 1 2`, and bold text.
+
+**Destination header variants.** A destination may use one of these instead, keyed by its own id or class in its own sheet:
+
+- **Inline one-row header (Lab, Roleplay).** One row with no border and `padding: 0 1` (`destination-header-inline` above), carrying the title and a subtitle; the subtitle stays visible at every terminal height. Readiness may sit beside the destination's primary action in its work pane instead of in the header, and the one-line purpose may live in the destination's navigation. Lab: `.lab-header-inline` (`css/features/_lab.tcss`). Roleplay: `#personas-header.personas-header-inline` (`css/features/_roleplay.tcss`; the Roleplay frame spec of 2026-10-02, §1.3).
+  - *Roleplay's chips.* After the subtitle, Roleplay's row carries optional chips and the authority chip last. Its chips are words, never a dot or a badge: an unsaved chip driven by its one draft predicate (**Unsaved changes**), and a blocked chip that names a destination-wide block and its recovery (**No chat provider · Settings ›**). Chip words take the readable status foregrounds (`$ds-status-warning-readable`, `$ds-status-error-readable`), never the decorative status hues, which fall below AA on the panel in many themes. Its authority chip says where the data lives (**Local**, or **Server: \<label\> · read-only**); it is never a "Ready" badge.
+  - *Lab differs* (as it already did before Roleplay's frame slice B1, which does not change it): its header's status slot is a readiness badge (`ready`, `running` and the vLLM states; `lab_header_state` in `UI/Screens/llm_screen.py`), and its status chips are separate `Static`s placed after the header in `#lab-header-row` (`UI/Screens/lab_frame.py`), cut by CSS `text-overflow: ellipsis`. The Roleplay chip rules above are not Lab's.
+- **Console's one-row header ([ADR-210](backlog/decisions/210-console-region-ownership.md)).** One row carrying the workspace, authority and actions, with no title or purpose line: ADR-210's own exception, written into this section by its migration step 8 (TASK-33627). Whichever of that step and this list lands second rebases onto the other.
 
 ### Recovery Callout
 

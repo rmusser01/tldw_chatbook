@@ -149,7 +149,7 @@ LibraryFileNotesWorkspace TextArea:focus {
  * compact fields and every unrelated TextArea on the shared focused fill. */
 #library-note-body:focus,
 #file-notes-editor:focus {
-    outline: heavy $ds-action-focus;
+    outline: heavy $ds-active-fg;
     background: $ds-surface-raised;
 }
 
@@ -468,7 +468,7 @@ Switch:focus {
 
 .settings-compact-input:focus {
     border: none;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     background: $ds-input-focus-bg;
     color: $ds-text-primary;
     /* No underline: it made placeholder copy read as a link (task-185). */

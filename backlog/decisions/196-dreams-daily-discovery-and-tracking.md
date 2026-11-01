@@ -120,3 +120,92 @@ Two repo-specific forces shaped the decision:
 - **LLM-knowledge-only discovery (kept as fallback only):** cheapest, but
   cannot surface new/timely content and goes generic — kept as the degraded
   mode, not the product.
+
+## Current integration authority amendment (2026-10-12)
+
+Dreams remains schema v6, retaining the author migrations and atomic BEGIN
+IMMEDIATE daily reservation owner. Every external invocation checks the live
+master switch after awaited prerequisites; observing disabled is sticky for that
+operation. Attempted calls retain their reservation. Pending Dreams-owned work
+fails closed if startup suspension or provenance reconciliation is incomplete;
+unrelated scheduler work remains eligible. Guardian-derived topics are admitted
+only under current enabled, non-crisis, feeds_discovery consent, separately from
+independent user/seed/media/note contributions. Generating goal IDs survive ranking
+and feedback; lexical overlap never establishes a goal's provenance.
+
+The production Library artifact owner exposes the existing Dreams story actions
+and goals modal. Collection detail displays existing degradation reasons literally.
+Dreams v6 and Guardian v2 (with retained v1 history) are optional recovery owners with current custom-path
+selection and inert restored automatic behavior, governed by ADR-126. The later
+public DreamsDB quiescent-close outcome remains separate from finite retirement
+of connections acquired by these operations.
+
+
+### Startup dispatch admission (2026-10-12)
+
+The bounded scheduler startup wait controls responsiveness, not authority. Its
+completion, timeout, or failure cannot authorize pending Dreams-owned work. An
+installed per-task dispatch guard stays active until the boot pass has verified
+its persisted suspension/provenance obligations. It holds known Dreams-created
+watchlist jobs and reminders linked by dream_tracked_item; unrelated reminders
+and other scheduler types continue, as do positively classified unrelated
+watchlists. If the ownership read itself is unavailable, watchlist jobs remain
+unclassified and held until a successful read; unknown ownership never grants a
+fetch. This conservative delay is preferable to either globally wedging the
+scheduler or dispatching a disabled private source. Guarded occurrences do not
+advance their schedule or claim a successful run. Native boot-task ownership,
+maintenance admission and both-store execution checks remain in force.
+
+
+### Historical Dreams catalog admission (2026-10-12)
+
+The exact author history has multiple valid catalogs under the same version:
+retained early indexes, SQLite's rewritten table SQL after ALTER/rename, and
+prior version rows retained by INSERT OR IGNORE. Admit only measured full
+catalogs for versions 1–6. Version history must contain positive supported
+integers whose maximum agrees with that catalog; do not erase valid earlier
+markers. Empty/missing/malformed/future/hybrid lineages are refusals, never a
+request to reconstruct missing tables. An actually empty database is the sole
+fresh-initialization case. Existing v6 columns and migration semantics remain;
+no new stored shape is introduced. Preserve all original data and perform
+upgrades atomically. This trades repair of unverifiable partial stores for
+explicit refusal; recovery retains the original bytes for investigation.
+
+
+### Mixed goal/topic collection opportunity (TASK34801)
+
+After URL deduplication/exclusions and existing stable topic-overlap ranking,
+a collection with at least two selected candidates keeps one place for a
+provenance-bearing goal result if topic ranking would otherwise select none.
+Use the highest-ranked eligible goal result for the last slot; preserve the
+other topic choices and all existing goal/query attribution. This does not
+change profile weights, private-goal eligibility, result limits or budgets.
+A one-slot collection keeps the existing ranking because both sources cannot
+be represented simultaneously. Existing selected goal results need no quota
+adjustment. No lexical overlap creates goal attribution.
+
+### Production Library reader (TASK34804 / TASK34815)
+
+Dreams is a Library Artifacts view under the existing ADR-172 reader and its
+profile, presentation and selected-revision fences. The fixed composite gains
+Dreams story and empty-collection namespaces; it does not gain another screen
+or persisted aggregate. Each Dreams namespace returns at most twenty metadata
+candidates with exact rank/count queries in one shared read snapshot. Bodies
+are read only for the selected story. Empty, failed and generating collections
+remain inspectable when they have no stories. Existing collection
+`degradation_notes` appear literally in the reader alongside stored status;
+normal collections add no warning. All artifacts includes these local results
+when Dreams is enabled; Reports and Chatbooks keep their existing owners.
+
+The existing Dreams story and goals modals retain mutation ownership. Library
+revalidates the selected revision before opening story actions, and modal
+getters remain bound to the captured profile/owner. Read workers encompass lazy
+Dreams construction and retire only connections they acquired. No browse action
+runs discovery or grants restored execution authority. No schema change.
+
+The same fixed reader also retains the author's existing Tracked rows as a
+Dreams tracked-item namespace. Status, latest stored verdict and pause reason
+remain readable, and an available origin story supplies the existing story
+actions. Missing origins remain status-only. This is the existing Phase 2
+surface moving with its stories, not a new tracking workflow. It obeys the same
+twenty-candidate, metadata-only page and selected-body contracts above.

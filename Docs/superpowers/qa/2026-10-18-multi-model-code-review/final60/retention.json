@@ -1,0 +1,8 @@
+{
+  "archive_path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/final60-evidence.tar.gz",
+  "archive_sha256": "63f8cbe176bf76614b4553d2c50e6016270c062bab86f04ee6d9471c6acb039b",
+  "archive_bytes": 618351,
+  "file_count": 123,
+  "verified_member_hashes": true,
+  "excluded": "Private home/data profiles and credential files remain only in original retained directories; no raw archive added to PR."
+}

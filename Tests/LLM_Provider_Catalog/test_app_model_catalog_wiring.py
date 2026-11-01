@@ -113,7 +113,12 @@ _DEFAULT_DISK_STORE = object()
 
 
 def _stub(
-    monkeypatch, *, settings=None, report=None, error=None, disk_store=_DEFAULT_DISK_STORE
+    monkeypatch,
+    *,
+    settings=None,
+    report=None,
+    error=None,
+    disk_store=_DEFAULT_DISK_STORE,
 ):
     """Build a stub app + service and pin tldw_chatbook.app.load_settings."""
     if settings is None:
@@ -185,16 +190,12 @@ class _ConsentHost:
 @pytest.mark.asyncio
 async def test_consent_allow_persists_consent_and_schedules_refresh(monkeypatch):
     saved = MagicMock(return_value=True)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, True)
 
-    saved.assert_called_once_with(
-        {"model_catalog": {"refresh_consent_recorded": True}}
-    )
+    saved.assert_called_once_with({"model_catalog": {"refresh_consent_recorded": True}})
     host.run_worker.assert_called_once_with(
         host._refresh_model_catalogs,
         exclusive=True,
@@ -206,9 +207,7 @@ async def test_consent_allow_persists_consent_and_schedules_refresh(monkeypatch)
 @pytest.mark.asyncio
 async def test_consent_deny_persists_disabled_and_skips_refresh(monkeypatch):
     saved = MagicMock(return_value=True)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, False)
@@ -231,9 +230,7 @@ async def test_consent_deny_persists_disabled_and_skips_refresh(monkeypatch):
 async def test_consent_truthy_non_bool_is_treated_as_deny(monkeypatch, junk):
     """Only the boolean True counts as consent, mirroring the parser."""
     saved = MagicMock(return_value=True)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, junk)
@@ -246,9 +243,7 @@ async def test_consent_truthy_non_bool_is_treated_as_deny(monkeypatch, junk):
 @pytest.mark.asyncio
 async def test_consent_allow_still_refreshes_when_persist_fails(monkeypatch):
     saved = MagicMock(return_value=False)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, True)
@@ -411,9 +406,7 @@ async def test_refresh_posts_model_catalog_refreshed_for_refreshed_and_baseline(
     )
     app, _service = _stub(monkeypatch, report=report)
     await TldwCli._refresh_model_catalogs(app)
-    events = [
-        m for m in app.posted_messages if isinstance(m, ModelCatalogRefreshed)
-    ]
+    events = [m for m in app.posted_messages if isinstance(m, ModelCatalogRefreshed)]
     assert len(events) == 1
     assert events[0].providers == frozenset({"OpenAI", "Anthropic"})
 
@@ -526,3 +519,86 @@ def test_disk_store_load_failure_logs_path_without_traceback(tmp_path, monkeypat
     # message, which may carry sensitive details.
     assert "boom-secret" not in text
     assert "Traceback" not in text
+
+
+# ---------------------------------------------------------------------------
+# TASK-34100.5 review (B-F7): the post-setup pass announces only failures
+# ---------------------------------------------------------------------------
+
+
+def _success_report():
+    return RefreshReport(
+        outcomes=(
+            ProviderRefreshOutcome(
+                provider_list_key="OpenAI",
+                status="refreshed",
+                new_model_ids=("gpt-9",),
+            ),
+        )
+    )
+
+
+def _failure_report():
+    return RefreshReport(
+        outcomes=(
+            ProviderRefreshOutcome(
+                provider_list_key="OpenAI", status="failed", error_kind="network"
+            ),
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_pass_setup_released_is_quiet_unless_it_failed(monkeypatch):
+    """Live (g5-v-oai): 'Model lists updated — OpenAI: 124 new cached, ...'
+    showed beside the 'Setup complete' arrival line (AC#11: one first-run
+    notice at a time). The pass that setup's own choice started announces
+    only a failure; the model picker shows the new lists anyway."""
+    app, _service = _stub(monkeypatch, report=_success_report())
+    app._model_catalog_notice_quiet = True
+    await TldwCli._refresh_model_catalogs(app)
+    assert app.notifications == []
+    assert app.posted_messages, "the refresh itself still happened"
+
+    app, _service = _stub(monkeypatch, report=_failure_report())
+    app._model_catalog_notice_quiet = True
+    await TldwCli._refresh_model_catalogs(app)
+    assert [severity for _m, _t, severity in app.notifications] == ["warning"]
+
+
+class _ScheduleHost:
+    def __init__(self) -> None:
+        self.app_config = {"first_run": {"setup_completed": True}}
+        self.run_worker = MagicMock()
+        self.call_after_refresh = MagicMock()
+        self._refresh_model_catalogs = AsyncMock()
+
+    _schedule_startup_model_catalog_refresh = (
+        TldwCli._schedule_startup_model_catalog_refresh
+    )
+
+
+@pytest.mark.parametrize("after_setup", [True, False])
+def test_only_the_pass_setup_released_is_marked_quiet(monkeypatch, after_setup):
+    set_app_global(
+        monkeypatch,
+        "load_settings",
+        lambda: {"model_catalog": {"refresh_consent_recorded": True}},
+    )
+    host = _ScheduleHost()
+    assert host._schedule_startup_model_catalog_refresh(
+        after_setup_completion=after_setup, environ={}
+    )
+    host.run_worker.assert_called_once()
+    assert getattr(host, "_model_catalog_notice_quiet", False) is after_setup
+
+
+def test_the_setup_summary_consent_pass_is_marked_quiet() -> None:
+    """Live (g5-r1-ant): the Summary's 'Keep model lists fresh' consent runs
+    the pass through refresh_model_catalogs_now, not the scheduler -- the
+    toast still showed beside the arrival line. Its only caller is setup."""
+    host = _ScheduleHost()
+    host.refresh_model_catalogs_now = TldwCli.refresh_model_catalogs_now.__get__(host)
+    host.refresh_model_catalogs_now()
+    host.run_worker.assert_called_once()
+    assert host._model_catalog_notice_quiet is True

@@ -1,0 +1,11 @@
+{
+  "path": "Tests\\Workspaces\\test_project_index_service.py",
+  "AST_equivalent_to_green_child_source": true,
+  "command": [
+    "C:/Users/GDesktop-1/Working/Github/tldw_tui/.venv/Scripts/ruff.exe",
+    "format",
+    "Tests\\Workspaces\\test_project_index_service.py",
+    "Tests/DB/test_workspace_project_index_db.py"
+  ],
+  "exit_code": 0
+}

@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import dataclass, field, replace
-from enum import Enum
+from dataclasses import dataclass, field, fields, replace
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping
 from uuid import uuid4
 
@@ -82,6 +82,12 @@ class ConsoleSubmissionOrigin(str, Enum):
     MANUAL = "manual"
     QUEUED = "queued"
     AGENT_WAKE = "agent_wake"
+    AGENT_CHAT_START = "agent_chat_start"
+    GOAL_ITERATION = "goal_iteration"
+
+    @property
+    def automatic(self) -> bool:
+        return self in {self.AGENT_WAKE, self.AGENT_CHAT_START, self.GOAL_ITERATION}
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +110,7 @@ class ConsoleControllerActivity:
     queued_count: int
     queue_paused: bool
     terminal_notification_eligible: bool
+    agent_handoff_status: str = ""
 
     @property
     def has_queued_work(self) -> bool:
@@ -370,6 +377,15 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
 }
 
 
+#: Shared decision-kind keys for pending-round registries and UI copy.
+CONSOLE_PENDING_HOOK_REVIEW_KIND = "hook_review"
+CONSOLE_PENDING_APPROVAL_KIND = "approval"
+CONSOLE_PENDING_QUESTION_KIND = "question"
+CONSOLE_PENDING_SKILL_INSTALL_KIND = "skill_install"
+CONSOLE_PENDING_SKILL_SCRIPT_KIND = "skill_script"
+CONSOLE_PENDING_WORKTREE_MERGE_KIND = "worktree_merge"
+
+
 #: Qodo #4 (task-32345): what the run chip and the turn-activity line say
 #: while an interrupt round is waiting on the user, by round KIND
 #: (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys). Only the two kinds
@@ -381,8 +397,8 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
 #: Sentence-less on purpose: the run chip appends its own full stop, the
 #: activity line appends " · <elapsed>".
 CONSOLE_PENDING_ROUND_COPY: Mapping[str, str] = {
-    "approval": "Waiting for your approval",
-    "question": "Waiting for your answer",
+    CONSOLE_PENDING_APPROVAL_KIND: "Waiting for your approval",
+    CONSOLE_PENDING_QUESTION_KIND: "Waiting for your answer",
 }
 CONSOLE_PENDING_ROUND_DEFAULT_COPY = "Waiting for your confirmation"
 
@@ -392,8 +408,8 @@ def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
 
     Precedence, when more than one kind is outstanding at once: an approval
     wins. That is the one kind the Inspector counts
-    (``ConsoleInspectorState.pending_approval_count`` counts mounted APPROVAL
-    cards), so it is the only choice that keeps the chip and the Inspector
+    (``ConsoleInspectorState.pending_approval_count`` counts outstanding APPROVAL
+    rounds), so it is the only choice that keeps the chip and the Inspector
     telling the same story -- and an approval is the heavier decision of the
     two. Otherwise a lone question asks for an answer, and anything else --
     including a mix of non-approval kinds -- asks for a confirmation.
@@ -409,10 +425,10 @@ def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
         The waiting sentence, without trailing punctuation.
     """
     resolved = {str(kind) for kind in kinds}
-    if not resolved or "approval" in resolved:
-        return CONSOLE_PENDING_ROUND_COPY["approval"]
-    if resolved == {"question"}:
-        return CONSOLE_PENDING_ROUND_COPY["question"]
+    if not resolved or CONSOLE_PENDING_APPROVAL_KIND in resolved:
+        return CONSOLE_PENDING_ROUND_COPY[CONSOLE_PENDING_APPROVAL_KIND]
+    if resolved == {CONSOLE_PENDING_QUESTION_KIND}:
+        return CONSOLE_PENDING_ROUND_COPY[CONSOLE_PENDING_QUESTION_KIND]
     return CONSOLE_PENDING_ROUND_DEFAULT_COPY
 
 
@@ -463,6 +479,13 @@ CONSOLE_DISPATCH_DUPLICATE_WARNING = (
     "Retry anyway may send a duplicate request because delivery status is unknown."
 )
 CONSOLE_DISPATCH_DISCARDED_COPY = "Response discarded."
+CONSOLE_DISPATCH_UNKNOWN_COPY = "Response delivery status is unknown."
+#: Shared kind for chat-creation registration and Close consequences.
+CONSOLE_PENDING_CHAT_CREATE_KIND = "chat_create"
+
+CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL = (
+    "Close cleanup needs recovery. Restart the app before closing this tab."
+)
 CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY = (
     "Finish or discard the pending turn before saving."
 )
@@ -692,7 +715,9 @@ def console_dispatch_recovery_from_checkpoint(
         assistant_message_id=checkpoint.assistant_message_id,
         conversation_id=checkpoint.conversation_id,
         visible_copy=(
-            "Response delivery status is unknown on the source device."
+            # TASK-33621.6 AC#3: this owner is this device's own send; "on
+            # the source device" is the imported (REMOTE_*) owner's copy.
+            CONSOLE_DISPATCH_UNKNOWN_COPY
             if started
             else "Response accepted; waiting for dispatch."
         ),
@@ -990,6 +1015,8 @@ class ConsoleProviderSelection:
     #: Internal routed-run snapshot authority; ordinary sessions follow live
     #: registry edits. Never populated from model-provided spawn arguments.
     base_url_is_pinned: bool = field(default=False, kw_only=True)
+    #: Internal routed-run execution snapshot; raw provider still owns credentials.
+    execution_provider: str = field(default="", kw_only=True)
     #: False only for a live session policy that must never fall back to a
     #: configured endpoint (notably a failed endpoint-adoption rollback).
     configured_endpoint_fallback_allowed: bool = True
@@ -1060,6 +1087,40 @@ class ConsoleRunState:
             ConsoleRunStatus.STREAMING,
             ConsoleRunStatus.CHECKING_CITATIONS,
         }
+
+
+class ConsoleSubmitBlocker(StrEnum):
+    """Why an accepted Console submit ended BLOCKED (TASK-33621.23).
+
+    Code-owned tokens for the log: ``submit_draft`` writes the value on its
+    attention warning and on the ``controller_submit`` send-stage line, which
+    once read only ``status=blocked`` whatever the cause.
+    """
+
+    #: The request's trace could not be saved; the transcript card offers
+    #: Retry / Send without capture / Cancel.
+    TRACE_PROVENANCE = "trace_provenance"
+    #: Trace capture for the provider call could not start; same card.
+    TRACE_CALL = "trace_call"
+    #: A trace pause's retry could not prove what was delivered.
+    DELIVERY_UNKNOWN = "delivery_unknown"
+    #: Dispatch settlement refused the turn (for example a hook); the turn
+    #: is kept for Retry or Discard.
+    DISPATCH_SETTLEMENT = "dispatch_settlement"
+    #: Settling the accepted turn failed; kept for Retry or Discard.
+    SETTLEMENT_FAILED = "settlement_failed"
+    #: Another owner took over the saved turn; kept for recovery.
+    OWNER_CHANGED = "owner_changed"
+    #: Discard's prerequisite pass stopped before the provider by design.
+    PREREQUISITES_ONLY = "prerequisites_only"
+    #: Project-instruction setup refused the turn: no project folder could be
+    #: chosen (the picker was cancelled or unavailable) or instructions were
+    #: turned off from the picker.
+    PROJECT_SETUP = "project_setup"
+    #: Any other check that blocked the turn without naming its own code (a
+    #: hook, the private scratch space, the context check); ``submit_draft``
+    #: applies it so a blocked send never logs without one.
+    TURN_REFUSED = "turn_refused"
 
 
 @dataclass(frozen=True)
@@ -1290,6 +1351,41 @@ class ConsoleChatMessage:
     live_activity_action: str = ""
 
 
+#: Field names per message class, for ``copy_console_message``.
+_MESSAGE_FIELD_NAMES: dict[type, tuple[str, ...]] = {}
+
+
+def copy_console_message(message: ConsoleChatMessage) -> ConsoleChatMessage:
+    """Return what ``dataclasses.replace(message)`` returns, without ``__init__``.
+
+    ``replace`` rebuilds the message through its generated ``__init__``: about
+    16 us for this ~50-field class. The store snapshots every active-path
+    message several times per post-action Console sync, so at 3,000 messages
+    that alone held the event loop for ~0.24 s per sync (TASK-33628.5.2).
+    For a class whose fields are all ``init`` fields and that has no
+    ``__post_init__`` -- ``ConsoleChatMessage``, pinned by
+    ``Tests/Chat/test_console_message_copy.py`` -- ``replace`` amounts to a
+    new instance holding the same field values and nothing else, which is
+    what this builds directly. Any other class goes through ``replace``.
+
+    Args:
+        message: The message to copy.
+
+    Returns:
+        A shallow copy that shares field values with ``message``.
+    """
+    cls = type(message)
+    names = _MESSAGE_FIELD_NAMES.get(cls)
+    if names is None:
+        if hasattr(cls, "__post_init__") or not all(f.init for f in fields(cls)):
+            return replace(message)
+        names = _MESSAGE_FIELD_NAMES[cls] = tuple(f.name for f in fields(cls))
+    values = message.__dict__
+    copied = object.__new__(cls)
+    copied.__dict__.update({name: values[name] for name in names})
+    return copied
+
+
 @dataclass(frozen=True)
 class ConsoleVariant:
     """One regenerated variant for a turn."""
@@ -1468,3 +1564,34 @@ def fold_greeting_into_system_prompt(system_prompt: str, greeting: str) -> str:
     if not (system_prompt or "").strip():
         return opener_block
     return f"{system_prompt}\n\n{opener_block}"
+
+
+# Definition-time inputs for optional in-memory pending display.
+_CONSOLE_PENDING_COPY_SOURCE = (
+    console_pending_round_copy_for,
+    console_pending_round_copy_for.__code__,
+    console_pending_round_copy_for.__globals__,
+    console_pending_round_copy_for.__defaults__,
+    console_pending_round_copy_for.__kwdefaults__,
+    tuple((console_pending_round_copy_for.__kwdefaults__ or {}).items()),
+    console_pending_round_copy_for.__closure__,
+    tuple(
+        (cell, cell.cell_contents)
+        for cell in console_pending_round_copy_for.__closure__ or ()
+    ),
+)
+
+
+_CONSOLE_PENDING_COPY_KIND_SOURCE = (
+    console_pending_round_copy,
+    console_pending_round_copy.__code__,
+    console_pending_round_copy.__globals__,
+    console_pending_round_copy.__defaults__,
+    console_pending_round_copy.__kwdefaults__,
+    tuple((console_pending_round_copy.__kwdefaults__ or {}).items()),
+    console_pending_round_copy.__closure__,
+    tuple(
+        (cell, cell.cell_contents)
+        for cell in console_pending_round_copy.__closure__ or ()
+    ),
+)

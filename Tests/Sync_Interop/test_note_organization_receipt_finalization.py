@@ -151,13 +151,19 @@ def test_ready_finalization_commits_note_resource_and_link_intents_then_clears_r
     connection = notes.get_connection()
     assert first == {"finalized": 1, "placement_review": 0, "cancelled": 0}
     assert second == {"finalized": 0, "placement_review": 0, "cancelled": 0}
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_organization_receipts"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_sync_publication_intents WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 1
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_organization_receipts"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_sync_publication_intents WHERE note_id = ?",
+            (saved["id"],),
+        ).fetchone()[0]
+        == 1
+    )
     assert {
         str(row[0])
         for row in connection.execute(
@@ -169,13 +175,19 @@ def test_ready_finalization_commits_note_resource_and_link_intents_then_clears_r
         "notes.keyword",
         "notes.keyword_link",
     }
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_keywords WHERE note_id = ?", (saved["id"],)
-    ).fetchone()[0] == 1
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_folder_memberships WHERE note_id = ? AND deleted = 0",
-        (saved["id"],),
-    ).fetchone()[0] == 1
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_keywords WHERE note_id = ?", (saved["id"],)
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_folder_memberships WHERE note_id = ? AND deleted = 0",
+            (saved["id"],),
+        ).fetchone()[0]
+        == 1
+    )
     assert state.list_sync_v2_outbox_entries(**SCOPE, dataset_id=DATASET) == []
 
     copied = organization.drain_pending_note_intents(**SCOPE)
@@ -214,14 +226,20 @@ def test_direct_drain_after_ready_restart_finalizes_before_dispatch(
         "already_copied": 0,
     }
     connection = reopened.get_connection()
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_sync_publication_intents WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 1
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_sync_publication_intents WHERE note_id = ?",
+            (saved["id"],),
+        ).fetchone()[0]
+        == 1
+    )
     entries = state.list_sync_v2_outbox_entries(**SCOPE, dataset_id=DATASET)
     assert len([entry for entry in entries if entry["domain"] == "notes"]) == 1
 
@@ -271,17 +289,23 @@ def test_scoped_note_intent_survives_restart_and_cannot_drain_to_another_profile
     replay = restarted.drain_pending_note_intents(**SCOPE)
 
     assert wrong_scope == {"copied": 0, "already_copied": 0}
-    assert state.list_sync_v2_outbox_entries(
-        server_profile_id="server-b",
-        authenticated_principal_id=None,
-        workspace_scope=None,
-        dataset_id="dataset-b",
-    ) == []
+    assert (
+        state.list_sync_v2_outbox_entries(
+            server_profile_id="server-b",
+            authenticated_principal_id=None,
+            workspace_scope=None,
+            dataset_id="dataset-b",
+        )
+        == []
+    )
     assert right_scope == {"copied": 1, "already_copied": 0}
     assert replay == {"copied": 0, "already_copied": 1}
-    assert state.list_sync_v2_outbox_entries(**SCOPE, dataset_id=DATASET)[0][
-        "envelope"
-    ]["object_id"] == saved["id"]
+    assert (
+        state.list_sync_v2_outbox_entries(**SCOPE, dataset_id=DATASET)[0]["envelope"][
+            "object_id"
+        ]
+        == saved["id"]
+    )
     reopened.close_connection()
 
 
@@ -311,9 +335,9 @@ def test_finalization_does_not_lose_scoped_intent_to_same_version_legacy_row(
         "copied": 1,
         "already_copied": 0,
     }
-    envelope = state.list_sync_v2_outbox_entries(
-        **SCOPE, dataset_id=DATASET
-    )[0]["envelope"]
+    envelope = state.list_sync_v2_outbox_entries(**SCOPE, dataset_id=DATASET)[0][
+        "envelope"
+    ]
     assert envelope["object_id"] == saved["id"]
 
 
@@ -353,9 +377,9 @@ def test_finalized_intent_survives_note_mutation_and_restart_before_drain(
         "copied": 1,
         "already_copied": 0,
     }
-    envelope = state.list_sync_v2_outbox_entries(
-        **SCOPE, dataset_id=DATASET
-    )[0]["envelope"]
+    envelope = state.list_sync_v2_outbox_entries(**SCOPE, dataset_id=DATASET)[0][
+        "envelope"
+    ]
     assert envelope["object_id"] == saved["id"]
     assert envelope["entity_version"] == 1
     reopened.close_connection()
@@ -388,14 +412,21 @@ def test_finalized_intent_is_retained_until_general_outbox_acknowledgement(
         rejected=[],
         conflicts=[],
     )
-    assert organization.reconcile_acknowledgements(
-        **SCOPE,
-        dataset_id=DATASET,
-    ) == 1
-    row = notes.get_connection().execute(
-        "SELECT acknowledged_at FROM note_sync_publication_intents WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()
+    assert (
+        organization.reconcile_acknowledgements(
+            **SCOPE,
+            dataset_id=DATASET,
+        )
+        == 1
+    )
+    row = (
+        notes.get_connection()
+        .execute(
+            "SELECT acknowledged_at FROM note_sync_publication_intents WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()
+    )
     assert row["acknowledged_at"] is not None
     assert organization.drain_pending_note_intents(**SCOPE) == {
         "copied": 0,
@@ -415,9 +446,7 @@ def test_finalized_update_preserves_immutable_base_and_entity_versions(
             note_id="00000000-0000-4000-8000-000000000077",
         )
     )
-    current = library.get_library_note_text(
-        "user-a", note_id, start=0, max_chars=100
-    )
+    current = library.get_library_note_text("user-a", note_id, start=0, max_chars=100)
     updated = library.save_note_with_organization(
         "user-a",
         note_id=note_id,
@@ -439,9 +468,9 @@ def test_finalized_update_preserves_immutable_base_and_entity_versions(
     )
     organization.drain_pending_note_intents(**SCOPE)
 
-    envelope = state.list_sync_v2_outbox_entries(
-        **SCOPE, dataset_id=DATASET
-    )[0]["envelope"]
+    envelope = state.list_sync_v2_outbox_entries(**SCOPE, dataset_id=DATASET)[0][
+        "envelope"
+    ]
     assert updated["version"] == 2
     assert envelope["object_id"] == note_id
     assert envelope["base_version"] == 1
@@ -501,9 +530,7 @@ def test_reversed_clocks_drain_same_note_versions_once_in_lineage_order(
     tmp_path: Path,
 ) -> None:
     notes, state, library, organization, _producer = _services(tmp_path)
-    created = _finalize_two_versions_with_reversed_clocks(
-        notes, library, organization
-    )
+    created = _finalize_two_versions_with_reversed_clocks(notes, library, organization)
     assert [
         int(row[0])
         for row in notes.get_connection().execute(
@@ -583,13 +610,21 @@ def test_finalized_create_receipt_retry_returns_original_note_without_mutation(
     assert replayed["id"] == created["id"]
     assert replayed["version"] == created["version"] == 1
     assert replayed["receipt_state"] is None
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM notes WHERE deleted = 0"
-    ).fetchone()[0] == 1
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM note_sync_publication_intents WHERE intent_id = ?",
-        ("receipt-create-replay",),
-    ).fetchone()[0] == 1
+    assert (
+        notes.get_connection()
+        .execute("SELECT COUNT(*) FROM notes WHERE deleted = 0")
+        .fetchone()[0]
+        == 1
+    )
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM note_sync_publication_intents WHERE intent_id = ?",
+            ("receipt-create-replay",),
+        )
+        .fetchone()[0]
+        == 1
+    )
 
 
 def test_finalized_create_receipt_rejects_mismatched_retry_before_mutation(
@@ -616,16 +651,23 @@ def test_finalized_create_receipt_rejects_mismatched_retry_before_mutation(
         )
 
     assert error.value.reason_code == "receipt_conflict"
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM notes WHERE deleted = 0"
-    ).fetchone()[0] == 1
-    note_row = notes.get_connection().execute(
-        "SELECT id, version FROM notes WHERE deleted = 0"
-    ).fetchone()
+    assert (
+        notes.get_connection()
+        .execute("SELECT COUNT(*) FROM notes WHERE deleted = 0")
+        .fetchone()[0]
+        == 1
+    )
+    note_row = (
+        notes.get_connection()
+        .execute("SELECT id, version FROM notes WHERE deleted = 0")
+        .fetchone()
+    )
     assert tuple(note_row) == (created["id"], 1)
 
 
-def test_finalization_failure_rolls_back_every_note_owner_change(tmp_path: Path) -> None:
+def test_finalization_failure_rolls_back_every_note_owner_change(
+    tmp_path: Path,
+) -> None:
     def fail(stage: str) -> None:
         if stage == "after_receipt_finalization_intents":
             raise RuntimeError(stage)
@@ -643,20 +685,32 @@ def test_finalization_failure_rolls_back_every_note_owner_change(tmp_path: Path)
         )
 
     connection = notes.get_connection()
-    assert connection.execute(
-        "SELECT state FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == "pending_organization"
-    assert connection.execute(
-        "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM notes_organization_sync_intents"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_keywords WHERE note_id = ?", (saved["id"],)
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT state FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        ).fetchone()[0]
+        == "pending_organization"
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
+            (saved["id"],),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM notes_organization_sync_intents"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_keywords WHERE note_id = ?", (saved["id"],)
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_finalizer_refuses_changed_note_or_organization_state(tmp_path: Path) -> None:
@@ -674,17 +728,26 @@ def test_finalizer_refuses_changed_note_or_organization_state(tmp_path: Path) ->
 
     assert result == {"finalized": 0, "placement_review": 0, "cancelled": 0}
     connection = notes.get_connection()
-    assert connection.execute(
-        "SELECT state FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == "pending_organization"
-    assert connection.execute(
-        "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM notes_organization_sync_intents"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT state FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        ).fetchone()[0]
+        == "pending_organization"
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM sync_log WHERE entity = 'notes' AND entity_id = ?",
+            (saved["id"],),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM notes_organization_sync_intents"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_profile_scoped_finalizer_leaves_another_profiles_receipt_untouched(
@@ -714,10 +777,15 @@ def test_profile_scoped_finalizer_leaves_another_profiles_receipt_untouched(
     )
 
     assert result == {"finalized": 0, "placement_review": 0, "cancelled": 0}
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 1
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()[0]
+        == 1
+    )
 
 
 def test_finalizer_fails_closed_for_malformed_request_fingerprint(
@@ -746,14 +814,24 @@ def test_finalizer_fails_closed_for_malformed_request_fingerprint(
     )
 
     assert result == {"finalized": 0, "placement_review": 0, "cancelled": 0}
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 1
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM note_sync_publication_intents WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 0
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()[0]
+        == 1
+    )
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM note_sync_publication_intents WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_folder_collision_transitions_same_receipt_to_nonblocking_review(
@@ -770,24 +848,31 @@ def test_folder_collision_transitions_same_receipt_to_nonblocking_review(
         server_profile_id=PROFILE,
         dataset_id=DATASET,
     )
-    receipt = notes.get_connection().execute(
-        "SELECT receipt_id, state, review_id, collision_ids_json "
-        "FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()
+    receipt = (
+        notes.get_connection()
+        .execute(
+            "SELECT receipt_id, state, review_id, collision_ids_json "
+            "FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()
+    )
 
     assert result == {"finalized": 0, "placement_review": 1, "cancelled": 0}
     assert receipt["receipt_id"] == "receipt-a"
     assert receipt["state"] == "placement_review"
     assert receipt["review_id"]
     assert collision.folder_id in receipt["collision_ids_json"]
-    assert producer.enqueue_note_upsert(
-        **SCOPE,
-        note_id=saved["id"],
-        title="Pending lesson",
-        content="Verified content",
-        entity_version=1,
-    )["status"] == "enqueued"
+    assert (
+        producer.enqueue_note_upsert(
+            **SCOPE,
+            note_id=saved["id"],
+            title="Pending lesson",
+            content="Verified content",
+            entity_version=1,
+        )["status"]
+        == "enqueued"
+    )
 
 
 @pytest.mark.parametrize("action", ("merge", "rename_local", "keep_local"))
@@ -804,10 +889,14 @@ def test_resolved_or_dismissed_placement_review_retires_receipt(
         server_profile_id=PROFILE,
         dataset_id=DATASET,
     )
-    receipt = notes.get_connection().execute(
-        "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()
+    receipt = (
+        notes.get_connection()
+        .execute(
+            "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()
+    )
     resolved = SyncV2ConflictReviewService(
         state_repository=object(),
         notes_repository=NotesOrganizationRepository(notes, server_profile_id=PROFILE),
@@ -825,14 +914,23 @@ def test_resolved_or_dismissed_placement_review_retires_receipt(
 
     assert resolved is True
     assert result == {"finalized": 0, "placement_review": 0, "cancelled": 0}
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 0
-    memberships = notes.get_connection().execute(
-        "SELECT folder_id FROM note_folder_memberships WHERE note_id = ? AND deleted = 0",
-        (saved["id"],),
-    ).fetchall()
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()[0]
+        == 0
+    )
+    memberships = (
+        notes.get_connection()
+        .execute(
+            "SELECT folder_id FROM note_folder_memberships WHERE note_id = ? AND deleted = 0",
+            (saved["id"],),
+        )
+        .fetchall()
+    )
     assert bool(memberships) is (action != "keep_local")
     if action == "merge":
         assert memberships[0][0] == collision.folder_id
@@ -851,10 +949,14 @@ def test_resolved_placement_review_waits_when_organization_loses_readiness(
         server_profile_id=PROFILE,
         dataset_id=DATASET,
     )
-    receipt = notes.get_connection().execute(
-        "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()
+    receipt = (
+        notes.get_connection()
+        .execute(
+            "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()
+    )
     with notes.transaction() as cursor:
         cursor.execute(
             "UPDATE notes_organization_sync_checkpoints SET local_state = 'pulling' "
@@ -878,38 +980,55 @@ def test_resolved_placement_review_waits_when_organization_loses_readiness(
     )
 
     assert result == {"finalized": 0, "placement_review": 0, "cancelled": 0}
-    assert notes.get_connection().execute(
-        "SELECT state FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == "placement_review"
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM note_folder_memberships "
-        "WHERE note_id = ? AND folder_id = ? AND deleted = 0",
-        (saved["id"], collision.folder_id),
-    ).fetchone()[0] == 0
-    assert notes.get_connection().execute(
-        "SELECT state FROM notes_organization_adoption_reviews WHERE review_id = ?",
-        (receipt["review_id"],),
-    ).fetchone()[0] == "open"
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT state FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()[0]
+        == "placement_review"
+    )
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM note_folder_memberships "
+            "WHERE note_id = ? AND folder_id = ? AND deleted = 0",
+            (saved["id"], collision.folder_id),
+        )
+        .fetchone()[0]
+        == 0
+    )
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT state FROM notes_organization_adoption_reviews WHERE review_id = ?",
+            (receipt["review_id"],),
+        )
+        .fetchone()[0]
+        == "open"
+    )
 
 
 def test_rename_local_resolution_records_both_folder_resource_intents(
     tmp_path: Path,
 ) -> None:
     notes, _state, library, organization, _producer = _services(tmp_path)
-    LocalNoteFolderRepository(notes).create_folder(
-        name="agent_lessons", parent_id=None
-    )
+    LocalNoteFolderRepository(notes).create_folder(name="agent_lessons", parent_id=None)
     saved = _save_pending(library)
     _make_ready(notes)
     organization.finalize_pending_note_organization_receipts(
         server_profile_id=PROFILE,
         dataset_id=DATASET,
     )
-    review_id = notes.get_connection().execute(
-        "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0]
+    review_id = (
+        notes.get_connection()
+        .execute(
+            "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()[0]
+    )
     SyncV2ConflictReviewService(
         state_repository=object(),
         notes_repository=NotesOrganizationRepository(notes, server_profile_id=PROFILE),
@@ -946,27 +1065,37 @@ def test_soft_delete_atomically_cancels_pending_or_review_receipt_and_review(
         server_profile_id=PROFILE,
         dataset_id=DATASET,
     )
-    review_id = notes.get_connection().execute(
-        "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0]
+    review_id = (
+        notes.get_connection()
+        .execute(
+            "SELECT review_id FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()[0]
+    )
 
     assert notes.soft_delete_note(saved["id"], 1) is True
     connection = notes.get_connection()
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        ).fetchone()[0]
+        == 0
+    )
     review = connection.execute(
         "SELECT state, resolution FROM notes_organization_adoption_reviews "
         "WHERE review_id = ?",
         (review_id,),
     ).fetchone()
     assert tuple(review) == ("resolved", "keep_local")
-    assert connection.execute(
-        "SELECT cancelled_at FROM note_sync_publication_intents WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] is not None
+    assert (
+        connection.execute(
+            "SELECT cancelled_at FROM note_sync_publication_intents WHERE note_id = ?",
+            (saved["id"],),
+        ).fetchone()[0]
+        is not None
+    )
     assert organization.drain_pending_note_intents(**SCOPE) == {
         "copied": 0,
         "already_copied": 0,
@@ -986,12 +1115,16 @@ def test_soft_deleted_pending_create_keeps_receipt_id_terminal_on_retry(
     assert error.value.reason_code == "receipt_conflict"
     connection = notes.get_connection()
     assert connection.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
-    assert connection.execute(
-        "SELECT COUNT(*) FROM notes WHERE deleted = 0"
-    ).fetchone()[0] == 0
-    assert connection.execute(
-        "SELECT COUNT(*) FROM note_organization_receipts"
-    ).fetchone()[0] == 0
+    assert (
+        connection.execute("SELECT COUNT(*) FROM notes WHERE deleted = 0").fetchone()[0]
+        == 0
+    )
+    assert (
+        connection.execute(
+            "SELECT COUNT(*) FROM note_organization_receipts"
+        ).fetchone()[0]
+        == 0
+    )
     _make_ready(notes)
     organization.finalize_pending_note_organization_receipts(
         server_profile_id=PROFILE,
@@ -1039,10 +1172,13 @@ def test_finalizer_cancellation_keeps_deleted_create_receipt_id_terminal(
     assert mismatch.value.reason_code == "receipt_conflict"
     connection = notes.get_connection()
     assert connection.execute("SELECT COUNT(*) FROM notes").fetchone()[0] == 1
-    assert connection.execute(
-        "SELECT cancelled_at FROM note_sync_publication_intents WHERE intent_id = ?",
-        ("receipt-finalizer-cancelled-create",),
-    ).fetchone()[0] is not None
+    assert (
+        connection.execute(
+            "SELECT cancelled_at FROM note_sync_publication_intents WHERE intent_id = ?",
+            ("receipt-finalizer-cancelled-create",),
+        ).fetchone()[0]
+        is not None
+    )
     assert organization.drain_pending_note_intents(**SCOPE) == {
         "copied": 0,
         "already_copied": 0,
@@ -1084,14 +1220,19 @@ async def test_general_outbox_drain_filters_an_already_enqueued_blocking_note(
 ) -> None:
     notes, state, library, organization, producer = _services(tmp_path)
     note_id = library.add_note("user-a", "Earlier", "Earlier body", note_id="note-a")
-    assert producer.enqueue_note_upsert(
-        **SCOPE,
-        note_id=str(note_id),
-        title="Earlier",
-        content="Earlier body",
-        entity_version=1,
-    )["status"] == "enqueued"
-    current = library.get_library_note_text("user-a", str(note_id), start=0, max_chars=20)
+    assert (
+        producer.enqueue_note_upsert(
+            **SCOPE,
+            note_id=str(note_id),
+            title="Earlier",
+            content="Earlier body",
+            entity_version=1,
+        )["status"]
+        == "enqueued"
+    )
+    current = library.get_library_note_text(
+        "user-a", str(note_id), start=0, max_chars=20
+    )
     library.save_note_with_organization(
         "user-a",
         note_id=str(note_id),
@@ -1118,9 +1259,14 @@ async def test_general_outbox_drain_filters_an_already_enqueued_blocking_note(
     await service.sync_once(**SCOPE, domains=["notes"])
 
     assert server.pushed == []
-    assert len(state.list_pending_sync_v2_outbox_envelopes(
-        **SCOPE, dataset_id=DATASET, domains=["notes"]
-    )) == 1
+    assert (
+        len(
+            state.list_pending_sync_v2_outbox_envelopes(
+                **SCOPE, dataset_id=DATASET, domains=["notes"]
+            )
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -1143,10 +1289,15 @@ async def test_ready_receipt_finalizes_before_the_same_normal_drain(
     await service.sync_once(**SCOPE, domains=["notes"])
 
     assert [envelope["object_id"] for envelope in server.pushed] == [saved["id"]]
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
-        (saved["id"],),
-    ).fetchone()[0] == 0
+    assert (
+        notes.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM note_organization_receipts WHERE note_id = ?",
+            (saved["id"],),
+        )
+        .fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -1154,9 +1305,7 @@ async def test_local_first_submits_reversed_clock_lineage_once_in_version_order(
     tmp_path: Path,
 ) -> None:
     notes, state, library, organization, producer = _services(tmp_path)
-    created = _finalize_two_versions_with_reversed_clocks(
-        notes, library, organization
-    )
+    created = _finalize_two_versions_with_reversed_clocks(notes, library, organization)
     server = _RecordingServer()
     service = LocalFirstSyncService(
         server_service=server,

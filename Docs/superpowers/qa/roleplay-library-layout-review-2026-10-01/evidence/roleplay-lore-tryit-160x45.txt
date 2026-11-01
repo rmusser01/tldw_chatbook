@@ -1,0 +1,45 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                                                                     │
+│ Author the pieces that shape a chat                                                                                                                          │
+│  Ready                                                                                                                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Lore — world facts injected on keywords · 3
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ ╭─────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────┐ │
+│ │  Library                         <  ││                                                                            ││                                     │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││                                                                            ││  Inspector                       >  │ │
+│ │ ▊  Search...                      ▎ ││                                                                            ││ Selected: Aetheria Atlas            │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││                                                                            ││ Type: lore                          │ │
+│ │    New     Import     Duplicate     ││                                                                            ││ Validation: OK                      │ │
+│ │                                     ││                                                                            ││ Readiness                           │ │
+│ │  Aetheria Atlas                     ││                                                                            ││ Console chat is for characters and  │ │
+│ │  10 entries · on                    ││                                                                            ││ personas.                           │ │
+│ │  Night Market Rumors                ││  Entries  Settings  Attachments                                            ││               Delete                │ │
+│ │  4 entries · off                    ││                                                                            ││            Manage Buddy             │ │
+│ │  Station Kepler-9 Ops Manual        ││                                                                            ││             Show Buddy              │ │
+│ │  6 entries · on                     ││  keys                     content                                          ││             Close Buddy             │ │
+│ │                                     ││ Try it — injection preview                                                 ││            Disable Buddy            │ │
+│ │                                     ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││                                     │ │
+│ │                                     ││ ▊ We ride for Emberfall before the Night of Lanterns.                    ▎ ││                                     │ │
+│ │                                     ││ ▊                                                                        ▎ ││                                     │ │
+│ │                                     ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││                                     │ │
+│ │                                     ││ ▊▔▔▔▔▔▔▔▔▎Include recent turns (soon)                                      ││                                     │ │
+│ │                                     ││ ▊        ▎                                                                 ││                                     │ │
+│ │                                     ││ ▊▁▁▁▁▁▁▁▁▎                                                                 ││                                     │ │
+│ │                                     ││   Run preview                                                              ││                                     │ │
+│ │                                     ││ Injected content shown below, grouped by position.                         ││                                     │ │
+│ │                                     ││ Before character:                                                          ││                                     │ │
+│ │                                     ││   Emberfall is a volcanic fortress-city ruled by the Ash Council; its      ││                                     │ │
+│ │                                     ││ gates open only at dusk.                                                   ││                                     │ │
+│ │                                     ││   Annual festival when the dead may speak for one hour.                    ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││ 2 fired · 0 near-miss · 32/600 tokens                                      ││                                     │ │
+│ ╰─────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────┘ │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | f6 pane | c/p/d/l mode | [ ] mode | F1 help · Ctrl+P palette · Ctrl+Q quit

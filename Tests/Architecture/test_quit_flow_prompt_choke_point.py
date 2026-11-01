@@ -22,8 +22,20 @@ this scans, statically:
   through ``self.<name>(...)``;
 * every method of ``app_lifecycle.py`` whose name mentions ``quit``, with the
   same ``self.`` closure;
-* every module-level function of ``confirmation_dialog.py`` whose name
-  mentions ``quit`` except ``await_quit_prompt`` itself.
+* every module-level function whose name mentions ``quit`` (except
+  ``await_quit_prompt`` itself) in any module that defines or names a walk
+  hook -- ``confirmation_dialog.py``'s prompt helpers, and the delegates
+  TASK-33622.15 added beside the modals that call them
+  (``refuse_quit_while_working``, ``confirm_quit_discarding_generated_video``
+  ...), which a ``self.`` closure cannot follow;
+* every module-level function of ``Persona_Modules/roleplay_draft_guard.py``
+  (TASK-33622.14). ``PersonasScreen.confirm_quit`` delegates there, so the
+  scan cannot follow it through ``self.``; the module's flow is shared with
+  app navigation and is handed its ``ask``, so no function in it may wait on
+  a pushed screen at all;
+* every module-level function of ``Library_Modules/library_pending_work.py``
+  (TASK-34000.1), for the same reason: ``LibraryScreen.confirm_quit`` and
+  ``prepare_for_quit`` delegate there.
 
 and fails if any of them waits on a pushed screen other than through the
 choke point. Calls into other classes are not followed; the rule is pinned
@@ -33,12 +45,19 @@ where a quit-flow prompt is written, which is these methods.
 from __future__ import annotations
 
 import ast
+from functools import lru_cache
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "tldw_chatbook"
 APP_LIFECYCLE = PACKAGE / "app_lifecycle.py"
-CONFIRMATION_DIALOG = PACKAGE / "Widgets" / "confirmation_dialog.py"
+#: Roleplay's quit hook delegates here; every function in it is scanned.
+ROLEPLAY_DRAFT_GUARD = PACKAGE / "UI" / "Persona_Modules" / "roleplay_draft_guard.py"
+#: Library's quit hooks delegate here (TASK-34000.1); every function is scanned.
+LIBRARY_PENDING_WORK = PACKAGE / "UI" / "Library_Modules" / "library_pending_work.py"
+#: Scanned whole (every function, not only the quit-named ones), so the
+#: per-module quit-helper pass skips them rather than listing them twice.
+WHOLE_SCANNED_DELEGATES = (ROLEPLAY_DRAFT_GUARD, LIBRARY_PENDING_WORK)
 
 #: Hooks the quit walk (and the workflow authoring owner) call with no args.
 WALK_HOOKS = frozenset({"confirm_quit", "prepare_for_quit", "prepare_quit"})
@@ -137,15 +156,29 @@ def scan_source(
     return roots_seen, offences
 
 
-def scan_module_functions(source: str, label: str) -> tuple[list[str], list[str]]:
-    """Scan the module-level quit functions of the choke point's own module."""
+def scan_module_functions(
+    source: str, label: str, *, quit_named_only: bool = True
+) -> tuple[list[str], list[str]]:
+    """Scan a module's module-level functions.
+
+    Args:
+        source: The module's source text.
+        label: How offences name the module.
+        quit_named_only: Scan only functions whose name mentions ``quit``
+            (the choke point's own module); False scans every function.
+
+    Returns:
+        ``(roots, offences)`` as ``scan_source`` returns them.
+    """
     tree = ast.parse(source)
     roots: list[str] = []
     offences: list[str] = []
     for node in tree.body:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        if "quit" not in node.name or node.name == CHOKE_POINT:
+        if node.name == CHOKE_POINT:
+            continue
+        if quit_named_only and "quit" not in node.name:
             continue
         roots.append(f"{label}:{node.name}")
         offences.extend(
@@ -154,6 +187,7 @@ def scan_module_functions(source: str, label: str) -> tuple[list[str], list[str]
     return roots, offences
 
 
+@lru_cache(maxsize=1)  # one tree walk per run; the tests only read it
 def _scan_tree() -> tuple[list[str], list[str]]:
     roots: list[str] = []
     offences: list[str] = []
@@ -167,11 +201,26 @@ def _scan_tree() -> tuple[list[str], list[str]]:
         )
         roots.extend(found_roots)
         offences.extend(found_offences)
-    found_roots, found_offences = scan_module_functions(
-        CONFIRMATION_DIALOG.read_text(encoding="utf-8"),
-        str(CONFIRMATION_DIALOG.relative_to(REPO_ROOT)),
-    )
-    return roots + found_roots, offences + found_offences
+        if path in WHOLE_SCANNED_DELEGATES:
+            continue  # scanned whole below
+        # TASK-33622.15: a hook's module-level quit helpers (the prompt
+        # helpers in confirmation_dialog.py among them).
+        found_roots, found_offences = scan_module_functions(source, label)
+        roots.extend(found_roots)
+        offences.extend(found_offences)
+    # Missing on a tree without TASK-33622.14 / TASK-34000.1: the reach
+    # test then names it.
+    for delegate in WHOLE_SCANNED_DELEGATES:
+        if not delegate.exists():
+            continue
+        found_roots, found_offences = scan_module_functions(
+            delegate.read_text(encoding="utf-8"),
+            str(delegate.relative_to(REPO_ROOT)),
+            quit_named_only=False,
+        )
+        roots.extend(found_roots)
+        offences.extend(found_offences)
+    return roots, offences
 
 
 def test_quit_flow_prompts_are_awaited_only_through_the_choke_point() -> None:
@@ -198,6 +247,41 @@ def test_the_scan_reaches_the_quit_flow_it_guards() -> None:
         "tldw_chatbook/app_lifecycle.py:LifecycleMixin._confirm_and_quit",
         "tldw_chatbook/app_lifecycle.py:LifecycleMixin._await_quit_prompt",
         "tldw_chatbook/Widgets/confirmation_dialog.py:confirm_quit_discarding_edits",
+        # TASK-33622.14: Roleplay's hook, and the shared flow it delegates to.
+        "tldw_chatbook/UI/Screens/personas_screen.py:PersonasScreen.confirm_quit",
+        "tldw_chatbook/UI/Persona_Modules/roleplay_draft_guard.py:"
+        "confirm_roleplay_quit",
+        "tldw_chatbook/UI/Persona_Modules/roleplay_draft_guard.py:"
+        "confirm_roleplay_drafts",
+        # TASK-33622.15: in-flight refusals, the video save screens, and the
+        # module-level delegates their hooks call.
+        "tldw_chatbook/Widgets/Console/console_fork_chat_modal.py:"
+        "ConsoleForkChatModal.confirm_quit",
+        "tldw_chatbook/Widgets/quit_while_working.py:refuse_quit_while_working",
+        "tldw_chatbook/Widgets/Console/console_video_save_screens.py:"
+        "GeneratedVideoFileSave.confirm_quit",
+        "tldw_chatbook/Widgets/Console/console_video_capacity_modal.py:"
+        "confirm_quit_discarding_generated_video",
+        "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py:"
+        "_quit_unless_applying",
+        # TASK-34000.1: Library's hooks, and the module they delegate to.
+        "tldw_chatbook/UI/Screens/library_screen.py:LibraryScreen.confirm_quit",
+        "tldw_chatbook/UI/Screens/library_screen.py:LibraryScreen.prepare_for_quit",
+        "tldw_chatbook/UI/Library_Modules/library_pending_work.py:confirm_library_quit",
+        "tldw_chatbook/UI/Library_Modules/library_pending_work.py:prepare_library_quit",
+        # TASK-33007 (capture finding 22): Settings' staged-change prompt.
+        "tldw_chatbook/UI/Settings_Modules/settings_quit_guard.py:confirm_settings_quit",
+        # Ruling C-N1: the stand-in that asks about a kept Settings draft.
+        (
+            "tldw_chatbook/UI/Settings_Modules/settings_quit_guard.py:"
+            "KeptSettingsDraft.confirm_quit"
+        ),
+        # Capture fix 3 round 1, finding 6: the prompt both of them hand off
+        # to; a module call is not followed, so its name must hold "quit".
+        (
+            "tldw_chatbook/UI/Settings_Modules/settings_quit_guard.py:"
+            "_ask_to_quit_discarding"
+        ),
     }
     missing = expected - set(roots)
     assert not missing, f"the scan no longer reaches: {sorted(missing)}"
@@ -253,3 +337,17 @@ async def confirm_quit_with_a_bare_wait(app, prompt):
     roots, offences = scan_module_functions(source, "fixture")
     assert roots == ["fixture:confirm_quit_with_a_bare_wait"]
     assert offences == ["fixture:confirm_quit_with_a_bare_wait:6"]
+
+
+def test_negative_control_every_function_of_a_delegate_module() -> None:
+    """The Roleplay flow's shared helper is scanned whatever its name."""
+    source = """
+async def confirm_drafts(screen, ask):
+    return await ask(Prompt())
+
+async def _save_then_ask(screen):
+    return await screen.app.push_screen_wait(Prompt())
+"""
+    roots, offences = scan_module_functions(source, "fixture", quit_named_only=False)
+    assert roots == ["fixture:confirm_drafts", "fixture:_save_then_ask"]
+    assert offences == ["fixture:_save_then_ask:6"]

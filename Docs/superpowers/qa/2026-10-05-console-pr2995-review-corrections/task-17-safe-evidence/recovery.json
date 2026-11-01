@@ -1,0 +1,9 @@
+{
+  "base": "13d1668d4eedbdfcab50fff28a47a8a68346f033",
+  "previous_dev": "a78a9a900b4901e33c031f830dd2d80224d5147d",
+  "selected_dev": "8c4dfe59a243ce0cec8e131aff3935646c64b298",
+  "recovery_ref": "refs/heads/recovery/pr2995-task17-before-command-integration",
+  "bundle": "/private/tmp/pr2995-task17-before-command-integration.bundle",
+  "bundle_bytes": 111049162,
+  "bundle_sha256": "e7037c74c0e99f0c3735f09019ab8c94c389ab1ac0ffa740a91e4a2ad04f3e5d"
+}

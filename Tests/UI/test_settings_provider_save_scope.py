@@ -43,14 +43,20 @@ async def test_providers_models_state_line_names_its_scope_in_one_row(request) -
     async with host.run_test(size=(211, 44)) as pilot:
         screen = _active_destination_screen(host)
         screen._select_category(category.value)
-        await _wait_for_selector(screen, pilot, "#settings-model-value")
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
         banner = screen.query_one("#settings-category-state-banner", Static)
         scope = screen._category_state_scope_text(category)
         assert scope == (
             "Applies to new and unused open chats · used chats keep theirs "
             "(Console: Alt+M)"
         )
-        assert _static_text(banner) == f"State: Draft — save with s | {scope}"
+        # Capture finding 3, rewritten on purpose: at rest the banner read
+        # "Draft — save with s" beside the Inspector's "No unsaved changes".
+        clean = f"State: No changes · edits save with s | {scope}"
+        assert _static_text(banner) == clean
+        assert _static_text(
+            screen.query_one("#settings-selected-category-draft-status", Static)
+        ) == "No unsaved changes"
         assert banner.content_region.height == 1
 
         widest = f"State: Draft — save with s · 99 unsaved | {scope}"
@@ -107,8 +113,12 @@ async def test_focusing_the_visible_provider_picker_shows_the_provider_purpose(
     async with host.run_test(size=(211, 44)) as pilot:
         screen = _active_destination_screen(host)
         screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
-        await _wait_for_selector(screen, pilot, "#settings-provider-search")
-        for selector in ("#settings-provider-search", "#settings-provider-picker"):
+        await _wait_for_selector(
+            screen, pilot, "#settings-provider-search", timeout=30.0
+        )
+        # TASK-33007.2, rewritten on purpose: the list under the Provider
+        # control never takes focus, so the control is the one field.
+        for selector in ("#settings-provider-search",):
             screen.query_one(selector).focus()
             await pilot.pause()
             guide = [

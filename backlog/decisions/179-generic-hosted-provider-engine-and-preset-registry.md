@@ -49,3 +49,49 @@ ADR-146.
 - [ADR-062: Hosted Chat Completions Provider Boundary](062-hosted-chat-completions-provider-boundary.md)
 - [ADR-063: Use a neutral hosted wire boundary with durable tool continuation](063-hosted-provider-wire-and-durable-tool-continuation.md)
 - [ADR-146: Console custom endpoint registry](146-console-custom-endpoint-registry.md)
+
+
+## Current-owner integration amendment (2026-10-13)
+
+Documented Groq and OpenRouter envelope fields are normalized by call-owned adapter functions before the strict neutral boundary; Together, Fireworks and Cerebras allowances remain scoped to their preset records. Preserve registry-owned zero-retry sessions, streaming filtering, usage taps, endpoint reconstruction and actual dispatch parameter mapping. Offline fixtures qualify wire contracts only, never current provider availability or quality.
+
+
+## Non-leading SYSTEM preparation clarification (TASK-35582, 2026-10-27)
+
+Apply ADR063's ordered carrier clarification to registry-derived engine execution
+keys with non-leading SYSTEM rows. Reuse distinct_roles rather than weaken strict
+engine ownership. Ordinary leading-only/provider routes and explicit raw/canonical
+destination authority remain unchanged. This is provider preparation parity, not
+a new response allowance, endpoint registry, schema or permission. ADR281/230
+separately admits bounded pinned capacity for exact accepted review-boundary wakes.
+
+
+### Source correction to accepted-wake carrier diagnosis (Ruling63)
+
+Exact BASE7952422 controller source deliberately projects automatic SYSTEM
+transcript notices as payload-only trailing USER while preserving AGENT_WAKE
+authority and order. The prior reconstructed SYSTEM-carrier diagnosis was not
+the actual wire path. Its carrier conversion/Safe-capture clauses are superseded;
+ordinary serialization and the strict engine stay unchanged. Accepted-review-only
+pinned capacity/revalidation and normal schema reachability requirements remain.
+The full handler-backed fixture instead exposes completed checkpoint forwarding
+without native replay rows. A focused replay contract is pending before source
+changes at that extra boundary. Original diagnostic evidence is retained with
+QA/ac24/review-wake-repair-design/diagnosis-controller-correction.md. No authority,
+schema or additional live allowance follows from this correction.
+
+
+## Custom-hosted streaming usage correction (TASK-35582, 2026-10-28)
+
+Request standard stream_options.include_usage through the existing custom preset
+record. The local Qwen endpoint returned no usage without it and complete counts
+with it in the two-request recorded differential. Tolerant no-usage parsing remains
+valid; automatic work retains its exact-usage requirement and pauses when missing.
+Servers rejecting the option produce the ordinary typed provider error; do not
+automatically retry after removing the option or invent usage. Non-streaming keeps
+its existing behavior. This is an intentional custom streaming payload change.
+
+The gateway may retain usage from the already-accepted single terminal-choice
+shape when no top-level usage key exists. Preserve emitted SSE/event bytes and
+top-level precedence, and let the existing complete-count validation decide
+automatic settlement. No broader parser tolerance, estimates or ownership change.

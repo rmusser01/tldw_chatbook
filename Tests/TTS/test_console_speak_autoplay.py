@@ -13,8 +13,8 @@ The fix: when a successful completion's message id is not claimed by any
 mounted legacy widget, the handler now posts `TTSPlaybackEvent(action="play",
 ...)` itself so the existing `@on(TTSPlaybackEvent)` -> `handler.
 handle_tts_playback` pipeline (already used by the legacy play button) plays
-the audio immediately. The legacy widget-found path is unchanged (pinned by
-the second test below).
+the audio immediately. The legacy widget-found branch was removed together
+with the widget family (task-34890); this path is the only one.
 
 Test level: these tests call `TldwCli.handle_tts_complete_event` directly
 against a minimal duck-typed stand-in for `self` (exposing only `query`,
@@ -73,7 +73,6 @@ from tldw_chatbook.TTS.openai_compatible_config import (
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.TTS_Generation import TTSService
 from tldw_chatbook.UI.Console_Modules.message import ConsoleMessageController
-from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
@@ -109,6 +108,7 @@ class _FakeApp:
 
     async def _offer_tts_global_override(self, token: str) -> None:
         await TldwCli._offer_tts_global_override(self, token)
+
 
 class ProgressHost(App[None]):
     """Real Textual app exposing the DOMQuery used by the progress handler."""
@@ -403,7 +403,9 @@ async def test_automatic_request_rejects_destination_change_before_admission() -
 
 
 @pytest.mark.asyncio
-async def test_automatic_request_rechecks_destination_immediately_before_synthesis() -> None:
+async def test_automatic_request_rechecks_destination_immediately_before_synthesis() -> (
+    None
+):
     expected = "sha256:" + "a" * 64
     changed = "sha256:" + "b" * 64
     outcomes: list[bool] = []
@@ -437,7 +439,9 @@ async def test_automatic_request_rechecks_destination_immediately_before_synthes
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_stage", ["resolver", "admission"])
-async def test_unexpected_trusted_request_failure_settles_once(failure_stage: str) -> None:
+async def test_unexpected_trusted_request_failure_settles_once(
+    failure_stage: str,
+) -> None:
     store = ConsoleChatStore()
     session = store.create_session()
     message = store.append_message(
@@ -583,7 +587,9 @@ async def test_post_tts_message_reports_queue_acceptance(post_result) -> None:
 
 
 @pytest.mark.asyncio
-async def test_final_completion_post_rejection_reports_generation_failure(tmp_path) -> None:
+async def test_final_completion_post_rejection_reports_generation_failure(
+    tmp_path,
+) -> None:
     async def chunks():
         yield b"audio"
 
@@ -665,10 +671,14 @@ async def test_manual_generation_preserves_legacy_service_call_shape(tmp_path) -
 
 
 class _SpeechRequestControllerStub:
+    bind_speech_presentation = ConsoleMessageController.bind_speech_presentation
+    current_speech_presentation = ConsoleMessageController.current_speech_presentation
     _begin_console_speech_presentation = (
         ConsoleMessageController._begin_console_speech_presentation
     )
-    _settle_console_speech_presentation = ConsoleMessageController._settle_console_speech_presentation
+    _settle_console_speech_presentation = (
+        ConsoleMessageController._settle_console_speech_presentation
+    )
     _schedule_console_speech_state_sync = (
         ConsoleMessageController._schedule_console_speech_state_sync
     )
@@ -947,9 +957,13 @@ async def test_stale_speech_outcome_cannot_replace_newer_request_state() -> None
     controller = _SpeechRequestControllerStub(store, True)
     controller.app_instance.post_message.side_effect = _accept_owned_stop
 
-    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    await ConsoleMessageController.request_console_message_speech(
+        controller, message.id
+    )
     first = controller.app_instance.post_message.call_args.args[0]
-    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    await ConsoleMessageController.request_console_message_speech(
+        controller, message.id
+    )
     second = controller.app_instance.post_message.call_args.args[0]
 
     first.report_outcome(False)
@@ -1144,7 +1158,9 @@ async def test_superseding_request_fences_old_completion_and_posts_stop() -> Non
     await asyncio.sleep(0)
 
     await ConsoleMessageController.request_console_message_speech(controller, second.id)
-    posted = [call.args[0] for call in controller.app_instance.post_message.call_args_list]
+    posted = [
+        call.args[0] for call in controller.app_instance.post_message.call_args_list
+    ]
 
     assert isinstance(posted[-2], TTSPlaybackEvent)
     assert posted[-2].action == "stop"
@@ -1247,7 +1263,9 @@ async def test_session_switch_and_restore_same_id_invalidate_playback_owner() ->
     store.switch_session(first_session.id)
     controller = _SpeechRequestControllerStub(store, True)
 
-    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    await ConsoleMessageController.request_console_message_speech(
+        controller, message.id
+    )
     request = controller.app_instance.post_message.call_args.args[0]
     store.switch_session(second_session.id)
     assert request.playback_lifecycle.is_current() is False
@@ -1277,7 +1295,9 @@ async def test_screen_lifetime_invalidation_rejects_late_playback() -> None:
     controller = _SpeechRequestControllerStub(store, True)
     controller.app_instance.post_message.side_effect = _accept_owned_stop
 
-    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    await ConsoleMessageController.request_console_message_speech(
+        controller, message.id
+    )
     request = controller.app_instance.post_message.call_args.args[0]
     task = ConsoleMessageController.invalidate_console_speech_context(controller)
     assert task is not None
@@ -1299,7 +1319,9 @@ async def test_context_invalidation_falls_back_to_real_handler_stop(
         session.id, role=ConsoleMessageRole.ASSISTANT, content="Ready."
     )
     controller = _SpeechRequestControllerStub(store, True)
-    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    await ConsoleMessageController.request_console_message_speech(
+        controller, message.id
+    )
     request = controller.app_instance.post_message.call_args.args[0]
     request.playback_lifecycle.report("playing")
     handler = TTSEventHandler()
@@ -1333,7 +1355,9 @@ async def test_invalidation_fallback_exception_can_retry_retained_owner() -> Non
         session.id, role=ConsoleMessageRole.ASSISTANT, content="Ready."
     )
     controller = _SpeechRequestControllerStub(store, True)
-    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    await ConsoleMessageController.request_console_message_speech(
+        controller, message.id
+    )
     request = controller.app_instance.post_message.call_args.args[0]
     request.playback_lifecycle.report("playing")
     controller.app_instance.post_message.return_value = False
@@ -1383,7 +1407,9 @@ async def test_restore_same_ids_rejects_delayed_invalidation_ui_settlement() -> 
     controller.app_instance.post_message.side_effect = lambda event: (
         posted.append(event) or True
     )
-    await ConsoleMessageController.request_console_message_speech(controller, message.id)
+    await ConsoleMessageController.request_console_message_speech(
+        controller, message.id
+    )
     request = posted[-1]
     request.playback_lifecycle.report("playing")
 
@@ -1438,7 +1464,9 @@ async def test_ownership_state_remains_bounded_across_many_requests() -> None:
     assert controller._console_speech_request_generation == 10_000
 
 
-def test_legacy_playback_monitor_reports_real_start_and_natural_finish(tmp_path) -> None:
+def test_legacy_playback_monitor_reports_real_start_and_natural_finish(
+    tmp_path,
+) -> None:
     from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
         _play_legacy_clip_and_await_completion,
     )
@@ -2174,9 +2202,7 @@ async def test_exact_stop_during_owned_play_lock_wait_is_accepted(
             )
         )
         await asyncio.sleep(0)
-        reserved_before_audio_lookup = (
-            handler._active_file_playback_owner is lifecycle
-        )
+        reserved_before_audio_lookup = handler._active_file_playback_owner is lifecycle
         stop_task = asyncio.create_task(
             handler.handle_tts_playback(
                 TTSPlaybackEvent(
@@ -2417,7 +2443,9 @@ async def test_app_unavailable_notice_rejection_still_settles_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_app_unavailable_notice_false_acceptance_settles_without_type_error() -> None:
+async def test_app_unavailable_notice_false_acceptance_settles_without_type_error() -> (
+    None
+):
     store = ConsoleChatStore()
     session = store.create_session()
     message = store.append_message(
@@ -2459,6 +2487,7 @@ def test_auto_speak_outcome_callback_must_be_callable() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_effective_openai_destination_is_versioned_and_sanitized() -> None:
     app_tts = {
         "default_provider": "openai",
@@ -2529,7 +2558,9 @@ async def test_provider_destination_uses_applied_network_configuration(
 ) -> None:
     service = MagicMock()
     service.registry.provider_configuration_snapshot = AsyncMock(
-        return_value=SimpleNamespace(applied_config={"app_config": {"app_tts": app_tts}})
+        return_value=SimpleNamespace(
+            applied_config={"app_config": {"app_tts": app_tts}}
+        )
     )
 
     endpoint = await TTSEventHandler._effective_provider_endpoint(
@@ -2567,7 +2598,9 @@ def test_audio_cpp_admitted_destination_uses_active_mode(
 
 
 @pytest.mark.asyncio
-async def test_destination_authorization_uses_post_capacity_exact_lease_config() -> None:
+async def test_destination_authorization_uses_post_capacity_exact_lease_config() -> (
+    None
+):
     adapters: list[FakeAdapter] = []
 
     def factory(config: Mapping[str, Any]) -> FakeAdapter:
@@ -2628,9 +2661,7 @@ async def test_destination_authorization_uses_post_capacity_exact_lease_config()
         "openai",
         {
             "generation": "two",
-            "app_config": {
-                "app_tts": {"OPENAI_BASE_URL": "https://b.example/v1"}
-            },
+            "app_config": {"app_tts": {"OPENAI_BASE_URL": "https://b.example/v1"}},
         },
     )
     await first.aclose()
@@ -2733,29 +2764,6 @@ async def test_error_completion_clears_console_speaking_marker() -> None:
     # A screen speaking a DIFFERENT message keeps its own state untouched.
     assert other._console_speaking_message_id == "console-msg-2"
     assert other.sync_calls == 0
-
-
-@pytest.mark.asyncio
-async def test_console_speak_autoplay_skipped_when_legacy_widget_claims_message(
-    tmp_path,
-):
-    """Regression pin: a legacy ChatMessage widget owning the message id
-    keeps the pre-existing "click play to listen" behavior and must NOT be
-    auto-played out from under the user."""
-    audio_file = tmp_path / "clip.mp3"
-    audio_file.write_bytes(b"fake-audio-bytes")
-
-    widget = ChatMessage(message="hello", role="AI", message_id="legacy-msg-1")
-    fake_app = _FakeApp(widgets=[widget])
-    event = TTSCompleteEvent(message_id="legacy-msg-1", audio_file=audio_file)
-
-    await TldwCli.handle_tts_complete_event(fake_app, event)
-
-    playback_events = [m for m in fake_app.posted if isinstance(m, TTSPlaybackEvent)]
-    assert playback_events == []
-    fake_app.notify.assert_called_once_with(
-        "TTS audio ready - click play to listen", severity="information"
-    )
 
 
 @pytest.mark.asyncio

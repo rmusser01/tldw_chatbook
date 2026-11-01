@@ -1,0 +1,14 @@
+{
+  "command": [
+    "C:\\Users\\GDesktop-1\\.codex\\worktrees\\workspace-project-guidance\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-m",
+    "pytest",
+    "Tests/DB/test_workspace_project_index_db.py::test_index_timestamp_writers_store_canonical_utc",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "--no-showlocals"
+  ],
+  "exit_code": 1,
+  "elapsed_seconds": 15.098146438598633
+}

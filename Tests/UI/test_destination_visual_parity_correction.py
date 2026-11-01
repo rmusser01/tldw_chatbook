@@ -11,6 +11,7 @@ from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import Button, Checkbox, Collapsible, DataTable, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -23,6 +24,7 @@ from Tests.UI.test_destination_shells import (
     StaticLibraryMediaScopeService,
     StaticLibraryNotesScopeService,
     StaticWatchlistsScopeService,
+    _ToolsPaneHarness,
     _active_destination_screen,
     _wait_for_selector,
 )
@@ -47,18 +49,15 @@ from tldw_chatbook.UI.Screens import (
     library_screen as library_screen_module,
 )
 from tldw_chatbook.UI.Screens import (
-    skills_screen as skills_screen_module,
-)
-from tldw_chatbook.UI.Screens import (
     watchlists_collections_screen as wc_screen_module,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.mcp_screen import MCPScreen
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
 from tldw_chatbook.UI.Screens.settings_screen import (
     SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH,
+    SettingsScreen,
 )
 from tldw_chatbook.UI.Watchlists_Modules.inspector_pane import InspectorPane
 from tldw_chatbook.UI.Watchlists_Modules.notifications_pane import NotificationsPane
@@ -1003,7 +1002,7 @@ SOURCE_PREP_WORKBENCHES = {
             "#personas-inspector-pane",
         ),
         "actions": ("#personas-library-new", "#personas-attach-to-console"),
-        "markers": ("#personas-library-empty", "#personas-library-count"),
+        "markers": ("#personas-library-empty", "#personas-library-rows"),
         "marker_container": "#personas-library-pane",
     },
     # Watchlists uses its own responsive horizontal body with permanent grips,
@@ -1035,18 +1034,6 @@ SOURCE_PREP_WORKBENCHES = {
         "markers": ("#wc-empty-state", "#wc-service-error", "#wc-loading-state"),
         "marker_container": "#wl-centre-status",
     },
-    "skills": {
-        "workbench": "#skills-workbench",
-        "strip": "#skills-mode-strip",
-        "panes": ("#skills-list-pane", "#skills-detail-pane", "#skills-inspector-pane"),
-        "actions": ("#skills-import-skill", "#skills-attach-to-console"),
-        "markers": (
-            "#skills-empty-state",
-            "#skills-service-error",
-            "#skills-loading-state",
-        ),
-        "marker_container": "#skills-detail-pane",
-    },
 }
 
 #: `SOURCE_PREP_WORKBENCHES` minus Watchlists, whose responsive grips may
@@ -1061,7 +1048,7 @@ SOURCE_PREP_WORKBENCHES_HORIZONTAL = {
 @pytest.mark.parametrize(
     "route,contract",
     SOURCE_PREP_WORKBENCHES_HORIZONTAL.items(),
-    ids=("artifacts", "personas", "skills"),
+    ids=("artifacts", "personas"),
 )
 @pytest.mark.asyncio
 async def test_source_prep_destinations_use_list_detail_inspector_workbench(
@@ -1092,7 +1079,7 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
 @pytest.mark.parametrize(
     "route,contract",
     SOURCE_PREP_WORKBENCHES_HORIZONTAL.items(),
-    ids=("artifacts", "personas", "skills"),
+    ids=("artifacts", "personas"),
 )
 @pytest.mark.asyncio
 async def test_source_prep_default_empty_or_unavailable_states_preserve_workbench_geometry(
@@ -1467,7 +1454,15 @@ async def test_watchlists_active_section_tab_label_is_visible():
             f"a border inside the one-row strip eats the row the labels need: "
             f"{rows[0]!r}"
         )
-        for label in ("Read", "Sources", "Runs", "Rules", "Notifications", "Artifacts", "Overview"):
+        for label in (
+            "Read",
+            "Sources",
+            "Runs",
+            "Rules",
+            "Notifications",
+            "Artifacts",
+            "Overview",
+        ):
             _assert_label_intact_on_screen(
                 strip, label, context="watchlists section tab strip"
             )
@@ -1509,6 +1504,8 @@ async def test_watchlists_article_focus_gives_the_reader_the_flexible_body(size)
         assert reader.region.width + sum(grip.region.width for grip in grips) == (
             body.region.width
         )
+
+
 @pytest.mark.parametrize("size", [(235, 52), (160, 42)])
 @pytest.mark.asyncio
 async def test_watchlists_right_rail_does_not_clip_action_labels(size):
@@ -1621,11 +1618,6 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
             "#acp-workbench",
             ("Agents / Sessions", "Runtime Setup", "Compatibility / Actions"),
         ),
-        (
-            "skills",
-            "#skills-workbench",
-            ("Skill Library", "Skill Detail", "Skill Inspector"),
-        ),
         # Settings' Overview card title carries the column-title class.
         (
             "settings",
@@ -1641,7 +1633,6 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
         "schedules",
         "workflows",
         "acp",
-        "skills",
         "settings",
     ),
 )
@@ -1901,21 +1892,13 @@ SOURCE_PREP_LOADING_CONTRACTS = [
     # but `_assert_ascii_workbench_contract` requires three always-expanded
     # panes. Watchlists instead resolves responsive side-pane grips around a
     # permanent centre canvas. See `SOURCE_PREP_WORKBENCHES_HORIZONTAL` above.
-    (
-        "skills",
-        skills_screen_module.SkillsScreen,
-        "_refresh_local_skills_context",
-        "#skills-loading-state",
-        SOURCE_PREP_WORKBENCHES["skills"],
-        "#skills-detail-pane",
-    ),
 ]
 
 
 @pytest.mark.parametrize(
     "route,screen_cls,refresh_method,loading_marker,contract,loading_container",
     SOURCE_PREP_LOADING_CONTRACTS,
-    ids=("artifacts", "skills"),
+    ids=("artifacts",),
 )
 @pytest.mark.asyncio
 async def test_source_prep_loading_states_preserve_workbench_geometry(
@@ -2193,23 +2176,38 @@ async def _assert_advanced_run_reachable(screen, pilot) -> None:
         assert adv_run.can_focus, "#mcp-adv-run is not focusable"
 
 
+class _BundleToolsPaneHarness(_ToolsPaneHarness):
+    """`_ToolsPaneHarness` that ALSO loads the real app CSS bundle.
+
+    The pane's mode-strip height lives in the app bundle
+    (`.destination-mode-strip`, css/layout/_destination.tcss) -- the bare
+    harness never loads it, so geometry measurements need this subclass the
+    same way `_CssTrueDestinationHarness` does for Meetings (see its
+    docstring and the "shared UI harness never loads the app stylesheet"
+    entry in backlog/docs/lessons-testing-evidence.md).
+    """
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+
 @pytest.mark.asyncio
-async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow():
+@private_profile_test
+async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(request):
     """Realigned from the retired `UnifiedMCPPanel` 3-column embed.
 
     Task 8 replaced the embedded panel with the rail/canvas/inspector
-    `MCPWorkbench` triad. Same product intent -- server list, server detail,
-    and readiness/actions each get a fully visible, non-overflowing pane --
-    verified against the new `#mcp-hub-rail` / `#mcp-hub-canvas` /
-    `#mcp-hub-inspector` landmarks.
+    `MCPWorkbench` triad; ADR-240 moved that triad into the Settings Tools &
+    MCP pane. Same product intent -- server list, server detail, and
+    readiness/actions each get a fully visible, non-overflowing pane --
+    verified against the `#mcp-hub-rail` / `#mcp-hub-canvas` /
+    `#mcp-hub-inspector` landmarks (the retired shell's `#mcp-title` strip is
+    gone; the pane's `#tools-hub-purpose` line carries the purpose copy).
     """
-    app = _build_test_app()
-    host = DestinationHarness(app, "mcp")
+    host = _BundleToolsPaneHarness()
     async with host.run_test(size=(140, 42)) as pilot:
-        screen = _active_destination_screen(host)
+        screen = host.query_one("#settings-tools-hub")
         await _wait_for_selector(screen, pilot, "#mcp-hub-workbench")
-        _assert_strip_compact(screen, "#mcp-title", max_height=1)
-        _assert_strip_compact(screen, "#mcp-purpose", max_height=1)
+        _assert_strip_compact(screen, "#tools-hub-purpose", max_height=1)
         _assert_ascii_workbench_contract(
             screen,
             workbench="#mcp-hub-workbench",
@@ -2223,19 +2221,20 @@ async def test_mcp_uses_visible_server_detail_readiness_layout_without_overflow(
 
 
 @pytest.mark.asyncio
-async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry():
+@private_profile_test
+async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry(request):
     """Realigned from the retired `UnifiedMCPPanel` embed (same intent as above).
 
-    Verifies the default local-source state (no server selected, only the
-    built-in server present) does not break the workbench triad's geometry,
-    and that the servers-mode overview content stays confined to the canvas
-    pane rather than escaping it (successor to the old
-    `#unified-mcp-content` inside `#mcp-detail-pane` check).
+    ADR-240: hosted by the Settings Tools & MCP pane now. Verifies the
+    default local-source state (no server selected, only the built-in server
+    present) does not break the workbench triad's geometry, and that the
+    servers-mode overview content stays confined to the canvas pane rather
+    than escaping it (successor to the old `#unified-mcp-content` inside
+    `#mcp-detail-pane` check).
     """
-    app = _build_test_app()
-    host = DestinationHarness(app, "mcp")
+    host = _BundleToolsPaneHarness()
     async with host.run_test(size=(140, 42)) as pilot:
-        screen = _active_destination_screen(host)
+        screen = host.query_one("#settings-tools-hub")
         await _wait_for_selector(screen, pilot, "#mcp-hub-workbench")
         _assert_ascii_workbench_contract(
             screen,
@@ -2270,11 +2269,15 @@ async def test_mcp_unavailable_or_local_default_state_keeps_workbench_geometry()
 
 
 @pytest.mark.asyncio
-async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
+@private_profile_test
+async def test_mcp_forced_loading_state_stays_inside_workbench(request, monkeypatch):
     """A blocked production service load keeps the real workbench usable."""
     app = _build_test_app()
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
+    # Pin the initial route (a fresh private profile defaults elsewhere) --
+    # same precedent as the footer-hints production test.
+    app._initial_tab_value = "chat"
     service = app.unified_mcp_service
     real_load_context = service.load_context
     load_started = asyncio.Event()
@@ -2288,9 +2291,14 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
     monkeypatch.setattr(service, "load_context", keep_loading)
     async with app.run_test(size=(140, 42)) as pilot:
         try:
-            await _wait_for_production_screen(app, pilot, ChatScreen)
+            # Private-profile children start cold (no warm module cache), so
+            # the first screen push can outgrow the helper's tight default.
+            await _wait_for_production_screen(app, pilot, ChatScreen, timeout=30.0)
+            # ADR-240: the bare "mcp" route lands Settings > Tools & MCP.
             await app.handle_screen_navigation(NavigateToScreen("mcp"))
-            screen = await _wait_for_production_screen(app, pilot, MCPScreen)
+            screen = await _wait_for_production_screen(
+                app, pilot, SettingsScreen, timeout=30.0
+            )
             await asyncio.wait_for(load_started.wait(), timeout=6.0)
             await _wait_for_selector(screen, pilot, "#mcp-hub-inspector")
             rail = screen.query_one("#mcp-hub-rail")
@@ -2301,12 +2309,22 @@ async def test_mcp_forced_loading_state_stays_inside_workbench(monkeypatch):
             )
             inspector = screen.query_one("#mcp-hub-inspector")
             _assert_strip_compact(screen, "#mcp-mode-strip", max_height=2)
-            assert rail.region.x < loading.region.x < inspector.region.x
-            assert len({rail.region.y, loading.region.y, inspector.region.y}) == 1
+            # task-35151: at 140 columns the Settings detail pane (~61 cols)
+            # sits below the compact triad's minimum width (rail 16 + canvas
+            # 30 + inspector 20), so the ADR-148 stacked layout renders:
+            # rail+canvas share one row and the inspector is the bounded
+            # band below it. (The previous rail < canvas < inspector
+            # x-ordering pinned the pre-task-35151 triad, whose canvas
+            # actually degenerated to ~7x the pane width and ran offscreen
+            # at this size -- nothing here checked horizontal containment,
+            # so it passed vacuously.)
+            assert rail.region.x < loading.region.x
+            assert rail.region.y == loading.region.y
+            assert inspector.region.y > rail.region.y
             for widget, context in (
                 (rail, "MCP rail"),
                 (loading, "MCP loading canvas"),
-                (inspector, "MCP inspector"),
+                (inspector, "MCP inspector band"),
             ):
                 _assert_visible_in_viewport(widget, height=42, context=context)
             _assert_marker_inside_container(

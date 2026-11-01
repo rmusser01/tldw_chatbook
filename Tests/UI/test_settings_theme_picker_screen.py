@@ -1538,6 +1538,136 @@ async def test_quit_without_theme_edits_does_not_prompt(request, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("button", "quits"), [("#cancel-button", False), ("#confirm-button", True)]
+)
+@private_profile_test
+async def test_quit_with_a_staged_settings_change_asks_first(
+    request, monkeypatch, button, quits
+):
+    """Capture finding 22 (TASK-33007): Ctrl+Q with "1 unsaved" in Providers &
+    Models quit at once and the staged change was lost. Quitting now asks;
+    Keep editing stops the quit before any cleanup, Discard and quit goes on."""
+    from tldw_chatbook.UI.Screens.settings_config_models import (
+        SettingsCategoryId,
+        SettingsDraft,
+    )
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _category(host, pilot, "Overview")
+        settings = host.screen
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("provider", "openai", "anthropic")
+        settings._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+        tldw, _switched = _real_app_on(host, settings, monkeypatch)
+        past_screen_check = []
+
+        async def next_quit_step():
+            past_screen_check.append(True)
+            return False
+
+        monkeypatch.setattr(tldw, "_confirm_console_runtime_quit", next_quit_step)
+        tldw._quit_in_progress = True
+        quit_flow = host.run_worker(tldw._confirm_and_quit(), exit_on_error=False)
+        await pilot.pause(0.3)
+        prompt = host.screen
+        assert isinstance(prompt, ConfirmationDialog)
+        assert "Providers & Models" in prompt.message
+        await pilot.click(button)
+        await pilot.pause(0.2)
+        await quit_flow.wait()
+        assert past_screen_check == ([True] if quits else [])
+        assert tldw._quit_in_progress is False
+        assert host.screen is settings and draft.is_dirty
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quit_asks_about_staged_changes_before_the_theme(request, monkeypatch):
+    """Capture fix 2, finding 4: the theme prompt asked first, and its
+    Discard undid the Try preview before the staged-change prompt asked;
+    Keep editing there then cancelled the quit with the preview already
+    gone. The staged-change prompt, which changes nothing, now asks first."""
+    from tldw_chatbook.UI.Screens.settings_config_models import (
+        SettingsCategoryId,
+        SettingsDraft,
+    )
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("provider", "openai", "anthropic")
+        settings._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+        undone = []
+        monkeypatch.setattr(editor, "discard_try", lambda: undone.append(True))
+        tldw, _switched = _real_app_on(host, settings, monkeypatch)
+        past_screen_check = []
+
+        async def next_quit_step():
+            past_screen_check.append(True)
+            return False
+
+        monkeypatch.setattr(tldw, "_confirm_console_runtime_quit", next_quit_step)
+        tldw._quit_in_progress = True
+        quit_flow = host.run_worker(tldw._confirm_and_quit(), exit_on_error=False)
+        await pilot.pause(0.3)
+        assert isinstance(host.screen, ConfirmationDialog), host.screen
+        await pilot.click("#cancel-button")
+        await pilot.pause(0.2)
+        await quit_flow.wait()
+        assert past_screen_check == [] and _leave_modals(host) == []
+        assert undone == [] and editor.is_modified and draft.is_dirty
+        assert host.screen is settings
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quit_with_staged_changes_never_stacks_on_the_theme_prompt(
+    request, monkeypatch
+):
+    """Capture fix 2 round 2, finding 1: with the theme leave prompt open,
+    Ctrl+Q pushed the staged-change prompt on top of it, and its Discard and
+    quit then hit the theme prompt's one-at-a-time guard and cancelled the
+    quit silently. One prompt at a time: the quit stays put, nothing stacks."""
+    from tldw_chatbook.UI.Screens.settings_config_models import (
+        SettingsCategoryId,
+        SettingsDraft,
+    )
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("provider", "openai", "anthropic")
+        settings._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+        settings._select_category(SettingsCategoryId.APPEARANCE.value)
+        await pilot.pause(0.3)
+        assert len(_leave_modals(host)) == 1
+        tldw, _switched = _real_app_on(host, settings, monkeypatch)
+        past_screen_check = []
+
+        async def next_quit_step():
+            past_screen_check.append(True)
+            return False
+
+        monkeypatch.setattr(tldw, "_confirm_console_runtime_quit", next_quit_step)
+        tldw._quit_in_progress = True
+        quit_flow = host.run_worker(tldw._confirm_and_quit(), exit_on_error=False)
+        await pilot.pause(0.3)
+        assert not any(isinstance(s, ConfirmationDialog) for s in host.screen_stack)
+        await quit_flow.wait()
+        assert past_screen_check == [] and len(_leave_modals(host)) == 1
+        await pilot.click("#settings-theme-leave-stay")
+        await pilot.pause(0.3)
+        assert _leave_modals(host) == [] and editor.is_modified and draft.is_dirty
+
+
+@pytest.mark.asyncio
 @private_profile_test
 async def test_real_navigate_to_screen_prompts_and_stay_keeps_settings(request, monkeypatch):
     """Review follow-up 7: a real ``NavigateToScreen`` through the real

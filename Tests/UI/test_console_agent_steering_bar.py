@@ -143,7 +143,6 @@ class _SteeringFleetBridge:
             return []
         return self.coordinator.snapshot()
 
-
     def live_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
         if conversation_id != self._conversation_id:
             return AgentLiveSnapshot()
@@ -509,9 +508,7 @@ async def test_submit_with_an_empty_target_never_posts_a_message_at_all():
         await _scroll_into_view(pilot, console, _BAR)
 
         bar = console.query_one(_BAR, ConsoleAgentSteeringBar)
-        bar.sync_state(
-            ConsoleAgentSteeringState(visible=True, target_id="", queued=0)
-        )
+        bar.sync_state(ConsoleAgentSteeringState(visible=True, target_id="", queued=0))
         await pilot.pause()
 
         posted: list[object] = []
@@ -570,9 +567,7 @@ async def test_oversize_submit_refused_with_own_painted_copy():
         text = str(note.renderable)
         assert "too long" in text and str(MAX_STEERING_CHARS) in text
         # The draft is kept for shortening, not discarded.
-        assert console.query_one(_INPUT, Input).value == "x" * (
-            MAX_STEERING_CHARS + 1
-        )
+        assert console.query_one(_INPUT, Input).value == "x" * (MAX_STEERING_CHARS + 1)
 
 
 class _RefusingBridge(_SteeringFleetBridge):

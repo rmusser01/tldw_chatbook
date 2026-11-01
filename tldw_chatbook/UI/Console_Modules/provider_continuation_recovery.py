@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -11,12 +12,18 @@ from typing import Any
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from ...Chat.console_chat_models import ConsoleChatMessage
+from ...Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
+    ConsoleChatMessage,
+)
 from ...Chat.console_turn_preparation import (
+    RESEND_PAUSE_COPY,
     ConsolePreparationPauseKind,
+    ContextCompactionHold,
     ConsoleTurnPreparation,
     ConsoleTurnPreparationState,
 )
@@ -30,6 +37,23 @@ class TraceCallRecoveryState:
 
     preparation_id: str
     temporary_capture: bool = False
+    #: TASK-34350: set when the send is held at the compaction threshold;
+    #: content-free token counts for the card's copy.
+    context_hold: ContextCompactionHold | None = None
+    #: TASK-33621.2: the request's trace record failed before any call was
+    #: reserved (``TRACE_PROVENANCE``), rather than the call's capture.
+    provenance: bool = False
+    #: TASK-33621.20: why automatic Library retrieval paused this send
+    #: (``RETRIEVAL``), e.g. "Library search timed out"; empty otherwise.
+    library_reason: str = ""
+    #: TASK-33621.20 review: the pause a send that Retry or Send once
+    #: without Library resumed fell into on its way out (provider not ready,
+    #: not saved); None otherwise. Its card offers Retry and Cancel.
+    resend_pause: ConsolePreparationPauseKind | None = None
+    #: TASK-33621.5: for a TRACE_CALL pause, whether the send reached the
+    #: provider ("yes"/"no"/"unknown") and its last HTTP refusal, as the
+    #: controller recorded them; None when nothing was recorded.
+    provider_contact: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,22 +66,68 @@ class TraceCallRecoveryResult:
 
 def trace_call_recovery_state(
     preparation: ConsoleTurnPreparation | None,
+    *,
+    context_hold: ContextCompactionHold | None = None,
+    library_reason: str = "",
+    provider_contact: object | None = None,
 ) -> TraceCallRecoveryState | None:
-    """Project only an actionable trace pause into the transcript UI.
+    """Project only an actionable pre-dispatch pause into the transcript UI.
 
     Args:
         preparation: Current session preparation, if one exists.
+        context_hold: The controller's numbers for a send held at the
+            compaction threshold (TASK-34350); required for that pause.
+        library_reason: Why automatic Library retrieval paused the send
+            (TASK-33621.20); a generic reason stands in when empty.
+        provider_contact: The controller's provider-contacted record for a
+            TRACE_CALL pause (TASK-33621.5).
 
     Returns:
         Content-free recovery identity for a supported pause, otherwise None.
     """
 
     if (
+        preparation is not None
+        and preparation.state is ConsoleTurnPreparationState.PAUSED
+        and preparation.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
+    ):
+        # TASK-33621.20: a timed-out, failed or stopped Library search used
+        # to pause with no card, no reason and no way to continue.
+        return TraceCallRecoveryState(
+            preparation.preparation_id,
+            library_reason=library_reason or "Library search did not finish",
+        )
+    if (
+        preparation is not None
+        and preparation.state is ConsoleTurnPreparationState.PAUSED
+        and preparation.pause_kind in RESEND_PAUSE_COPY
+    ):
+        # TASK-33621.20 review: nothing showed a send that re-paused on its
+        # way out (provider not ready, not saved), and nothing could end it.
+        return TraceCallRecoveryState(
+            preparation.preparation_id, resend_pause=preparation.pause_kind
+        )
+    if (
+        preparation is not None
+        and preparation.state is ConsoleTurnPreparationState.PAUSED
+        and preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION
+    ):
+        if context_hold is None:
+            return None
+        return TraceCallRecoveryState(
+            preparation.preparation_id, context_hold=context_hold
+        )
+    if (
         preparation is None
         or preparation.state is not ConsoleTurnPreparationState.PAUSED
         or preparation.pause_kind
         not in {
             ConsolePreparationPauseKind.TRACE_CALL,
+            # TASK-33940.3: a durable first send whose provenance could not be
+            # saved pauses with exactly this card's actions (retry,
+            # send_without_capture, cancel), but was never projected, so the
+            # send just sat "Blocked" with no way to see why or move on.
+            ConsolePreparationPauseKind.TRACE_PROVENANCE,
             ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
         }
     ):
@@ -65,10 +135,128 @@ def trace_call_recovery_state(
     return TraceCallRecoveryState(
         preparation.preparation_id,
         temporary_capture=(
-            preparation.pause_kind
-            is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+            preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+        ),
+        provenance=(
+            preparation.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE
+        ),
+        provider_contact=(
+            provider_contact
+            if preparation.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
+            else None
         ),
     )
+
+
+def _trace_call_copy(state: TraceCallRecoveryState) -> tuple[str, str, str] | None:
+    """Title, Problem and Impact for a TRACE_CALL card from what it reached.
+
+    TASK-33621.5: the card said "Impact: The provider was not contacted" after
+    the provider had answered HTTP 429 and only the automatic retry's trace
+    failed. A recorded refusal now leads, with the trace failure as a note;
+    without a record the Impact line says what is known.
+    """
+    if state.provider_contact is None and not (
+        state.provenance or state.temporary_capture
+    ):
+        contacted = "unknown"
+    else:
+        contacted = getattr(state.provider_contact, "contacted", "no")
+    rejection = getattr(state.provider_contact, "rejection", None)
+    if contacted == "yes" and rejection is not None:
+        provider = rejection.provider or "The provider"
+        refused = f"{provider} returned HTTP {rejection.status_code} ({rejection.meaning})"
+        return (
+            refused,
+            f"Problem: {refused}.",
+            f"Impact: {provider} was contacted; no reply arrived. Note: the "
+            "automatic retry was not sent because its trace record could not "
+            "be saved.",
+        )
+    impact = {
+        "yes": "Impact: The provider was contacted earlier in this send; this "
+        "request was not sent. Choose how to continue.",
+        "unknown": "Impact: It is not known whether the provider was contacted. "
+        "Choose how to continue.",
+    }.get(contacted)
+    return None if impact is None else ("", "", impact)
+
+
+#: TASK-33621.2: why a turn is stuck, short enough that the run chip's
+#: ``Run: Blocked — <reason>`` stays whole inside its 30-cell label cap.
+_BLOCKED_TURN_REASONS = {
+    ConsolePreparationPauseKind.TRACE_PROVENANCE: "trace not saved",
+    ConsolePreparationPauseKind.TRACE_CALL: "capture failed",
+    ConsolePreparationPauseKind.TEMPORARY_CAPTURE: "save chat first",
+    # TASK-33621.20 review: a send that re-paused after Retry / Send once.
+    ConsolePreparationPauseKind.DESTINATION_CHANGED: "check provider",
+    ConsolePreparationPauseKind.PERSISTENCE: "send not saved",
+    # TASK-33621.4: held by the Ask policy, waiting on the card's choice;
+    # "Run: Blocked — compaction ask" fills the 29-column Inspect block.
+    ConsolePreparationPauseKind.CONTEXT_COMPACTION: "compaction ask",
+}
+#: TASK-33621.20 review: the card's Problem line for a send that re-paused.
+_RESEND_PROBLEMS = {
+    ConsolePreparationPauseKind.DESTINATION_CHANGED: (
+        "Problem: The provider or model for this send is not ready, or changed "
+        "after the send was prepared."
+    ),
+    ConsolePreparationPauseKind.PERSISTENCE: (
+        "Problem: This send could not be saved before it went out."
+    ),
+}
+#: TASK-33621.20: the same for a Library-paused send, by its error code.
+_LIBRARY_BLOCKED_REASONS = {
+    "library_retrieval_timeout": "Library timeout",
+    "library_retrieval_failed": "Library error",
+    "library_retrieval_stopped": "Library stopped",
+}
+
+
+def blocked_turn_reason(controller: Any) -> str:
+    """Return why the viewed chat's accepted turn is stuck unsent, or "".
+
+    TASK-33621.2: a send paused for trace recovery left the header badge, the
+    run chip and the Inspect Run line all reading "Ready". Only a pause the
+    transcript callout can act on counts as a stuck turn; an ordinary refusal
+    keeps its draft in the composer and says why there. The paused
+    preparation, not the run status, is the truth: a later send refused
+    behind it re-stamps the status ("Preparation ended."), and the turn is
+    still stuck.
+
+    Args:
+        controller: The Console chat controller, or None before it exists.
+
+    Returns:
+        A short reason for the paused turn, or "" when no turn is stuck.
+    """
+
+    run_state = getattr(controller, "run_state", None)
+    if getattr(run_state, "status", None) in FEEDBACK_ACTIVE_RUN_STATUSES:
+        return ""  # Retry or Send without capture is running the turn now.
+    preparation = getattr(controller, "trace_call_recovery_preparation", None)
+    paused = preparation() if callable(preparation) else None
+    # TASK-33621.4: a compaction hold's card needs the controller's numbers;
+    # without them it projected nothing, and the held send read "Ready".
+    hold_for = getattr(controller, "context_compaction_hold", None)
+    hold = (
+        hold_for(paused.preparation_id)
+        if callable(hold_for) and paused is not None
+        else None
+    )
+    if trace_call_recovery_state(paused, context_hold=hold) is None:
+        # TASK-33621.6: response recovery still blocks without a live hold.
+        store = getattr(controller, "store", None)
+        blocks = getattr(store, "dispatch_recovery_blocks_submission", None)
+        if callable(blocks) and blocks(getattr(store, "active_session_id", None)):
+            return "recovery needed"
+        return ""
+    if paused.pause_kind is ConsolePreparationPauseKind.RETRIEVAL:
+        outcome_for = getattr(controller, "preparation_outcome", None)
+        outcome = outcome_for(paused.preparation_id) if callable(outcome_for) else None
+        code = getattr(outcome, "error_code", None) or ""
+        return _LIBRARY_BLOCKED_REASONS.get(code, "Library paused")
+    return _BLOCKED_TURN_REASONS.get(paused.pause_kind, "trace capture blocked")
 
 
 TraceCallAction = Callable[[str, str], object | Awaitable[object]]
@@ -81,6 +269,8 @@ async def dispatch_trace_call_recovery_action(
     *,
     on_started: Callable[[], object] | None = None,
     on_finished: Callable[[], object | Awaitable[object]] | None = None,
+    restore_draft: bool = True,
+    on_result: Callable[[object], None] | None = None,
 ) -> object:
     """Route a visible trace-recovery action to the controller.
 
@@ -90,6 +280,8 @@ async def dispatch_trace_call_recovery_action(
         preparation_id: Exact paused preparation identity.
         on_started: Optional callback invoked before controller entry.
         on_finished: Optional callback invoked after controller completion.
+        restore_draft: Whether Cancel may restore an owned draft automatically.
+        on_result: Synchronously retain the controller outcome before UI cleanup.
 
     Returns:
         The awaited controller result, or False for an unknown action or missing
@@ -100,6 +292,9 @@ async def dispatch_trace_call_recovery_action(
         "retry": "retry_library_preparation",
         "save_and_send": "save_and_send",
         "send_without_capture": "send_without_capture",
+        "compact_and_send": "compact_and_send",
+        "send_without_compacting": "send_without_compacting",
+        "bypass": "bypass_library_preparation",  # TASK-33621.20
         "cancel": "cancel_library_preparation",
     }.get(action)
     handler = getattr(controller, handler_name, None) if handler_name else None
@@ -108,13 +303,30 @@ async def dispatch_trace_call_recovery_action(
     if on_started is not None:
         on_started()
     try:
-        result = handler(preparation_id)
-        return await result if inspect.isawaitable(result) else result
+        result = (
+            handler(preparation_id, restore_draft=False)
+            if action == "cancel" and not restore_draft
+            else handler(preparation_id)
+        )
+        result = await result if inspect.isawaitable(result) else result
+        if on_result is not None:
+            on_result(result)
+        return result
     finally:
         if on_finished is not None:
             finished = on_finished()
             if inspect.isawaitable(finished):
                 await finished
+
+
+def _set_copy(widget: Static, text: str) -> None:
+    """Write ``text`` unless ``widget`` already shows it.
+
+    ``Static.update`` always requests a whole-screen layout, and the callout
+    re-syncs on every 0.2 s run tick while it is hidden (TASK-33620.15.7).
+    """
+    if widget.content != text:
+        widget.update(text)
 
 
 class TraceCallRecoveryCallout(Vertical):
@@ -195,9 +407,27 @@ class TraceCallRecoveryCallout(Vertical):
                 variant="warning",
             )
             yield Button("Retry capture", id="console-trace-retry", variant="warning")
+            # TASK-34350: the context-limit hold's own actions.
+            yield Button(
+                "Compact and send",
+                id="console-trace-compact-send",
+                variant="primary",
+            )
+            yield Button(
+                "Send without compacting",
+                id="console-trace-send-uncompacted",
+            )
+            # TASK-33621.4 AC#1: the policy is one step away, not in Settings.
+            yield Button("Change policy", id="console-trace-change-policy")
             yield Button(
                 "Send without capture",
                 id="console-trace-send-without",
+                variant="warning",
+            )
+            # TASK-33621.20: a Library-paused send's one-off bypass.
+            yield Button(
+                "Send once without Library",
+                id="console-trace-send-without-library",
                 variant="warning",
             )
             yield Button("Cancel send", id="console-trace-cancel")
@@ -213,30 +443,132 @@ class TraceCallRecoveryCallout(Vertical):
         self.recovery_state = state
         self.display = state is not None
         temporary = bool(state is not None and state.temporary_capture)
-        self.query_one("#console-trace-title", Static).update(
-            "Save chat to capture this send" if temporary else "Trace capture blocked"
+        hold = state.context_hold if state is not None else None
+        library = state.library_reason if state is not None else ""
+        resend = (
+            RESEND_PAUSE_COPY.get(state.resend_pause, "")
+            if state is not None and state.resend_pause is not None
+            else ""
+        )
+        call_copy = (
+            _trace_call_copy(state)
+            if state is not None and hold is None and not library and not resend
+            else None
+        )
+        _set_copy(
+            self.query_one("#console-trace-title", Static),
+            call_copy[0]
+            if call_copy is not None and call_copy[0]
+            else "Context limit reached; your message is held"
+            if hold is not None
+            else f"{library or resend}; your message was not sent"
+            if library or resend
+            else "Save chat to capture this send"
+            if temporary
+            else "Trace capture blocked",
         )
         detail_rows = tuple(self.query(".console-trace-detail"))
-        if len(detail_rows) >= 2:
-            detail_rows[1].update(
-                (
-                    "Problem: Temporary chats cannot store durable captures."
-                    if temporary
-                    else "Problem: Trace capture could not be saved."
+        if len(detail_rows) >= 3:
+            if hold is not None:
+                # A deliberate policy hold, not a failure: no Problem/Impact.
+                # Lazy: this module mounts at UI-ready (ADR-097 census) and the
+                # copy is needed only while a send is actually held.
+                from ...Chat.console_context_budget_copy import (
+                    compaction_hold_detail,
                 )
-            )
+
+                # TASK-33621.4: the numbers lead (the Owner row is a failure
+                # card's), then the choices and where to preview a summary.
+                for row, copy in zip(
+                    detail_rows,
+                    compaction_hold_detail(
+                        used_tokens=hold.used_tokens,
+                        budget_tokens=hold.budget_tokens,
+                        estimated=hold.estimated,
+                        trigger_tokens=hold.trigger_tokens,
+                    ),
+                ):
+                    _set_copy(row, copy)
+            else:
+                _set_copy(detail_rows[0], "Owner: This Console send")
+                _set_copy(
+                    detail_rows[1],
+                    call_copy[1]
+                    if call_copy is not None and call_copy[1]
+                    else f"Problem: {library} before this send could use it."
+                    if library
+                    else _RESEND_PROBLEMS.get(state.resend_pause, "")
+                    if resend
+                    else "Problem: Temporary chats cannot store durable captures."
+                    if temporary
+                    else "Problem: This send's trace record could not be saved."
+                    if state is not None and state.provenance
+                    else "Problem: Trace capture could not be saved.",
+                )
+                _set_copy(
+                    detail_rows[2],
+                    call_copy[2]
+                    if call_copy is not None
+                    else "Impact: The provider was not contacted. Choose how to continue.",
+                )
         for button in self.query(Button):
             button.display = state is not None
             button.disabled = self._busy or state is None
-        self.query_one("#console-trace-save-send", Button).display = temporary
-        self.query_one("#console-trace-retry", Button).display = (
-            state is not None and not temporary
+        self.query_one("#console-trace-save-send", Button).display = (
+            temporary and hold is None
         )
-        self.query_one("#console-trace-status", Static).update(
+        retry = self.query_one("#console-trace-retry", Button)
+        retry.display = state is not None and not temporary and hold is None
+        provider_error = call_copy is not None and bool(call_copy[0])
+        retry.label = (
+            "Retry Library search"
+            if library
+            else "Retry send"
+            if resend
+            else "Retry"
+            if provider_error
+            else "Retry capture"
+        )
+        # TASK-33621.5 AC#1: after a provider refusal, Retry is the way on --
+        # unless Capture-On Retry was already refused as unconfirmed, when
+        # only Send without capture can continue (the status line says so).
+        unconfirmed = bool(
+            call_copy is not None
+            and getattr(state.provider_contact, "capture_unconfirmed", False)
+        )
+        retry.variant = "primary" if provider_error and not unconfirmed else "warning"
+        send_without = self.query_one("#console-trace-send-without", Button)
+        send_without.variant = "primary" if unconfirmed else "warning"
+        send_without.display = (
+            state is not None and hold is None and not library and not resend
+        )
+        self.query_one("#console-trace-send-without-library", Button).display = bool(
+            library
+        )
+        self.query_one("#console-trace-compact-send", Button).display = (
+            hold is not None
+        )
+        for button_id in (
+            "#console-trace-send-uncompacted",
+            "#console-trace-change-policy",
+        ):
+            self.query_one(button_id, Button).display = hold is not None
+        _set_copy(
+            self.query_one("#console-trace-status", Static),
             "Working… actions are temporarily disabled."
             if self._busy
-            else self._status_copy or "Choose one action."
+            else self._status_copy or "Choose one action.",
         )
+
+    @on(Button.Pressed, "#console-trace-change-policy")
+    def _change_policy(self, event: Button.Pressed) -> None:
+        """Open Chat settings at Context and memory; the send stays held."""
+
+        event.stop()
+        screen = self.screen
+        opener = getattr(screen, "_open_console_settings", None)
+        if callable(opener):  # the screen's worker outlives a card resync
+            screen.run_worker(opener(focus_context=True), exclusive=False)
 
     @on(Button.Pressed)
     def _handle_action(self, event: Button.Pressed) -> None:
@@ -244,6 +576,9 @@ class TraceCallRecoveryCallout(Vertical):
             "console-trace-save-send": "save_and_send",
             "console-trace-retry": "retry",
             "console-trace-send-without": "send_without_capture",
+            "console-trace-compact-send": "compact_and_send",
+            "console-trace-send-uncompacted": "send_without_compacting",
+            "console-trace-send-without-library": "bypass",
             "console-trace-cancel": "cancel",
         }.get(event.button.id or "")
         state = self.recovery_state
@@ -266,14 +601,18 @@ class TraceCallRecoveryCallout(Vertical):
                 result = await result
         except asyncio.CancelledError:
             self._busy = False
-            self.sync_recovery(self.recovery_state)
+            # A center swap removed the card mid-action: its buttons may
+            # already be gone, and a NoMatches here would fail the worker.
+            with contextlib.suppress(NoMatches):
+                self.sync_recovery(self.recovery_state)
             raise
         except Exception:
             self._busy = False
             self._status_copy = (
                 "Recovery did not complete. Try again or cancel the send."
             )
-            self.sync_recovery(self.recovery_state)
+            with contextlib.suppress(NoMatches):  # removed mid-action, as above
+                self.sync_recovery(self.recovery_state)
             return
         self._busy = False
         completed = (
@@ -643,8 +982,19 @@ class ProviderContinuationTranscriptRegion(ConsoleTranscriptRegion):
             ),
         )
 
+    def on_mount(self) -> None:
+        # Textual sets is_mounted after Mount; re-read the current builders then.
+        self.call_later(self.sync_recovery)
+
     def sync_recovery(self) -> None:
         """Synchronize the always-mounted recovery placeholder in place."""
+        # TASK-33621.20: Textual marks a removed subtree as pruning at once and
+        # prunes children first, so mid-swap a card can outlive its own title.
+        # A sync then (a cancelled card action's own) skips the doomed region;
+        # its replacement composes fresh. A card missing from a live region
+        # still raises.
+        if not self.is_mounted or self._pruning:
+            return
         self.query_one(TraceCallRecoveryCallout).sync_recovery(
             self._trace_recovery_state_builder()
         )

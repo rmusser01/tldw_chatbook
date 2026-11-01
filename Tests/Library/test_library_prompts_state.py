@@ -706,9 +706,7 @@ def _direct_prompt_browse_result(items=None, **overrides):
     values = {
         "scope": scope,
         "items": (
-            [{"id": "local:prompt:8", "local_id": 8}]
-            if items is None
-            else items
+            [{"id": "local:prompt:8", "local_id": 8}] if items is None else items
         ),
         "total_items": 1,
         "total_pages": 1,
@@ -1068,9 +1066,7 @@ def test_browse_prompt_result_rejects_bool_response_integers(field):
 
 def test_browse_prompt_request_token_rejects_bool():
     scope = prompts_state_module.PromptBrowseScope()
-    result = _direct_prompt_browse_result(
-        [{"id": "local:prompt:8", "local_id": 8}]
-    )
+    result = _direct_prompt_browse_result([{"id": "local:prompt:8", "local_id": 8}])
 
     with pytest.raises(ValueError, match="request_token"):
         prompts_state_module.begin_prompt_browse(scope, request_token=True)

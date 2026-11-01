@@ -1,0 +1,45 @@
+{
+  "python_files": [
+    "Tests/Architecture/test_module_size_ratchet.py",
+    "Tests/Library/test_library_file_export.py",
+    "Tests/Performance/test_console_keystroke_work_census.py",
+    "Tests/UI/test_console_send_acknowledgement.py",
+    "Tests/UI/test_console_transcript_ack_repaint.py",
+    "Tests/UI/test_evals_bench_editor.py",
+    "Tests/UI/test_evals_bench_save_publication.py",
+    "Tests/UI/test_evals_screen.py",
+    "Tests/UI/test_library_prompt_export_journeys.py",
+    "Tests/UI/test_library_prompt_export_responsiveness.py",
+    "Tests/UI/test_reminder_form.py",
+    "Tests/UI/test_schedules_reminder_form_saves.py",
+    "Tests/UI/test_schedules_transfer_actions.py",
+    "Tests/UI/test_speech_effects_placeholder.py",
+    "Tests/UI/test_speech_footer_scope.py",
+    "Tests/UI/test_speech_rail_navigation.py",
+    "Tests/UI/test_speech_shortcuts.py",
+    "Tests/UI/test_stts_capability_state.py",
+    "scripts/check_ui_pr_gate_census.py",
+    "tldw_chatbook/Scheduling/services/scheduling_service.py",
+    "tldw_chatbook/UI/Evals/bench_editor.py",
+    "tldw_chatbook/UI/Library_Modules/library_file_export.py",
+    "tldw_chatbook/UI/STTS_Window.py",
+    "tldw_chatbook/UI/Screens/evals_screen.py",
+    "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
+    "tldw_chatbook/UI/Screens/stts_screen.py",
+    "tldw_chatbook/Widgets/Console/console_transcript.py"
+  ],
+  "raw_lint_exit": 1,
+  "baseline_lint_counts": {
+    "E402": 7,
+    "E721": 10
+  },
+  "focused_lint_exit": 0,
+  "format_exit": 1,
+  "baseline_format_files": [
+    "Tests/Performance/test_console_keystroke_work_census.py",
+    "Tests/UI/test_speech_rail_navigation.py",
+    "tldw_chatbook/UI/STTS_Window.py",
+    "tldw_chatbook/Widgets/Console/console_transcript.py"
+  ],
+  "whitespace_pass": true
+}

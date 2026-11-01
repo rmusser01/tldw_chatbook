@@ -1,0 +1,27 @@
+{
+  "base_ref": "529a9ea9d1c14ba4a2e085c0355c0a304ac562ab",
+  "base_sha": "529a9ea9d1c14ba4a2e085c0355c0a304ac562ab",
+  "baseline_red_paths": [
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py"
+  ],
+  "files": {
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": {
+      "debt_units": 5,
+      "formatter_required": true,
+      "normalized_diff_sha256": "e6ba28274995b1cfab383ad4b73c13d65dcdcc5691abaf41050c8f779aef69ca",
+      "source_hunks": [
+        [
+          3863,
+          3872
+        ]
+      ],
+      "source_sha256": "8d9f4dcfd0b52521b09580158e5afab4ad0f9903824a8c72f4cfb739030fc546"
+    }
+  },
+  "generated_at_utc": "2026-10-03T02:57:32.655472+00:00",
+  "paths": [
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

@@ -64,9 +64,7 @@ def warm_up_image_protocol() -> bool:
         importlib.import_module("textual_image.widget")
     except ImportError:
         # Optional dependency absent -- expected, not a defect.
-        logger.debug(
-            "textual_image not installed; images use mosaic/pixels rendering."
-        )
+        logger.debug("textual_image not installed; images use mosaic/pixels rendering.")
         log_counter(
             "terminal_utils_image_protocol_warmup",
             labels={"result": "missing_dependency"},

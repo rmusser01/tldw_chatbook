@@ -202,9 +202,7 @@ class TestPromptOperations:
         )
         assert in_memory_db.soft_delete_prompt(prompt_id) is True
 
-        restored = in_memory_db.restore_deleted_prompt(
-            prompt_id, expected_version=2
-        )
+        restored = in_memory_db.restore_deleted_prompt(prompt_id, expected_version=2)
 
         assert restored["id"] == prompt_id
         assert restored["deleted"] == 0
@@ -330,9 +328,7 @@ class TestPromptOperations:
                 artifact_type=artifact_type,
             )
 
-    def test_expected_version_is_checked_inside_update_transaction(
-        self, temp_db_path
-    ):
+    def test_expected_version_is_checked_inside_update_transaction(self, temp_db_path):
         """A stale writer from a second database instance cannot alter a row."""
         first = PromptsDatabase(temp_db_path, client_id="writer-one")
         second = PromptsDatabase(temp_db_path, client_id="writer-two")
@@ -717,7 +713,6 @@ if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
 
-
 # ---------------------------------------------------------------------------
 # Library query seams (task-1337 plan Task 3)
 # ---------------------------------------------------------------------------
@@ -843,7 +838,9 @@ def test_library_prompts_search_exact_name_first_and_distinct_total(in_memory_db
     assert "system_prompt" in body_item["matched_fields"]
 
 
-def test_library_prompts_search_covers_every_section_and_literal_wildcards(in_memory_db):
+def test_library_prompts_search_covers_every_section_and_literal_wildcards(
+    in_memory_db,
+):
     db = in_memory_db
     details_id, _ = _seed_library_prompt(db, name="D", details="needle in details")
     user_id, _ = _seed_library_prompt(db, name="U", user_prompt="needle in user")
@@ -947,9 +944,12 @@ def test_library_prompt_detail_reads_run_inside_transaction(in_memory_db):
     conn.set_trace_callback(record_transaction_state)
     try:
         assert db.get_library_prompt_overview(prompt_uuid) is not None
-        assert db.get_library_prompt_section(
-            prompt_uuid, section="system_prompt", start=0, max_chars=20
-        ) is not None
+        assert (
+            db.get_library_prompt_section(
+                prompt_uuid, section="system_prompt", start=0, max_chars=20
+            )
+            is not None
+        )
     finally:
         conn.set_trace_callback(None)
 

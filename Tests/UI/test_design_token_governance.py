@@ -161,9 +161,9 @@ def test_documented_design_vocabulary_is_available(request) -> None:
         "$ds-sidebar-max-width",
     }
     missing = sorted(required - _defined_tokens())
-    assert not missing, (
-        f"Documented design-language tokens missing from catalog: {missing}"
-    )
+    assert (
+        not missing
+    ), f"Documented design-language tokens missing from catalog: {missing}"
 
 
 @private_profile_test
@@ -222,7 +222,9 @@ def test_active_css_extension_is_in_hex_floor(request, tmp_path, monkeypatch):
     monkeypatch.setattr(sys.modules[__name__], "CSS_MODULES", ["components/active.css"])
     assert sheet in _source_modules()
     assert unused not in _source_modules()
-    with pytest.raises(AssertionError, match="components/active.css"):
+    with pytest.raises(
+        AssertionError, match=re.escape(str(sheet.relative_to(tmp_path)))
+    ):
         test_hex_literals_are_ratcheted_outside_token_definitions.__wrapped__(request)
 
 

@@ -323,8 +323,12 @@ def test_compute_stats_groups_by_tool_by_default():
 
 
 def test_compute_stats_unrecognised_group_by_falls_back_to_tool():
-    default_groups, default_total, default_omitted = compute_stats(CORPUS, group_by="tool")
-    junk_groups, junk_total, junk_omitted = compute_stats(CORPUS, group_by="not_a_real_field")
+    default_groups, default_total, default_omitted = compute_stats(
+        CORPUS, group_by="tool"
+    )
+    junk_groups, junk_total, junk_omitted = compute_stats(
+        CORPUS, group_by="not_a_real_field"
+    )
     assert junk_groups == default_groups
     assert junk_total == default_total
     assert junk_omitted == default_omitted
@@ -340,7 +344,9 @@ def test_compute_stats_group_by_status_and_type():
 
 
 def test_compute_stats_pre_filters_compose_before_grouping():
-    groups, total_matched, _omitted = compute_stats(CORPUS, group_by="tool", status="ok")
+    groups, total_matched, _omitted = compute_stats(
+        CORPUS, group_by="tool", status="ok"
+    )
     assert {g.key for g in groups} == {"read_file", "write_file"}
     assert total_matched == 2
 
@@ -372,9 +378,9 @@ def test_compute_stats_sorted_by_descending_count_then_key():
 def test_compute_stats_empty_log_returns_no_groups():
     assert compute_stats([]) == ([], 0, 0)
     groups, total, omitted = compute_stats([])
-    assert format_stats(groups, group_by="tool", total_records=total, omitted_groups=omitted) == (
-        "No records matched."
-    )
+    assert format_stats(
+        groups, group_by="tool", total_records=total, omitted_groups=omitted
+    ) == ("No records matched.")
 
 
 def test_compute_stats_output_is_bounded_by_distinct_groups_not_record_count():
@@ -437,9 +443,7 @@ def test_compute_stats_caps_group_count_when_distinct_tool_names_exceed_the_limi
     # The surviving groups are exactly the MAX_STATS_GROUPS highest-count
     # ones (tool_0 .. tool_{MAX_STATS_GROUPS - 1}), in descending order.
     assert [g.key for g in groups] == [f"tool_{i}" for i in range(MAX_STATS_GROUPS)]
-    assert all(
-        groups[i].count >= groups[i + 1].count for i in range(len(groups) - 1)
-    )
+    assert all(groups[i].count >= groups[i + 1].count for i in range(len(groups) - 1))
 
     rendered = format_stats(
         groups, group_by="tool", total_records=total_matched, omitted_groups=omitted
@@ -459,7 +463,9 @@ def test_compute_stats_zero_max_groups_still_reports_the_exact_total_matched():
     # always uses the module default) -- confirm the cap logic degrades
     # sanely rather than treating 0 as "no cap" by accident.
     records = [rec(i, "x", tool=f"tool_{i}") for i in range(1, 6)]
-    groups, total_matched, omitted = compute_stats(records, group_by="tool", max_groups=0)
+    groups, total_matched, omitted = compute_stats(
+        records, group_by="tool", max_groups=0
+    )
     assert total_matched == 5
     # max_groups=0 is falsy -> the `max_groups > 0` guard treats it as
     # "no cap requested" (consistent with from_record/to_record's own

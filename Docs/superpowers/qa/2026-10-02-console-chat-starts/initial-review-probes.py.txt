@@ -1,0 +1,134 @@
+"""Independent reviewer reproduction at c9b3738434; not rerun by controller."""
+import asyncio
+import json
+import os
+import tempfile
+from pathlib import Path
+from threading import Event
+from types import SimpleNamespace
+from loguru import logger
+
+logger.remove()
+scratch = tempfile.TemporaryDirectory(prefix="task2-review-")
+root = Path(scratch.name)
+(root / "data").mkdir(mode=0o700)
+config = root / "config.toml"
+config.write_text('[paths]\ndata_dir = ' + json.dumps(str(root / "data")) + '\n')
+config.chmod(0o600)
+os.environ["TLDW_CONFIG_PATH"] = str(config)
+os.environ["XDG_CONFIG_HOME"] = str(root / "config")
+os.environ["XDG_DATA_HOME"] = str(root / "data")
+os.environ["TLDW_TEST_MODE"] = "1"
+
+from Tests.Chat.test_console_chat_start import _native_start_rig
+from tldw_chatbook.UI.Console_Modules.prompt_queue import ConsolePromptQueueUIController
+
+async def rig(name):
+    path = root / name
+    path.mkdir()
+    return await _native_start_rig(path)
+
+async def close(controller, store, runs):
+    await controller.shutdown()
+    runs.close()
+    store.persistence.db.close_connection()
+
+async def physical_slot():
+    c, s, runs, source, target, chain, request = await rig("slot")
+    entered, release, exited = Event(), Event(), Event()
+    original = c._agent_bridge.run_reply
+    def paused(*args, **kwargs):
+        entered.set()
+        try:
+            assert release.wait(15)
+            return original(*args, **kwargs)
+        finally:
+            exited.set()
+    c._agent_bridge.run_reply = paused
+    try:
+        assert (await c._chat_start.start(request)).launch_status == "started"
+        assert await asyncio.to_thread(entered.wait, 5)
+        s.switch_session(target.id)
+        assert c.stop_active_run()
+        await asyncio.wait_for(asyncio.gather(*c._chat_start.tasks()), 5)
+        print("physical_slot", {
+            "worker_exited": exited.is_set(),
+            "automatic_claims": len(c._fleet_wake._automatic_primary_claims),
+            "target_status": c.run_state_for(target.id).status.value,
+            "start_state": runs.automatic_work.read_chat_start_attempt(
+                request.attempt_id, owner_id=c._fleet_wake.runtime_owner_id
+            ).state,
+        })
+    finally:
+        release.set()
+        await asyncio.to_thread(exited.wait, 5)
+        await close(c, s, runs)
+
+async def prepared_send():
+    c, s, runs, source, target, chain, request = await rig("send")
+    entered = asyncio.Event()
+    async def paused(_selection):
+        entered.set()
+        await asyncio.Event().wait()
+    c._resolve_for_send_bounded = paused
+    start = asyncio.create_task(c._chat_start.start(request))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        presentation = ConsolePromptQueueUIController.presentation_for(
+            SimpleNamespace(
+                _chat_controller_accessor=lambda: c,
+                _turn_recovery_ids=lambda _session_id: (),
+            ),
+            target.id,
+        )
+        print("prepared_send", {
+            "is_prepared": c._chat_start.is_prepared(target.id),
+            "controller_refusal": c.send_refusal_copy(target.id),
+            "label": presentation.send_label,
+            "enabled": presentation.send_enabled,
+        })
+    finally:
+        await c.shutdown()
+        await start
+        runs.close()
+        s.persistence.db.close_connection()
+
+async def preparation_refund():
+    c, s, runs, source, target, chain, request = await rig("refund")
+    entered, release = Event(), Event()
+    ledger = runs.automatic_work
+    original_prepare = ledger.prepare_chat_start
+    original_abort = ledger.abort_chat_start
+    def paused(**kwargs):
+        result = original_prepare(**kwargs)
+        entered.set()
+        assert release.wait(10)
+        return result
+    ledger.prepare_chat_start = paused
+    ledger.abort_chat_start = lambda *args, **kwargs: False
+    start = asyncio.create_task(c._chat_start.start(request))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        c._signal_stop(session_id=source.id)
+        release.set()
+        outcome = await asyncio.wait_for(start, 5)
+        print("preparation_refund", {
+            "outcome": outcome.launch_status,
+            "reason": outcome.reason,
+            "reserved_generation": ledger.snapshot(chain).reserved["generation"],
+            "owned_tasks": len(c._chat_start.tasks()),
+        })
+    finally:
+        release.set()
+        ledger.abort_chat_start = original_abort
+        await close(c, s, runs)
+
+async def main():
+    await physical_slot()
+    await prepared_send()
+    await preparation_refund()
+
+try:
+    asyncio.run(main())
+finally:
+    scratch.cleanup()

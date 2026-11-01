@@ -1,0 +1,62 @@
+{
+  "study": {
+    "qualification_root": "<audit-checkout>\\.test-tmp\\textual-after-3248-merged-dev-qualified",
+    "product_context": {
+      "current_head": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+      "audited_dev": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+      "source_blobs_match": true
+    },
+    "executed_probe_sha256": "1d6402d9d3622a4aa0ea8df399d497d5622f8289f7602b3d3874a58a7f726a0d",
+    "published_probe_matches": "Exact Python source after CRLF/LF normalization; AST unchanged. Original executed byte hash retained.",
+    "parent_seconds": 59.756,
+    "cases": 2,
+    "intended_failures": 1,
+    "executed_normalized_text_sha256": "3d3e51fb163e2ebfd8351b931b5faec928a96a0b2fdddcf0f256b83c87eb903f",
+    "published_git_probe_sha256": "3d3e51fb163e2ebfd8351b931b5faec928a96a0b2fdddcf0f256b83c87eb903f"
+  },
+  "watchlists": {
+    "qualification_root": "<audit-checkout>\\.test-tmp\\textual-after-3248-merged-rest-qualified",
+    "product_context": {
+      "current_head": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+      "audited_dev": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+      "source_blobs_match": true
+    },
+    "executed_probe_sha256": "ce73395c3efccdb187c41eca3e9e18df43677a4fcfb3affe40036454016254f8",
+    "published_probe_matches": "Exact Python source after CRLF/LF normalization; AST unchanged. Original executed byte hash retained.",
+    "parent_seconds": 285.599,
+    "cases": 3,
+    "intended_failures": 0,
+    "executed_normalized_text_sha256": "9b1f1442b252728acf1b2c41f0c18c56eccca73ac6b567a1b44e22707a55a1f9",
+    "published_git_probe_sha256": "9b1f1442b252728acf1b2c41f0c18c56eccca73ac6b567a1b44e22707a55a1f9"
+  },
+  "personas": {
+    "qualification_root": "<audit-checkout>\\.test-tmp\\textual-after-3248-merged-final-domains",
+    "product_context": {
+      "current_head": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+      "audited_dev": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+      "source_blobs_match": true
+    },
+    "executed_probe_sha256": "b5119d3fd1b4bc0e05850c360a0c15ebddf1836a4f919c130f97b5545b2904d9",
+    "published_probe_matches": "Exact Python source after CRLF/LF normalization; AST unchanged. Original executed byte hash retained.",
+    "parent_seconds": 97.733,
+    "cases": 2,
+    "intended_failures": 0,
+    "executed_normalized_text_sha256": "240f46203bd2b00fd561ae0b26099353812d57599125b64b28693368dad0704e",
+    "published_git_probe_sha256": "240f46203bd2b00fd561ae0b26099353812d57599125b64b28693368dad0704e"
+  },
+  "research": {
+    "qualification_root": "<audit-checkout>\\.test-tmp\\textual-after-3248-merged-final-domains",
+    "product_context": {
+      "current_head": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+      "audited_dev": "7a5e2513c5d7e00ef57f3d19cd8e81a01e006d05",
+      "source_blobs_match": true
+    },
+    "executed_probe_sha256": "e679d68812b8af4a2411231ee08473aa88360b2f9de8f03e19ebf9655ac3c331",
+    "published_probe_matches": "Exact Python source after CRLF/LF normalization; AST unchanged. Original executed byte hash retained.",
+    "parent_seconds": 51.781,
+    "cases": 2,
+    "intended_failures": 0,
+    "executed_normalized_text_sha256": "5ad9e941816b969f281c61931c2e068c253c3e9f3b09c342daf27618253f70c4",
+    "published_git_probe_sha256": "5ad9e941816b969f281c61931c2e068c253c3e9f3b09c342daf27618253f70c4"
+  }
+}

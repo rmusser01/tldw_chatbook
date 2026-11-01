@@ -30,7 +30,12 @@ import pytest
 from textual.widgets import DataTable, Input, Select, TextArea
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
-from tldw_chatbook.Evals.word_bench.models import CellCapture, PreflightResult, Target, TokenProb
+from tldw_chatbook.Evals.word_bench.models import (
+    CellCapture,
+    PreflightResult,
+    Target,
+    TokenProb,
+)
 from tldw_chatbook.UI.Evals.library_rail import LibraryRail, _run_group_row_label
 from tldw_chatbook.UI.Evals.results_grid import ResultsGrid
 from tldw_chatbook.UI.Evals.snippet_editor import dataset_snippets
@@ -104,7 +109,9 @@ def authoring_app(evals_db: EvalsDB) -> EvalsHarness:
     return EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
 
 
-async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0.02) -> None:
+async def _wait_until(
+    pilot, predicate, *, tries: int = 300, interval: float = 0.02
+) -> None:
     """Mirrors ``test_evals_screen.py``'s own helper -- polls until a
     background worker's completion becomes visible (a selection change),
     since ``run_worker`` schedules real async work that does not finish
@@ -128,10 +135,7 @@ async def test_authoring_loop_lights_up_both_cross_target_lenses(
     """
     import_path = tmp_path / "imported.txt"
     import_path.write_text(
-        "The protestors were\n"
-        "The rioters were\n"
-        "The government said\n"
-        "The regime said\n",
+        "The protestors were\nThe rioters were\nThe government said\nThe regime said\n",
         encoding="utf-8",
     )
 
@@ -231,7 +235,10 @@ async def test_authoring_loop_lights_up_both_cross_target_lenses(
         bench_row = screen._view_model.bench_by_id(bench_id)
         assert bench_row["name"] == "authored bench"
         config_data = bench_row.get("config_data") or {}
-        assert set(config_data.get("target_ids") or ()) == {first_target_id, second_target_id}
+        assert set(config_data.get("target_ids") or ()) == {
+            first_target_id,
+            second_target_id,
+        }
         assert tuple(config_data.get("probes") or ()) == (" Sure", " I")
 
         # -- Run.

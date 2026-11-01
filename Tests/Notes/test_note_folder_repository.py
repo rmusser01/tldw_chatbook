@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import inspect
+import re
 import sqlite3
+import threading
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -43,9 +46,7 @@ def repository(tmp_path) -> Iterator[LocalNoteFolderRepository]:
 
 
 def _timestamp() -> str:
-    return datetime.now(UTC).isoformat(timespec="milliseconds").replace(
-        "+00:00", "Z"
-    )
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _attach_membership(
@@ -108,28 +109,42 @@ def _insert_note(
 def _folder_rows(
     repository: LocalNoteFolderRepository,
 ) -> tuple[tuple[object, ...], ...]:
-    rows = repository.db.get_connection().execute(
-        "SELECT id, parent_id, name, normalized_name, path, normalized_path, "
-        "version, deleted, modified_at FROM note_folders ORDER BY id"
-    ).fetchall()
+    rows = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT id, parent_id, name, normalized_name, path, normalized_path, "
+            "version, deleted, modified_at FROM note_folders ORDER BY id"
+        )
+        .fetchall()
+    )
     return tuple(tuple(row) for row in rows)
 
 
 def _membership_rows(
     repository: LocalNoteFolderRepository,
 ) -> tuple[tuple[object, ...], ...]:
-    rows = repository.db.get_connection().execute(
-        "SELECT id, folder_id, note_id, ownership, owner_id, owner_active, "
-        "version, deleted, modified_at FROM note_folder_memberships ORDER BY id"
-    ).fetchall()
+    rows = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT id, folder_id, note_id, ownership, owner_id, owner_active, "
+            "version, deleted, modified_at FROM note_folder_memberships ORDER BY id"
+        )
+        .fetchall()
+    )
     return tuple(tuple(row) for row in rows)
 
 
-def _note_row(repository: LocalNoteFolderRepository, note_id: str) -> tuple[object, ...]:
-    row = repository.db.get_connection().execute(
-        "SELECT id, title, content, deleted, version FROM notes WHERE id = ?",
-        (note_id,),
-    ).fetchone()
+def _note_row(
+    repository: LocalNoteFolderRepository, note_id: str
+) -> tuple[object, ...]:
+    row = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT id, title, content, deleted, version FROM notes WHERE id = ?",
+            (note_id,),
+        )
+        .fetchone()
+    )
     assert row is not None
     return tuple(row)
 
@@ -315,9 +330,11 @@ def test_commit_time_database_contention_is_a_stable_conflict(tmp_path) -> None:
 
     reopened = CharactersRAGDB(path, client_id="contention-check")
     try:
-        count = reopened.get_connection().execute(
-            "SELECT COUNT(*) FROM note_folders WHERE name = ?", ("Blocked",)
-        ).fetchone()[0]
+        count = (
+            reopened.get_connection()
+            .execute("SELECT COUNT(*) FROM note_folders WHERE name = ?", ("Blocked",))
+            .fetchone()[0]
+        )
         assert count == 0
     finally:
         reopened.close_connection()
@@ -422,6 +439,112 @@ def test_list_children_rejects_invalid_bounds(
 ) -> None:
     with pytest.raises(FolderValidationError):
         repository.list_children(parent_id=None, limit=limit, offset=offset)
+
+
+def _seed_picker_folders(repository: LocalNoteFolderRepository) -> dict[str, str]:
+    """The review's nested shape: two parents, three children, ids by path."""
+    projects = repository.create_folder(name="Projects", parent_id=None)
+    thesis = repository.create_folder(name="Thesis", parent_id=projects.folder_id)
+    launch = repository.create_folder(name="App launch", parent_id=projects.folder_id)
+    study = repository.create_folder(name="Study", parent_id=None)
+    japanese = repository.create_folder(name="Japanese", parent_id=study.folder_id)
+    return {
+        folder.path: folder.folder_id
+        for folder in (projects, thesis, launch, study, japanese)
+    }
+
+
+def _paths(page) -> list[str]:
+    return [folder.path for folder in page.folders]
+
+
+def test_page_folders_lists_every_active_folder_at_any_depth_in_path_order(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """TASK-34000.28 N-23: nested folders are offered without loading a branch."""
+    ids = _seed_picker_folders(repository)
+    removed = repository.create_folder(name="Old", parent_id=None)
+    repository.soft_delete_folder(removed.folder_id, expected_version=removed.version)
+
+    page = repository.page_folders(query="", limit=20, offset=0)
+
+    assert _paths(page) == [
+        "/Projects",
+        "/Projects/App launch",
+        "/Projects/Thesis",
+        "/Study",
+        "/Study/Japanese",
+    ]
+    assert page.total_folders == 5
+    assert page.start_offset == 0
+    assert page.previous_offset is None and page.next_offset is None
+    assert {folder.folder_id for folder in page.folders} == set(ids.values())
+
+
+def test_page_folders_narrows_by_a_case_folded_path_query(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    ids = _seed_picker_folders(repository)
+
+    thesis = repository.page_folders(query="thes", limit=20, offset=0)
+    breadcrumb = repository.page_folders(query="PROJECTS / Th", limit=20, offset=0)
+    literal = repository.page_folders(query="%", limit=20, offset=0)
+    underscore = repository.page_folders(query="_", limit=20, offset=0)
+
+    assert _paths(thesis) == ["/Projects/Thesis"]
+    assert thesis.total_folders == 1
+    assert thesis.folders[0].folder_id == ids["/Projects/Thesis"]
+    assert _paths(breadcrumb) == ["/Projects/Thesis"]
+    # ``%`` and ``_`` are literal characters, not wildcards.
+    assert literal.folders == () and literal.total_folders == 0
+    assert underscore.folders == () and underscore.total_folders == 0
+
+
+def test_page_folders_pages_with_an_exact_total_and_both_cursors(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    _seed_picker_folders(repository)
+
+    middle = repository.page_folders(query="", limit=2, offset=2)
+    last = repository.page_folders(query="", limit=2, offset=4)
+
+    assert _paths(middle) == ["/Projects/Thesis", "/Study"]
+    assert middle.total_folders == 5
+    assert (middle.previous_offset, middle.next_offset) == (0, 4)
+    assert _paths(last) == ["/Study/Japanese"]
+    assert (last.previous_offset, last.next_offset) == (2, None)
+
+
+def test_page_folders_excludes_a_moved_folder_and_its_whole_subtree(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    ids = _seed_picker_folders(repository)
+    # A sibling whose path merely STARTS with the excluded name stays offered.
+    lookalike = repository.create_folder(name="Projects archive", parent_id=None)
+
+    page = repository.page_folders(
+        query="", limit=20, offset=0, exclude_subtree_of=ids["/Projects"]
+    )
+    child = repository.page_folders(
+        query="", limit=20, offset=0, exclude_subtree_of=ids["/Projects/Thesis"]
+    )
+
+    assert _paths(page) == ["/Projects archive", "/Study", "/Study/Japanese"]
+    assert page.total_folders == 3
+    assert lookalike.folder_id in {folder.folder_id for folder in page.folders}
+    assert "/Projects/Thesis" not in _paths(child)
+    assert "/Projects" in _paths(child) and child.total_folders == 5
+
+
+@pytest.mark.parametrize(
+    ("limit", "offset", "query"),
+    [(0, 0, ""), (501, 0, ""), (1, -1, ""), (True, 0, ""), (1, 0, "x" * 201)],
+)
+def test_page_folders_rejects_invalid_bounds_and_queries(
+    repository: LocalNoteFolderRepository, limit: int, offset: int, query: str
+) -> None:
+    with pytest.raises(FolderValidationError):
+        repository.page_folders(query=query, limit=limit, offset=offset)
 
 
 @pytest.mark.parametrize("note_limit", [0, 1001, True])
@@ -626,6 +749,173 @@ def test_search_batch_loads_collapsed_placements_matching_folder_path(
     assert [note["id"] for note in page.notes] == [note_id]
 
 
+def _keyword(repository: LocalNoteFolderRepository, note_id: str, text: str) -> int:
+    """Attach keyword ``text`` to ``note_id`` through the real DB API."""
+    keyword_id = repository.db.add_keyword(text)
+    assert keyword_id is not None
+    assert repository.db.link_note_to_keyword(note_id, keyword_id) is True
+    return int(keyword_id)
+
+
+def _filter_ids(repository: LocalNoteFolderRepository, query: str) -> set[str]:
+    """The note ids the Notes list filter answers ``query`` with."""
+    page = repository.search_note_tree_placements(query=query, limit=50, offset=0)
+    return {str(placement.note["id"]) for placement in page.placements}
+
+
+def _filter_corpus(repository: LocalNoteFolderRepository) -> tuple[str, str]:
+    """The review's A/B corpus (TASK-34000.12): Lisbon and the meeting."""
+    lisbon = repository.db.add_note(
+        "Trip planning: Lisbon", "itinerary and chunk size notes"
+    )
+    meeting = repository.db.add_note("Meeting notes", "team meeting about size of chunk")
+    assert lisbon and meeting
+    return lisbon, meeting
+
+
+def test_filter_matches_any_word_order_and_a_partial_last_word(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """TASK-34000.12 AC#1: words in any order; the last word may be a prefix.
+
+    Before the fix the whole input was ONE FTS5 phrase, so ``size chunk``,
+    ``meet`` and ``Lisb`` each returned nothing.
+    """
+    lisbon, meeting = _filter_corpus(repository)
+
+    assert _filter_ids(repository, "size chunk") == {lisbon, meeting}
+    assert _filter_ids(repository, "chunk size") == {lisbon, meeting}
+    assert _filter_ids(repository, "meet") == {meeting}
+    assert _filter_ids(repository, "Lisb") == {lisbon}
+    assert _filter_ids(repository, "LISB") == {lisbon}
+    # every word must appear somewhere in the SAME note
+    assert _filter_ids(repository, "lisbon meeting") == set()
+
+
+def test_quoted_input_is_a_phrase_and_only_quoted_input_is(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """TASK-34000.12 AC#2: straight or curly quotes around the input mean
+    "these words, adjacent, in this order"; nothing else does."""
+    lisbon, meeting = _filter_corpus(repository)
+
+    assert _filter_ids(repository, '"chunk size"') == {lisbon}
+    assert _filter_ids(repository, "“chunk size”") == {lisbon}
+    assert _filter_ids(repository, '"size chunk"') == set()
+    # an unbalanced quote is ordinary text (the primitive doubles it, the
+    # tokenizer drops it): the word is still a prefix of "meeting"
+    assert _filter_ids(repository, 'meet"') == {meeting}
+    assert _filter_ids(repository, '"meet') == {meeting}
+    assert _filter_ids(repository, "size chunk") == {lisbon, meeting}
+
+
+def test_a_note_found_only_by_its_keyword_is_found(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """TASK-34000.12 AC#3: a word may match one of the note's live keywords.
+
+    This is the User Guide's ``conversation:`` claim (a captured answer is
+    keyed ``conversation:<id>`` by ``Chat/console_save_targets.py``), and
+    the review's ``zebra`` capture.
+    """
+    lisbon, meeting = _filter_corpus(repository)
+    # the keyed note's keyword is in NEITHER its title nor its body, so only
+    # the keyword leg can find it (fix round 1, I-1)
+    keyed = repository.db.add_note("Field trip", "nothing here")
+    assert keyed
+    _keyword(repository, keyed, "zebra")
+    _keyword(repository, meeting, "conversation:71d30fb1-aaaa")
+    homelab = _keyword(repository, lisbon, "homelab")
+    # a deleted note that carries the word in its title never comes back
+    deleted = repository.db.add_note("Zebra", "deleted twin")
+    assert deleted and repository.db.soft_delete_note(deleted, expected_version=1)
+
+    assert _filter_ids(repository, "zebra") == {keyed}
+    # one word in a keyword, the other in the body
+    assert _filter_ids(repository, "zebra nothing") == {keyed}
+    assert _filter_ids(repository, "homelab itinerary") == {lisbon}
+    assert _filter_ids(repository, "zebra meeting") == set()
+    assert _filter_ids(repository, "71d30fb1") == {meeting}
+    assert _filter_ids(repository, "conversation:71d") == {meeting}
+    assert _filter_ids(repository, "homelab") == {lisbon}
+    assert _filter_ids(repository, '"homelab"') == {lisbon}
+
+    # a soft-deleted keyword is no longer a way to find the note
+    assert repository.db.soft_delete_keyword(homelab, expected_version=1) is True
+    assert _filter_ids(repository, "homelab") == set()
+    # ...and the title/body legs still answer
+    assert _filter_ids(repository, "Lisb") == {lisbon}
+
+
+def test_a_word_in_a_keyword_and_a_word_in_the_body_match_the_same_note(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """TASK-34000.12 AC#3 across legs: each word may be satisfied by a
+    different leg of the SAME note -- here ``homelab`` only as a keyword and
+    ``itinerary`` only in the body."""
+    lisbon, meeting = _filter_corpus(repository)
+    _keyword(repository, lisbon, "homelab")
+
+    assert _filter_ids(repository, "homelab itinerary") == {lisbon}
+    assert _filter_ids(repository, "itinerary homelab") == {lisbon}
+    # the keyword alone, and a body word that belongs to the OTHER note
+    assert _filter_ids(repository, "homelab") == {lisbon}
+    assert _filter_ids(repository, "homelab team") == set()
+    assert meeting not in _filter_ids(repository, "homelab")
+
+
+def test_the_filter_cte_never_scans_the_fts_tables(
+    repository: LocalNoteFolderRepository,
+) -> None:
+    """The plan budget for TASK-34000.12's CTE, captured the way users run it.
+
+    No index is added by the task (CLAUDE.md gotcha 1: no ``CREATE INDEX``,
+    so no plan-pin row), so this pins the shape the EXISTING indexes give:
+    each FTS5 leg is MATCH-driven (SQLite prints a MATCH-driven virtual
+    table step as ``... VIRTUAL TABLE INDEX 0:M<n>``; a step WITHOUT the
+    ``M`` flag would be a full FTS scan) and the keyword leg walks
+    ``idx_notekw_kw``. The statement is the production template itself.
+    """
+    lisbon, meeting = _filter_corpus(repository)
+    _keyword(repository, lisbon, "homelab")
+    _keyword(repository, meeting, "meeting")
+    connection = repository.db.get_connection()
+    assert (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone()
+        is None
+    ), "ChaChaNotes never runs ANALYZE; a plan with stats is not the users' plan"
+
+    statement = folder_repository_module._notes_filter_match_sql(2)
+    assert statement.count("?") == 4
+    details = [
+        str(row["detail"])
+        for row in connection.execute(
+            f"EXPLAIN QUERY PLAN {statement}",
+            ('"size"', '"size"', '"chunk"*', '"chunk"*'),
+        )
+    ]
+
+    fts_steps = [
+        detail
+        for detail in details
+        if "notes_fts" in detail or "keywords_fts" in detail
+    ]
+    assert len(fts_steps) == 4, details
+    for detail in fts_steps:
+        assert "VIRTUAL TABLE INDEX 0:M" in detail, details
+    assert any(
+        "SEARCH nk USING INDEX idx_notekw_kw (keyword_id=?)" in detail
+        for detail in details
+    ), details
+    # the keyword tables themselves are never walked whole (``SCAN k`` would
+    # also prefix ``SCAN keywords_fts``, hence the word boundary)
+    assert not any(re.match(r"^SCAN (nk|k)\b", detail) for detail in details), details
+    # and the statement is the one the repository really binds
+    assert folder_repository_module._NOTES_FILTER_MATCH_LEG_SQL.count("MATCH ?") == 2
+
+
 def test_managed_subtree_cannot_be_renamed_through_repository_boundary(
     repository: LocalNoteFolderRepository,
 ) -> None:
@@ -773,9 +1063,7 @@ def test_load_tree_batch_returns_second_note_page_with_only_page_memberships(
         assert note_id is not None
         note_ids.append(note_id)
         membership_ids.append(
-            _attach_membership(
-                repository, folder_id=folder.folder_id, note_id=note_id
-            )
+            _attach_membership(repository, folder_id=folder.folder_id, note_id=note_id)
         )
 
     page = repository.load_tree_batch(
@@ -794,8 +1082,7 @@ def test_load_tree_batch_pages_folders_independently_from_notes(
     repository: LocalNoteFolderRepository,
 ) -> None:
     folders = tuple(
-        repository.create_folder(name=name, parent_id=None)
-        for name in ("A", "B", "C")
+        repository.create_folder(name=name, parent_id=None) for name in ("A", "B", "C")
     )
 
     first = repository.load_tree_batch(
@@ -1137,9 +1424,9 @@ def test_placement_pages_still_default_to_title_order(
 
     page = repository.page_note_placements(parent_id=folder_id, limit=25, offset=0)
 
-    assert [
-        str(placement.note["id"]) for placement in page.placements
-    ] == orders["title"]
+    assert [str(placement.note["id"]) for placement in page.placements] == orders[
+        "title"
+    ]
 
 
 def test_unfiled_date_order_breaks_ties_by_note_id_for_page_and_locator(
@@ -1191,7 +1478,9 @@ def test_mixed_timestamp_shapes_still_order_chronologically(
     noon = "2026-01-15 12:00:00"  # schema-default shape; chronologically second
     assert noon < morning  # the raw-text trap this test pins against
 
-    _insert_note(repository, note_id="mixed-morning", title="Morning", last_modified=morning)
+    _insert_note(
+        repository, note_id="mixed-morning", title="Morning", last_modified=morning
+    )
     _insert_note(repository, note_id="mixed-noon", title="Noon", last_modified=noon)
 
     page = repository.page_note_placements(
@@ -1546,8 +1835,7 @@ def test_load_tree_batch_preserves_totals_beyond_last_page(
     repository: LocalNoteFolderRepository,
 ) -> None:
     folders = tuple(
-        repository.create_folder(name=name, parent_id=None)
-        for name in ("A", "B", "C")
+        repository.create_folder(name=name, parent_id=None) for name in ("A", "B", "C")
     )
     for title in ("One", "Two", "Three"):
         note_id = repository.db.add_note(title, title)
@@ -1760,9 +2048,7 @@ def test_rename_updates_complete_subtree_once_and_preserves_ids(
     renamed_plans = repository.get_folder(plans.folder_id)
     renamed_later = repository.get_folder(later.folder_id)
     assert (
-        renamed is not None
-        and renamed_plans is not None
-        and renamed_later is not None
+        renamed is not None and renamed_plans is not None and renamed_later is not None
     )
     assert result.folder == renamed
     assert result.affected_folder_ids == (
@@ -1787,10 +2073,14 @@ def test_rename_updates_complete_subtree_once_and_preserves_ids(
         renamed_later.normalized_path,
         renamed_later.version,
     ) == ("/Projects/Plans/Later", "/projects/plans/later", 2)
-    modified_values = repository.db.get_connection().execute(
-        "SELECT DISTINCT modified_at FROM note_folders WHERE id IN (?, ?, ?)",
-        (work.folder_id, plans.folder_id, later.folder_id),
-    ).fetchall()
+    modified_values = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT DISTINCT modified_at FROM note_folders WHERE id IN (?, ?, ?)",
+            (work.folder_id, plans.folder_id, later.folder_id),
+        )
+        .fetchall()
+    )
     assert len(modified_values) == 1
 
 
@@ -1960,10 +2250,14 @@ def test_soft_delete_and_restore_subtree_preserve_memberships_and_note_row(
     assert restored.affected_folder_ids == (work.folder_id, plans.folder_id)
     assert restored_work is not None and restored_plans is not None
     assert (restored_work.version, restored_plans.version) == (3, 3)
-    membership = repository.db.get_connection().execute(
-        "SELECT id, deleted, version FROM note_folder_memberships WHERE id = ?",
-        (membership_id,),
-    ).fetchone()
+    membership = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT id, deleted, version FROM note_folder_memberships WHERE id = ?",
+            (membership_id,),
+        )
+        .fetchone()
+    )
     assert tuple(membership) == (membership_id, 0, 1)
     note_after = tuple(
         repository.db.get_connection()
@@ -1989,10 +2283,14 @@ def test_soft_delete_advances_colliding_zulu_tombstone_timestamp(
     repository.soft_delete_folder(first.folder_id, expected_version=first.version)
     repository.soft_delete_folder(second.folder_id, expected_version=second.version)
 
-    rows = repository.db.get_connection().execute(
-        "SELECT id, modified_at FROM note_folders WHERE id IN (?, ?) ORDER BY id",
-        (first.folder_id, second.folder_id),
-    ).fetchall()
+    rows = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT id, modified_at FROM note_folders WHERE id IN (?, ?) ORDER BY id",
+            (first.folder_id, second.folder_id),
+        )
+        .fetchall()
+    )
     timestamps = {str(row["modified_at"]) for row in rows}
     assert timestamps == {
         fixed_timestamp,
@@ -2091,9 +2389,7 @@ def test_multirow_mutation_rolls_back_to_its_own_boundary_when_outer_catches(
     if operation == "move":
         destination = repository.create_folder(name="Destination", parent_id=None)
     elif operation == "restore":
-        repository.soft_delete_folder(
-            root.folder_id, expected_version=expected_version
-        )
+        repository.soft_delete_folder(root.folder_id, expected_version=expected_version)
         expected_version += 1
 
     connection = repository.db.get_connection()
@@ -2129,9 +2425,7 @@ def test_multirow_mutation_rolls_back_to_its_own_boundary_when_outer_catches(
                 root.folder_id, expected_version=expected_version
             )
         else:
-            repository.restore_folder(
-                root.folder_id, expected_version=expected_version
-            )
+            repository.restore_folder(root.folder_id, expected_version=expected_version)
 
     assert _folder_rows(repository) == before
 
@@ -2211,9 +2505,7 @@ def test_restore_only_revives_descendants_from_the_target_delete_operation(
     restored_work = repository.get_folder(work.folder_id)
     restored_current = repository.get_folder(current.folder_id)
     restored_detail = repository.get_folder(detail.folder_id)
-    still_deleted_plans = repository.get_folder(
-        plans.folder_id, include_deleted=True
-    )
+    still_deleted_plans = repository.get_folder(plans.folder_id, include_deleted=True)
     assert result.affected_folder_ids == (
         work.folder_id,
         current.folder_id,
@@ -2270,9 +2562,7 @@ def test_multirow_mutation_treats_ignored_child_update_as_atomic_conflict(
                 root.folder_id, expected_version=expected_version
             )
         else:
-            repository.restore_folder(
-                root.folder_id, expected_version=expected_version
-            )
+            repository.restore_folder(root.folder_id, expected_version=expected_version)
 
     assert _folder_rows(repository) == before
 
@@ -2308,6 +2598,634 @@ def test_wrapped_non_contention_database_error_is_preserved() -> None:
     assert caught.value is wrapped
 
 
+# --- TASK-34000.28 (N-24): a conflict names its reason; contention is not one.
+
+#: SQLite's extended SQLITE_BUSY_SNAPSHOT (``5 | 2 << 8``), spelled out so the
+#: pins do not depend on which constants this Python's ``sqlite3`` exports.
+_SQLITE_BUSY_SNAPSHOT = 517
+
+
+def _stale_folder_version(repository: LocalNoteFolderRepository) -> None:
+    folder = repository.create_folder(name="Work", parent_id=None)
+    repository.rename_folder(
+        folder.folder_id, name="Projects", expected_version=folder.version + 1
+    )
+
+
+def _ignored_folder_update(repository: LocalNoteFolderRepository) -> None:
+    root = repository.create_folder(name="Root", parent_id=None)
+    repository.create_folder(name="Child", parent_id=root.folder_id)
+    repository.db.get_connection().execute(
+        "CREATE TRIGGER ignore_child_folder_update BEFORE UPDATE ON note_folders "
+        "WHEN OLD.name = 'Child' BEGIN SELECT RAISE(IGNORE); END"
+    )
+    repository.rename_folder(root.folder_id, name="Renamed", expected_version=1)
+
+
+def _stale_membership_version(repository: LocalNoteFolderRepository) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    membership = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    repository.detach_manual(
+        folder_id=folder.folder_id,
+        note_id=note_id,
+        expected_version=membership.version + 1,
+    )
+
+
+def _membership_guard_rejected(repository: LocalNoteFolderRepository) -> None:
+    folder = repository.create_folder(name="Guarded", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    repository.db.get_connection().execute(
+        "UPDATE notes SET version = 2 WHERE id = ?", (note_id,)
+    )
+    repository.attach_manual(
+        folder_id=folder.folder_id, note_id=note_id, expected_note_version=1
+    )
+
+
+def _duplicate_active_membership(repository: LocalNoteFolderRepository) -> None:
+    folder = repository.create_folder(name="Folder", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    now = _timestamp()
+    try:
+        repository.db.get_connection().execute(
+            "INSERT INTO note_folder_memberships(id, folder_id, note_id, ownership, "
+            "owner_id, created_at, modified_at) VALUES (?, ?, ?, 'manual', '', ?, ?)",
+            (str(uuid.uuid4()), folder.folder_id, note_id, now, now),
+        )
+    except sqlite3.IntegrityError as exc:
+        _raise_membership_integrity_error(exc)
+    raise AssertionError("the duplicate active membership was accepted")
+
+
+def _statement_contention(_repository: LocalNoteFolderRepository) -> None:
+    error = sqlite3.OperationalError("database is locked")
+    error.sqlite_errorcode = _SQLITE_BUSY_SNAPSHOT
+    _raise_mutation_operational_error(error)
+
+
+def _commit_contention(_repository: LocalNoteFolderRepository) -> None:
+    wrapped = CharactersRAGDBError("Commit failed: database is locked")
+    wrapped.__cause__ = sqlite3.OperationalError("database is locked")
+    wrapped.__cause__.sqlite_errorcode = sqlite3.SQLITE_BUSY
+    _raise_wrapped_repository_error(wrapped)
+
+
+@pytest.mark.parametrize(
+    ("trigger", "reason"),
+    [
+        (_stale_folder_version, "folder_version"),
+        (_ignored_folder_update, "folder_changed"),
+        (_stale_membership_version, "membership_version"),
+        (_membership_guard_rejected, "membership_changed"),
+        (_duplicate_active_membership, "membership_exists"),
+        (_statement_contention, "busy"),
+        (_commit_contention, "busy"),
+    ],
+    ids=lambda value: getattr(value, "__name__", value),
+)
+def test_every_conflict_raise_names_its_reason(
+    repository: LocalNoteFolderRepository, trigger, reason: str
+) -> None:
+    """Each of the seven ``FolderConflictError`` sites says what changed, so
+    the Notes tree can name it instead of one generic sentence (N-24)."""
+    with pytest.raises(FolderConflictError) as caught:
+        trigger(repository)
+
+    assert caught.value.reason == reason
+
+
+def test_a_conflict_without_a_reason_is_unknown() -> None:
+    assert FolderConflictError("conflict").reason == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("code", "contended"),
+    [
+        (sqlite3.SQLITE_BUSY, True),
+        (sqlite3.SQLITE_LOCKED, True),
+        (_SQLITE_BUSY_SNAPSHOT, True),
+        (sqlite3.SQLITE_BUSY | (1 << 8), True),  # BUSY_RECOVERY
+        (sqlite3.SQLITE_LOCKED | (1 << 8), True),  # LOCKED_SHAREDCACHE
+        (sqlite3.SQLITE_IOERR, False),
+        (sqlite3.SQLITE_CONSTRAINT, False),
+        (None, False),
+    ],
+)
+def test_contention_covers_busy_locked_and_their_extended_codes(
+    code: int | None, contended: bool
+) -> None:
+    error = sqlite3.OperationalError("detail")
+    if code is not None:
+        error.sqlite_errorcode = code
+
+    assert folder_repository_module._is_sqlite_contention(error) is contended
+
+
+def _record_backoffs(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record each retry back-off (still sleeping it). ``raising=False``: the
+    seam does not exist before the fix, and that RED must fail on behaviour."""
+    backoffs: list[int] = []
+    real = getattr(folder_repository_module, "_contention_backoff", None)
+
+    def recorded(attempt: int) -> None:
+        backoffs.append(attempt)
+        if real is not None:
+            real(attempt)
+
+    monkeypatch.setattr(
+        folder_repository_module, "_contention_backoff", recorded, raising=False
+    )
+    return backoffs
+
+
+@contextmanager
+def _write_lock_held(repository: LocalNoteFolderRepository, *, seconds: float | None):
+    """Hold the database's write lock from a second connection.
+
+    The repository's own connection is told not to wait on a held lock
+    (``busy_timeout = 0``), so a plain SQLITE_BUSY arrives at once -- in the
+    app it arrives after the busy handler has waited 15 s (``CharactersRAGDB``
+    opens its connections with ``timeout=15``).
+    """
+    repository.db.get_connection().execute("PRAGMA busy_timeout = 0")
+    holder = sqlite3.connect(
+        repository.db.db_path_str, check_same_thread=False, isolation_level=None
+    )
+    holder.execute("BEGIN IMMEDIATE")
+    release = threading.Timer(seconds, holder.rollback) if seconds else None
+    if release is not None:
+        release.start()
+    try:
+        yield
+    finally:
+        if release is not None:
+            release.join()
+        else:
+            holder.rollback()
+        holder.close()
+
+
+def _active_manual_rows(
+    repository: LocalNoteFolderRepository, folder_id: str, note_id: str
+) -> list[str]:
+    return [
+        str(row[0])
+        for row in repository.db.get_connection().execute(
+            "SELECT id FROM note_folder_memberships WHERE folder_id = ? "
+            "AND note_id = ? AND ownership = 'manual' AND deleted = 0",
+            (folder_id, note_id),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "held_for", [0.08, None], ids=["held-80ms", "held-throughout"]
+)
+def test_a_plain_sqlite_busy_is_raised_at_once_not_retried(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    held_for: float | None,
+) -> None:
+    """Ruling T4-b: a plain SQLITE_BUSY arrives after the busy handler has
+    already waited out the connection's timeout, so re-running the whole
+    transaction would only wait again. It is a ``busy`` conflict on the first
+    attempt -- no back-off, nothing written -- even when the lock is released
+    a moment later."""
+    folder = repository.create_folder(name="Inbox", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    backoffs = _record_backoffs(monkeypatch)
+
+    with _write_lock_held(repository, seconds=held_for):
+        started = time.monotonic()
+        with pytest.raises(FolderConflictError) as caught:
+            repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+        elapsed = time.monotonic() - started
+
+    assert caught.value.reason == "busy"
+    assert caught.value.__cause__.sqlite_errorcode == sqlite3.SQLITE_BUSY
+    assert backoffs == []
+    assert elapsed < 1.0
+    assert _active_manual_rows(repository, folder.folder_id, note_id) == []
+
+
+def _stale_snapshot_after_the_first_write(
+    monkeypatch: pytest.MonkeyPatch, *, attempts: int
+) -> dict[str, int]:
+    """Raise SQLITE_BUSY_SNAPSHOT inside the next ``attempts`` transactions,
+    right after their first write: the module's
+    ``_require_one_membership_update`` runs straight after a revived
+    placement's UPDATE, so each injected failure has a write to roll back."""
+    raised = {"count": 0}
+    real = folder_repository_module._require_one_membership_update
+
+    def stale(cursor: sqlite3.Cursor) -> None:
+        if raised["count"] < attempts:
+            raised["count"] += 1
+            error = sqlite3.OperationalError("database is locked")
+            error.sqlite_errorcode = _SQLITE_BUSY_SNAPSHOT
+            raise error
+        real(cursor)
+
+    monkeypatch.setattr(
+        folder_repository_module, "_require_one_membership_update", stale
+    )
+    return raised
+
+
+def _detached_placement(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Inbox", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    first = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    assert repository.detach_manual(
+        folder_id=folder.folder_id, note_id=note_id, expected_version=first.version
+    )
+    return folder, note_id, first
+
+
+def _membership_version(repository: LocalNoteFolderRepository, membership_id: str):
+    return repository.db.get_connection().execute(
+        "SELECT version, deleted FROM note_folder_memberships WHERE id = ?",
+        (membership_id,),
+    ).fetchone()[:]
+
+
+def test_a_stale_snapshot_is_retried_once_and_bumps_the_version_once(
+    repository: LocalNoteFolderRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one code the busy handler never waits on (517) is re-run, whole,
+    from a fresh BEGIN. The first attempt's revive is rolled back, so the
+    placement comes back once with a single version bump."""
+    folder, note_id, first = _detached_placement(repository)
+    assert _membership_version(repository, first.membership_id) == (2, 1)
+    backoffs = _record_backoffs(monkeypatch)
+    raised = _stale_snapshot_after_the_first_write(monkeypatch, attempts=1)
+
+    revived = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+
+    assert raised["count"] == 1
+    assert backoffs == [0]
+    assert revived.membership_id == first.membership_id
+    assert _membership_version(repository, first.membership_id) == (3, 0)
+    assert _active_manual_rows(repository, folder.folder_id, note_id) == [
+        first.membership_id
+    ]
+
+
+def test_a_stale_snapshot_on_every_attempt_ends_busy_after_three(
+    repository: LocalNoteFolderRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder, note_id, first = _detached_placement(repository)
+    backoffs = _record_backoffs(monkeypatch)
+    raised = _stale_snapshot_after_the_first_write(monkeypatch, attempts=99)
+
+    with pytest.raises(FolderConflictError) as caught:
+        repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+
+    assert caught.value.reason == "busy"
+    assert raised["count"] == 3
+    assert backoffs == [0, 1]
+    # Every attempt's revive was rolled back: still detached, never bumped.
+    assert _membership_version(repository, first.membership_id) == (2, 1)
+    assert _active_manual_rows(repository, folder.folder_id, note_id) == []
+
+
+def _stale_snapshot_on_the_first_targets_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[str, ...]]:
+    """Fail the first attempt's ``_require_active_membership_targets`` with
+    517, recording the note IDs every attempt asked it to check."""
+    seen: list[tuple[str, ...]] = []
+    real = folder_repository_module._require_active_membership_targets
+
+    def stale(cursor, *, folder_ids, note_ids):
+        seen.append(tuple(sorted(note_ids)))
+        if len(seen) == 1:
+            error = sqlite3.OperationalError("database is locked")
+            error.sqlite_errorcode = _SQLITE_BUSY_SNAPSHOT
+            raise error
+        return real(cursor, folder_ids=folder_ids, note_ids=note_ids)
+
+    monkeypatch.setattr(
+        folder_repository_module, "_require_active_membership_targets", stale
+    )
+    return seen
+
+
+def _managed_rows(repository: LocalNoteFolderRepository) -> list[tuple]:
+    return sorted(
+        tuple(row)
+        for row in repository.db.get_connection().execute(
+            "SELECT owner_id, note_id, deleted, owner_active "
+            "FROM note_folder_memberships WHERE ownership = 'managed'"
+        )
+    )
+
+
+def test_a_retried_reconcile_never_re_consumes_a_one_shot_iterable(
+    repository: LocalNoteFolderRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M2 (data safety): a generator ``desired`` is normalized once, so the
+    re-run after a 517 converges to the same full set. Re-consumed, it would
+    converge to nothing and soft-delete the owner's placements."""
+    folder = repository.create_folder(name="Synced", parent_id=None)
+    first = repository.db.add_note("First", "Body")
+    second = repository.db.add_note("Second", "Body")
+    pairs = ((folder.folder_id, first), (folder.folder_id, second))
+    repository.reconcile_managed(owner_id="root-1", desired=pairs)
+    backoffs = _record_backoffs(monkeypatch)
+    seen = _stale_snapshot_on_the_first_targets_check(monkeypatch)
+
+    result = repository.reconcile_managed(
+        owner_id="root-1", desired=(pair for pair in pairs)
+    )
+
+    assert backoffs == [0]
+    assert seen == [tuple(sorted((first, second)))] * 2
+    assert {membership.note_id for membership in result} == {first, second}
+    assert _managed_rows(repository) == sorted(
+        [("root-1", first, 0, 1), ("root-1", second, 0, 1)]
+    )
+
+
+def test_a_retried_owner_flag_pass_never_re_consumes_a_one_shot_iterable(
+    repository: LocalNoteFolderRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M2: the same for ``mark_unknown_owners_inactive`` -- re-consumed, an
+    emptied owner set would mark every owner inactive."""
+    folder = repository.create_folder(name="Synced", parent_id=None)
+    kept = repository.db.add_note("Kept", "Body")
+    orphan = repository.db.add_note("Orphan", "Body")
+    repository.reconcile_managed(owner_id="root-1", desired=((folder.folder_id, kept),))
+    repository.reconcile_managed(
+        owner_id="root-2", desired=((folder.folder_id, orphan),)
+    )
+    backoffs = _record_backoffs(monkeypatch)
+    raised = _stale_snapshot_after_the_first_write(monkeypatch, attempts=1)
+
+    changed = repository.mark_unknown_owners_inactive(
+        active_owner_ids=(owner for owner in ("root-1",))
+    )
+
+    assert (raised["count"], backoffs, changed) == (1, [0], 1)
+    assert _managed_rows(repository) == sorted(
+        [("root-1", kept, 0, 1), ("root-2", orphan, 0, 0)]
+    )
+
+
+@pytest.mark.parametrize("borrowed", ["cursor", "nested"])
+def test_contention_inside_a_callers_transaction_is_never_retried(
+    repository: LocalNoteFolderRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    borrowed: str,
+) -> None:
+    """Inside a transaction the repository does not own, a retry would re-run
+    half of someone else's work: the conflict is raised at once.
+
+    The failure must be the one code the retry DOES re-run (517, a stale
+    snapshot) -- a plain SQLITE_BUSY is refused by ``_is_stale_snapshot``
+    whoever owns the transaction, so it cannot tell whether the ownership
+    gate holds. ``_detached_placement`` makes ``attach_manual`` take the
+    revive path, where ``_require_one_membership_update`` runs right after a
+    write, so the injected 517 has a half-done write a retry would replay.
+    """
+    folder, note_id, first = _detached_placement(repository)
+    backoffs = _record_backoffs(monkeypatch)
+    raised = _stale_snapshot_after_the_first_write(monkeypatch, attempts=1)
+
+    with pytest.raises(FolderConflictError) as caught:
+        with repository.db.transaction() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM notes").fetchone()
+            repository.attach_manual(
+                folder_id=folder.folder_id,
+                note_id=note_id,
+                cursor=cursor if borrowed == "cursor" else None,
+            )
+
+    assert caught.value.reason == "busy"
+    assert caught.value.__cause__.sqlite_errorcode == _SQLITE_BUSY_SNAPSHOT
+    assert raised["count"] == 1
+    assert backoffs == []
+    # The caller's transaction rolled back: the placement is still detached.
+    assert _membership_version(repository, first.membership_id) == (2, 1)
+    assert _active_manual_rows(repository, folder.folder_id, note_id) == []
+
+
+@contextmanager
+def _wal_restarted_after_the_first_read(
+    repository: LocalNoteFolderRepository,
+) -> Iterator[list[tuple[int, int, int]]]:
+    """Restart the WAL from a second connection once this thread's next
+    transaction has taken its read snapshot.
+
+    N-24's measured cause: every finite worker retires its thread's
+    connection through ``close_connection``, whose ``PRAGMA
+    wal_checkpoint(TRUNCATE)`` restarts the WAL header. A DEFERRED
+    transaction on another thread that has already read then fails its first
+    write with SQLITE_BUSY_SNAPSHOT (517) -- no other writer needed, and
+    SQLite's busy handler is never consulted for that code. The checkpointer
+    waits on nothing (``timeout=0``), so against a transaction that already
+    holds the write lock it falls back to a passive checkpoint.
+    """
+    checkpointer = sqlite3.connect(
+        repository.db.db_path_str, timeout=0, isolation_level=None
+    )
+    # Every frame is backfilled first, so the next reader reads the database
+    # file alone -- exactly the state a just-closed worker leaves behind.
+    checkpointer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    connection = repository.db.get_connection()
+    restarts: list[tuple[int, int, int]] = []
+    read_started = False
+
+    def on_statement(sql: str) -> None:
+        nonlocal read_started
+        if restarts:
+            return
+        if read_started:
+            restarts.append(
+                tuple(
+                    checkpointer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                )
+            )
+        elif sql.lstrip().upper().startswith(("SELECT", "WITH")):
+            read_started = True
+
+    connection.set_trace_callback(on_statement)
+    try:
+        yield restarts
+    finally:
+        connection.set_trace_callback(None)
+        checkpointer.close()
+
+
+def _owner_rows(repository: LocalNoteFolderRepository, owner_id: str) -> list[tuple]:
+    return [
+        tuple(row)
+        for row in repository.db.get_connection().execute(
+            "SELECT ownership, deleted, owner_active FROM note_folder_memberships "
+            "WHERE owner_id = ? OR ownership = 'manual' ORDER BY ownership",
+            (owner_id,),
+        )
+    ]
+
+
+#: Each case returns ``(mutate, landed)``: the mutation to run under the WAL
+#: restart, and a read-back that its write committed.
+def _attach_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Inbox", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    return (
+        lambda: repository.attach_manual(folder_id=folder.folder_id, note_id=note_id),
+        lambda: len(_active_manual_rows(repository, folder.folder_id, note_id)) == 1,
+    )
+
+
+def _detach_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Inbox", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    membership = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    return (
+        lambda: repository.detach_manual(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_version=membership.version,
+        ),
+        lambda: _active_manual_rows(repository, folder.folder_id, note_id) == [],
+    )
+
+
+def _create_child_case(repository: LocalNoteFolderRepository):
+    parent = repository.create_folder(name="Parent", parent_id=None)
+    return (
+        lambda: repository.create_folder(name="Child", parent_id=parent.folder_id),
+        lambda: repository.get_folder_by_path(("Parent", "Child")) is not None,
+    )
+
+
+def _rename_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Work", parent_id=None)
+    return (
+        lambda: repository.rename_folder(
+            folder.folder_id, name="Projects", expected_version=folder.version
+        ),
+        lambda: repository.get_folder(folder.folder_id).name == "Projects",
+    )
+
+
+def _move_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Work", parent_id=None)
+    destination = repository.create_folder(name="Archive", parent_id=None)
+    return (
+        lambda: repository.move_folder(
+            folder.folder_id,
+            parent_id=destination.folder_id,
+            expected_version=folder.version,
+        ),
+        lambda: repository.get_folder(folder.folder_id).parent_id
+        == destination.folder_id,
+    )
+
+
+def _delete_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Work", parent_id=None)
+    return (
+        lambda: repository.soft_delete_folder(
+            folder.folder_id, expected_version=folder.version
+        ),
+        lambda: repository.get_folder(folder.folder_id) is None,
+    )
+
+
+def _restore_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Work", parent_id=None)
+    repository.soft_delete_folder(folder.folder_id, expected_version=folder.version)
+    return (
+        lambda: repository.restore_folder(folder.folder_id, expected_version=2),
+        lambda: repository.get_folder(folder.folder_id) is not None,
+    )
+
+
+def _managed_case(repository: LocalNoteFolderRepository):
+    folder = repository.create_folder(name="Synced", parent_id=None)
+    note_id = repository.db.add_note("Note", "Body")
+    return folder.folder_id, note_id
+
+
+def _reconcile_case(repository: LocalNoteFolderRepository):
+    folder_id, note_id = _managed_case(repository)
+    return (
+        lambda: repository.reconcile_managed(
+            owner_id="root-1", desired=((folder_id, note_id),)
+        ),
+        lambda: _owner_rows(repository, "root-1") == [("managed", 0, 1)],
+    )
+
+
+def _convert_case(repository: LocalNoteFolderRepository):
+    folder_id, note_id = _managed_case(repository)
+    repository.reconcile_managed(owner_id="root-1", desired=((folder_id, note_id),))
+    return (
+        lambda: repository.convert_owner_to_manual(owner_id="root-1"),
+        lambda: _owner_rows(repository, "root-1")
+        == [("managed", 1, 1), ("manual", 0, 1)],
+    )
+
+
+def _remove_owner_case(repository: LocalNoteFolderRepository):
+    folder_id, note_id = _managed_case(repository)
+    repository.reconcile_managed(owner_id="root-1", desired=((folder_id, note_id),))
+    return (
+        lambda: repository.remove_owner_memberships(owner_id="root-1"),
+        lambda: _owner_rows(repository, "root-1") == [("managed", 1, 1)],
+    )
+
+
+def _mark_owners_case(repository: LocalNoteFolderRepository):
+    folder_id, note_id = _managed_case(repository)
+    repository.reconcile_managed(owner_id="root-1", desired=((folder_id, note_id),))
+    return (
+        lambda: repository.mark_unknown_owners_inactive(active_owner_ids=()),
+        lambda: _owner_rows(repository, "root-1") == [("managed", 0, 0)],
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        _attach_case,
+        _detach_case,
+        _create_child_case,
+        _rename_case,
+        _move_case,
+        _delete_case,
+        _restore_case,
+        _reconcile_case,
+        _convert_case,
+        _remove_owner_case,
+        _mark_owners_case,
+    ],
+    ids=lambda case: case.__name__.strip("_").removesuffix("_case"),
+)
+def test_a_wal_restart_after_the_first_read_cannot_fail_a_mutation(
+    repository: LocalNoteFolderRepository, case
+) -> None:
+    """Every read-then-write mutation the repository owns takes SQLite's
+    write lock up front (``BEGIN IMMEDIATE``), so a concurrent checkpoint can
+    no longer invalidate the snapshot its first write depends on: the
+    checkpoint finds the write lock held, falls back to passive (its busy
+    flag is 1), and the mutation's write lands."""
+    mutate, landed = case(repository)
+
+    with _wal_restarted_after_the_first_read(repository) as restarts:
+        mutate()
+
+    assert len(restarts) == 1, "the WAL restart never ran"
+    assert restarts[0][0] == 1, f"the checkpoint was not held off: {restarts}"
+    assert landed()
+
+
 def test_managed_reconcile_never_removes_manual_membership(
     repository: LocalNoteFolderRepository,
 ) -> None:
@@ -2321,9 +3239,7 @@ def test_managed_reconcile_never_removes_manual_membership(
     )
     repository.reconcile_managed(owner_id="root-a", desired=())
 
-    active = repository.list_memberships(
-        note_ids=(note_id,), include_inactive=True
-    )
+    active = repository.list_memberships(note_ids=(note_id,), include_inactive=True)
     assert active == (manual,)
     assert _note_row(repository, note_id)[3:] == (0, 1)
 
@@ -2343,9 +3259,7 @@ def test_removing_one_managed_owner_leaves_other_owner_and_note(
     note_before = _note_row(repository, note_id)
 
     assert repository.remove_owner_memberships(owner_id="root-a") == 1
-    remaining = repository.list_memberships(
-        note_ids=(note_id,), include_inactive=True
-    )
+    remaining = repository.list_memberships(note_ids=(note_id,), include_inactive=True)
 
     assert [(item.ownership, item.owner_id) for item in remaining] == [
         ("managed", "root-b")
@@ -2373,19 +3287,17 @@ def test_attach_manual_is_idempotent_and_revives_only_latest_history(
                 (membership_id, folder.folder_id, note_id, now, now),
             )
 
-    revived = repository.attach_manual(
-        folder_id=folder.folder_id, note_id=note_id
-    )
-    repeated = repository.attach_manual(
-        folder_id=folder.folder_id, note_id=note_id
-    )
+    revived = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    repeated = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
 
     assert revived.membership_id == "manual-b"
     assert revived.version == 5
     assert repeated == revived
-    rows = repository.db.get_connection().execute(
-        "SELECT id, version, deleted FROM note_folder_memberships ORDER BY id"
-    ).fetchall()
+    rows = (
+        repository.db.get_connection()
+        .execute("SELECT id, version, deleted FROM note_folder_memberships ORDER BY id")
+        .fetchall()
+    )
     assert [tuple(row) for row in rows] == [
         ("manual-a", 4, 1),
         ("manual-b", 5, 0),
@@ -2461,9 +3373,7 @@ def test_conflict_copy_folder_ownership_detects_managed_candidate_and_ancestor(
     repository: LocalNoteFolderRepository,
 ) -> None:
     parent = repository.create_folder(name="Conflict copies", parent_id=None)
-    child = repository.create_folder(
-        name="My synced notes", parent_id=parent.folder_id
-    )
+    child = repository.create_folder(name="My synced notes", parent_id=parent.folder_id)
     note_id = repository.db.add_note("Managed", "body")
     assert note_id is not None
     repository.reconcile_managed(
@@ -2554,9 +3464,10 @@ def test_attach_manual_retries_a_generated_membership_id_collision(
     )
 
     assert attached.membership_id == str(replacement_id)
-    assert set(
-        repository.list_memberships(note_ids=(first_note, second_note))
-    ) == {existing, attached}
+    assert set(repository.list_memberships(note_ids=(first_note, second_note))) == {
+        existing,
+        attached,
+    }
 
 
 def test_membership_unique_classifier_distinguishes_owner_and_primary_key(
@@ -2605,9 +3516,7 @@ def test_detach_manual_succeeds_conflicts_when_stale_and_is_false_when_absent(
     folder = repository.create_folder(name="Folder", parent_id=None)
     note_id = repository.db.add_note("Note", "Body")
     assert note_id is not None
-    membership = repository.attach_manual(
-        folder_id=folder.folder_id, note_id=note_id
-    )
+    membership = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
 
     with pytest.raises(FolderConflictError):
         repository.detach_manual(
@@ -2622,11 +3531,14 @@ def test_detach_manual_succeeds_conflicts_when_stale_and_is_false_when_absent(
         note_id=note_id,
         expected_version=membership.version,
     )
-    assert repository.detach_manual(
-        folder_id=folder.folder_id,
-        note_id=note_id,
-        expected_version=membership.version + 1,
-    ) is False
+    assert (
+        repository.detach_manual(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_version=membership.version + 1,
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize("invalid_kind", ["folder", "note"])
@@ -2686,9 +3598,7 @@ def test_reconcile_is_idempotent_owner_scoped_and_revives_deleted_rows(
     assert revived.membership_id == first.membership_id
     assert revived.version == first.version + 2
     assert revived.owner_active
-    all_active = repository.list_memberships(
-        note_ids=(note_id,), include_inactive=True
-    )
+    all_active = repository.list_memberships(note_ids=(note_id,), include_inactive=True)
     assert {item.membership_id for item in all_active} == {
         manual.membership_id,
         other.membership_id,
@@ -2725,7 +3635,10 @@ def test_convert_owner_to_manual_reuses_active_and_revives_deleted_manual_rows(
     other = repository.reconcile_managed(
         owner_id="root-b", desired=((first_folder.folder_id, first_note),)
     )[0]
-    notes_before = (_note_row(repository, first_note), _note_row(repository, second_note))
+    notes_before = (
+        _note_row(repository, first_note),
+        _note_row(repository, second_note),
+    )
 
     assert repository.convert_owner_to_manual(owner_id="root-a") == 2
     assert repository.convert_owner_to_manual(owner_id="root-a") == 0
@@ -2738,14 +3651,27 @@ def test_convert_owner_to_manual_reuses_active_and_revives_deleted_manual_rows(
         active_manual.membership_id,
         deleted_manual.membership_id,
     }
-    assert next(
-        item for item in manual_rows if item.membership_id == active_manual.membership_id
-    ).version == active_manual.version
-    assert next(
-        item for item in manual_rows if item.membership_id == deleted_manual.membership_id
-    ).version == deleted_manual.version + 2
+    assert (
+        next(
+            item
+            for item in manual_rows
+            if item.membership_id == active_manual.membership_id
+        ).version
+        == active_manual.version
+    )
+    assert (
+        next(
+            item
+            for item in manual_rows
+            if item.membership_id == deleted_manual.membership_id
+        ).version
+        == deleted_manual.version + 2
+    )
     assert [item for item in memberships if item.ownership == "managed"] == [other]
-    assert (_note_row(repository, first_note), _note_row(repository, second_note)) == notes_before
+    assert (
+        _note_row(repository, first_note),
+        _note_row(repository, second_note),
+    ) == notes_before
 
 
 def test_unknown_owner_convergence_and_restore_reviews_are_deterministic(
@@ -2764,9 +3690,10 @@ def test_unknown_owner_convergence_and_restore_reviews_are_deterministic(
         owner_id="root-b", desired=((beta.folder_id, second_note),)
     )[0]
 
-    assert repository.mark_unknown_owners_inactive(
-        active_owner_ids=("root-b", "root-b")
-    ) == 2
+    assert (
+        repository.mark_unknown_owners_inactive(active_owner_ids=("root-b", "root-b"))
+        == 2
+    )
     assert repository.mark_unknown_owners_inactive(active_owner_ids=("root-b",)) == 0
     assert repository.list_memberships(note_ids=(first_note, second_note)) == (root_b,)
     assert {
@@ -2784,9 +3711,10 @@ def test_unknown_owner_convergence_and_restore_reviews_are_deterministic(
     )
     assert (reviews[0].note_count, reviews[0].folder_count) == (1, 2)
 
-    assert repository.mark_unknown_owners_inactive(
-        active_owner_ids=("root-a", "root-b")
-    ) == 2
+    assert (
+        repository.mark_unknown_owners_inactive(active_owner_ids=("root-a", "root-b"))
+        == 2
+    )
     assert repository.list_restore_reviews() == ()
 
 

@@ -1,0 +1,27 @@
+Textual 8.2.8: which awaited removals ever finish? Measured against a plain textual.screen.Screen (no guard),
+one process per shape, 4 s wall-clock bound, 2026-10-04. Sources follow the two result tables.
+
+== screen.recompose() (probe-recompose-shapes.py)  -- 'predicate' is the guard's task-identity check, evaluated just before the await
+descendant_awaits_screen_recompose         NEVER LANDED (bounded 4s)    {'predicate': 'PUMP:Canvas', 'ctx_pump': 'Canvas'}
+descendant_call_later_self                 NEVER LANDED (bounded 4s)    {'predicate': 'PUMP:Canvas', 'ctx_pump': 'Canvas'}
+descendant_call_after_refresh_self         COMPLETED                    {'predicate': 'clear', 'ctx_pump': 'Canvas', 'swap': 'returned'}
+descendant_worker                          NEVER LANDED (bounded 4s)    {'predicate': 'WORKER:Canvas', 'ctx_pump': 'Probe', 'swap': 'CANCELLED mid-recompose'}
+root_awaits_parent_remove_children         COMPLETED                    {'predicate': 'clear'}
+descendant_call_later_screen               COMPLETED                    {'predicate': 'clear', 'ctx_pump': 'Main', 'swap': 'returned'}
+descendant_call_after_refresh_screen       COMPLETED                    {'predicate': 'clear', 'ctx_pump': 'Canvas', 'swap': 'returned'}
+screen_worker                              COMPLETED                    {'predicate': 'clear', 'ctx_pump': 'Probe', 'swap': 'returned'}
+
+== one host's child swap, plus two screen-owned recompose doors (probe-child-swap-shapes.py)
+child_swap_from_nested                         NEVER LANDED (bounded 4s)    {}
+child_swap_from_outgoing_root                  COMPLETED                    {'swap': 'returned'}
+child_swap_from_host                           COMPLETED                    {'swap': 'returned'}
+child_swap_from_screen                         COMPLETED                    {'swap': 'returned'}
+child_swap_worker_owned_by_outgoing_root       NEVER LANDED (bounded 4s)    {'swap': 'CANCELLED mid-swap'}
+recompose_via_screen_call_next_from_nested     COMPLETED                    {'swap': 'returned'}
+recompose_via_refresh_from_nested              COMPLETED                    {}
+
+Reading: 'PUMP:<widget>' = the current asyncio task is that widget's message-pump task and the widget sits
+below a removed root; every such row never landed. 'ctx_pump' is textual._context.active_message_pump: it
+reads 'Canvas' on two rows that COMPLETED (call_after_refresh runs on the screen's task), which is why the
+guard compares tasks and not that variable. The two WORKER rows are a different failure (the worker is
+cancelled mid-swap when its owner unmounts) and are NOT covered by the guard.

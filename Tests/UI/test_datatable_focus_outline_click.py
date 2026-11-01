@@ -52,7 +52,9 @@ from textual.widgets import DataTable
 
 import tldw_chatbook
 
-_BUNDLED_CSS_PATH = Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+_BUNDLED_CSS_PATH = (
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
 
 ROW_COUNT = 6
 LAST_ROW = ROW_COUNT - 1

@@ -21,6 +21,7 @@ def evaluate_workspace_eligibility(
     item_workspace_ids: Iterable[str],
     item_type: str,
     operation: WorkspaceOperation | str,
+    active_workspace_name: str = "",
 ) -> WorkspaceEligibility:
     """Evaluate visibility and active-context eligibility for one item operation.
 
@@ -33,6 +34,9 @@ def evaluate_workspace_eligibility(
         item_workspace_ids: Workspace ids associated with the visible item.
         item_type: Human-readable item type used in recovery copy.
         operation: Operation being attempted against the item.
+        active_workspace_name: The active workspace's DISPLAY name for the
+            recovery copy (TASK-34000.24). The raw id never reaches the user:
+            without a name the copy says "the active workspace".
 
     Returns:
         A `WorkspaceEligibility` decision preserving visibility and describing
@@ -71,13 +75,16 @@ def evaluate_workspace_eligibility(
         )
 
     reason_code = "cross_workspace" if workspace_ids else "not_in_active_workspace"
+    # TASK-34000.24: "workspace workspace-default" was the critique's S-01 --
+    # an id the user has never seen. The display name, or the plain phrase.
+    workspace_name = str(active_workspace_name or "").strip() or "active"
     return WorkspaceEligibility(
         visible=True,
         active_context_eligible=False,
         reason_code=reason_code,
         recovery_copy=(
-            f"Copy or link this {item_type} into workspace {active_id} before "
-            "using it in Console."
+            f"Copy or link this {item_type} into the {workspace_name} workspace "
+            "before using it in Console."
         ),
     )
 

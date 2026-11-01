@@ -3,13 +3,16 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from .coordinator import PluginCoordinator
 from .models import PackageInspection
 from .package_files import canonical_json
 from .recovery import retained_inspections
 from .revocation import RevocationTarget
+
+if TYPE_CHECKING:
+    from .coordinator import PluginCoordinator
 
 
 def effective_activation(default: bool, override: str) -> bool:
@@ -43,6 +46,7 @@ class RunPluginSnapshot:
     data_roots_json: str = "[]"
     root_epochs: tuple[tuple[str, int], ...] = ()
     component_ceiling: tuple[str, ...] | None = None
+    unavailable_hooks: tuple[str, ...] = ()
 
 
 class LivePluginFences:
@@ -234,7 +238,7 @@ class PluginAdmission:
 
     def __init__(
         self,
-        coordinator: PluginCoordinator,
+        coordinator: "PluginCoordinator",
         workspace_lookup: Callable,
         *,
         fences: LivePluginFences | None = None,
@@ -255,6 +259,250 @@ class PluginAdmission:
         record = self.workspace_lookup(workspace_id)
         if record is None or getattr(record, "archived", True):
             raise PluginUnavailable("plugin_workspace_unavailable")
+
+    def _activation(self, authority, installed, workspace_id):
+        installation_id, revision = (
+            installed["installation_id"],
+            installed["revision_digest"],
+        )
+        alias = installed.get("alias")
+        if not alias:
+            raise PluginUnavailable("plugin_alias_review_required")
+        trusted = any(
+            row["installation_id"] == installation_id
+            and row["revision_digest"] == revision
+            and row["reviewed"]
+            for row in authority["revision_trust"]
+        )
+        override = next(
+            (
+                row["intent"]
+                for row in authority["activation"]
+                if row["installation_id"] == installation_id
+                and row["workspace_id"] == workspace_id
+            ),
+            "inherit",
+        )
+        if not trusted or not effective_activation(
+            installed["activation_default"], override
+        ):
+            raise PluginUnavailable("plugin_not_enabled_or_trusted")
+        return alias, override
+
+    def _eligible_components(
+        self, authority, installation_id, revision, inspection, alias, workspace_id
+    ):
+        if inspection.rejected or inspection.activation_blockers:
+            raise PluginUnavailable("plugin_constraints_blocked")
+        selection = frozenset(
+            row["component_id"]
+            for row in authority["selections"]
+            if row["installation_id"] == installation_id
+            and row["revision_digest"] == revision
+            and row["selected"]
+        )
+        owned_mappings = [
+            row
+            for row in authority["mappings"]
+            if row["installation_id"] == installation_id
+            and row["revision_digest"] == revision
+        ]
+        unavailable = set()
+        if owned_mappings:
+            from tldw_chatbook.MCP.credential_bindings import CredentialError
+
+            for mapping in owned_mappings:
+                try:
+                    self.coordinator.validate_mapping(
+                        mapping, inspection, owned_mappings
+                    )
+                except (ValueError, PermissionError, CredentialError):
+                    unavailable.add(mapping["component_id"])
+
+        from .data_cleanup import applicable_roots
+
+        roots = applicable_roots(authority, installation_id, workspace_id)
+
+        def ready(component_id: str, visiting: frozenset[str]) -> bool:
+            component = inspection.inventory.get(component_id)
+            if (
+                component_id in visiting
+                or component_id in unavailable
+                or component_id not in selection
+                or component is None
+            ):
+                return False
+            if (
+                component.kind
+                not in {"skill", "mcp", "command", "rule", "agent", "hook"}
+                or component.support not in {"supported", "adapted"}
+                or {
+                    code
+                    for code in component.activation_blockers
+                    if not code.startswith("dependency_blocked:")
+                }
+                - {
+                    "model_mapping_required",
+                    "tool_mapping_required",
+                    "skill_tools_mapping_required",
+                }
+            ):
+                return False
+            from tldw_chatbook.MCP.credential_bindings import CredentialError
+
+            from .variables import values
+
+            try:
+                values(
+                    self.coordinator,
+                    installation_id,
+                    inspection,
+                    component_id,
+                    owned_mappings,
+                )
+            except (ValueError, PermissionError, CredentialError):
+                return False
+            if component.kind in {"agent", "skill"}:
+                from .host_references import mapped_model, mapped_tools
+
+                try:
+                    mapped_tools(installation_id, component, owned_mappings)
+                    mapped_model(component, owned_mappings)
+                except (PermissionError, ValueError):
+                    return False
+            if component.kind == "hook":
+                from .hooks import project_hook_definition
+
+                try:
+                    project_hook_definition(
+                        inspection,
+                        installation_id,
+                        component_id,
+                        roots,
+                        owned_mappings,
+                    )
+                except (PermissionError, ValueError):
+                    return False
+            if component.kind == "mcp":
+                if (
+                    sum(
+                        row["component_id"] == component_id
+                        and row["kind"] == "connection"
+                        for row in owned_mappings
+                    )
+                    != 1
+                ):
+                    return False
+            elif component.kind == "skill":
+                from .skill_provider import skill_summary
+
+                if skill_summary(installation_id, inspection, component_id, alias)[
+                    "plugin_blockers"
+                ]:
+                    return False
+            return all(
+                ready(dep, visiting | {component_id}) for dep in component.dependencies
+            )
+
+        eligible = tuple(sorted(key for key in selection if ready(key, frozenset())))
+        return selection, eligible
+
+    @staticmethod
+    def _unavailable_requirements(selection, eligible, inspection, installation_id):
+        from .hooks import _parse_hook_declaration
+
+        result = []
+        for key in sorted(set(selection) - set(eligible)):
+            component = inspection.inventory[key]
+            if component.kind != "hook" or component.support not in {
+                "supported",
+                "adapted",
+            }:
+                continue
+            try:
+                handler = _parse_hook_declaration(inspection, installation_id, key)
+            except (ValueError, PermissionError) as error:
+                raise PluginUnavailable(
+                    "plugin_constraint_verification_failed"
+                ) from error
+            if (
+                handler.required
+                or handler.event == "PreToolUse"
+                and handler.effects & {"deny", "updated_input"}
+                or handler.event == "SubagentStart"
+                and handler.effects & {"deny", "child_limits"}
+            ):
+                result.append(key)
+        return tuple(result)
+
+    def _scope_generations(self, authority, installation_id, workspace_id, override):
+        scopes = {("installation", "")}
+        if override == "inherit":
+            scopes.add(("global_default", ""))
+        if workspace_id is not None:
+            scopes.add(("workspace", workspace_id))
+        rows = [
+            row
+            for row in authority["authority_generations"]
+            if row["installation_id"] == installation_id
+            and (row["scope_kind"], row["workspace_id"]) in scopes
+        ]
+        if any(row["revoked"] for row in rows):
+            raise PluginUnavailable("plugin_revoked")
+        generations = tuple(
+            sorted(
+                (
+                    kind,
+                    workspace,
+                    next(
+                        (
+                            row["generation"]
+                            for row in rows
+                            if row["scope_kind"] == kind
+                            and row["workspace_id"] == workspace
+                        ),
+                        0,
+                    ),
+                )
+                for kind, workspace in scopes
+            )
+        )
+        return generations
+
+    def recorded_eligibility(
+        self,
+        installation_id: str,
+        workspace_id: str | None,
+        *,
+        authority: dict,
+        inspection: PackageInspection,
+    ) -> tuple[str, ...]:
+        """Return recorded eligibility only; caller supplies authenticated metadata.
+
+        No package-body verification or execution snapshot is produced here.
+        """
+        self.fences.check(installation_id, workspace_id)
+        self._workspace(workspace_id)
+        installed = next(
+            row
+            for row in authority["installations"]
+            if row["installation_id"] == installation_id
+        )
+        revision = installed["revision_digest"]
+        if inspection.effective_digest != revision:
+            raise PluginUnavailable("plugin_recorded_revision_unavailable")
+        alias, override = self._activation(authority, installed, workspace_id)
+        _, eligible = self._eligible_components(
+            authority, installation_id, revision, inspection, alias, workspace_id
+        )
+        generations = self._scope_generations(
+            authority, installation_id, workspace_id, override
+        )
+        self.fences.current(installation_id, generations)
+        self.fences.check(installation_id, workspace_id)
+        if not eligible:
+            raise PluginUnavailable("plugin_components_unavailable")
+        return eligible
 
     def capture(
         self,
@@ -280,28 +528,7 @@ class PluginAdmission:
             revision = installed["revision_digest"]
             if fresh:
                 self.fences.require_admission(installation_id, revision)
-            alias = installed.get("alias")
-            if not alias:
-                raise PluginUnavailable("plugin_alias_review_required")
-            trusted = any(
-                row["installation_id"] == installation_id
-                and row["revision_digest"] == revision
-                and row["reviewed"]
-                for row in authority["revision_trust"]
-            )
-            override = next(
-                (
-                    row["intent"]
-                    for row in authority["activation"]
-                    if row["installation_id"] == installation_id
-                    and row["workspace_id"] == workspace_id
-                ),
-                "inherit",
-            )
-            if not trusted or not effective_activation(
-                installed["activation_default"], override
-            ):
-                raise PluginUnavailable("plugin_not_enabled_or_trusted")
+            alias, override = self._activation(authority, installed, workspace_id)
             # Reinspection verifies retained bytes AND their complete interpretation.
             inspection = retained_inspections(
                 {
@@ -312,104 +539,14 @@ class PluginAdmission:
                         if row["installation_id"] == installation_id
                         and row["revision_digest"] == revision
                     ],
-                }
+                },
+                coordinator=self.coordinator,
             )[(installation_id, revision)]
-            if inspection.rejected or inspection.activation_blockers:
-                raise PluginUnavailable("plugin_constraints_blocked")
-            selection = frozenset(
-                row["component_id"]
-                for row in authority["selections"]
-                if row["installation_id"] == installation_id
-                and row["revision_digest"] == revision
-                and row["selected"]
+            selection, eligible = self._eligible_components(
+                authority, installation_id, revision, inspection, alias, workspace_id
             )
-            owned_mappings = [
-                row
-                for row in authority["mappings"]
-                if row["installation_id"] == installation_id
-                and row["revision_digest"] == revision
-            ]
-            unavailable = set()
-            if owned_mappings:
-                from tldw_chatbook.MCP.credential_bindings import CredentialError
-                for mapping in owned_mappings:
-                    try:
-                        self.coordinator.validate_mapping(
-                            mapping, inspection, owned_mappings
-                        )
-                    except (ValueError, PermissionError, CredentialError):
-                        unavailable.add(mapping["component_id"])
-
-            from .data_cleanup import applicable_roots
-
-            roots = applicable_roots(authority, installation_id, workspace_id)
-
-            def ready(component_id: str, visiting: frozenset[str]) -> bool:
-                component = inspection.inventory.get(component_id)
-                if (
-                    component_id in visiting
-                    or component_id in unavailable
-                    or component_id not in selection
-                    or component is None
-                ):
-                    return False
-                if (
-                    component.kind
-                    not in {"skill", "mcp", "command", "rule", "agent", "hook"}
-                    or component.support not in {"supported", "adapted"}
-                    or set(component.activation_blockers)
-                    - {
-                        "model_mapping_required",
-                        "tool_mapping_required",
-                        "skill_tools_mapping_required",
-                    }
-                ):
-                    return False
-                if component.kind in {"agent", "skill"}:
-                    from .host_references import mapped_model, mapped_tools
-
-                    try:
-                        mapped_tools(installation_id, component, owned_mappings)
-                        mapped_model(component, owned_mappings)
-                    except (PermissionError, ValueError):
-                        return False
-                if component.kind == "hook":
-                    from .hooks import project_hook_definition
-
-                    try:
-                        project_hook_definition(
-                            inspection,
-                            installation_id,
-                            component_id,
-                            roots,
-                            owned_mappings,
-                        )
-                    except (PermissionError, ValueError):
-                        return False
-                if component.kind == "mcp":
-                    if (
-                        sum(
-                            row["component_id"] == component_id
-                            and row["kind"] == "connection"
-                            for row in owned_mappings
-                        )
-                        != 1
-                    ):
-                        return False
-                elif component.kind == "skill":
-                    from .skill_provider import skill_summary
-
-                    if skill_summary(installation_id, inspection, component_id, alias)[
-                        "plugin_blockers"
-                    ]:
-                        return False
-                return all(
-                    ready(dep, visiting | {component_id})
-                    for dep in component.dependencies
-                )
-
-            eligible = tuple(
-                sorted(key for key in selection if ready(key, frozenset()))
+            unavailable_hooks = self._unavailable_requirements(
+                selection, eligible, inspection, installation_id
             )
             if component_ceiling is not None:
                 if (
@@ -433,38 +570,10 @@ class PluginAdmission:
                 if not requested <= set(eligible):
                     raise PluginUnavailable("plugin_component_unavailable")
                 eligible = tuple(sorted(requested))
-            if not eligible:
+            if not eligible and not unavailable_hooks:
                 raise PluginUnavailable("plugin_components_unavailable")
-            scopes = {("installation", "")}
-            if override == "inherit":
-                scopes.add(("global_default", ""))
-            if workspace_id is not None:
-                scopes.add(("workspace", workspace_id))
-            rows = [
-                row
-                for row in authority["authority_generations"]
-                if row["installation_id"] == installation_id
-                and (row["scope_kind"], row["workspace_id"]) in scopes
-            ]
-            if any(row["revoked"] for row in rows):
-                raise PluginUnavailable("plugin_revoked")
-            generations = tuple(
-                sorted(
-                    (
-                        kind,
-                        workspace,
-                        next(
-                            (
-                                row["generation"]
-                                for row in rows
-                                if row["scope_kind"] == kind
-                                and row["workspace_id"] == workspace
-                            ),
-                            0,
-                        ),
-                    )
-                    for kind, workspace in scopes
-                )
+            generations = self._scope_generations(
+                authority, installation_id, workspace_id, override
             )
             mappings = canonical_json(
                 [
@@ -472,9 +581,12 @@ class PluginAdmission:
                     for row in authority["mappings"]
                     if row["installation_id"] == installation_id
                     and row["revision_digest"] == revision
-                    and row["component_id"] in eligible
+                    and row["component_id"] in (*eligible, *unavailable_hooks)
                 ]
             )
+            from .data_cleanup import applicable_roots
+
+            roots = applicable_roots(authority, installation_id, workspace_id)
             with self.fences.live_lock:
                 root_epochs = tuple(
                     (row["root_id"], self.fences.root_epochs.get(row["root_id"], 0))
@@ -498,6 +610,7 @@ class PluginAdmission:
                 canonical_json(roots),
                 root_epochs,
                 eligible if component_ceiling is not None else None,
+                unavailable_hooks,
             )
         except PluginUnavailable:
             raise
@@ -509,6 +622,16 @@ class PluginAdmission:
         self.fences.check_snapshot(snapshot)
         if component_id not in snapshot.selection:
             raise PluginUnavailable("plugin_component_not_admitted")
+        self._check_current(snapshot)
+
+    def check_requirement(self, snapshot: RunPluginSnapshot, component_id: str) -> None:
+        """Validate retention of a requirement; never authorize its execution."""
+        self.fences.check_snapshot(snapshot)
+        if component_id not in snapshot.unavailable_hooks:
+            raise PluginUnavailable("plugin_requirement_not_retained")
+        self._check_current(snapshot)
+
+    def _check_current(self, snapshot: RunPluginSnapshot) -> None:
         current = self.capture(
             snapshot.installation_id,
             snapshot.workspace_id,
@@ -523,6 +646,7 @@ class PluginAdmission:
             current.dependencies,
             current.alias,
             current.data_roots_json,
+            current.unavailable_hooks,
         ) != (
             snapshot.revision_digest,
             snapshot.generations,
@@ -530,6 +654,7 @@ class PluginAdmission:
             snapshot.dependencies,
             snapshot.alias,
             snapshot.data_roots_json,
+            snapshot.unavailable_hooks,
         ) or not set(snapshot.selection) <= set(current.selection):
             # An archived ceiling may deliberately narrow the current selection.
             # Exact generations still detect every intervening authority edit.

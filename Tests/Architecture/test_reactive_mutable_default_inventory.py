@@ -211,8 +211,7 @@ def _violations_in_file(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     relative = path.relative_to(PACKAGE_ROOT.parent)
     return [
-        f"{relative}:{lineno}: {reason}"
-        for lineno, reason in _violations_in_tree(tree)
+        f"{relative}:{lineno}: {reason}" for lineno, reason in _violations_in_tree(tree)
     ]
 
 

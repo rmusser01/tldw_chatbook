@@ -10,6 +10,10 @@ the selected row -- the "transient rendering artifact" the review reported.
 Live-reproduced via tmux capture before this fix (a `#` outlined box
 spanning ~24 rows below "Default Assistant"), and confirmed gone after.
 
+Since B2a (TASK-33910.3) the list under ``#personas-library-rows`` is the
+``RoleplayItemList`` (an ``OptionList``), not a ``ListView``; it fills the
+rail the same way, so the rule stays pinned (spec R18).
+
 Mirrors the task-383 Console chip focus-outline contract test.
 """
 
@@ -28,7 +32,7 @@ def _rule_body(css_text: str, selector_pattern: str) -> str:
 
 
 def test_focused_library_rail_suppresses_the_obscuring_outline():
-    """The library rail's ListView focus rule drops the global outline."""
+    """The library rail's items-list focus rule drops the global outline."""
     for css_path in (AGENTIC, BUNDLE):
         body = _rule_body(
             css_path.read_text(encoding="utf-8"),

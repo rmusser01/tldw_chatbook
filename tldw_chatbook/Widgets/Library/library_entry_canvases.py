@@ -128,9 +128,7 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
             serial == self._deferred_sync_serial
             and self.is_attached
             and not getattr(self, "_pruning", False)
-            and (
-                self._deferred_sync_guard is None or self._deferred_sync_guard()
-            )
+            and (self._deferred_sync_guard is None or self._deferred_sync_guard())
         )
 
     def _discard_stale_deferred_sync(self, serial: int) -> None:
@@ -392,10 +390,7 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
         if step == "use" and not self.state.search_result_selected:
             if not self.state.has_any_content:
                 return "Use it in Console needs a search result — Import a file first."
-            return (
-                "Use it in Console needs a search result — run Find it and "
-                "pick one."
-            )
+            return "Use it in Console needs a search result — run Find it and pick one."
         return ""
 
     def _compose_get_started_steps(self) -> ComposeResult:
@@ -429,9 +424,7 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
 
     def _sync_load_failure(self, failure: DestinationRecoveryState) -> None:
         """Patch the one load-failure callout's copy and tint in place."""
-        sync_load_failure_callout(
-            self.query_one("#library-hub-load-failure"), failure
-        )
+        sync_load_failure_callout(self.query_one("#library-hub-load-failure"), failure)
 
     def sync_state(self, state: LibraryLandingCanvasState) -> None:
         """Patch stable fields, recomposing only when the widget set changes."""
@@ -468,17 +461,13 @@ class LibraryLandingCanvas(_RetainedSyncCallback, Vertical):
             continue_button = self.query_one("#library-hub-continue", Button)
             continue_button.label = escape_markup(continue_action.label)
             continue_button.row_id = continue_action.row_id
-            adjustment = self.query_one(
-                "#library-hub-continue-adjustment", Static
-            )
+            adjustment = self.query_one("#library-hub-continue-adjustment", Static)
             adjustment.update(continue_action.adjustment)
             adjustment.display = bool(continue_action.adjustment)
         if state.attention_action is not None:
             attention_copy = self.query_one("#library-hub-attention-copy", Static)
             attention_copy.update(state.attention_action.message)
-            attention_button = self.query_one(
-                "#library-hub-attention-action", Button
-            )
+            attention_button = self.query_one("#library-hub-attention-action", Button)
             attention_button.label = escape_markup(state.attention_action.action_label)
             attention_button.tooltip = (
                 f"{state.attention_action.action_label}: "

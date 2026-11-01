@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│   a  │ Library notes · Ready · Next: Create a note or add     │  o                                                   │
+│   v  │ from files.                                            │  t                                                   │
+│      │ Notes (122)                                            │  e                                                   │
+│      │ These notes live in the Library's own database — for   │  s                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │                                                      │
+│      │ files. To copy or keep a folder synced, choose Add     │                                                      │
+│      │ from files.                                            │                                                      │
+│      │                                                        │                                                      │
+│ ---> │ Filter                                                 │                                                      │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│      │ ▊ Filter notes… (Enter)                              ▎ │                                                      │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│      │                                                        │<---                                                  │
+│      │    New     Sort: Newest     Select                     │                                                      │
+│      │    Add from files…     Export                          │                                                      │
+│      │ Folders & placement                                    │                                                      │
+│      │    New folder     Rename     Move     Remove           │                                                      │
+│ ---> │                                                        │                                                      │
+│      │                                                        │                                                      │
+│      │  ▾ Agent_Lessons                                       │                                                      │
+│      │ █  Lesson 12: Stale CLAUDE.md · 7m                   ▂ │                                                      │
+│      │    Lesson 11: One socket per probe · 34m               │                                                      │
+│      │    Lesson 10: Mutation-test every claim · 34m          │                                                      │
+│      │    Lesson 09: Capture the plan, not the index · 34m    │                                                      │
+│      │    Lesson 08: Census floors are one-way · 34m          │                                                      │
+│      │    Lesson 07: Never arm a zero-delay timer · 34m       │                                                      │
+│      └────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  n new note | / find note | g go to folder | esc focus rail | F1 · F6 · Ctrl+P · Ctrl+Q

@@ -17,7 +17,13 @@ from typing import TYPE_CHECKING, Literal, TypeVar, cast
 
 from loguru import logger
 
-from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica, ReplicaFileInfo
+from tldw_chatbook.Notes.file_notes_replica import (
+    FileNotesReplica,
+    ReplicaFileInfo,
+    ReplicaRevisionInfo,
+    REVISION_HISTORY_DEFAULT_LIMIT,
+    REVISION_HISTORY_MAX_LIMIT,
+)
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
     SessionBinding,
@@ -38,6 +44,10 @@ INTERACTIVE_FILE_CHARS = 200_000
 LARGE_FILE_EXCERPT_CHARS = 100_000
 EXACT_EXPORT_CHUNK_BYTES = 64 * 1024
 SUPPORTED_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".text"})
+#: How many revisions one bounded history read returns, newest first. The
+#: default and its ceiling are defined once beside the replica's listing
+#: API so the two layers cannot drift (PR #3016 review finding 5).
+REVISION_HISTORY_LIMIT = REVISION_HISTORY_DEFAULT_LIMIT
 _ACTIVATION_WARNING = "Recovery activation required; replica refresh is inactive"
 UTF8_BOM = b"\xef\xbb\xbf"
 
@@ -177,6 +187,19 @@ class ReconcileResult:
     deleted: tuple[str, ...] = ()
     offline: bool = False
     replica_warning: str | None = None
+    # task-11: True when the discovery signature matched the previous
+    # reconcile and this result is the cached projection with empty change
+    # sets. Pollers use it to back off; one-off callers keep the historical
+    # default (False) and treat every result as fresh activity.
+    vault_unchanged: bool = False
+
+
+@dataclass(frozen=True)
+class RevisionHistoryResult:
+    """Bounded revision listing for one replicated file."""
+
+    entries: tuple[ReplicaRevisionInfo, ...] = ()
+    replica_warning: str | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +207,8 @@ class _ObservedFile:
     relative_path: str
     size: int
     mtime_ns: int
+    device: int = 0
+    inode: int = 0
 
 
 class ScanCancelled(Exception):
@@ -200,6 +225,22 @@ class ScanCancelled(Exception):
 
 #: How many walked entries pass before ``scan`` reports progress again.
 SCAN_PROGRESS_INTERVAL = 200
+
+#: task-11: bounded-walk limits, mirroring the sync watcher's discovery
+#: bounds (``notes_sync_runtime``'s ``ImportBounds`` max_files/max_entries/
+#: max_depth). Truncation semantics: once ``WALK_MAX_FILES`` supported
+#: files (or ``WALK_MAX_ENTRIES`` total directory entries) have been
+#: observed, the walk stops early, the overflow is logged, and the run
+#: proceeds with the observed prefix -- sorted lexicographic DFS makes
+#: that prefix deterministic, so the discovery signature stays stable
+#: across ticks. A truncated walk folds into ``had_walk_error`` so the
+#: deletion diff never mistakes the invisible tail for deletions, and
+#: directories nested deeper than ``WALK_MAX_DEPTH`` are not descended
+#: into at all. Changes entirely beyond the caps are invisible to this
+#: service, exactly as they are invisible to the sync watcher.
+WALK_MAX_FILES = 1_000
+WALK_MAX_ENTRIES = 10_000
+WALK_MAX_DEPTH = 32
 
 
 class FileNotesService:
@@ -247,6 +288,20 @@ class FileNotesService:
         self._pending_replica_moves: dict[str, str] = {}
         self._hidden_tombstones_swept = False
         self._inspection_refresh_allowed = False
+        # task-11: the signature gate's private state. The signature is the
+        # previous finished walk's (path, device, inode, size, mtime_ns)
+        # inventory; ``_last_reconcile_result`` is that walk's successful
+        # CLEAN projection (a warning-carrying pass is never cached -- see
+        # ``reconcile``), replayed with emptied change sets while the vault
+        # stays still. Only ``reconcile`` writes either field -- ``scan``
+        # deliberately does not seed them, because the first reconcile
+        # after a scan must still run the full replica diff (external
+        # deletions while the surface was closed are caught there).
+        self._last_walk_signature: tuple[object, ...] | None = None
+        self._last_reconcile_result: ReconcileResult | None = None
+        # task-11 (review M4): one-shot-per-episode truncation logging --
+        # the poll would otherwise re-log a bounded vault every pass.
+        self._walk_truncation_logged = False
         with session_owner._lock:
             session_owner._maintenance_file_sources.add(self)
 
@@ -436,10 +491,7 @@ class FileNotesService:
             for relative_path in uncertain_paths
         )
         entries.sort(key=lambda entry: entry.relative_path)
-        self._entry_cache = {
-            entry.relative_path: entry
-            for entry in entries
-        }
+        self._entry_cache = {entry.relative_path: entry for entry in entries}
         return ScanResult(
             status="ok",
             entries=tuple(entries),
@@ -506,7 +558,9 @@ class FileNotesService:
         """
         relative_path = opened.relative_path
         if opened.root != self.root_key:
-            return _result("unsafe", relative_path, "Opened note belongs to another root")
+            return _result(
+                "unsafe", relative_path, "Opened note belongs to another root"
+            )
         if not opened.editable:
             return _result("readonly", relative_path, opened.read_only_reason)
         if not self._root_is_online():
@@ -665,7 +719,9 @@ class FileNotesService:
 
         raw_bytes = _serialize_body(opened, body)
         if len(body) > MAX_FILE_CHARS or len(raw_bytes) > MAX_FILE_BYTES:
-            return _result("readonly", destination_path, "Edited content exceeds limits")
+            return _result(
+                "readonly", destination_path, "Edited content exceeds limits"
+            )
 
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -1142,7 +1198,17 @@ class FileNotesService:
         try:
             descriptor = os.open(path, flags, 0o666)
         except FileExistsError:
-            return _result("exists", relative_path)
+            return _result(
+                "exists",
+                relative_path,
+                "Destination already exists; restore never replaces a file",
+            )
+        except FileNotFoundError:
+            return _result(
+                "missing",
+                relative_path,
+                "Parent directory is missing; restore only writes absent paths",
+            )
         except OSError as error:
             if error.errno in {errno.ELOOP, errno.ENOTDIR}:
                 return _result("unsafe", relative_path, str(error))
@@ -1166,15 +1232,465 @@ class FileNotesService:
             content_hash=content_hash,
         )
 
+    def _load_revision(
+        self,
+        relative_path: str,
+        destination_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+        revision_id: int | None = None,
+    ) -> tuple[OperationResult | None, bytes, str]:
+        """Load one verified revision for publication.
+
+        Args:
+            relative_path: Revision's file path relative to the notes root.
+            destination_path: Publication target, for refusal results.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                newest deletion revision.
+            revision_id: Exact revision row selecting one specific deletion
+                among several (PR #3016 review finding 2).
+
+        Returns:
+            A refusal result, or ``None`` plus the revision's exact bytes and
+            their recorded digest (which the bytes were verified against).
+        """
+        if self._replica is None:
+            return (
+                _result(
+                    "replica-error",
+                    destination_path,
+                    "Revision recovery requires the replica",
+                ),
+                b"",
+                "",
+            )
+        try:
+            self._safe_path(relative_path)
+            destination = self._safe_path(destination_path)
+        except ValueError as error:
+            return _result("unsafe", destination_path, str(error)), b"", ""
+        if not self._is_supported(destination):
+            return _result("unsupported", destination_path), b"", ""
+        try:
+            revision = self._replica.get_revision(
+                self.root_key,
+                relative_path,
+                kind=kind,
+                session_key=session_key,
+                revision_id=revision_id,
+            )
+        except Exception as error:
+            return (
+                _result(
+                    "replica-error",
+                    destination_path,
+                    "Could not load revision bytes",
+                    warning=_replica_warning(error),
+                ),
+                b"",
+                "",
+            )
+        if revision is None:
+            return (
+                _result(
+                    "missing",
+                    destination_path,
+                    "Revision not found",
+                ),
+                b"",
+                "",
+            )
+        raw_bytes = revision.raw_bytes
+        if len(raw_bytes) > MAX_FILE_BYTES:
+            return (
+                _result(
+                    "readonly",
+                    destination_path,
+                    "Revision exceeds size limits",
+                ),
+                b"",
+                "",
+            )
+        if _digest(raw_bytes) != revision.content_hash:
+            return (
+                _result(
+                    "conflict",
+                    destination_path,
+                    "Revision bytes do not match the stored hash",
+                ),
+                b"",
+                "",
+            )
+        return None, raw_bytes, revision.content_hash
+
+    @_serialized
+    def list_revision_history(
+        self,
+        relative_path: str,
+        *,
+        limit: int = REVISION_HISTORY_LIMIT,
+    ) -> RevisionHistoryResult:
+        """List one file's stored revisions, most recent first, bounded.
+
+        Args:
+            relative_path: File path relative to the notes root.
+            limit: Maximum number of entries returned; clamped to at most
+                :data:`REVISION_HISTORY_MAX_LIMIT` before the replica is
+                asked (PR #3016 review finding 3).
+
+        Returns:
+            Bounded revision entries and any replica warning.
+        """
+        if self._replica is None or limit <= 0:
+            warning = None if self._replica is not None else "Replica unavailable"
+            return RevisionHistoryResult(replica_warning=warning)
+        bounded_limit = min(limit, REVISION_HISTORY_MAX_LIMIT)
+        try:
+            return RevisionHistoryResult(
+                entries=tuple(
+                    self._replica.list_revisions(
+                        self.root_key,
+                        relative_path,
+                        limit=bounded_limit,
+                    )
+                )
+            )
+        except Exception as error:
+            return RevisionHistoryResult(replica_warning=_replica_warning(error))
+
+    @_serialized
+    def verify_revision(
+        self,
+        relative_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+        revision_id: int | None = None,
+    ) -> OperationResult:
+        """Compare one revision's stored bytes with its recorded digest.
+
+        Args:
+            relative_path: File path relative to the notes root.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                deletion revision.
+            revision_id: Exact revision row (from ``list_revision_history``)
+                selecting one specific deletion among several (PR #3016
+                review finding 2).
+
+        Returns:
+            Verification status with a reason for every refusal.
+        """
+        if self._replica is None:
+            return _result(
+                "replica-error",
+                relative_path,
+                "Revision verification requires the replica",
+            )
+        try:
+            verified = self._replica.verify_revision(
+                self.root_key,
+                relative_path,
+                kind=kind,
+                session_key=session_key,
+                revision_id=revision_id,
+            )
+        except Exception as error:
+            return _result(
+                "replica-error",
+                relative_path,
+                "Could not read the revision",
+                warning=_replica_warning(error),
+            )
+        if verified is None:
+            return _result("missing", relative_path, "Revision not found")
+        if not verified:
+            return _result(
+                "conflict",
+                relative_path,
+                "Revision bytes do not match the stored hash",
+            )
+        return OperationResult(status="ok", relative_path=relative_path)
+
+    @_serialized
+    def export_revision_file(
+        self,
+        relative_path: str,
+        destination_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+        revision_id: int | None = None,
+    ) -> OperationResult:
+        """Exact-export one revision to an absent path, never replacing it.
+
+        Mirrors :meth:`export_exact_file`: bytes stream to a same-directory
+        temporary file whose digest must equal the revision's recorded digest
+        before an ``os.link`` publishes it, so an existing destination is
+        never replaced and a corrupted revision never publishes a copy.
+
+        Args:
+            relative_path: Revision's file path relative to the notes root.
+            destination_path: New path relative to the notes root.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                newest deletion revision -- the current tombstone's own
+                snapshot (PR #3016 review finding 2).
+            revision_id: Exact revision row (from ``list_revision_history``)
+                selecting one specific deletion among several.
+
+        Returns:
+            Export status, the exact exported content hash, and a
+            durability warning when the published folder entry could not be
+            fsync-confirmed (the file itself is published and recorded).
+        """
+        if not self._root_is_online():
+            return _result("offline", destination_path)
+        refusal, raw_bytes, expected_hash = self._load_revision(
+            relative_path,
+            destination_path,
+            kind=kind,
+            session_key=session_key,
+            revision_id=revision_id,
+        )
+        if refusal is not None:
+            return refusal
+        assert isinstance(raw_bytes, bytes)
+        try:
+            destination = self._safe_path(destination_path)
+        except ValueError as error:
+            return _result("unsafe", destination_path, str(error))
+
+        temporary_descriptor = -1
+        temporary_path: str | None = None
+        durability_warning: str | None = None
+        digest = hashlib.sha256()
+        try:
+            try:
+                temporary_descriptor, temporary_path = tempfile.mkstemp(
+                    prefix=f".{destination.name}.",
+                    suffix=".tmp",
+                    dir=destination.parent,
+                )
+            except OSError as error:
+                return _result("error", destination_path, str(error))
+            assert temporary_path is not None
+            with os.fdopen(temporary_descriptor, "wb") as target:
+                temporary_descriptor = -1
+                target.write(raw_bytes)
+                digest.update(raw_bytes)
+                target.flush()
+                fchmod = getattr(os, "fchmod", None)
+                if fchmod is not None:
+                    fchmod(target.fileno(), 0o644)
+                flush_file(target.fileno())
+            if fchmod is None:
+                os.chmod(temporary_path, 0o644)
+            content_hash = digest.hexdigest()
+            if content_hash != expected_hash:
+                return _result(
+                    "conflict",
+                    destination_path,
+                    "Revision bytes do not match the stored hash",
+                )
+            try:
+                os.link(temporary_path, destination, follow_symlinks=False)
+            except FileExistsError:
+                return _result("exists", destination_path)
+            except OSError as error:
+                if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+                    return _result("unsafe", destination_path, str(error))
+                return _result("error", destination_path, str(error))
+            # Every handler above returns, so reaching here means the link
+            # PUBLISHED: the destination now exists with verified bytes. A
+            # parent-fsync failure past this point is therefore a durability
+            # warning about a published file, not a failed export (PR #3016
+            # review finding 9): reporting it as an error would leave an
+            # unrecorded file behind and a retry that can only return
+            # ``exists``.
+            try:
+                fsync_parent_directory(destination.parent)
+            except OSError as error:
+                durability_warning = (
+                    "Exported exactly, but the folder entry is not "
+                    f"fsync-confirmed: {error}"
+                )
+                logger.warning(
+                    "File Notes revision export published without a confirmed "
+                    "parent fsync: {}",
+                    error,
+                )
+        except OSError as error:
+            return _result("error", destination_path, str(error))
+        finally:
+            if temporary_descriptor >= 0:
+                os.close(temporary_descriptor)
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except OSError as error:
+                    logger.warning(
+                        "Could not remove a File Notes revision export temporary: {}",
+                        type(error).__name__,
+                    )
+
+        self._record_session_change(SessionChange("created", destination_path))
+        return OperationResult(
+            status="ok",
+            relative_path=destination_path,
+            content_hash=content_hash,
+            replica_warning=durability_warning,
+        )
+
+    @_serialized
+    def restore_revision(
+        self,
+        relative_path: str,
+        destination_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+        revision_id: int | None = None,
+    ) -> OperationResult:
+        """Restore one revision to an absent path with an exclusive create.
+
+        Args:
+            relative_path: File path relative to the notes root.
+            destination_path: New path relative to the notes root.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                newest deletion revision -- the current tombstone's own
+                snapshot (PR #3016 review finding 2).
+            revision_id: Exact revision row (from ``list_revision_history``)
+                selecting one specific deletion among several.
+
+        Returns:
+            Restore status, resulting hash, and any replica warning.
+        """
+        if not self._root_is_online():
+            return _result("offline", destination_path)
+        refusal, raw_bytes, _expected_hash = self._load_revision(
+            relative_path,
+            destination_path,
+            kind=kind,
+            session_key=session_key,
+            revision_id=revision_id,
+        )
+        if refusal is not None:
+            return refusal
+        assert isinstance(raw_bytes, bytes)
+        try:
+            path = self._safe_path(destination_path)
+        except ValueError as error:
+            return _result("unsafe", destination_path, str(error))
+
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags, 0o666)
+        except FileExistsError:
+            return _result(
+                "exists",
+                destination_path,
+                "Destination already exists; restore never replaces a file",
+            )
+        except FileNotFoundError:
+            return _result(
+                "missing",
+                destination_path,
+                "Parent directory is missing",
+            )
+        except OSError as error:
+            if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+                return _result("unsafe", destination_path, str(error))
+            return _result("error", destination_path, str(error))
+        try:
+            with os.fdopen(descriptor, "wb") as destination:
+                destination.write(raw_bytes)
+        except OSError as error:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            return _result("error", destination_path, str(error))
+
+        content_hash = _digest(raw_bytes)
+        return self._finish_published_file(
+            "restored",
+            destination_path,
+            path,
+            raw_bytes,
+            content_hash=content_hash,
+        )
+
+    @_serialized
+    def enforce_retention(self) -> OperationResult:
+        """Apply the ADR-218 retention bounds for this service's root.
+
+        Returns:
+            Retention status and any replica warning.
+        """
+        if self._replica is None:
+            return _result(
+                "replica-error",
+                self.root_key,
+                "Retention requires the recovery replica",
+            )
+        try:
+            self._replica.enforce_retention(self.root_key)
+        except Exception as error:
+            return _result(
+                "replica-error",
+                self.root_key,
+                "Could not enforce replica retention",
+                warning=_replica_warning(error),
+            )
+        return OperationResult(status="ok", relative_path=self.root_key)
+
     @_serialized
     def reconcile(self) -> ReconcileResult:
         """Project external create/modify/delete changes into the replica.
+
+        task-11: the walk runs first so its (path, device, inode, size,
+        mtime_ns) signature can gate everything after it. When the
+        signature matches the previous CLEAN reconcile and no replica
+        move is still pending, the second lstat/read pass, the
+        ``list_active_files`` read, the diff, and the sort are all skipped
+        and the cached projection is replayed with empty change sets. A
+        pass with a warning, uncertain file read, or incomplete walk is a
+        degraded projection -- rows it should have written may be missing --
+        so it never arms the gate: the next tick re-runs the full pass and self-heals the
+        moment the replica recovers, exactly as the pre-gate code's
+        every-tick re-diff did. Pending replica moves always force the
+        full pass -- their retry can make progress without any disk
+        movement.
 
         Returns:
             Reconciled entries, external change sets, and any replica warning.
         """
         if not self._root_is_online():
             return ReconcileResult(status="offline", offline=True)
+
+        observed, uncertain_paths, had_walk_error = self._walk_candidates()
+        signature = self._walk_signature(observed, had_walk_error)
+        if (
+            signature == self._last_walk_signature
+            and self._last_reconcile_result is not None
+            and not self._pending_replica_moves
+            and not uncertain_paths
+            and not had_walk_error
+        ):
+            previous = self._last_reconcile_result
+            return replace(
+                previous,
+                created=(),
+                modified=(),
+                deleted=(),
+                vault_unchanged=True,
+            )
+        self._last_walk_signature = signature
 
         old_files: dict[str, ReplicaFileInfo] | None = None
         warning: str | None = self._forget_hidden_tombstones()
@@ -1189,7 +1705,6 @@ class FileNotesService:
         else:
             warning = _merge_warnings(warning, "Replica unavailable")
 
-        observed, uncertain_paths, had_walk_error = self._walk_candidates()
         pending_move_entries: dict[str, OpenedFileNote] = {}
         pending_move_sources: set[str] = set()
         if old_files is not None and self._replica is not None:
@@ -1278,9 +1793,7 @@ class FileNotesService:
                             mtime_ns=observed_file.mtime_ns,
                             content_hash=previous.content_hash,
                             editable=not oversized,
-                            read_only_reason=(
-                                "too-many-bytes" if oversized else None
-                            ),
+                            read_only_reason=("too-many-bytes" if oversized else None),
                         )
                     )
                 continue
@@ -1315,10 +1828,7 @@ class FileNotesService:
         deleted: list[str] = []
         if old_files is not None and not had_walk_error:
             missing = sorted(
-                set(old_files)
-                - set(observed)
-                - uncertain_paths
-                - pending_move_sources
+                set(old_files) - set(observed) - uncertain_paths - pending_move_sources
             )
             for relative_path in missing:
                 try:
@@ -1337,11 +1847,8 @@ class FileNotesService:
                     continue
                 deleted.append(relative_path)
         entries.sort(key=lambda entry: entry.relative_path)
-        self._entry_cache = {
-            entry.relative_path: entry
-            for entry in entries
-        }
-        return ReconcileResult(
+        self._entry_cache = {entry.relative_path: entry for entry in entries}
+        result = ReconcileResult(
             status="ok",
             entries=tuple(entries),
             created=tuple(sorted(created)),
@@ -1349,6 +1856,24 @@ class FileNotesService:
             deleted=tuple(deleted),
             replica_warning=warning,
         )
+        # task-11: cache the full pass's projection next to the signature
+        # it was computed from, so an unchanged next tick can replay it.
+        # Only a complete, certain result may arm the gate. A failed replica
+        # read, unreadable file, or truncated walk is degraded. Freezing it
+        # would keep the replica missing rows until the next real vault change.
+        # Dropping the cache forces the full pass again, which self-heals
+        # on the first healthy tick just as the pre-gate every-tick
+        # re-diff did.
+        self._last_reconcile_result = (
+            result
+            if (
+                result.replica_warning is None
+                and not uncertain_paths
+                and not had_walk_error
+            )
+            else None
+        )
+        return result
 
     @_serialized
     def protect_path(
@@ -1431,6 +1956,7 @@ class FileNotesService:
         observed: dict[str, _ObservedFile] = {}
         uncertain_paths: set[str] = set()
         had_walk_error = False
+        truncated = False
         # Every entry the walk reports, not just the supported files kept:
         # a folder picked by accident is mostly things this service ignores,
         # and a progress count that barely moves is worse than none.
@@ -1454,6 +1980,22 @@ class FileNotesService:
             if on_progress is not None and seen - reported >= SCAN_PROGRESS_INTERVAL:
                 reported = seen
                 on_progress(reported)
+            # task-11: entry-count bound. Breaking out of os.walk is safe --
+            # it is a lazy generator over scandir iterators -- and it leaves
+            # ``observed`` holding the deterministic sorted prefix. The
+            # warning is one-shot per truncation episode (review M4): the
+            # poll would otherwise re-log it every pass.
+            if seen > WALK_MAX_ENTRIES:
+                had_walk_error = True
+                truncated = True
+                if not self._walk_truncation_logged:
+                    self._walk_truncation_logged = True
+                    logger.warning(
+                        "File Notes walk bounded at {} entries; "
+                        "the vault is truncated for this pass",
+                        WALK_MAX_ENTRIES,
+                    )
+                break
             current_path = Path(current)
             # task-32552 AC#2: one rule, every dot-directory is hidden --
             # ``.git`` as before, and ``.obsidian``/``.trash``, which used
@@ -1464,6 +2006,23 @@ class FileNotesService:
                 for name in directory_names
                 if not name.startswith(".") and not _is_symlink(current_path / name)
             )
+            # task-11: depth bound -- children of a directory already at
+            # WALK_MAX_DEPTH relative parts would exceed the watcher's
+            # discovery depth, so they are not descended into.
+            if (
+                directory_names
+                and len(current_path.relative_to(self.root).parts) >= WALK_MAX_DEPTH
+            ):
+                had_walk_error = True
+                truncated = True
+                if not self._walk_truncation_logged:
+                    self._walk_truncation_logged = True
+                    logger.warning(
+                        "File Notes walk bounded at depth {}; "
+                        "the vault is truncated for this pass",
+                        WALK_MAX_DEPTH,
+                    )
+                directory_names[:] = []
             for name in sorted(file_names):
                 # A flat folder is ONE walk yield, so the check above never
                 # comes round again: two stats per file is the slow half,
@@ -1485,10 +2044,71 @@ class FileNotesService:
                     relative_path=relative_path,
                     size=file_stat.st_size,
                     mtime_ns=file_stat.st_mtime_ns,
+                    device=file_stat.st_dev,
+                    inode=file_stat.st_ino,
                 )
+                # task-11: file-count bound, same truncation contract as
+                # the entry bound above -- the flag exits BOTH loops, and
+                # the warning is one-shot per truncation episode (M4).
+                if len(observed) >= WALK_MAX_FILES:
+                    had_walk_error = True
+                    truncated = True
+                    if not self._walk_truncation_logged:
+                        self._walk_truncation_logged = True
+                        logger.warning(
+                            "File Notes walk bounded at {} files; "
+                            "the vault is truncated for this pass",
+                            WALK_MAX_FILES,
+                        )
+                    break
+            else:
+                continue
+            break  # file-count bound reached: leave os.walk as well
+        if not truncated:
+            # A complete walk closes the truncation episode, so a later
+            # regression over the bound logs once again.
+            self._walk_truncation_logged = False
         if on_progress is not None:
             on_progress(seen)
         return dict(sorted(observed.items())), uncertain_paths, had_walk_error
+
+    @staticmethod
+    def _walk_signature(
+        observed: dict[str, _ObservedFile],
+        had_walk_error: bool,
+    ) -> tuple[object, ...]:
+        """Build the per-root discovery signature from one finished walk.
+
+        task-11: one ``(path, device, inode, size, mtime_ns)`` tuple per
+        observed file. DELIBERATE NARROWING, not a mirror: the sync
+        watcher's ``_discovery_signature`` (``notes_sync_runtime.py``)
+        carries ``modified_ns`` AND ``changed_ns`` (ctime), but this
+        signature feeds a projection whose own freshness checks --
+        ``replica_matches``/``cache_matches`` below -- compare only size
+        and mtime, and the replica schema (``files`` table) stores no
+        ctime to compare against either. Carrying ctime here would burn
+        full passes that still conclude "unchanged" (a metadata-only
+        ctime bump with no size/mtime movement), so the signature is
+        narrowed to the same blindness class the pre-task comparison
+        already had; device/inode still make vault-internal renames
+        visible even when size and mtime survive the move. Computed from
+        the walk that had to run anyway, so the gate costs no extra
+        stats. A walk that errored or truncated appends a marker so
+        recovering from that state always re-runs the full reconcile.
+        """
+        signature: tuple[object, ...] = tuple(
+            (
+                relative_path,
+                item.device,
+                item.inode,
+                item.size,
+                item.mtime_ns,
+            )
+            for relative_path, item in observed.items()
+        )
+        if had_walk_error:
+            signature += (("walk-incomplete",),)
+        return signature
 
     def _load_file(self, relative_path: str) -> OpenedFileNote:
         path = self._safe_path(relative_path)
@@ -1706,9 +2326,7 @@ class FileNotesService:
     ) -> str | None:
         if self._replica is None:
             return "Replica unavailable"
-        observed_mtime_ns = (
-            file_stat.st_mtime_ns if file_stat is not None else mtime_ns
-        )
+        observed_mtime_ns = file_stat.st_mtime_ns if file_stat is not None else mtime_ns
         if observed_mtime_ns is None:
             raise ValueError("mtime_ns is required for replica upsert")
         _, pending_warning = self._materialize_pending_move(

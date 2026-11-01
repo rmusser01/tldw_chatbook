@@ -36,6 +36,7 @@ changes in the `sync_log` and in individual records.
 
 # Imports
 import contextlib
+import inspect
 import hashlib
 import sqlite3
 import json
@@ -60,11 +61,21 @@ from typing import (
     Iterable,
     Mapping,
     Callable,
+    NoReturn,
     TYPE_CHECKING,
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Character_Chat.portrait_compositing import (
+        PortraitCompositionRecipe,
+    )
+    from tldw_chatbook.Character_Chat.portrait_performance import (
+        PerformanceFrame,
+        PerformanceSource,
+        PortraitPerformanceRecord,
+    )
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryMigrationSeed
+    from tldw_chatbook.DB.portrait_region_settings import PortraitRegionSettings
     from tldw_chatbook.Library.library_artifacts_state import (
         ArtifactKey,
         ArtifactOrderKey,
@@ -77,18 +88,28 @@ if TYPE_CHECKING:
         ChatSyncDeleteIntentRecord,
         ChatSyncIntentRecord,
     )
-
 from loguru import logger
 
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Utils.input_validation import validate_conversation_archive_scope
-from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.Utils.timestamps import parse_utc, to_utc_iso
+from tldw_chatbook.Metrics.metrics_logger import (
+    is_metrics_logging_enabled,
+    log_counter,
+    log_histogram,
+)
 
 
 #
 # Third-Party Libraries
 #
 # Local Imports
+from .library_search_engine import (
+    LibrarySearchSpec,
+    build_lexical_group,
+    library_search_page,
+    matched_fields_from_hits,
+)
 from .sql_validation import (
     escape_identifier,
     validate_table_name,
@@ -103,6 +124,7 @@ from tldw_chatbook.Backup_Recovery.participants import (
     _register_core_connection,
 )
 from .private_sqlite import backup_connection_to_private, connect_private_sqlite
+from .private_sqlite_process import HelperTimeoutError
 from .base_db import (
     _QuiescentSQLiteConnection,
     _SemanticMutationAuthorization,
@@ -117,6 +139,7 @@ from tldw_chatbook.Utils.private_paths import PrivatePathError, lexical_path
 from tldw_chatbook.Utils.log_sanitizer import content_fingerprint
 from tldw_chatbook.Utils.fts5_match_forms import (
     build_and_match_query,
+    build_notes_filter_match,
     build_phrase_match_query,
     quote_fts5_prefix,
     quote_fts5_token,
@@ -131,8 +154,46 @@ DEFAULT_DISCOVERY_OWNER = "general_chat"
 _CONVERSATION_IDENTITY_TEXT_MAX_BYTES = 256
 _CONVERSATION_ARCHIVE_STATE_BATCH_SIZE = 500
 _SQLITE_POSITIVE_INTEGER_MAX = (1 << 63) - 1
+#: Most ids one ``IN (?, ...)`` list binds; a lower live connection limit wins.
+_ID_LIST_BATCH_CAP = 500
+#: SQLite's compile-time variable limit before 3.32, if the live one is unreadable.
+_SQLITE_DEFAULT_VARIABLE_LIMIT = 999
 _UNSET = object()
 _VOICE_TRACE_IMPORT_GUARD_FUNCTION = "console_voice_trace_import_authorized"
+
+# task-34399: execute_query used to build fresh label dicts and call
+# log_histogram/log_counter (plus two time.time() reads) on EVERY query even
+# though metrics_logger drops the emission when metrics logging is off (the
+# default). One `is_metrics_logging_enabled()` check per query now gates all
+# of it, and the immutable label dicts are shared module constants instead of
+# per-call allocations. The log_* functions themselves keep their internal
+# gate, so these labels are read-only to every consumer.
+_QUERY_METRIC_LABELS_SUCCESS = {"operation": "query", "success": "true"}
+_QUERY_METRIC_LABELS_ERROR = {"operation": "query", "success": "false"}
+_QUERY_METRIC_LABELS_SCRIPT_SUCCESS = {"operation": "script", "success": "true"}
+_QUERY_METRIC_LABELS_SCRIPT_ERROR = {"operation": "script", "success": "false"}
+_COUNTER_LABELS_SUCCESS = {"operation": "query", "status": "success"}
+_COUNTER_LABELS_SCRIPT_SUCCESS = {"operation": "script", "status": "success"}
+_COUNTER_LABELS_INTEGRITY_ERROR = {
+    "operation": "query",
+    "status": "error",
+    "error_type": "integrity_error",
+}
+_COUNTER_LABELS_DATABASE_ERROR = {
+    "operation": "query",
+    "status": "error",
+    "error_type": "database_error",
+}
+_COUNTER_LABELS_SCRIPT_INTEGRITY_ERROR = {
+    "operation": "script",
+    "status": "error",
+    "error_type": "integrity_error",
+}
+_COUNTER_LABELS_SCRIPT_DATABASE_ERROR = {
+    "operation": "script",
+    "status": "error",
+    "error_type": "database_error",
+}
 
 
 class _VoiceTraceImportAuthorization:
@@ -171,6 +232,7 @@ class _VoiceTraceImportAuthorization:
             and call_id in self._call_ids
             and self._connection.in_transaction
         )
+
 
 _CANVAS_REVISION_DELETE_GUARD_FUNCTION = "canvas_revision_delete_authorized"
 _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION = "canvas_revision_payload_valid"
@@ -536,7 +598,6 @@ def _split_sql_statements(script: str) -> List[str]:
 
 
 from tldw_chatbook.DB.canvas_payload_validation import (
-    canvas_revision_payload_valid as _canvas_revision_payload_valid,
     install_canvas_revision_payload_validator as _install_canvas_revision_payload_validator,
 )
 
@@ -675,6 +736,24 @@ def _table_check_references_console_project_context(create_sql: str) -> bool:
 # ``message_trajectory_metadata`` is LOCAL-ONLY: no sync triggers, no sync
 # serialization. It records this device's own per-turn step observations for
 # the Console trajectory view.
+@dataclass(frozen=True)
+class _PreparedMessageInsert:
+    """A validated message INSERT, ready to execute (review-B B25).
+
+    Produced by :meth:`CharactersRAGDB._validated_message_insert`; shared by
+    the single-message writer and the import batch so both take exactly the
+    same validation path.
+    """
+
+    msg_id: str
+    role: str
+    conversation_id: str
+    sender: str
+    content: str
+    query: str
+    params: Tuple[Any, ...]
+
+
 @dataclass
 class TrajectoryRowWrite:
     """Input row for :meth:`CharactersRAGDB.upsert_trajectory_rows`.
@@ -740,7 +819,9 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 75  # Durable Stop continuation admission receipts.
+    _CURRENT_SCHEMA_VERSION = (
+        85  # Local archive chronology after portrait regions (ADR-166).
+    )
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2729,451 +2810,22 @@ UPDATE db_schema_version
    AND version = 15;
 """
 
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v16_to_v17_conversation_local_marks.sql.
-    _MIGRATE_V16_TO_V17_SQL = """
-CREATE TABLE IF NOT EXISTS conversation_local_marks (
-  conversation_id TEXT NOT NULL,
-  mark_type TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (conversation_id, mark_type)
-);
-
-CREATE INDEX IF NOT EXISTS idx_conversation_local_marks_type
-  ON conversation_local_marks(mark_type, updated_at DESC, conversation_id);
-
-UPDATE db_schema_version
-   SET version = 17
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 16;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v17_to_v18_conversation_system_prompt.sql.
-    _MIGRATE_V17_TO_V18_SQL = """
-ALTER TABLE conversations ADD COLUMN system_prompt TEXT;
-
-DROP TRIGGER IF EXISTS conversations_sync_create;
-DROP TRIGGER IF EXISTS conversations_sync_update;
-DROP TRIGGER IF EXISTS conversations_sync_delete;
-DROP TRIGGER IF EXISTS conversations_sync_undelete;
-
-CREATE TRIGGER conversations_sync_create
-AFTER INSERT ON conversations BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'create',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-CREATE TRIGGER conversations_sync_update
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = NEW.deleted AND (
-     OLD.title IS NOT NEW.title OR
-     OLD.rating IS NOT NEW.rating OR
-     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR
-     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR
-     OLD.character_id IS NOT NEW.character_id OR
-     OLD.assistant_kind IS NOT NEW.assistant_kind OR
-     OLD.assistant_id IS NOT NEW.assistant_id OR
-     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR
-     OLD.scope_type IS NOT NEW.scope_type OR
-     OLD.workspace_id IS NOT NEW.workspace_id OR
-     OLD.state IS NOT NEW.state OR
-     OLD.topic_label IS NOT NEW.topic_label OR
-     OLD.topic_label_source IS NOT NEW.topic_label_source OR
-     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR
-     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR
-     OLD.cluster_id IS NOT NEW.cluster_id OR
-     OLD.source IS NOT NEW.source OR
-     OLD.external_ref IS NOT NEW.external_ref OR
-     OLD.runtime_backend IS NOT NEW.runtime_backend OR
-     OLD.discovery_owner IS NOT NEW.discovery_owner OR
-     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR
-     OLD.system_prompt IS NOT NEW.system_prompt OR
-     OLD.last_modified IS NOT NEW.last_modified OR
-     OLD.version IS NOT NEW.version)
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-CREATE TRIGGER conversations_sync_delete
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = 0 AND NEW.deleted = 1
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'delete',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
-                     'version',NEW.version,'client_id',NEW.client_id));
-END;
-
-CREATE TRIGGER conversations_sync_undelete
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = 1 AND NEW.deleted = 0
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-UPDATE db_schema_version
-   SET version = 18
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 17;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v19_to_v20_conversation_metadata.sql.
-    _MIGRATE_V19_TO_V20_SQL = """
-DROP TRIGGER IF EXISTS conversations_sync_create;
-DROP TRIGGER IF EXISTS conversations_sync_update;
-DROP TRIGGER IF EXISTS conversations_sync_delete;
-DROP TRIGGER IF EXISTS conversations_sync_undelete;
-
-CREATE TRIGGER conversations_sync_create
-AFTER INSERT ON conversations BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'create',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'metadata',NEW.metadata,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-CREATE TRIGGER conversations_sync_update
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = NEW.deleted AND (
-     OLD.title IS NOT NEW.title OR
-     OLD.rating IS NOT NEW.rating OR
-     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR
-     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR
-     OLD.character_id IS NOT NEW.character_id OR
-     OLD.assistant_kind IS NOT NEW.assistant_kind OR
-     OLD.assistant_id IS NOT NEW.assistant_id OR
-     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR
-     OLD.scope_type IS NOT NEW.scope_type OR
-     OLD.workspace_id IS NOT NEW.workspace_id OR
-     OLD.state IS NOT NEW.state OR
-     OLD.topic_label IS NOT NEW.topic_label OR
-     OLD.topic_label_source IS NOT NEW.topic_label_source OR
-     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR
-     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR
-     OLD.cluster_id IS NOT NEW.cluster_id OR
-     OLD.source IS NOT NEW.source OR
-     OLD.external_ref IS NOT NEW.external_ref OR
-     OLD.runtime_backend IS NOT NEW.runtime_backend OR
-     OLD.discovery_owner IS NOT NEW.discovery_owner OR
-     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR
-     OLD.system_prompt IS NOT NEW.system_prompt OR
-     OLD.metadata IS NOT NEW.metadata OR
-     OLD.last_modified IS NOT NEW.last_modified OR
-     OLD.version IS NOT NEW.version)
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'metadata',NEW.metadata,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-CREATE TRIGGER conversations_sync_delete
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = 0 AND NEW.deleted = 1
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'delete',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
-                     'version',NEW.version,'client_id',NEW.client_id));
-END;
-
-CREATE TRIGGER conversations_sync_undelete
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = 1 AND NEW.deleted = 0
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'metadata',NEW.metadata,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-UPDATE db_schema_version
-   SET version = 20
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 19;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v20_to_v21_world_book_entry_priority.sql.
-    _MIGRATE_V20_TO_V21_SQL = """
-DROP TRIGGER IF EXISTS world_book_entries_sync_create;
-DROP TRIGGER IF EXISTS world_book_entries_sync_update;
-
-CREATE TRIGGER world_book_entries_sync_create
-AFTER INSERT ON world_book_entries BEGIN
-  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
-  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified,
-         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
-         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
-                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
-                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
-                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
-                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
-END;
-
-CREATE TRIGGER world_book_entries_sync_update
-AFTER UPDATE ON world_book_entries
-WHEN OLD.keys IS NOT NEW.keys OR
-     OLD.content IS NOT NEW.content OR
-     OLD.enabled IS NOT NEW.enabled OR
-     OLD.position IS NOT NEW.position OR
-     OLD.insertion_order IS NOT NEW.insertion_order OR
-     OLD.priority IS NOT NEW.priority OR
-     OLD.selective IS NOT NEW.selective OR
-     OLD.secondary_keys IS NOT NEW.secondary_keys OR
-     OLD.case_sensitive IS NOT NEW.case_sensitive OR
-     OLD.extensions IS NOT NEW.extensions
-BEGIN
-  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
-  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified,
-         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
-         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
-                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
-                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
-                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
-                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
-END;
-
-UPDATE db_schema_version
-   SET version = 21
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 20;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v21_to_v22_world_book_entry_regex.sql.
-    _MIGRATE_V21_TO_V22_SQL = """
-DROP TRIGGER IF EXISTS world_book_entries_sync_create;
-DROP TRIGGER IF EXISTS world_book_entries_sync_update;
-
-CREATE TRIGGER world_book_entries_sync_create
-AFTER INSERT ON world_book_entries BEGIN
-  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
-  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified,
-         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
-         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
-                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
-                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
-                     'case_sensitive', NEW.case_sensitive, 'regex', NEW.regex,
-                     'extensions', NEW.extensions,
-                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
-END;
-
-CREATE TRIGGER world_book_entries_sync_update
-AFTER UPDATE ON world_book_entries
-WHEN OLD.keys IS NOT NEW.keys OR
-     OLD.content IS NOT NEW.content OR
-     OLD.enabled IS NOT NEW.enabled OR
-     OLD.position IS NOT NEW.position OR
-     OLD.insertion_order IS NOT NEW.insertion_order OR
-     OLD.priority IS NOT NEW.priority OR
-     OLD.selective IS NOT NEW.selective OR
-     OLD.secondary_keys IS NOT NEW.secondary_keys OR
-     OLD.case_sensitive IS NOT NEW.case_sensitive OR
-     OLD.regex IS NOT NEW.regex OR
-     OLD.extensions IS NOT NEW.extensions
-BEGIN
-  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
-  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified,
-         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
-         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
-                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
-                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
-                     'case_sensitive', NEW.case_sensitive, 'regex', NEW.regex,
-                     'extensions', NEW.extensions,
-                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
-END;
-
-UPDATE db_schema_version
-   SET version = 22
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 21;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v22_to_v23_character_expression_images.sql.
-    _MIGRATE_V22_TO_V23_SQL = """
-CREATE TABLE IF NOT EXISTS character_expression_images(
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  character_id  INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE ON UPDATE CASCADE,
-  state_id      TEXT    NOT NULL,
-  image         BLOB    NOT NULL,
-  mime          TEXT,
-  created_at    TEXT    NOT NULL DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW')),
-  updated_at    TEXT    NOT NULL DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW')),
-  deleted       INTEGER NOT NULL DEFAULT 0,
-  UNIQUE(character_id, state_id)
-);
-CREATE INDEX IF NOT EXISTS idx_char_expr_images_char ON character_expression_images(character_id);
-UPDATE db_schema_version
-   SET version = 23
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 22;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v23_to_v24_conversation_active_leaf.sql.
-    # NOTE: no trigger DDL. `active_leaf_message_id` is a LOCAL-ONLY pointer that
-    # must never reach sync_log, so the conversations_sync_* triggers are left
-    # untouched and the column is never added to their payloads.
-    _MIGRATE_V23_TO_V24_SQL = """
-UPDATE db_schema_version
-   SET version = 24
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 23;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v24_to_v25_message_generation_metadata.sql.
-    _MIGRATE_V24_TO_V25_SQL = """
-CREATE TABLE IF NOT EXISTS message_generation_metadata(
-  message_id      TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE ON UPDATE CASCADE,
-  position        INTEGER NOT NULL CHECK (position >= 0),
-  prompt          TEXT    NOT NULL,
-  negative_prompt TEXT    NOT NULL DEFAULT '',
-  backend         TEXT    NOT NULL,
-  model           TEXT,
-  seed            INTEGER,
-  style           TEXT,
-  params_json     TEXT    NOT NULL DEFAULT '{}',
-  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (message_id, position)
-);
-CREATE INDEX IF NOT EXISTS idx_msg_gen_meta_message ON message_generation_metadata(message_id);
-UPDATE db_schema_version
-   SET version = 25
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 24;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v25_to_v26_conversation_context_summary.sql.
-    # NOTE: no trigger DDL. ``context_summary``/``summary_boundary_message_id``
-    # are LOCAL-ONLY (Console `/rewind` "summarize up to here") and must never
-    # reach sync_log, so the conversations_sync_* triggers are left untouched
-    # and the columns are never added to their payloads.
-    _MIGRATE_V25_TO_V26_SQL = """
-UPDATE db_schema_version
-   SET version = 26
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 25;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v29_to_v30_message_usage.sql.
-    # NOTE: no trigger DDL. ``usage_json`` is LOCAL-ONLY (Console cost ticker
-    # PR1) and must never reach sync_log, so the messages_sync_* triggers are
-    # left untouched and the column is never added to their payloads. The
-    # schema-version bump is done separately in the runner (not embedded
-    # here) with a rowcount check, matching
-    # ``_update_character_authority_schema_version``.
-    _MIGRATE_V29_TO_V30_SQL = """
-ALTER TABLE messages ADD COLUMN usage_json TEXT DEFAULT NULL;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v30_to_v31_message_metadata.sql.
-    # NOTE: no trigger DDL. ``metadata_json`` is LOCAL-ONLY (task-2364:
-    # engine provenance, interrupted flag, transcript status) and must never
-    # reach sync_log, so the messages_sync_* triggers are left untouched and
-    # the column is never added to their payloads -- byte-for-byte the same
-    # reasoning as ``usage_json`` above. The schema-version bump is done
-    # separately in the runner (not embedded here) with a rowcount check.
-    _MIGRATE_V30_TO_V31_SQL = """
-ALTER TABLE messages ADD COLUMN metadata_json TEXT DEFAULT NULL;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v41_to_v42_console_project_context.sql.
-    # NOTE: no trigger DDL. ``console_project_context_json`` is LOCAL-ONLY and
-    # must never reach sync_log. The guarded version bump is owned by the
-    # migration runner so a column-present/version-41 database can recover.
+    # task-19565: this runner SQL is the SINGLE source of this migration (the
+    # step's Python owns shape validation and the guarded version bump for
+    # half-applied-database recovery, which a bare .sql file cannot express;
+    # the former decorative .sql twin was deleted rather than shipped
+    # unread). NOTE: no trigger DDL. ``console_project_context_json`` is
+    # LOCAL-ONLY and must never reach sync_log.
     _MIGRATE_V41_TO_V42_SQL = """
 ALTER TABLE conversations ADD COLUMN console_project_context_json TEXT;
 """
 
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_research_quick_note_proofs.sql.
-    # This table is private local recovery state: no trigger may project it to
-    # sync_log, FTS, keyword/tag surfaces, exports, graph, or RAG.
+    # task-19565: this runner SQL is the SINGLE source of this migration (the
+    # step's Python owns the existing-table shape validation and version
+    # bump; the former decorative .sql twin was deleted rather than shipped
+    # unread). This table is private local recovery state: no trigger may
+    # project it to sync_log, FTS, keyword/tag surfaces, exports, graph, or
+    # RAG.
     _MIGRATE_V42_TO_V43_CREATE_SQL = """CREATE TABLE research_quick_note_owner_proofs(
   note_id     TEXT PRIMARY KEY NOT NULL
               REFERENCES notes(id) ON DELETE CASCADE ON UPDATE CASCADE,
@@ -3247,69 +2899,6 @@ DELETE FROM keywords
         + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL
         + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL
     )
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
-    _MIGRATE_V18_TO_V19_SQL = """
-CREATE TABLE IF NOT EXISTS message_attachments(
-  message_id   TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE ON UPDATE CASCADE,
-  position     INTEGER NOT NULL CHECK (position >= 1),
-  data         BLOB    NOT NULL,
-  mime_type    TEXT    NOT NULL,
-  display_name TEXT    NOT NULL DEFAULT '',
-  PRIMARY KEY (message_id, position)
-);
-CREATE INDEX IF NOT EXISTS idx_message_attachments_message ON message_attachments(message_id);
-UPDATE db_schema_version
-   SET version = 19
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 18;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v28_to_v29_kept_briefings.sql.
-    # Deliberately no sync columns (client_id/version/deleted) and no FTS --
-    # see the migration file's header comment for the full rationale.
-    # `kept_scripts.kept_briefing_id` IS a real intra-ChaChaNotes FK with
-    # ON DELETE CASCADE; `source_briefing_id`/`source_script_id` are plain
-    # ints kept for tracing only, never FKs (the source rows live in a
-    # different database file, Subscriptions_DB).
-    _MIGRATE_V28_TO_V29_SQL = """
-CREATE TABLE IF NOT EXISTS kept_briefings(
-  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-  source_briefing_id     INTEGER NOT NULL UNIQUE,
-  watchlist_name         TEXT,
-  body_markdown          TEXT NOT NULL,
-  covers_through_item_id INTEGER,
-  covers_from_ts         DATETIME,
-  selection_mode         TEXT,
-  model_used             TEXT,
-  item_count             INTEGER NOT NULL DEFAULT 0,
-  featured_count         INTEGER NOT NULL DEFAULT 0,
-  overflow_count         INTEGER NOT NULL DEFAULT 0,
-  origin                 TEXT NOT NULL CHECK(origin IN ('manual','scheduled')),
-  original_created_at    DATETIME,
-  kept_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_kept_briefings_kept_at ON kept_briefings(kept_at DESC, id DESC);
-
-CREATE TABLE IF NOT EXISTS kept_scripts(
-  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-  kept_briefing_id     INTEGER NOT NULL REFERENCES kept_briefings(id) ON DELETE CASCADE ON UPDATE CASCADE,
-  source_script_id     INTEGER UNIQUE,
-  preset_name          TEXT NOT NULL,
-  roster_snapshot_json TEXT NOT NULL,
-  turns_json           TEXT NOT NULL,
-  model_used           TEXT,
-  original_created_at  DATETIME,
-  kept_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_kept_scripts_briefing ON kept_scripts(kept_briefing_id);
-UPDATE db_schema_version
-   SET version = 29
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 28;
-"""
 
     def __init__(
         self,
@@ -3422,7 +3011,9 @@ UPDATE db_schema_version
 
     # --- Connection Management ---
     @_core_getter
-    def _get_thread_connection(self) -> sqlite3.Connection:
+    def _get_thread_connection(
+        self, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """
         Retrieves or creates a thread-local SQLite connection.
 
@@ -3449,10 +3040,13 @@ UPDATE db_schema_version
         from tldw_chatbook.Backup_Recovery.participants import _core_access
 
         _core_access(self)
+        if operation_deadline is not None and time.monotonic() >= operation_deadline:
+            raise TimeoutError("Conversation connection budget exhausted")
         try:
             self._connection_quiescence.begin_acquisition()
         except RuntimeError as exc:
             raise CharactersRAGDBError(str(exc)) from exc
+        opened_here = False
         try:
             conn = _core_cached_connection(self, getattr(self._local, "conn", None))
             if conn is not None and not self._connection_quiescence.is_registered(conn):
@@ -3469,10 +3063,44 @@ UPDATE db_schema_version
                     >= self._LIVENESS_PING_IDLE_SECONDS
                 ):
                     try:
-                        conn.execute("SELECT 1")  # Check if connection is still alive
-                    except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                        # Reopen only when SQLite proves the handle is closed;
-                        # an uncertain borrower keeps both maintenance pins.
+                        if operation_deadline is None:
+                            conn.execute("SELECT 1")
+                        else:
+                            old_timeout = conn.execute(
+                                "PRAGMA busy_timeout"
+                            ).fetchone()[0]
+                            try:
+                                remaining = operation_deadline - time.monotonic()
+                                if remaining <= 0:
+                                    raise TimeoutError(
+                                        "Conversation connection budget exhausted"
+                                    )
+                                conn.execute(
+                                    f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                                )
+                                conn.set_progress_handler(
+                                    lambda: int(time.monotonic() >= operation_deadline),
+                                    100,
+                                )
+                                conn.execute("SELECT 1")
+                            finally:
+                                conn.set_progress_handler(None, 0)
+                                conn.execute(f"PRAGMA busy_timeout = {old_timeout}")
+                    except (sqlite3.ProgrammingError, sqlite3.OperationalError) as exc:
+                        if (
+                            operation_deadline is not None
+                            and isinstance(exc, sqlite3.OperationalError)
+                            and (
+                                time.monotonic() >= operation_deadline
+                                or any(
+                                    word in str(exc).lower()
+                                    for word in ("locked", "busy", "interrupt")
+                                )
+                            )
+                        ):
+                            raise TimeoutError(
+                                "Conversation connection probe timed out"
+                            ) from exc
                         try:
                             sqlite3.Connection.in_transaction.__get__(conn)
                         except sqlite3.ProgrammingError:
@@ -3489,26 +3117,54 @@ UPDATE db_schema_version
                         self.db_path_str,
                         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
                         check_same_thread=False,  # Required for threading.local approach
-                        timeout=15,  # Maybe slightly increase timeout?
+                        timeout=15
+                        if operation_deadline is None
+                        else max(0.0, operation_deadline - time.monotonic()),
+                        **(
+                            {"operation_deadline": operation_deadline}
+                            if operation_deadline is not None
+                            else {}
+                        ),
                         factory=_QuiescentSQLiteConnection,
                     )
+                    opened_here = True
                     if not isinstance(conn, _QuiescentSQLiteConnection):
                         raise RuntimeError("quiescent_connection_factory")
                     _register_core_connection(self, conn)
                     _core_access(self)
                     conn.attach_quiescence_registry(self._connection_quiescence)
                     conn.row_factory = sqlite3.Row
+
+                    def execute_setup(sql: str) -> None:
+                        if operation_deadline is not None:
+                            remaining = operation_deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise TimeoutError(
+                                    "Conversation connection budget exhausted"
+                                )
+                            conn.execute(
+                                f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                            )
+                        conn.execute(sql).fetchall()
+
+                    if operation_deadline is not None:
+                        conn.set_progress_handler(
+                            lambda: int(time.monotonic() >= operation_deadline), 100
+                        )
                     if not self.is_memory_db:
-                        conn.execute("PRAGMA journal_mode=WAL;")
+                        # Finish the statement: an active journal_mode PRAGMA is
+                        # a writer that refuses every later COMMIT on this
+                        # connection if anything retains its cursor.
+                        execute_setup("PRAGMA journal_mode=WAL;")
                     # NORMAL is safe under WAL (app-crash-safe; only an OS/power
                     # crash can lose the last commit or two, acceptable for this
                     # local cache) and avoids an fsync on every commit -- the
                     # default FULL was fsyncing the WAL on every commit despite
                     # WAL already being enabled. See Library_Ingest_Jobs_DB.py:
                     # 57-61 for the original template (task-15465).
-                    conn.execute("PRAGMA synchronous=NORMAL;")
+                    execute_setup("PRAGMA synchronous=NORMAL;")
 
-                    conn.execute("PRAGMA foreign_keys = ON;")
+                    execute_setup("PRAGMA foreign_keys = ON;")
                     # task-22224: a HELD connection needs true autocommit (see
                     # Library_Ingest_Jobs_DB.py's module docstring -- the store
                     # template -- for the rule). Under the legacy default, one
@@ -3545,6 +3201,13 @@ UPDATE db_schema_version
                         canvas_deletion_authorization
                     )
                     _core_access(self)
+                    if operation_deadline is not None:
+                        if time.monotonic() >= operation_deadline:
+                            raise TimeoutError(
+                                "Conversation connection budget exhausted"
+                            )
+                        conn.set_progress_handler(None, 0)
+                        conn.execute("PRAGMA busy_timeout = 15000")
                     self._connection_quiescence.register(conn)
                     self._local.conn = conn
                     logger.debug(
@@ -3552,7 +3215,7 @@ UPDATE db_schema_version
                         f"db_sha256={self._db_diagnostic_ref} "
                         f"thread={threading.get_ident()}"
                     )
-                except (sqlite3.Error, PrivatePathError) as exc:
+                except BaseException as exc:
                     if conn is not None:
                         # Initialization owns this unpublished handle; closing it
                         # also retires its native backup lease. Failed closes keep
@@ -3569,30 +3232,66 @@ UPDATE db_schema_version
                             self._local.semantic_mutation_authorization = None
                             self._local.voice_trace_import_authorization = None
                             self._local.canvas_revision_deletion_authorization = None
+                    if operation_deadline is not None and (
+                        isinstance(exc, (TimeoutError, HelperTimeoutError))
+                        or isinstance(exc, sqlite3.OperationalError)
+                        and (
+                            time.monotonic() >= operation_deadline
+                            or any(
+                                word in str(exc).lower()
+                                for word in ("locked", "busy", "interrupt")
+                            )
+                        )
+                    ):
+                        raise TimeoutError(
+                            "Conversation connection setup timed out"
+                        ) from exc
                     logger.error(
                         f"Failed to connect to database "
                         f"db_sha256={self._db_diagnostic_ref} "
                         f"exception_type={type(exc).__name__}"
                     )
                     self._local.conn = None
-                    raise CharactersRAGDBError(
-                        f"Failed to connect to database '{self.db_path_str}': {exc}"
-                    ) from exc
+                    if isinstance(exc, (sqlite3.Error, PrivatePathError)):
+                        raise CharactersRAGDBError(
+                            f"Failed to connect to database '{self.db_path_str}': {exc}"
+                        ) from exc
+                    raise
+            if (
+                operation_deadline is not None
+                and time.monotonic() >= operation_deadline
+            ):
+                if opened_here:
+                    # Setup reset the timeout before publication; expiry owns this close.
+                    conn.execute("PRAGMA busy_timeout = 0")
+                    self.close_connection()
+                raise TimeoutError("Conversation connection budget exhausted")
             self._local.conn_last_used = time.monotonic()
             return self._local.conn
         finally:
             self._connection_quiescence.finish_acquisition()
 
-    def get_connection(self) -> sqlite3.Connection:
+    def get_connection(
+        self, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """
         Public method to get the current thread's database connection.
 
         This is a convenience wrapper around `_get_thread_connection`.
 
+        Args:
+            operation_deadline: Optional absolute time.monotonic deadline covering
+                private admission, cold setup and liveness probing. Default callers
+                retain existing timeout and quiescence ownership behavior.
+
         Returns:
             The active sqlite3.Connection for the current thread.
         """
-        return self._get_thread_connection()
+        return (
+            self._get_thread_connection()
+            if operation_deadline is None
+            else self._get_thread_connection(operation_deadline=operation_deadline)
+        )
 
     def registered_connection_count(self) -> int:
         """Return the number of live same-file thread-owned handles.
@@ -3835,78 +3534,95 @@ UPDATE db_schema_version
         The caller must release its native borrowers before requesting close; the
         cache reference is cleared only after successful native retirement.
         """
-        conn = getattr(self._local, "conn", None)
+        local = self._local
+        conn = getattr(local, "conn", None)
         if conn is not None:
-            with _core_closing(self, conn) as allowed:
-                if not allowed:
-                    return
-                try:
-                    if not self.is_memory_db:
-                        # Resolve any pending transaction before checkpointing
-                        if conn.in_transaction:
+            self._close_connection_handle(conn, local, self._connection_quiescence)
+
+    def _close_connection_handle(self, conn, local, registry, *, strict=False):
+        """Apply the current close policy to this exact captured native handle."""
+        with _core_closing(self, conn) as allowed:
+            if not allowed:
+                if strict:
+                    raise RuntimeError("notes_connection_retirement_refused")
+                return
+            try:
+                if not self.is_memory_db:
+                    # Resolve any pending transaction before checkpointing
+                    if conn.in_transaction:
+                        try:
+                            logger.warning(
+                                f"Connection is in an uncommitted transaction during "
+                                f"close; attempting rollback "
+                                f"db_sha256={self._db_diagnostic_ref}."
+                            )
+                            conn.rollback()  # Attempt rollback if transaction is open
+                        except sqlite3.Error as exc:
+                            logger.error(
+                                f"Rollback attempt during close failed "
+                                f"db_sha256={self._db_diagnostic_ref} "
+                                f"exception_type={type(exc).__name__}"
+                            )
+                            # Don't proceed to checkpoint if rollback fails and we're still in transaction potentially
+                            # However, conn.close() below should still be attempted.
+
+                    # Checkpoint WAL only if not in a failed transaction state that prevents it
+                    # and WAL mode is active.
+                    # We assume if conn.in_transaction is false now, any transaction was committed/rolled back.
+                    if not conn.in_transaction:  # Re-check after potential rollback
+                        mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
+                        if mode_row and mode_row[0].lower() == "wal":
                             try:
-                                logger.warning(
-                                    f"Connection is in an uncommitted transaction during "
-                                    f"close; attempting rollback "
+                                logger.debug(
+                                    f"Attempting WAL checkpoint (TRUNCATE) before close "
+                                    f"db_sha256={self._db_diagnostic_ref} "
+                                    f"thread={threading.get_ident()}."
+                                )
+                                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                                logger.debug(
+                                    f"WAL checkpoint TRUNCATE executed "
                                     f"db_sha256={self._db_diagnostic_ref}."
                                 )
-                                conn.rollback()  # Attempt rollback if transaction is open
                             except sqlite3.Error as exc:
-                                logger.error(
-                                    f"Rollback attempt during close failed "
+                                logger.warning(
+                                    f"WAL checkpoint failed "
                                     f"db_sha256={self._db_diagnostic_ref} "
                                     f"exception_type={type(exc).__name__}"
                                 )
-                                # Don't proceed to checkpoint if rollback fails and we're still in transaction potentially
-                                # However, conn.close() below should still be attempted.
+                conn.close()
+                if strict:
+                    try:
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        pass
+                    else:
+                        raise RuntimeError("notes_connection_not_physically_retired")
+                registry.unregister(conn)
+                # This ensures that the reference is cleared from threading.local
+                # even if conn.close() itself raised an exception.
+                if getattr(local, "conn", None) is conn:
+                    local.conn = None
+                    local.canvas_revision_deletion_authorization = None
+                    local.semantic_mutation_authorization = None
+                    local.voice_trace_import_authorization = None
 
-                        # Checkpoint WAL only if not in a failed transaction state that prevents it
-                        # and WAL mode is active.
-                        # We assume if conn.in_transaction is false now, any transaction was committed/rolled back.
-                        if not conn.in_transaction:  # Re-check after potential rollback
-                            mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
-                            if mode_row and mode_row[0].lower() == "wal":
-                                try:
-                                    logger.debug(
-                                        f"Attempting WAL checkpoint (TRUNCATE) before close "
-                                        f"db_sha256={self._db_diagnostic_ref} "
-                                        f"thread={threading.get_ident()}."
-                                    )
-                                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-                                    logger.debug(
-                                        f"WAL checkpoint TRUNCATE executed "
-                                        f"db_sha256={self._db_diagnostic_ref}."
-                                    )
-                                except sqlite3.Error as exc:
-                                    logger.warning(
-                                        f"WAL checkpoint failed "
-                                        f"db_sha256={self._db_diagnostic_ref} "
-                                        f"exception_type={type(exc).__name__}"
-                                    )
-                    conn.close()
-                    self._connection_quiescence.unregister(conn)
-                    # This ensures that the reference is cleared from threading.local
-                    # even if conn.close() itself raised an exception.
-                    if hasattr(self._local, "conn"):
-                        self._local.conn = None
-                    self._local.canvas_revision_deletion_authorization = None
-                    self._local.semantic_mutation_authorization = None
-                    self._local.voice_trace_import_authorization = None
+                logger.debug(
+                    f"Closed SQLite connection "
+                    f"db_sha256={self._db_diagnostic_ref} "
+                    f"thread={threading.get_ident()}."
+                )
+            except (
+                sqlite3.Error
+            ) as exc:  # Catches errors from execute, checkpoint, or close
+                logger.warning(
+                    f"Error during SQLite connection close/checkpoint "
+                    f"db_sha256={self._db_diagnostic_ref} "
+                    f"thread={threading.get_ident()} "
+                    f"exception_type={type(exc).__name__}"
+                )
+                if strict:
+                    raise
 
-                    logger.debug(
-                        f"Closed SQLite connection "
-                        f"db_sha256={self._db_diagnostic_ref} "
-                        f"thread={threading.get_ident()}."
-                    )
-                except (
-                    sqlite3.Error
-                ) as exc:  # Catches errors from execute, checkpoint, or close
-                    logger.warning(
-                        f"Error during SQLite connection close/checkpoint "
-                        f"db_sha256={self._db_diagnostic_ref} "
-                        f"thread={threading.get_ident()} "
-                        f"exception_type={type(exc).__name__}"
-                    )
     def backup_database(self, backup_file_path: str) -> bool:
         """
         Creates a backup of the current database to the specified file path.
@@ -4028,8 +3744,15 @@ UPDATE db_schema_version
             ConflictError: If an SQLite IntegrityError due to a "unique constraint failed" occurs.
             CharactersRAGDBError: For other SQLite errors or general query execution failures.
         """
-        start_time = time.time()
-        operation_type = "script" if script else "query"
+        # task-34399: one cheap check gates every metric emission and both
+        # time.time() reads below; the shared label dicts at module scope
+        # replace the per-call dict literals this used to build on every
+        # query. metrics_logger drops the emission itself when metrics
+        # logging is off (the default), so gating here just skips the
+        # now-dead timing and label work too.
+        collect_metrics = is_metrics_logging_enabled()
+        if collect_metrics:
+            start_time = time.time()
 
         conn = self.get_connection()
         try:
@@ -4060,34 +3783,48 @@ UPDATE db_schema_version
                 logger.debug("Committed directly by execute_query.")
 
             # Log success metrics
-            duration = time.time() - start_time
-            log_histogram(
-                "chachanotes_db_query_duration",
-                duration,
-                labels={"operation": operation_type, "success": "true"},
-            )
-            log_counter(
-                "chachanotes_db_query_count",
-                labels={"operation": operation_type, "status": "success"},
-            )
+            if collect_metrics:
+                duration = time.time() - start_time
+                log_histogram(
+                    "chachanotes_db_query_duration",
+                    duration,
+                    labels=(
+                        _QUERY_METRIC_LABELS_SCRIPT_SUCCESS
+                        if script
+                        else _QUERY_METRIC_LABELS_SUCCESS
+                    ),
+                )
+                log_counter(
+                    "chachanotes_db_query_count",
+                    labels=(
+                        _COUNTER_LABELS_SCRIPT_SUCCESS
+                        if script
+                        else _COUNTER_LABELS_SUCCESS
+                    ),
+                )
 
             return cursor
         except sqlite3.IntegrityError as e:
             # Log error metrics
-            duration = time.time() - start_time
-            log_histogram(
-                "chachanotes_db_query_duration",
-                duration,
-                labels={"operation": operation_type, "success": "false"},
-            )
-            log_counter(
-                "chachanotes_db_query_count",
-                labels={
-                    "operation": operation_type,
-                    "status": "error",
-                    "error_type": "integrity_error",
-                },
-            )
+            if collect_metrics:
+                duration = time.time() - start_time
+                log_histogram(
+                    "chachanotes_db_query_duration",
+                    duration,
+                    labels=(
+                        _QUERY_METRIC_LABELS_SCRIPT_ERROR
+                        if script
+                        else _QUERY_METRIC_LABELS_ERROR
+                    ),
+                )
+                log_counter(
+                    "chachanotes_db_query_count",
+                    labels=(
+                        _COUNTER_LABELS_SCRIPT_INTEGRITY_ERROR
+                        if script
+                        else _COUNTER_LABELS_INTEGRITY_ERROR
+                    ),
+                )
 
             logger.warning(
                 f"Integrity constraint violation: {query[:300]}... Error: exception_type={type(e).__name__}"
@@ -4100,20 +3837,25 @@ UPDATE db_schema_version
             ) from e  # Broader for other integrity issues
         except sqlite3.Error as e:
             # Log error metrics
-            duration = time.time() - start_time
-            log_histogram(
-                "chachanotes_db_query_duration",
-                duration,
-                labels={"operation": operation_type, "success": "false"},
-            )
-            log_counter(
-                "chachanotes_db_query_count",
-                labels={
-                    "operation": operation_type,
-                    "status": "error",
-                    "error_type": "database_error",
-                },
-            )
+            if collect_metrics:
+                duration = time.time() - start_time
+                log_histogram(
+                    "chachanotes_db_query_duration",
+                    duration,
+                    labels=(
+                        _QUERY_METRIC_LABELS_SCRIPT_ERROR
+                        if script
+                        else _QUERY_METRIC_LABELS_ERROR
+                    ),
+                )
+                log_counter(
+                    "chachanotes_db_query_count",
+                    labels=(
+                        _COUNTER_LABELS_SCRIPT_DATABASE_ERROR
+                        if script
+                        else _COUNTER_LABELS_DATABASE_ERROR
+                    ),
+                )
 
             logger.error(
                 f"Query execution failed: {query[:300]}... Error: exception_type={type(e).__name__}"
@@ -4517,9 +4259,9 @@ UPDATE db_schema_version
     # `last_modified`, `deleted`, `client_id`, and `version` are bookkeeping,
     # not content, and are deliberately excluded from the comparison.
     #
-    # Keep this runner content aligned with tldw_chatbook/DB/migrations/
-    # chachanotes_v31_to_v32_default_assistant_enrichment.sql (a hand-apply
-    # reference generated FROM these constants; it is not read at runtime).
+    # task-19565 deleted the hand-apply .sql reference that used to mirror
+    # these constants (alignment lived only in a comment, the exact
+    # decorative-twin anti-pattern); this routine is the single source.
     _DEFAULT_ASSISTANT_BARE_NAME = "Default Assistant"
     _DEFAULT_ASSISTANT_BARE_DESCRIPTION = "A general-purpose assistant."
     _DEFAULT_ASSISTANT_BARE_FIRST_MESSAGE = "Hello! How can I help you today?"
@@ -5320,10 +5062,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V16 to V17 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v16_to_v17_conversation_local_marks.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V16_TO_V17_SQL, "V16→V17"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V16→V17",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V16→V17] Migration script executed.")
 
@@ -5364,10 +5113,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V17 to V18 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v17_to_v18_conversation_system_prompt.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V17_TO_V18_SQL, "V17→V18"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V17→V18",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V17→V18] Migration script executed.")
 
@@ -5408,21 +5164,22 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V19 to V20 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v19_to_v20_conversation_metadata.sql"
+        )
         try:
             with self.transaction() as cursor:
-                # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
-                # skip the ALTER when a replayed/partial migration already left the
-                # column in place (mirrors the v18->v19 ``CREATE TABLE IF NOT EXISTS``).
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute(
-                        "PRAGMA table_info(conversations)"
-                    ).fetchall()
-                }
-                if "metadata" not in existing_columns:
-                    cursor.execute("ALTER TABLE conversations ADD COLUMN metadata TEXT")
+                # Idempotent replay: the file's plain ``ADD COLUMN`` (SQLite
+                # has no IF NOT EXISTS form) is skipped by
+                # ``_skip_already_applied_add_column`` inside
+                # ``_execute_migration_statements`` when a partially-applied
+                # run already left the column in place.
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V19_TO_V20_SQL, "V19→V20"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V19→V20",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V19→V20] Migration script executed.")
 
@@ -5463,23 +5220,22 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V20 to V21 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v20_to_v21_world_book_entry_priority.sql"
+        )
         try:
             with self.transaction() as cursor:
-                # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
-                # skip the ALTER when a replayed/partial migration already left the
-                # column in place (mirrors the v19->v20 ``metadata`` column guard).
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute(
-                        "PRAGMA table_info(world_book_entries)"
-                    ).fetchall()
-                }
-                if "priority" not in existing_columns:
-                    cursor.execute(
-                        "ALTER TABLE world_book_entries ADD COLUMN priority INTEGER DEFAULT 0"
-                    )
+                # Idempotent replay: the file's plain ``ADD COLUMN`` (SQLite
+                # has no IF NOT EXISTS form) is skipped by
+                # ``_skip_already_applied_add_column`` inside
+                # ``_execute_migration_statements`` when a partially-applied
+                # run already left the column in place.
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V20_TO_V21_SQL, "V20→V21"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V20→V21",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V20→V21] Migration script executed.")
 
@@ -5514,20 +5270,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V21 to V22 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v21_to_v22_world_book_entry_regex.sql"
+        )
         try:
             with self.transaction() as cursor:
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute(
-                        "PRAGMA table_info(world_book_entries)"
-                    ).fetchall()
-                }
-                if "regex" not in existing_columns:
-                    cursor.execute(
-                        "ALTER TABLE world_book_entries ADD COLUMN regex BOOLEAN DEFAULT 0"
-                    )
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V21_TO_V22_SQL, "V21→V22"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V21→V22",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V21→V22] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -5560,10 +5313,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V22 to V23 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v22_to_v23_character_expression_images.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V22_TO_V23_SQL, "V22→V23"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V22→V23",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V22→V23] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -5597,20 +5357,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V23 to V24 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v23_to_v24_conversation_active_leaf.sql"
+        )
         try:
             with self.transaction() as cursor:
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute(
-                        "PRAGMA table_info(conversations)"
-                    ).fetchall()
-                }
-                if "active_leaf_message_id" not in existing_columns:
-                    cursor.execute(
-                        "ALTER TABLE conversations ADD COLUMN active_leaf_message_id TEXT"
-                    )
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V23_TO_V24_SQL, "V23→V24"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V23→V24",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V23→V24] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -5644,10 +5401,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V24 to V25 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v24_to_v25_message_generation_metadata.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V24_TO_V25_SQL, "V24→V25"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V24→V25",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V24→V25] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -5682,24 +5446,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V25 to V26 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v25_to_v26_conversation_context_summary.sql"
+        )
         try:
             with self.transaction() as cursor:
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute(
-                        "PRAGMA table_info(conversations)"
-                    ).fetchall()
-                }
-                if "context_summary" not in existing_columns:
-                    cursor.execute(
-                        "ALTER TABLE conversations ADD COLUMN context_summary TEXT"
-                    )
-                if "summary_boundary_message_id" not in existing_columns:
-                    cursor.execute(
-                        "ALTER TABLE conversations ADD COLUMN summary_boundary_message_id TEXT"
-                    )
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V25_TO_V26_SQL, "V25→V26"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V25→V26",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V25→V26] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -5897,10 +5654,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V28 to V29 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v28_to_v29_kept_briefings.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V28_TO_V29_SQL, "V28→V29"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V28→V29",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V28→V29] Migration script executed.")
 
@@ -5940,32 +5704,26 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V29 to V30 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v29_to_v30_message_usage.sql"
+        )
         try:
-            # The .sql file is the plain, unguarded ALTER (see its header
-            # note); THIS runner owns the idempotence guard. `ALTER TABLE ...
-            # ADD COLUMN` is not conditional in SQLite, so a database that
-            # already carries `usage_json` at v29 -- a partially-applied
-            # migration, or a row added by a concurrent build of this branch --
-            # would abort the whole upgrade with "duplicate column name".
-            # Skipping just the DDL (never the version bump) lands such a
-            # database at v30 exactly like a clean one.
+            # The .sql file is the plain ALTER (see its header note); the
+            # idempotence guard lives in ``_execute_migration_statements``
+            # (``_skip_already_applied_add_column``): a database that already
+            # carries `usage_json` from a partially-applied run has just the
+            # ALTER skipped, and lands at v30 exactly like a clean one.
             with self.transaction() as cursor:
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute("PRAGMA table_info(messages)").fetchall()
-                }
-                if "usage_json" in existing_columns:
-                    logger.info(
-                        f"[{self._SCHEMA_NAME} V29→V30] messages.usage_json already present; "
-                        "skipping the ALTER and applying the version bump only."
-                    )
-                else:
-                    self._execute_migration_statements(
-                        cursor, self._MIGRATE_V29_TO_V30_SQL, "V29→V30"
-                    )
-                    logger.debug(
-                        f"[{self._SCHEMA_NAME} V29→V30] Migration script executed."
-                    )
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V29→V30",
+                )
+                logger.debug(
+                    f"[{self._SCHEMA_NAME} V29→V30] Migration script executed."
+                )
 
                 cursor.execute(
                     """
@@ -6017,32 +5775,26 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V30 to V31 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v30_to_v31_message_metadata.sql"
+        )
         try:
-            # The .sql file is the plain, unguarded ALTER (see its header
-            # note); THIS runner owns the idempotence guard. `ALTER TABLE ...
-            # ADD COLUMN` is not conditional in SQLite, so a database that
-            # already carries `metadata_json` at v30 -- a partially-applied
-            # migration, or a row added by a concurrent build of this branch
-            # -- would abort the whole upgrade with "duplicate column name".
-            # Skipping just the DDL (never the version bump) lands such a
-            # database at v31 exactly like a clean one.
+            # The .sql file is the plain ALTER (see its header note); the
+            # idempotence guard lives in ``_execute_migration_statements``
+            # (``_skip_already_applied_add_column``): a database that already
+            # carries `metadata_json` from a partially-applied run has just
+            # the ALTER skipped, and lands at v31 exactly like a clean one.
             with self.transaction() as cursor:
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute("PRAGMA table_info(messages)").fetchall()
-                }
-                if "metadata_json" in existing_columns:
-                    logger.info(
-                        f"[{self._SCHEMA_NAME} V30→V31] messages.metadata_json already present; "
-                        "skipping the ALTER and applying the version bump only."
-                    )
-                else:
-                    self._execute_migration_statements(
-                        cursor, self._MIGRATE_V30_TO_V31_SQL, "V30→V31"
-                    )
-                    logger.debug(
-                        f"[{self._SCHEMA_NAME} V30→V31] Migration script executed."
-                    )
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V30→V31",
+                )
+                logger.debug(
+                    f"[{self._SCHEMA_NAME} V30→V31] Migration script executed."
+                )
 
                 cursor.execute(
                     """
@@ -7696,9 +7448,7 @@ UPDATE db_schema_version
                     (self._SCHEMA_NAME,),
                 )
                 if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        "Notes organization schema version update failed"
-                    )
+                    raise SchemaError("Notes organization schema version update failed")
             if self._get_db_version(conn) != 58:
                 raise SchemaError(
                     f"[{self._SCHEMA_NAME} V57→V58] Migration version check failed"
@@ -7872,7 +7622,9 @@ UPDATE db_schema_version
                     "V62→V63",
                 )
                 if cursor.execute("PRAGMA foreign_key_check").fetchall():
-                    raise SchemaError("Console trace GC migration foreign key audit failed")
+                    raise SchemaError(
+                        "Console trace GC migration foreign key audit failed"
+                    )
                 version_cursor = cursor.execute(
                     "UPDATE db_schema_version SET version = 63 "
                     "WHERE schema_name = ? AND version = 62",
@@ -8114,7 +7866,9 @@ UPDATE db_schema_version
                     "V67→V68",
                 )
                 if cursor.execute("PRAGMA foreign_key_check").fetchall():
-                    raise SchemaError("Canvas runtime migration foreign key audit failed")
+                    raise SchemaError(
+                        "Canvas runtime migration foreign key audit failed"
+                    )
                 version_cursor = cursor.execute(
                     "UPDATE db_schema_version SET version = 68 "
                     "WHERE schema_name = ? AND version = 67",
@@ -8247,6 +8001,71 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v76_to_v77(self, conn: sqlite3.Connection) -> None:
+        """Preserve checkpoint owners while adding native chat-start receipts."""
+        self._require_migration_entry_version(conn, 76, "V76→V77")
+        if (
+            conn.execute(
+                "SELECT 1 FROM sqlite_schema WHERE name='fleet_progress_messages'"
+            ).fetchone()
+            is not None
+        ):
+            raise SchemaError(
+                "V76 to V77 unsupported native receipt catalog (progress predecessor)"
+            )
+        migration = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v76_to_v77_agent_chat_starts.sql"
+        )
+        with self.transaction() as cursor:
+            columns = {
+                row[1]
+                for row in cursor.execute(
+                    "PRAGMA table_info(console_dispatch_checkpoints)"
+                )
+            }
+            if "agent_chat_start_attempt_id" in columns:
+                # Column presence selects this gate; only a complete catalog admits it.
+                from .recovery_core_schema import CHACHANOTES_V76_NATIVE_SCHEMAS
+
+                catalog = tuple(
+                    row[0]
+                    for row in cursor.execute(
+                        "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+                    )
+                )
+                qualified = catalog in CHACHANOTES_V76_NATIVE_SCHEMAS
+                if not qualified:
+                    # SiteConfigManager already opens CharactersRAGDB on the
+                    # Subscription file. This runtime gate never changes the
+                    # primary backup adapter's separate catalog policy.
+                    from .recovery_operations import (
+                        _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS,
+                    )
+
+                    qualified = (
+                        catalog in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
+                        and tuple(
+                            cursor.execute(
+                                "SELECT MAX(version) FROM schema_version"
+                            ).fetchone()
+                        )
+                        == (2,)
+                    )
+                if not qualified:
+                    raise SchemaError("V76→V77 unsupported native receipt catalog")
+            else:
+                self._execute_migration_statements(
+                    cursor, migration.read_text(encoding="utf-8"), "V76→V77"
+                )
+            changed = cursor.execute(
+                "UPDATE db_schema_version SET version = 77 WHERE schema_name = ? AND version = 76",
+                (self._SCHEMA_NAME,),
+            )
+            if changed.rowcount != 1:
+                raise SchemaError("V76→V77 version update failed")
+
     def _migrate_from_v72_to_v73(self, conn: sqlite3.Connection) -> None:
         """Persist the note-link relation and backfill it from existing bodies."""
 
@@ -8351,6 +8170,36 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v84_to_v85(self, conn: sqlite3.Connection) -> None:
+        """Add local archive chronology while retaining shared sync events."""
+        self._require_migration_entry_version(conn, 84, "V84→V85")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v84_to_v85_archive_chronology.sql"
+        )
+        try:
+            with self.transaction(immediate=True) as cursor:
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), "V84→V85"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 85 "
+                    "WHERE schema_name = ? AND version = 84",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError(
+                        "Archive chronology migration version update failed"
+                    )
+            if self._get_db_version(conn) != 85:
+                raise SchemaError("Archive chronology migration version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V84 to V85 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v74_to_v75(self, conn: sqlite3.Connection) -> None:
         """Retain machine continuation dedup independently of checkpoints."""
         self._require_migration_entry_version(conn, 74, "V74→V75")
@@ -8377,6 +8226,244 @@ UPDATE db_schema_version
                 f"Migration V74→V75 failed: {type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v75_to_v76(self, conn: sqlite3.Connection) -> None:
+        """Ship the guarded ``notes_au`` FTS trigger body as a real migration.
+
+        The trigger originally shipped without its ``deleted = 0`` guards, and
+        because the v4 base script never re-runs on an existing database the
+        repair lived for years in a runtime self-heal that DROP/reCREATEd
+        ``notes_au`` on every open (task-19565 removed it). Every database
+        passes through v75->v76 exactly once, so the correct body lands once
+        and the startup fixup is gone. The recreated body is
+        whitespace-identical to the v4 base script's, so fresh and
+        chain-migrated databases converge on the same sqlite_master row.
+        """
+
+        self._require_migration_entry_version(conn, 75, "V75→V76")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v75_to_v76_notes_fts_undelete_guard.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V75→V76",
+                )
+            if self._get_db_version(conn) != 76:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V75→V76] Migration version check failed"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V75 to V76 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
+    def _migrate_from_v83_to_v84(self, conn: sqlite3.Connection) -> None:
+        """Install independent source-bound regions and optional applied provenance."""
+        self._require_migration_entry_version(conn, 83, "V83→V84")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v83_to_v84_portrait_regions.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V83→V84"
+                )
+                changed = cursor.execute(
+                    "UPDATE db_schema_version SET version=84 WHERE schema_name=? AND version=83",
+                    (self._SCHEMA_NAME,),
+                )
+                if changed.rowcount != 1:
+                    raise SchemaError("V83→V84 version update failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
+            raise SchemaError(f"Migration V83→V84 failed: {type(exc).__name__}") from exc
+
+
+    def _migrate_from_v82_to_v83(self, conn: sqlite3.Connection) -> None:
+        """Install source-bound local portrait sets without sync triggers."""
+        self._require_migration_entry_version(conn, 82, "V82→V83")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v82_to_v83_portrait_performance.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V82→V83"
+                )
+                changed = cursor.execute(
+                    "UPDATE db_schema_version SET version=83 WHERE schema_name=? AND version=82",
+                    (self._SCHEMA_NAME,),
+                )
+                if changed.rowcount != 1:
+                    raise SchemaError("V82→V83 version update failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError) as exc:
+            raise SchemaError(f"Migration V82→V83 failed: {type(exc).__name__}") from exc
+
+    def _migrate_from_v81_to_v82(self, conn: sqlite3.Connection) -> None:
+        """Permit immutable sibling ties while preserving one root per Canvas."""
+        self._require_migration_entry_version(conn, 81, "V81→V82")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v81_to_v82_canvas_sibling_sequences.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                predecessor = cursor.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' "
+                    "AND name = 'idx_canvas_revisions_canvas_sequence'"
+                ).fetchone()
+                if predecessor is None or predecessor[0] != (
+                    "CREATE UNIQUE INDEX idx_canvas_revisions_canvas_sequence\n"
+                    "  ON canvas_revisions(canvas_id, sequence)"
+                ):
+                    raise SchemaError("incompatible Canvas sequence predecessor schema")
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V81→V82"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 82 WHERE schema_name = ? AND version = 81",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V81→V82 version update failed")
+            if self._get_db_version(conn) != 82:
+                raise SchemaError("V81→V82 version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V81→V82 failed: {type(exc).__name__}"
+            ) from exc
+
+    def _migrate_from_v80_to_v81(self, conn: sqlite3.Connection) -> None:
+        """Install native local rules without adding sync or metadata payloads."""
+        self._require_migration_entry_version(conn, 80, "V80→V81")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v80_to_v81_response_rules.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V80→V81"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 81 WHERE schema_name = ? AND version = 80",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V80→V81 version update failed")
+            if self._get_db_version(conn) != 81:
+                raise SchemaError("V80→V81 version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V80→V81 failed: {type(exc).__name__}"
+            ) from exc
+
+    def _migrate_from_v79_to_v80(self, conn: sqlite3.Connection) -> None:
+        """Add the conversations browse-order index (perf review B, B7).
+
+        Library browse pages order by ``last_modified DESC, id DESC`` and
+        take one page at a time; without this index every page sorted the
+        full filtered set in a TEMP B-TREE. Stacks on the ADR-224 v79
+        timestamp normalization, whose canonical UTC ``last_modified``
+        format is exactly what this index orders by.
+        """
+        self._require_migration_entry_version(conn, 79, "V79→V80")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v79_to_v80_conversations_browse_order_index.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V79→V80",
+                )
+                result = cursor.execute(
+                    "UPDATE db_schema_version SET version = 80 WHERE schema_name = ? AND version = 79",
+                    (self._SCHEMA_NAME,),
+                )
+                if result.rowcount != 1:
+                    raise SchemaError(
+                        "Migration V79 to V80 version update was not applied."
+                    )
+            if self._get_db_version(conn) != 80:
+                raise SchemaError("Migration V79 to V80 version check failed.")
+        except (OSError, sqlite3.Error) as exc:
+            raise SchemaError("Migration from V79 to V80 failed.") from exc
+
+    def _migrate_from_v77_to_v78(self, conn: sqlite3.Connection) -> None:
+        """Add chat-owned pending progress without restoring live authority."""
+        self._require_migration_entry_version(conn, 77, "V77→V78")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v77_to_v78_fleet_progress.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), "V77→V78"
+                )
+                result = cursor.execute(
+                    "UPDATE db_schema_version SET version = 78 WHERE schema_name = ? AND version = 77",
+                    (self._SCHEMA_NAME,),
+                )
+                if result.rowcount != 1:
+                    raise SchemaError(
+                        "Migration V77 to V78 version update was not applied."
+                    )
+            if self._get_db_version(conn) != 78:
+                raise SchemaError("Migration V77 to V78 version check failed.")
+        except (OSError, sqlite3.Error) as exc:
+            raise SchemaError("Migration from V77 to V78 failed.") from exc
+
+    def _migrate_from_v78_to_v79(self, conn: sqlite3.Connection) -> None:
+        """Normalize the sargable trio's ordering columns (ADR-224).
+
+        Rewrites ``conversations.last_modified`` and
+        ``flashcards.next_review`` to the ADR-173 canonical UTC shape and
+        adds the indexes the raw (non-function-wrapped) comparisons need.
+        Idempotent: canonical rows are GLOB-guarded out and unparseable
+        values are left untouched (never NULLed). The conversations sync
+        trigger is dropped and recreated around the normalization UPDATE so
+        the format change does not enqueue spurious ``sync_log`` events.
+        """
+        self._require_migration_entry_version(conn, 78, "V78→V79")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), "V78→V79"
+                )
+                result = cursor.execute(
+                    "UPDATE db_schema_version SET version = 79 WHERE schema_name = ? AND version = 78",
+                    (self._SCHEMA_NAME,),
+                )
+                if result.rowcount != 1:
+                    raise SchemaError(
+                        "Migration V78 to V79 version update was not applied."
+                    )
+            if self._get_db_version(conn) != 79:
+                raise SchemaError("Migration V78 to V79 version check failed.")
+        except (OSError, sqlite3.Error) as exc:
+            raise SchemaError("Migration from V78 to V79 failed.") from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -8391,10 +8478,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V18 to V19 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v18_to_v19_message_attachments.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V18_TO_V19_SQL, "V18→V19"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V18→V19",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V18→V19] Migration script executed.")
 
@@ -8542,7 +8636,6 @@ UPDATE db_schema_version
                         self._repair_missing_notes_organization_sync_ids(conn)
                     if current_db_version >= 58:
                         self._ensure_notes_organization_link_lookup_indexes(conn)
-                    self._ensure_notes_fts_update_trigger_handles_undelete(conn)
                     logger.debug(
                         f"Database schema '{self._SCHEMA_NAME}' is up to date (Version {target_version})."
                     )
@@ -8624,6 +8717,16 @@ UPDATE db_schema_version
                     72: self._migrate_from_v72_to_v73,
                     73: self._migrate_from_v73_to_v74,
                     74: self._migrate_from_v74_to_v75,
+                    75: self._migrate_from_v75_to_v76,
+                    76: self._migrate_from_v76_to_v77,
+                    77: self._migrate_from_v77_to_v78,
+                    78: self._migrate_from_v78_to_v79,
+                    79: self._migrate_from_v79_to_v80,
+                    80: self._migrate_from_v80_to_v81,
+                    81: self._migrate_from_v81_to_v82,
+                    82: self._migrate_from_v82_to_v83,
+                    83: self._migrate_from_v83_to_v84,
+                    84: self._migrate_from_v84_to_v85,
                 }
 
                 if current_db_version == 0:
@@ -8657,7 +8760,6 @@ UPDATE db_schema_version
                     raise SchemaError(
                         f"Schema migration process completed, but final DB version is {final_version_check}, expected {target_version}. Manual check required."
                     )
-                self._ensure_notes_fts_update_trigger_handles_undelete(conn)
                 logger.info(
                     f"Database schema '{self._SCHEMA_NAME}' successfully initialized/migrated to version {final_version_check}."
                 )
@@ -9325,6 +9427,136 @@ UPDATE db_schema_version
             )
             raise
 
+    def get_character_portrait_regions(
+        self, *, character_id: int, expression_key: str
+    ) -> "PortraitRegionSettings | None":
+        """Read independent settings, including stale source identity for re-selection."""
+        from .portrait_region_settings import get_regions
+
+        return get_regions(
+            self, character_id=character_id, expression_key=expression_key
+        )
+
+    def save_character_portrait_regions(
+        self,
+        source: "PerformanceSource",
+        recipe: "PortraitCompositionRecipe",
+        *,
+        expected_revision: int,
+    ) -> int:
+        """Save confirmed source-pixel regions without changing active poses."""
+        from .portrait_region_settings import save_regions
+
+        return save_regions(self, source, recipe, expected_revision=expected_revision)
+
+    def apply_character_portrait_performance(
+        self,
+        source: "PerformanceSource",
+        frames: tuple["PerformanceFrame", ...],
+        *,
+        expected_revision: int,
+        composition_recipe: "PortraitCompositionRecipe | None" = None,
+        expected_regions_revision: int | None = None,
+    ) -> int:
+        """Atomically replace six poses, fencing optional composition provenance."""
+        from .portrait_region_settings import apply_performance
+
+        return apply_performance(
+            self,
+            source,
+            frames,
+            expected_revision=expected_revision,
+            composition_recipe=composition_recipe,
+            expected_regions_revision=expected_regions_revision,
+        )
+
+    def get_character_portrait_performance(
+        self,
+        *,
+        character_id: int,
+        expression_key: str,
+    ) -> "PortraitPerformanceRecord | None":
+        """Read one consistent attachment/tombstone, even if its source is old."""
+        from tldw_chatbook.Character_Chat.portrait_performance import (
+            FRAME_ROLES,
+            PerformanceFrame,
+            PerformanceSource,
+            PortraitPerformanceRecord,
+        )
+
+        from .portrait_region_settings import optional_recipe
+
+        with self.transaction() as cursor:
+            row = cursor.execute(
+                """SELECT p.* FROM character_portrait_performances p
+                   JOIN character_cards c ON c.id=p.character_id AND c.deleted=0
+                   WHERE p.character_id=? AND p.expression_key=?""",
+                (character_id, expression_key),
+            ).fetchone()
+            if row is None:
+                return None
+            frames = cursor.execute(
+                "SELECT role,png,width,height,sha256 FROM character_portrait_performance_frames WHERE performance_id=?",
+                (row["id"],),
+            ).fetchall()
+            return PortraitPerformanceRecord(
+                PerformanceSource(
+                    row["character_id"],
+                    row["expression_key"],
+                    row["source_sha256"],
+                    row["source_kind"],
+                    tuple(json.loads(row["source_ref_json"])),
+                ),
+                row["revision"],
+                bool(row["active"]),
+                tuple(
+                    sorted(
+                        (PerformanceFrame(*frame) for frame in frames),
+                        key=lambda frame: FRAME_ROLES.index(frame.role),
+                    )
+                ),
+                optional_recipe(row["composition_recipe_json"]),
+            )
+
+    def remove_character_portrait_performance(
+        self,
+        source: "PerformanceSource",
+        *,
+        expected_revision: int,
+    ) -> int:
+        """Remove blobs atomically, preserving an increasing revision tombstone."""
+        from tldw_chatbook.Character_Chat.portrait_performance import (
+            PerformanceConflict,
+            _performance_write,
+            _preflight_source,
+            _source_stamp,
+        )
+
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("portrait_performance_revision_invalid")
+        stamp = _preflight_source(self, source)
+        with _performance_write(self) as cursor:
+            if _source_stamp(self, source) != stamp:
+                raise PerformanceConflict("portrait_performance_source_changed")
+            row = cursor.execute(
+                "SELECT id,revision,active FROM character_portrait_performances WHERE character_id=? AND expression_key=?",
+                (source.character_id, source.expression_key),
+            ).fetchone()
+            actual = 0 if row is None else row[1]
+            if actual != expected_revision:
+                raise PerformanceConflict("portrait_performance_revision_changed")
+            if row is None or not row[2]:
+                return actual
+            cursor.execute(
+                "DELETE FROM character_portrait_performance_frames WHERE performance_id=?",
+                (row[0],),
+            )
+            cursor.execute(
+                "UPDATE character_portrait_performances SET active=0,revision=?,composition_recipe_json=NULL WHERE id=?",
+                (actual + 1, row[0]),
+            )
+        return actual + 1
+
     # --- Reaction-avatar expression images (P3d) ---
 
     def set_character_expression_image(
@@ -9485,11 +9717,39 @@ UPDATE db_schema_version
             )
             raise
 
+    #: ADR-224: the browse (no-search) character queries, named so
+    #: ``Tests/ChaChaNotesDB/test_sargable_timestamps.py`` runs EXPLAIN
+    #: QUERY PLAN over the statements production actually uses. The page
+    #: and count forms are served by the partial expression index
+    #: ``idx_character_cards_visible_name`` (user-visible cards in NOCASE
+    #: name order); ``list_character_cards``' BINARY ``ORDER BY name`` is
+    #: served by the UNIQUE autoindex on ``name``. Methods, not plain
+    #: constants, because the visibility predicate's escaped ``{{}}``
+    #: brace must be interpolated exactly once.
+    def _character_cards_browse_page_sql(
+        self, *, order_by: str, include_image: bool
+    ) -> str:
+        return (
+            f"SELECT {self._character_card_select_columns(include_image=include_image)} "
+            f"FROM character_cards "
+            f"WHERE deleted = 0 "
+            f"AND {self._USER_VISIBLE_CHARACTER.format(a='character_cards')} "
+            f"{self._resolve_sort_clause(order_by, searching=False)} LIMIT ? OFFSET ?"
+        )
+
+    def _character_cards_browse_count_sql(self) -> str:
+        return (
+            "SELECT COUNT(*) FROM character_cards "
+            f"WHERE deleted = 0 "
+            f"AND {self._USER_VISIBLE_CHARACTER.format(a='character_cards')}"
+        )
+
     def list_character_cards(
         self, limit: int = 100, offset: int = 0, *, include_image: bool = False
     ) -> List[Dict[str, Any]]:
         """
-        Lists character cards, ordered by name.
+        Lists character cards, ordered by name (BINARY collation; the paged
+        Library view uses ``list_character_cards_page``'s NOCASE order).
 
         Only non-deleted cards are returned. JSON fields (see `_CHARACTER_CARD_JSON_FIELDS`)
         are deserialized.
@@ -9636,28 +9896,38 @@ UPDATE db_schema_version
         searching = bool(search_term)
         sort_clause = self._resolve_sort_clause(order_by, searching=searching)
         params: list[Any] = []
-        where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
-        alias = "cc" if searching else "character_cards"
-        where.append(self._USER_VISIBLE_CHARACTER.format(a=alias))
-        if searching:
-            columns = self._character_card_select_columns(
-                include_image=include_image, alias="cc"
+        if not searching and tag is None:
+            # ADR-224: the common browse page goes through the named
+            # statement (served by idx_character_cards_visible_name) so the
+            # EXPLAIN QUERY PLAN budget asserts the plan production runs.
+            query = self._character_cards_browse_page_sql(
+                order_by=order_by, include_image=include_image
             )
-            head = (
-                f"SELECT {columns} FROM character_cards_fts fts "
-                "JOIN character_cards cc ON fts.rowid = cc.id"
-            )
-            where.insert(0, "fts.character_cards_fts MATCH ?")
-            params.append(search_term)
         else:
-            columns = self._character_card_select_columns(include_image=include_image)
-            head = f"SELECT {columns} FROM character_cards"
-        if tag is not None:
-            where.append(
-                f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
-            )
-            params.append(tag)
-        query = f"{head} WHERE {' AND '.join(where)} {sort_clause} LIMIT ? OFFSET ?"
+            where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
+            alias = "cc" if searching else "character_cards"
+            where.append(self._USER_VISIBLE_CHARACTER.format(a=alias))
+            if searching:
+                columns = self._character_card_select_columns(
+                    include_image=include_image, alias="cc"
+                )
+                head = (
+                    f"SELECT {columns} FROM character_cards_fts fts "
+                    "JOIN character_cards cc ON fts.rowid = cc.id"
+                )
+                where.insert(0, "fts.character_cards_fts MATCH ?")
+                params.append(search_term)
+            else:
+                columns = self._character_card_select_columns(
+                    include_image=include_image
+                )
+                head = f"SELECT {columns} FROM character_cards"
+            if tag is not None:
+                where.append(
+                    f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
+                )
+                params.append(tag)
+            query = f"{head} WHERE {' AND '.join(where)} {sort_clause} LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         cursor = self.execute_query(query, tuple(params))
         return [
@@ -9672,24 +9942,29 @@ UPDATE db_schema_version
         """Count non-deleted character cards matching the same search+tag filter."""
         searching = bool(search_term)
         params: list[Any] = []
-        alias = "cc" if searching else "character_cards"
-        where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
-        where.append(self._USER_VISIBLE_CHARACTER.format(a=alias))
-        if searching:
-            head = (
-                "SELECT COUNT(*) FROM character_cards_fts fts "
-                "JOIN character_cards cc ON fts.rowid = cc.id"
-            )
-            where.insert(0, "fts.character_cards_fts MATCH ?")
-            params.append(search_term)
+        if not searching and tag is None:
+            # ADR-224: the plain browse count over the partial expression
+            # index (named statement; see the EXPLAIN QUERY PLAN budget).
+            query = self._character_cards_browse_count_sql()
         else:
-            head = "SELECT COUNT(*) FROM character_cards"
-        if tag is not None:
-            where.append(
-                f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
-            )
-            params.append(tag)
-        query = f"{head} WHERE {' AND '.join(where)}"
+            alias = "cc" if searching else "character_cards"
+            where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
+            where.append(self._USER_VISIBLE_CHARACTER.format(a=alias))
+            if searching:
+                head = (
+                    "SELECT COUNT(*) FROM character_cards_fts fts "
+                    "JOIN character_cards cc ON fts.rowid = cc.id"
+                )
+                where.insert(0, "fts.character_cards_fts MATCH ?")
+                params.append(search_term)
+            else:
+                head = "SELECT COUNT(*) FROM character_cards"
+            if tag is not None:
+                where.append(
+                    f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
+                )
+                params.append(tag)
+            query = f"{head} WHERE {' AND '.join(where)}"
         cursor = self.execute_query(query, tuple(params))
         row = cursor.fetchone()
         return int(row[0]) if row else 0
@@ -11044,7 +11319,14 @@ UPDATE db_schema_version
             params += (thinking_history_policy,)
         query = f"INSERT INTO conversations ({insert_columns}) VALUES ({placeholders})"
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): the conversation-create path reserves the
+            # write lock up front, the same standing policy task-21100 put on
+            # the hot `messages` writers. Depth-0 this INSERT is blind (a plain
+            # SQLITE_BUSY would honor the busy timeout), but a DEFERRED begin
+            # cannot be proven safe against future body changes, and every
+            # wrapper that composes this call inherits whatever begin mode it
+            # finds at depth 0 -- reserve here so the default is safe.
+            with self.transaction(immediate=True) as conn:
                 conn.execute(query, params)
             logger.debug(f"Added conversation ID: {conv_id}.")
 
@@ -11138,6 +11420,27 @@ UPDATE db_schema_version
             archive_scope
         ]
 
+    def query_archive_recovery_page(
+        self,
+        request_data: Mapping[str, object],
+        workspace_rows: tuple[Mapping[str, object], ...],
+        *,
+        after: tuple[int, str, str] | None,
+        deadline: float,
+        monotonic: Callable[[], float],
+    ) -> dict[str, object]:
+        """Delegate bounded storage-side archive discovery (ADR-166)."""
+        from .conversation_archive_queries import query_archive_recovery_page
+
+        return query_archive_recovery_page(
+            self,
+            request_data,
+            workspace_rows,
+            after=after,
+            deadline=deadline,
+            monotonic=monotonic,
+        )
+
     def get_conversation_archive_states(
         self, conversation_ids: Iterable[str]
     ) -> dict[str, bool]:
@@ -11192,11 +11495,12 @@ UPDATE db_schema_version
                         failures[cid] = "missing_version"
                         continue
                     cursor = conn.execute(
-                        "UPDATE conversations SET archived = ?, version = version + 1, "
+                        "UPDATE conversations SET archived = ?, archived_at = ?, version = version + 1, "
                         "last_modified = ? WHERE id = ? AND deleted = 0 "
                         "AND version = ? AND archived != ?",
                         (
                             int(archived),
+                            self._get_current_utc_timestamp_iso() if archived else None,
                             self._get_current_utc_timestamp_iso(),
                             cid,
                             version,
@@ -11487,6 +11791,26 @@ UPDATE db_schema_version
             )
             raise
 
+    #: The character-conversation list pages, ADR-224 style: raw (sargable)
+    #: ``last_modified`` keyset + order over ``idx_conv_char_lm``. Valid
+    #: because the v78→v79 migration normalized every stored value to the
+    #: canonical fixed-width shape, where TEXT order == time order. Named so
+    #: ``Tests/ChaChaNotesDB/test_sargable_timestamps.py`` runs EXPLAIN
+    #: QUERY PLAN over the statement production actually uses.
+    _CONVERSATIONS_FOR_CHARACTER_PAGE_SQL = (
+        "SELECT * FROM conversations "
+        "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
+        "AND {archive} "
+        "ORDER BY last_modified DESC, id DESC LIMIT ? OFFSET ?"
+    )
+    _CONVERSATIONS_FOR_CHARACTER_KEYSET_SQL = (
+        "SELECT * FROM conversations "
+        "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
+        "AND {archive} "
+        "AND (last_modified < ? OR (last_modified = ? AND id < ?)) "
+        "ORDER BY last_modified DESC, id DESC LIMIT ?"
+    )
+
     def get_conversations_for_character(
         self,
         character_id: int,
@@ -11500,9 +11824,12 @@ UPDATE db_schema_version
         """
         Lists conversations associated with a specific character ID.
 
-        Only non-deleted global conversations are returned, ordered by the
-        temporal value of ``last_modified`` descending with ``id`` as a
-        deterministic tie-breaker.
+        Only non-deleted global conversations are returned, ordered by
+        ``last_modified`` descending with ``id`` as a deterministic
+        tie-breaker. Since ADR-224 the column is uniformly canonical
+        (``YYYY-MM-DDTHH:MM:SS.mmmZ``), so the keyset and ordering compare
+        raw indexed values; a seek cursor is normalized to that same shape
+        before it is bound.
 
         Args:
             character_id: The integer ID of the character.
@@ -11510,7 +11837,7 @@ UPDATE db_schema_version
             offset: The number of conversations to skip. Defaults to 0.
             before_last_modified: Timestamp text or the SQLite-returned DATETIME
                 value from the final row of the previous seek page. Naive datetime
-                values are adapted as UTC.
+                values are adapted as UTC; text must be a parseable timestamp.
             before_id: Conversation ID of the final row from the previous seek
                 page.
 
@@ -11518,8 +11845,9 @@ UPDATE db_schema_version
             A list of dictionaries, each representing a conversation. Can be empty.
 
         Raises:
-            InputError: If only one cursor value is supplied, or a complete
-                cursor is combined with a nonzero offset.
+            InputError: If only one cursor value is supplied, a complete
+                cursor is combined with a nonzero offset, or the cursor
+                timestamp is unparseable text.
             CharactersRAGDBError: For database errors.
         """
         cursor_supplied = before_last_modified is not None or before_id is not None
@@ -11539,29 +11867,34 @@ UPDATE db_schema_version
             raise InputError("before_id must be a non-empty string.")
         if cursor_supplied and offset != 0:
             raise InputError("A seek cursor cannot be combined with a nonzero offset.")
+        cursor_timestamp: str | None = None
+        if before_last_modified is not None:
+            if isinstance(before_last_modified, datetime):
+                cursor_timestamp = to_utc_iso(before_last_modified)
+            else:
+                try:
+                    cursor_timestamp = to_utc_iso(parse_utc(before_last_modified))
+                except ValueError as exc:
+                    raise InputError(
+                        "before_last_modified must be a parseable timestamp."
+                    ) from exc
 
         start_time = time.time()
         archive_clause = self._conversation_archive_scope_clause(archive_scope)
         if cursor_supplied:
-            query = (
-                "SELECT * FROM conversations "
-                f"WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' AND {archive_clause} "
-                "AND (julianday(last_modified) < julianday(?) "
-                "OR (julianday(last_modified) = julianday(?) AND id < ?)) "
-                "ORDER BY julianday(last_modified) DESC, id DESC LIMIT ?"
+            query = self._CONVERSATIONS_FOR_CHARACTER_KEYSET_SQL.format(
+                archive=archive_clause
             )
             params = (
                 character_id,
-                before_last_modified,
-                before_last_modified,
+                cursor_timestamp,
+                cursor_timestamp,
                 before_id,
                 limit,
             )
         else:
-            query = (
-                "SELECT * FROM conversations "
-                f"WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' AND {archive_clause} "
-                "ORDER BY julianday(last_modified) DESC, id DESC LIMIT ? OFFSET ?"
+            query = self._CONVERSATIONS_FOR_CHARACTER_PAGE_SQL.format(
+                archive=archive_clause
             )
             params = (character_id, limit, offset)
         try:
@@ -11618,7 +11951,10 @@ UPDATE db_schema_version
         query_terms: Optional[Sequence[str]] = None,
         query_workspace_ids_by_term: Optional[Sequence[Sequence[str]]] = None,
         query_include_global_scope_by_term: Optional[Sequence[bool]] = None,
+        title_only: bool = False,
     ) -> Tuple[str, List[Any]]:
+        if title_only and query_terms is not None:
+            raise InputError("title_only does not combine with query_terms.")
         archive_clause = self._conversation_archive_scope_clause(archive_scope)
         # Archive scopes govern saved live chats. Trash must retain every
         # deleted chat, including those archived before deletion.
@@ -11820,6 +12156,13 @@ UPDATE db_schema_version
                     )
                     params.append(json.dumps(workspace_term_ids, separators=(",", ":")))
                 clauses.append(f"({' OR '.join(query_clauses)})")
+        elif normalized_query is not None and title_only:
+            # TASK-33622.6: the Console rail filter counts what it shows --
+            # titles, as a literal substring (its matcher treats '%' and '_'
+            # as text, so LIKE must too).
+            clauses.append("title LIKE ? ESCAPE '\\'")
+            escaped = re.sub(r"([\\%_])", r"\\\1", normalized_query)
+            params.append(f"%{escaped}%")
         elif normalized_query is not None:
             query_clauses = [f"title LIKE ? OR id = ? OR {content_match_clause}"]
             like_query = f"%{normalized_query}%"
@@ -11867,6 +12210,7 @@ UPDATE db_schema_version
         query_terms: Optional[Sequence[str]] = None,
         query_workspace_ids_by_term: Optional[Sequence[Sequence[str]]] = None,
         query_include_global_scope_by_term: Optional[Sequence[bool]] = None,
+        title_only: bool = False,
         limit: int = 50,
         offset: int = 0,
         **_: Any,
@@ -11889,6 +12233,7 @@ UPDATE db_schema_version
             query_terms=query_terms,
             query_workspace_ids_by_term=query_workspace_ids_by_term,
             query_include_global_scope_by_term=query_include_global_scope_by_term,
+            title_only=title_only,
         )
         count_query = (
             f"SELECT COUNT(*) as total FROM conversations WHERE {where_clause}"
@@ -12297,6 +12642,251 @@ UPDATE db_schema_version
         cursor = self.execute_query(query, (conversation_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_message_tree_rows_for_conversation_page(
+        self,
+        conversation_id: str,
+        *,
+        root_offset: int = 0,
+        root_limit: int = 50,
+        order_desc: bool = False,
+        include_deleted_conversation: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Fetch one root page of a conversation's message tree, plus subtree.
+
+        Task 7 (wave 4): the bounded companion to
+        ``get_message_tree_rows_for_conversation``. The tree window
+        ``ChatConversationService.get_conversation_tree`` asks for is ONE
+        page of ``root_limit`` root threads, so this reads only that
+        page's roots and their descendants instead of every live row of
+        the conversation. Three statements, ONE transaction (a consistent
+        snapshot across count, page, and subtree):
+
+        (a) the live root count -- the same predicate the service's old
+            ``len(root_rows)`` computed from the full fetch;
+        (b) the root page, ``LIMIT ?/OFFSET ?`` on the same ordering the
+            service's old Python slice consumed (``m.timestamp`` in the
+            requested direction; the trailing ``m.rowid`` tiebreaker
+            makes explicit the order the unbounded query's
+            ``idx_msgs_conv_ts`` scan already produces for equal
+            timestamps). SQLite's LIMIT/OFFSET semantics reproduce the
+            slicing semantics the service replicated in Python: a
+            negative OFFSET is treated as 0, a negative LIMIT as no
+            limit at all;
+        (c) the page's descendants via ONE recursive CTE seeded with the
+            page's root ids (direct children of the page roots in the
+            anchor, parent-link closure in the recursive arm). The
+            recursion is confined to ``conversation_id`` and live rows,
+            so a row whose parent lives in ANOTHER conversation -- which
+            the old full-fetch assembly keyed but never visited -- stays
+            unfetched, exactly as it stayed unrendered. No
+            ``conversations`` join is needed here: the seeds come from
+            statement (b), which already enforced it, and dead
+            conversations seed nothing.
+
+        The root criterion is the one the service assembly uses:
+        ``parent_message_id IS NULL`` (a NULL parent makes a root; a
+        parent id absent from the fetch does NOT). The unary ``+`` before
+        ``m.parent_message_id`` mirrors ``get_root_message_rows_page``:
+        it keeps the planner on ``idx_msgs_conv_ts`` and off
+        ``idx_msgs_parent``, which holds every conversation's parentless
+        rows.
+
+        Column set, ``has_image`` BLOB exclusion, and per-parent child
+        order (timestamp order within each parent's bucket, a stable
+        partition of one ordered fetch) are identical to the unbounded
+        variant; callers hydrate images via
+        ``get_message_images_by_ids`` as before. Callers that genuinely
+        need the full tree regardless of roots (the fork path's
+        ``get_messages_for_conversation`` cap) keep using the unbounded
+        reads explicitly.
+
+        Args:
+            conversation_id: The conversation UUID.
+            root_offset: The root page offset; negative values are
+                treated as 0 by SQLite, matching the old Python clamp.
+            root_limit: The root page size; a negative value means "no
+                limit" in SQLite, matching the old Python slice. The
+                page's root ids seed the CTE IN-list, so a page must
+                stay below the host's bound-variable limit (32766 on
+                the bundled SQLite; the largest production page -- the
+                resume/fork full-tree cap -- is 10_000).
+            order_desc: ``True`` for newest-first roots and children
+                (the unbounded variant's ``order_by_timestamp='DESC'``).
+            include_deleted_conversation: Include rows whose parent
+                conversation is soft-deleted.
+
+        Returns:
+            ``(rows, total_root_count)``: the page's root rows in page
+            order followed by their descendants in timestamp order
+            (same per-row shape as the unbounded variant), and the
+            conversation's live root count.
+
+        Raises:
+            CharactersRAGDBError: If SQLite fails.
+        """
+        direction = "DESC" if order_desc else "ASC"
+        conversation_filter = (
+            "" if include_deleted_conversation else "AND c.deleted = 0"
+        )
+        count_query = f"""
+            SELECT COUNT(*)
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND m.deleted = 0
+              AND +m.parent_message_id IS NULL
+              {conversation_filter}
+        """
+        page_query = f"""
+            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender,
+                   m.content,
+                   (m.image_data IS NOT NULL) AS has_image, m.image_mime_type,
+                   m.timestamp, m.ranking, m.last_modified,
+                   m.version, m.client_id, m.deleted, m.feedback, m.role,
+                   m.variant_of, m.variant_number, m.is_selected_variant,
+                   m.total_variants, m.usage_json, m.metadata_json,
+                   m.provider_continuation_json, m.thinking_blocks_json,
+                   m.assistant_generation_state
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND m.deleted = 0
+              AND +m.parent_message_id IS NULL
+              {conversation_filter}
+            ORDER BY m.timestamp {direction}, m.rowid {direction}
+            LIMIT ? OFFSET ?
+        """
+        try:
+            with self.transaction() as conn:
+                count_row = conn.execute(count_query, (conversation_id,)).fetchone()
+                total_roots = int(count_row[0]) if count_row else 0
+                root_rows = [
+                    dict(row)
+                    for row in conn.execute(
+                        page_query,
+                        (conversation_id, root_limit, root_offset),
+                    ).fetchall()
+                ]
+                if not root_rows:
+                    return [], total_roots
+                page_root_ids = [row["id"] for row in root_rows]
+                placeholders = ",".join("?" for _ in page_root_ids)
+                descendants_query = f"""
+                    WITH RECURSIVE descendants(id) AS (
+                        SELECT ch.id
+                        FROM messages ch
+                        WHERE ch.conversation_id = ?
+                          AND ch.deleted = 0
+                          AND ch.parent_message_id IN ({placeholders})
+                        UNION ALL
+                        SELECT gc.id
+                        FROM messages gc
+                        JOIN descendants d ON gc.parent_message_id = d.id
+                        WHERE gc.conversation_id = ?
+                          AND gc.deleted = 0
+                    )
+                    SELECT m.id, m.conversation_id, m.parent_message_id, m.sender,
+                           m.content,
+                           (m.image_data IS NOT NULL) AS has_image,
+                           m.image_mime_type,
+                           m.timestamp, m.ranking, m.last_modified,
+                           m.version, m.client_id, m.deleted, m.feedback, m.role,
+                           m.variant_of, m.variant_number, m.is_selected_variant,
+                           m.total_variants, m.usage_json, m.metadata_json,
+                           m.provider_continuation_json, m.thinking_blocks_json,
+                           m.assistant_generation_state
+                    FROM descendants d
+                    JOIN messages m ON m.id = d.id
+                    ORDER BY m.timestamp {direction}, m.rowid {direction}
+                """
+                descendant_rows = [
+                    dict(row)
+                    for row in conn.execute(
+                        descendants_query,
+                        (conversation_id, *page_root_ids, conversation_id),
+                    ).fetchall()
+                ]
+        except sqlite3.Error as exc:
+            raise CharactersRAGDBError(
+                "Failed to read paged message tree rows."
+            ) from exc
+        return root_rows + descendant_rows, total_roots
+
+    def get_root_message_rows_page(
+        self,
+        conversation_id: str,
+        *,
+        after_message_id: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Fetch one page of a live conversation's live parentless rows.
+
+        TASK-33628.7 (PR #3004 review): the Console's legacy flat Delete looks
+        for never-shown roots after the rows it deletes. It needs only the
+        parentless rows, so it reads them here a bounded page at a time rather
+        than every row of the conversation. Rows come in the order resume
+        reads roots in -- ``get_message_tree_rows_for_conversation``'s
+        timestamp order, equal timestamps in insertion order -- with only the
+        columns that decide whether resume shows a row: presence flags, not
+        the message text.
+
+        Both statements walk ``idx_msgs_conv_ts (conversation_id, timestamp)``
+        with no post-sort; a later page starts its range at the previous
+        page's last row (plans pinned with ``sqlite_stat1`` absent in
+        ``Tests/DB/test_message_root_rows_page.py``). Today's planner picks
+        that plan with or without the unary ``+``; the ``+`` keeps it there,
+        off the parent indexes, which hold every conversation's parentless
+        rows.
+
+        Args:
+            conversation_id: The conversation UUID.
+            after_message_id: The last id of the previous page; ``None`` for
+                the first page. An id that names no row yields an empty page.
+            limit: The most rows to return; at least 1.
+
+        Returns:
+            Up to ``limit`` rows, each with ``id``, ``sender``, ``role``,
+            ``metadata_json`` and the 0/1 flags ``has_content``,
+            ``has_image``, ``has_generation_state`` and
+            ``has_provider_continuation``. A page shorter than ``limit`` is
+            the last.
+
+        Raises:
+            InputError: If ``limit`` is less than 1.
+        """
+        if limit < 1:
+            raise InputError("limit must be at least 1.")
+        query = """
+            SELECT m.id, m.sender, m.role, m.metadata_json,
+                   (m.content <> '') AS has_content,
+                   (m.image_data IS NOT NULL) AS has_image,
+                   (m.assistant_generation_state IS NOT NULL) AS has_generation_state,
+                   (m.provider_continuation_json IS NOT NULL)
+                       AS has_provider_continuation
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND +m.parent_message_id IS NULL
+              AND m.deleted = 0
+              AND c.deleted = 0
+        """
+        params: List[Any] = [conversation_id]
+        if after_message_id is not None:
+            # Row values compare the raw stored timestamp, never one that
+            # took a round trip through the DATETIME converter.
+            query += """
+              AND (m.timestamp, m.rowid) > (
+                  SELECT prev.timestamp, prev.rowid
+                  FROM messages prev
+                  WHERE prev.id = ?
+              )
+            """
+            params.append(after_message_id)
+        query += " ORDER BY m.timestamp, m.rowid LIMIT ?"
+        params.append(limit)
+        cursor = self.execute_query(query, tuple(params))
+        return [dict(row) for row in cursor.fetchall()]
+
     def get_message_images_by_ids(
         self, message_ids: Sequence[str]
     ) -> Dict[str, Dict[str, Any]]:
@@ -12388,7 +12978,10 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): read-then-write (optimistic version
+            # check then UPDATE) on a user-facing chat path -- the standing
+            # task-21100 policy for exactly this shape.
+            with self.transaction(immediate=True) as conn:
                 current_state = conn.execute(
                     """
                     SELECT rowid, title, version, deleted, character_id, assistant_kind, assistant_id,
@@ -12932,7 +13525,10 @@ UPDATE db_schema_version
         )
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): read-then-write (version check then
+            # soft-delete UPDATE) on a user-facing chat path -- the standing
+            # task-21100 policy for exactly this shape.
+            with self.transaction(immediate=True) as conn:
                 try:
                     current_db_version = self._get_current_db_version(
                         conn, "conversations", "id", conversation_id
@@ -13020,7 +13616,10 @@ UPDATE db_schema_version
         )
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): read-then-write (deleted/version check
+            # then restore UPDATE) on a user-facing chat path -- the standing
+            # task-21100 policy for exactly this shape.
+            with self.transaction(immediate=True) as conn:
                 current_state = conn.execute(
                     "SELECT deleted, version FROM conversations WHERE id = ?",
                     (conversation_id,),
@@ -13129,7 +13728,9 @@ UPDATE db_schema_version
         safe_search_term = build_and_match_query(title_query)
         if not safe_search_term:
             return []
-        archive_clause = self._conversation_archive_scope_clause(archive_scope).replace("archived", "c.archived")
+        archive_clause = self._conversation_archive_scope_clause(archive_scope).replace(
+            "archived", "c.archived"
+        )
         base_query = f"""
                      SELECT c.*
                      FROM conversations_fts fts
@@ -13332,6 +13933,146 @@ UPDATE db_schema_version
 
         return self._add_message_with_semantic_sidecars(msg_data)
 
+    def add_message_import_batch(
+        self,
+        staged_messages: Sequence[Dict[str, Any]],
+    ) -> List[str]:
+        """Bulk-insert staged chat-history messages as one chained import.
+
+        Strategy (review-B B25): the semantic-revision sidecar write is not
+        safely batchable outside its coordinator (``_claim_write_intent``,
+        graph-epoch fencing, and read-back contracts on the private
+        ``console_trace_semantic_revisions`` shape), so this keeps the
+        sanctioned per-message sidecar write and batches everything else:
+        validation is hoisted ahead of the transaction, the message INSERTs
+        run as one ``executemany``, the canonical read-back verification is
+        one chunked SELECT per 500 ids, and the whole batch shares one
+        immediate transaction (a savepoint when the caller already holds
+        one). Rows are byte-identical to repeated :meth:`add_message` calls
+        as issued by the chat-history importer: each message's
+        ``parent_message_id`` is overwritten with the previous message's id.
+
+        Args:
+            staged_messages: One dict per message, each carrying
+                ``conversation_id`` plus the fields :meth:`add_message`
+                accepts.
+
+        Returns:
+            The generated message ids in order.
+
+        Raises:
+            InputError: Same validation errors as :meth:`add_message`,
+                raised before any row is written.
+            ConflictError: If a staged id already exists.
+        """
+        staged_list = [dict(staged) for staged in staged_messages]
+        if not staged_list:
+            return []
+        prepared: List[_PreparedMessageInsert] = []
+        previous_id: Optional[str] = None
+        for staged in staged_list:
+            staged["parent_message_id"] = previous_id
+            prepared.append(self._validated_message_insert(staged))
+            previous_id = prepared[-1].msg_id
+        inserting = prepared[0]
+
+        def insert_params() -> Iterator[tuple[Any, ...]]:
+            nonlocal inserting
+            # SQLite consumes one tuple at a time; retain the failing row's
+            # identity without adding per-message queries to the batch.
+            for inserting in prepared:
+                yield inserting.params
+
+        try:
+            with self.transaction(immediate=True) as conn:
+                # One existence check per distinct conversation replaces the
+                # per-message check; same error, same in-transaction timing.
+                for conversation_id in dict.fromkeys(
+                    item.conversation_id for item in prepared
+                ):
+                    found = conn.execute(
+                        "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
+                        (conversation_id,),
+                    ).fetchone()
+                    if not found:
+                        raise InputError(
+                            f"Cannot add message: Conversation ID "
+                            f"'{conversation_id}' not found or deleted."
+                        )
+                queries = {item.query for item in prepared}
+                if len(queries) != 1:
+                    raise CharactersRAGDBError(
+                        "Import batch mixed message schemas; refusing to write."
+                    )
+                query = next(iter(queries))
+                try:
+                    conn.executemany(query, insert_params())
+                except sqlite3.IntegrityError as exc:
+                    self._translate_message_insert_integrity_error(
+                        inserting.msg_id, exc
+                    )
+                self._verify_import_batch_rows(conn, prepared)
+                for inserting in prepared:
+                    self._ensure_initial_semantic_revision(
+                        conn,
+                        message_id=inserting.msg_id,
+                        creation_reason="message_create",
+                    )
+        except sqlite3.IntegrityError as exc:
+            self._translate_message_insert_integrity_error(inserting.msg_id, exc)
+        logger.debug(
+            f"Added {len(prepared)} imported messages in one batch "
+            f"(conversation {prepared[0].conversation_id})."
+        )
+        return [item.msg_id for item in prepared]
+
+    @staticmethod
+    def _translate_message_insert_integrity_error(
+        msg_id: str, exc: sqlite3.IntegrityError
+    ) -> NoReturn:
+        """Re-raise a message INSERT integrity error as ``add_message`` does."""
+        if "UNIQUE constraint failed: messages.id" in str(exc):
+            raise ConflictError(
+                f"Message with ID '{msg_id}' already exists.",
+                entity="messages",
+                entity_id=msg_id,
+            ) from exc
+        raise CharactersRAGDBError(
+            f"Database integrity error adding message: {exc}"
+        ) from exc
+
+    def _verify_import_batch_rows(
+        self,
+        conn: sqlite3.Cursor,
+        prepared: Sequence[_PreparedMessageInsert],
+    ) -> None:
+        """Run the per-message canonical read-back in 500-id chunks."""
+
+        def fail() -> NoReturn:
+            raise InputError("Inserted message failed canonical validation.")
+
+        ids = [item.msg_id for item in prepared]
+        verified: Dict[str, tuple] = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            placeholders = ",".join("?" * len(chunk))
+            for row in conn.execute(
+                "SELECT id, conversation_id, sender, role, content, deleted "
+                f"FROM messages WHERE id IN ({placeholders})",
+                tuple(chunk),
+            ):
+                verified[row["id"]] = tuple(row)
+        for item in prepared:
+            row = verified.get(item.msg_id)
+            if row is None or row[1:] != (
+                item.conversation_id,
+                item.sender,
+                item.role,
+                item.content,
+                0,
+            ):
+                fail()
+
     def add_message_with_semantic_sidecars(
         self,
         msg_data: Dict[str, Any],
@@ -13358,41 +14099,18 @@ UPDATE db_schema_version
             feedback=feedback,
         )
 
-    def _add_message_with_semantic_sidecars(
-        self,
-        msg_data: Dict[str, Any],
-        *,
-        attachments: Sequence[Mapping[str, Any]] = (),
-        generation_metadata: Sequence[Mapping[str, Any]] = (),
-        feedback: str | None = None,
-    ) -> Optional[str]:
-        """
-        Adds a new message to a conversation, optionally with image data.
+    def _validated_message_insert(
+        self, msg_data: Dict[str, Any]
+    ) -> _PreparedMessageInsert:
+        """Validate one message and build its INSERT (no database access).
 
-        `id` (UUID string) is auto-generated if not provided in `msg_data`.
-        Requires 'conversation_id', 'sender'. Message must have 'content' (text) or 'image_data'.
-        `client_id` defaults to DB instance's `client_id`. `version` is set to 1.
-        `timestamp` defaults to current UTC time if not provided; `last_modified` is set to current UTC time.
-
-        Verifies that the parent conversation (given by `conversation_id`) exists and is not deleted.
-        FTS updates (`messages_fts` for content) and `sync_log` entries are handled by SQL triggers.
-
-        Args:
-            msg_data: Dictionary with message data.
-                      Required: 'conversation_id', 'sender'. At least one of 'content' or 'image_data'.
-                      Optional: 'id', 'parent_message_id', 'content' (str),
-                                'image_data' (bytes), 'image_mime_type' (str, required if image_data present),
-                                'timestamp', 'ranking', 'client_id', 'role' (str).
-                      If 'role' is not provided, it will be auto-determined from 'sender'.
-
-        Returns:
-            The string UUID of the newly added message.
+        Extracted verbatim from :meth:`_add_message_with_semantic_sidecars`
+        so the import batch (review-B B25) can hoist validation ahead of the
+        write transaction without duplicating any rule.
 
         Raises:
-            InputError: If required fields are missing, if both 'content' and 'image_data' are absent,
-                        or if the parent conversation is not found or is deleted.
-            ConflictError: If a message with the provided 'id' (if any) already exists.
-            CharactersRAGDBError: For other database errors (e.g., FK violation for conversation_id).
+            InputError: Identical conditions and messages as
+                :meth:`_add_message_with_semantic_sidecars`.
         """
         msg_id = msg_data.get("id") or self._generate_uuid()
 
@@ -13510,6 +14228,56 @@ UPDATE db_schema_version
                 ),
             )
         )
+        return _PreparedMessageInsert(
+            msg_id=msg_id,
+            role=role,
+            conversation_id=msg_data["conversation_id"],
+            sender=msg_data["sender"],
+            content=msg_data.get("content", ""),
+            query=query,
+            params=params,
+        )
+
+    def _add_message_with_semantic_sidecars(
+        self,
+        msg_data: Dict[str, Any],
+        *,
+        attachments: Sequence[Mapping[str, Any]] = (),
+        generation_metadata: Sequence[Mapping[str, Any]] = (),
+        feedback: str | None = None,
+    ) -> Optional[str]:
+        """
+        Adds a new message to a conversation, optionally with image data.
+
+        `id` (UUID string) is auto-generated if not provided in `msg_data`.
+        Requires 'conversation_id', 'sender'. Message must have 'content' (text) or 'image_data'.
+        `client_id` defaults to DB instance's `client_id`. `version` is set to 1.
+        `timestamp` defaults to current UTC time if not provided; `last_modified` is set to current UTC time.
+
+        Verifies that the parent conversation (given by `conversation_id`) exists and is not deleted.
+        FTS updates (`messages_fts` for content) and `sync_log` entries are handled by SQL triggers.
+
+        Args:
+            msg_data: Dictionary with message data.
+                      Required: 'conversation_id', 'sender'. At least one of 'content' or 'image_data'.
+                      Optional: 'id', 'parent_message_id', 'content' (str),
+                                'image_data' (bytes), 'image_mime_type' (str, required if image_data present),
+                                'timestamp', 'ranking', 'client_id', 'role' (str).
+                      If 'role' is not provided, it will be auto-determined from 'sender'.
+
+        Returns:
+            The string UUID of the newly added message.
+
+        Raises:
+            InputError: If required fields are missing, if both 'content' and 'image_data' are absent,
+                        or if the parent conversation is not found or is deleted.
+            ConflictError: If a message with the provided 'id' (if any) already exists.
+            CharactersRAGDBError: For other database errors (e.g., FK violation for conversation_id).
+        """
+        prepared = self._validated_message_insert(msg_data)
+        msg_id = prepared.msg_id
+        role = prepared.role
+
         try:
             # IMMEDIATE (task-21100 review): every hot `messages` writer reserves the
             # write lock up front. These methods read (conversation/version checks)
@@ -13527,13 +14295,13 @@ UPDATE db_schema_version
             with self.transaction(immediate=True) as conn:
                 conv_cursor = conn.execute(
                     "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
-                    (msg_data["conversation_id"],),
+                    (prepared.conversation_id,),
                 )
                 if not conv_cursor.fetchone():
                     raise InputError(
-                        f"Cannot add message: Conversation ID '{msg_data['conversation_id']}' not found or deleted."
+                        f"Cannot add message: Conversation ID '{prepared.conversation_id}' not found or deleted."
                     )
-                conn.execute(query, params)
+                conn.execute(prepared.query, prepared.params)
                 if attachments:
                     self._set_message_attachments_uncoordinated(
                         conn, msg_id, attachments
@@ -13551,10 +14319,10 @@ UPDATE db_schema_version
                 ).fetchone()
                 if (
                     inserted is None
-                    or inserted["conversation_id"] != msg_data["conversation_id"]
-                    or inserted["sender"] != msg_data["sender"]
+                    or inserted["conversation_id"] != prepared.conversation_id
+                    or inserted["sender"] != prepared.sender
                     or inserted["role"] != role
-                    or inserted["content"] != msg_data.get("content", "")
+                    or inserted["content"] != prepared.content
                     or bool(inserted["deleted"])
                 ):
                     raise InputError("Inserted message failed canonical validation.")
@@ -13564,7 +14332,7 @@ UPDATE db_schema_version
                     creation_reason="message_create",
                 )
             logger.debug(
-                f"Added message ID: {msg_id} to conversation {msg_data['conversation_id']} (Image: {'Yes' if msg_data.get('image_data') else 'No'})."
+                f"Added message ID: {msg_id} to conversation {prepared.conversation_id} (Image: {'Yes' if msg_data.get('image_data') else 'No'})."
             )
             return msg_id
         except sqlite3.IntegrityError as e:
@@ -14311,9 +15079,7 @@ UPDATE db_schema_version
             )
             raise
 
-    def get_message_versions_by_ids(
-        self, message_ids: Iterable[str]
-    ) -> Dict[str, int]:
+    def get_message_versions_by_ids(self, message_ids: Iterable[str]) -> Dict[str, int]:
         """Return current positive versions for many non-deleted messages.
 
         task-32804.12 ([D2]): ``_durable_context_snapshots`` read one
@@ -15230,8 +15996,7 @@ UPDATE db_schema_version
                             role=current["role"],
                             raw_state=update_data["assistant_generation_state"],
                             has_valid_active_continuation=(
-                                checkpoint is not None
-                                and checkpoint.state == "active"
+                                checkpoint is not None and checkpoint.state == "active"
                             ),
                         )
                     except ValueError:
@@ -15290,20 +16055,24 @@ UPDATE db_schema_version
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
 
                 if content_changed and not preserve_descendants:
+                    # Unary ``+`` keeps both steps off the (conversation_id, id)
+                    # index, as in soft_delete_message_subtree: with no
+                    # sqlite_stat1 the planner otherwise scans the whole
+                    # conversation once per descendant (TASK-33628.11).
                     descendant_rows = conn.execute(
                         """
                         WITH RECURSIVE descendants(id) AS (
                             SELECT id
                               FROM messages
                              WHERE parent_message_id = ?
-                               AND conversation_id = ? AND deleted = 0
+                               AND +conversation_id = ? AND deleted = 0
                             UNION
                             SELECT child.id
                               FROM messages AS child
                               JOIN descendants AS parent
                                 ON child.parent_message_id = parent.id
                              WHERE child.deleted = 0
-                               AND child.conversation_id = ?
+                               AND +child.conversation_id = ?
                         )
                         SELECT id FROM descendants
                         """,
@@ -15322,14 +16091,14 @@ UPDATE db_schema_version
                             SELECT id
                               FROM messages
                              WHERE parent_message_id = ?
-                               AND conversation_id = ? AND deleted = 0
+                               AND +conversation_id = ? AND deleted = 0
                             UNION
                             SELECT child.id
                               FROM messages AS child
                               JOIN descendants AS parent
                                 ON child.parent_message_id = parent.id
                              WHERE child.deleted = 0
-                               AND child.conversation_id = ?
+                               AND +child.conversation_id = ?
                         )
                         UPDATE messages
                            SET deleted = 1,
@@ -16028,7 +16797,11 @@ UPDATE db_schema_version
             raise
 
     def soft_delete_message_subtree(
-        self, message_id: str, expected_version: int
+        self,
+        message_id: str,
+        expected_version: int,
+        *,
+        subtree_message_ids: Sequence[str | None] = (),
     ) -> List[Dict[str, Any]]:
         """Atomically soft-delete an active message and all active descendants.
 
@@ -16036,8 +16809,33 @@ UPDATE db_schema_version
         project the exact entity versions to another outbox after this local
         transaction succeeds. Provider-visible bytes and semantic lineage are
         retained unchanged; deletion changes only visibility and ownership.
+
+        Args:
+            message_id: The selected message; its version is the fence.
+            expected_version: The version the caller expects it to hold.
+            subtree_message_ids: The ids the caller shows in the selected
+                message's subtree. The Console sends its whole in-memory
+                subtree: the selected id, parent-linked rows, and ``None`` for
+                unsaved nodes (ignored). It matters for rows WITHOUT a
+                ``parent_message_id`` link -- a legacy flat conversation
+                (every parent NULL) that the Console chains in memory
+                (TASK-33628.6). Each id seeds the same descent as the selected
+                message; ids outside its conversation, or already deleted, are
+                never touched.
+
+        Returns:
+            One ``message_id``/``conversation_id``/``version`` mapping per
+            committed tombstone, carrying its new version.
+
+        Raises:
+            ConflictError: The selected message is missing or at another
+                version.
         """
         now = self._get_current_utc_timestamp_iso()
+        seeds = json.dumps(
+            [message_id, *(str(extra) for extra in subtree_message_ids if extra)],
+            separators=(",", ":"),
+        )
         # IMMEDIATE: hot messages writer; see add_message's scoping comment.
         with self.transaction(immediate=True) as conn:
             current = conn.execute(
@@ -16060,24 +16858,28 @@ UPDATE db_schema_version
                     entity="messages",
                     entity_id=message_id,
                 )
-
+            # Unary ``+`` keeps the recursive step off the (conversation_id, id)
+            # index: with no sqlite_stat1 the planner otherwise scans the whole
+            # conversation once per subtree row instead of searching by parent.
+            scope = (seeds, current["conversation_id"], current["conversation_id"])
             rows = conn.execute(
                 """
                 WITH RECURSIVE subtree(id) AS (
                     SELECT id FROM messages
-                     WHERE id = ? AND conversation_id = ? AND deleted = 0
+                     WHERE id IN (SELECT value FROM json_each(?))
+                       AND conversation_id = ? AND deleted = 0
                     UNION
                     SELECT child.id
                       FROM messages AS child
                       JOIN subtree AS parent ON child.parent_message_id = parent.id
                      WHERE child.deleted = 0
-                       AND child.conversation_id = ?
+                       AND +child.conversation_id = ?
                 )
                 SELECT id, conversation_id, version
                   FROM messages
                  WHERE id IN (SELECT id FROM subtree)
                 """,
-                (message_id, current["conversation_id"], current["conversation_id"]),
+                scope,
             ).fetchall()
             delete_proofs = self._capture_chat_delete_base_hashes(
                 conn, tuple(row["id"] for row in rows)
@@ -16086,13 +16888,14 @@ UPDATE db_schema_version
                 """
                 WITH RECURSIVE subtree(id) AS (
                     SELECT id FROM messages
-                     WHERE id = ? AND conversation_id = ? AND deleted = 0
+                     WHERE id IN (SELECT value FROM json_each(?))
+                       AND conversation_id = ? AND deleted = 0
                     UNION
                     SELECT child.id
                       FROM messages AS child
                       JOIN subtree AS parent ON child.parent_message_id = parent.id
                      WHERE child.deleted = 0
-                       AND child.conversation_id = ?
+                       AND +child.conversation_id = ?
                 )
                 UPDATE messages
                    SET deleted = 1,
@@ -16101,13 +16904,7 @@ UPDATE db_schema_version
                        client_id = ?
                  WHERE id IN (SELECT id FROM subtree)
                 """,
-                (
-                    message_id,
-                    current["conversation_id"],
-                    current["conversation_id"],
-                    now,
-                    self.client_id,
-                ),
+                (*scope, now, self.client_id),
             )
             self._attach_chat_delete_base_hashes(conn, delete_proofs)
             if rows:
@@ -16147,16 +16944,19 @@ UPDATE db_schema_version
         if not pairs:
             return []
         now = self._get_current_utc_timestamp_iso()
-        placeholders = ",".join("?" for _ in pairs)
+        unique_ids = list(dict.fromkeys(message_id for message_id, _version in pairs))
         with self.transaction(immediate=True) as conn:
-            current = {
-                row["id"]: row
-                for row in conn.execute(
-                    "SELECT id, conversation_id, version, deleted FROM messages "
-                    f"WHERE id IN ({placeholders})",  # nosec B608 - placeholders only
-                    tuple(message_id for message_id, _version in pairs),
-                ).fetchall()
-            }
+            current: dict[str, sqlite3.Row] = {}
+            for batch in self._bounded_id_batches(conn, unique_ids):
+                placeholders = ",".join("?" for _ in batch)
+                current.update(
+                    (row["id"], row)
+                    for row in conn.execute(
+                        "SELECT id, conversation_id, version, deleted FROM messages "
+                        f"WHERE id IN ({placeholders})",  # nosec B608 - placeholders only
+                        tuple(batch),
+                    ).fetchall()
+                )
             for message_id, version in pairs:
                 row = current.get(message_id)
                 if row is None or not row["deleted"] or row["version"] != version:
@@ -16165,13 +16965,25 @@ UPDATE db_schema_version
                         entity="messages",
                         entity_id=message_id,
                     )
-            for message_id, version in pairs:
-                conn.execute(
+            # TASK-33628.5: one UPDATE per id batch, not per row (2,999 rows
+            # took 1.0-1.8 s one by one). The IMMEDIATE transaction has held
+            # the write lock since before the version check above, so every
+            # row is still the tombstone it was just checked to be; the
+            # rowcount proves it.
+            for batch in self._bounded_id_batches(conn, unique_ids, reserved=2):
+                placeholders = ",".join("?" for _ in batch)
+                cursor = conn.execute(
                     "UPDATE messages SET deleted = 0, last_modified = ?, "
                     "version = version + 1, client_id = ? "
-                    "WHERE id = ? AND version = ? AND deleted = 1",
-                    (now, self.client_id, message_id, version),
+                    f"WHERE deleted = 1 AND id IN ({placeholders})",  # nosec B608 - placeholders only
+                    (now, self.client_id, *batch),
                 )
+                if cursor.rowcount != len(batch):
+                    raise ConflictError(
+                        "Messages changed after they were deleted.",
+                        entity="messages",
+                        entity_id=batch[0],
+                    )
             self._advance_semantic_graph_epoch(conn)
         return [
             {
@@ -16230,6 +17042,45 @@ UPDATE db_schema_version
             payload["thinking_blocks_json"] = canonical_thinking
         return canonical_payload_hash(payload)
 
+    @staticmethod
+    def _bounded_id_batches(
+        conn: sqlite3.Connection | sqlite3.Cursor,
+        ids: Sequence[Any],
+        *,
+        reserved: int = 0,
+        per_id: int = 1,
+    ) -> Iterator[Sequence[Any]]:
+        """Yield ``ids`` in slices one ``IN (?, ...)`` list can bind.
+
+        A subtree delete reaches as many rows as the conversation holds, but
+        one statement may bind only ``SQLITE_LIMIT_VARIABLE_NUMBER``
+        variables; past it SQLite refuses the statement and the whole delete
+        rolls back (TASK-33628.6 review). Callers run every batch inside one
+        transaction, so the batches still read and write one snapshot.
+
+        Args:
+            conn: The connection, or the ``transaction()`` cursor, the
+                statements will run on; its connection's live limit bounds
+                the batch.
+            ids: The items to bind, ``per_id`` variables each.
+            reserved: Variables the statement binds besides the batch (a
+                timestamp, a client id), taken off the limit first.
+            per_id: Variables each item binds (TASK-33628.5: a batched
+                write keyed by id binds the id again for each value it sets).
+
+        Yields:
+            Consecutive slices of at most ``min(500, (limit - reserved) //
+            per_id)`` items, and never fewer than one.
+        """
+        connection = getattr(conn, "connection", conn)
+        try:
+            limit = connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+        except (AttributeError, sqlite3.Error):
+            limit = _SQLITE_DEFAULT_VARIABLE_LIMIT
+        size = max(1, min(_ID_LIST_BATCH_CAP, (limit - reserved) // max(1, per_id)))
+        for start in range(0, len(ids), size):
+            yield ids[start : start + size]
+
     def _capture_chat_delete_base_hashes(
         self, conn: sqlite3.Connection, message_ids: Sequence[str]
     ) -> dict[str, tuple[int, str]]:
@@ -16246,17 +17097,23 @@ UPDATE db_schema_version
             # writers against their genuinely older schemas. Those schemas
             # predate the content-free Sync-v2 delete proof and cannot emit it.
             return {}
-        placeholders = ",".join("?" for _ in message_ids)
-        rows = conn.execute(
-            f"""
-            SELECT id, role, content, provider_continuation_json,
-                   thinking_blocks_json, assistant_generation_state, version
-              FROM messages
-             WHERE deleted = 0 AND id IN ({placeholders})
-            """,
-            tuple(message_ids),
-        ).fetchall()
-        if len(rows) != len(set(message_ids)):
+        unique_ids = list(dict.fromkeys(message_ids))
+        rows: list[sqlite3.Row] = []
+        # The caller's transaction spans every batch, so one snapshot answers.
+        for batch in self._bounded_id_batches(conn, unique_ids):
+            placeholders = ",".join("?" for _ in batch)
+            rows.extend(
+                conn.execute(
+                    f"""
+                    SELECT id, role, content, provider_continuation_json,
+                           thinking_blocks_json, assistant_generation_state, version
+                      FROM messages
+                     WHERE deleted = 0 AND id IN ({placeholders})
+                    """,  # nosec B608 - placeholders only
+                    tuple(batch),
+                ).fetchall()
+            )
+        if len(rows) != len(unique_ids):
             raise CharactersRAGDBError("Chat delete proof owner changed.")
         return {
             row["id"]: (
@@ -16270,21 +17127,52 @@ UPDATE db_schema_version
     def _attach_chat_delete_base_hashes(
         conn: sqlite3.Connection, proofs: Mapping[str, tuple[int, str]]
     ) -> None:
-        """Attach each hash to exactly one trigger-authored delete intent."""
-        for message_id, (version, base_payload_hash) in proofs.items():
+        """Attach each hash to exactly one trigger-authored delete intent.
+
+        TASK-33628.5: one read and one write per id batch, where a subtree
+        delete used to issue an ``UPDATE`` per tombstone. The read finds each
+        row's delete intents; exactly one must sit at the tombstone's version,
+        as the per-row ``rowcount == 1`` check required.
+
+        Raises:
+            CharactersRAGDBError: A tombstone has no delete intent at its
+                version, or more than one.
+        """
+        unattached = CharactersRAGDBError(
+            "Chat delete intent proof was not uniquely attached."
+        )
+        # The write binds three variables per row: CASE's id and hash, IN's id.
+        for batch in CharactersRAGDB._bounded_id_batches(conn, list(proofs), per_id=3):
+            placeholders = ",".join("?" for _ in batch)
+            intents: dict[str, int] = {}
+            for row in conn.execute(
+                "SELECT change_id, entity_id, version FROM sync_log "
+                "WHERE entity = 'messages' AND operation = 'delete' "
+                f"AND entity_id IN ({placeholders})",  # nosec B608 - placeholders only
+                tuple(batch),
+            ).fetchall():
+                if row["version"] != proofs[row["entity_id"]][0]:
+                    continue
+                if row["entity_id"] in intents:
+                    raise unattached
+                intents[row["entity_id"]] = row["change_id"]
+            if len(intents) != len(batch):
+                raise unattached
+            change_ids = [intents[message_id] for message_id in batch]
+            hashes = [
+                value
+                for message_id, change_id in zip(batch, change_ids)
+                for value in (change_id, proofs[message_id][1])
+            ]
             cursor = conn.execute(
-                """
-                UPDATE sync_log
-                   SET payload = json_set(payload, '$.base_payload_hash', ?)
-                 WHERE entity = 'messages' AND entity_id = ?
-                   AND version = ? AND operation = 'delete'
-                """,
-                (base_payload_hash, message_id, version),
+                "UPDATE sync_log SET payload = json_set(payload, "
+                "'$.base_payload_hash', CASE change_id "
+                f"{' '.join('WHEN ? THEN ?' for _ in batch)} END) "
+                f"WHERE change_id IN ({placeholders})",  # nosec B608 - placeholders only
+                (*hashes, *change_ids),
             )
-            if cursor.rowcount != 1:
-                raise CharactersRAGDBError(
-                    "Chat delete intent proof was not uniquely attached."
-                )
+            if cursor.rowcount != len(batch):
+                raise unattached
 
     def get_message_tombstones(
         self, message_ids: Sequence[str]
@@ -16297,16 +17185,20 @@ UPDATE db_schema_version
         Returns:
             Committed tombstone identity, conversation, and version mappings.
         """
-        ids = [message_id for message_id in message_ids if message_id]
+        ids = list(dict.fromkeys(value for value in message_ids if value))
         if not ids:
             return []
-        placeholders = ",".join("?" for _ in ids)
+        rows: list[sqlite3.Row] = []
         with self.transaction() as conn:
-            rows = conn.execute(
-                f"SELECT id, conversation_id, version FROM messages "
-                f"WHERE deleted = 1 AND id IN ({placeholders})",
-                tuple(ids),
-            ).fetchall()
+            for batch in self._bounded_id_batches(conn, ids):
+                placeholders = ",".join("?" for _ in batch)
+                rows.extend(
+                    conn.execute(
+                        f"SELECT id, conversation_id, version FROM messages "
+                        f"WHERE deleted = 1 AND id IN ({placeholders})",  # nosec B608 - placeholders only
+                        tuple(batch),
+                    ).fetchall()
+                )
         return [
             {
                 "message_id": row["id"],
@@ -16619,7 +17511,11 @@ UPDATE db_schema_version
             raise CharactersRAGDBError(f"Failed to select message variant: {e}") from e
 
     def search_messages_by_content(
-        self, content_query: str, conversation_id: Optional[str] = None, limit: int = 10
+        self,
+        content_query: str,
+        conversation_id: Optional[str] = None,
+        limit: int = 10,
+        include_image_data: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Searches messages by content using FTS.
@@ -16648,6 +17544,11 @@ UPDATE db_schema_version
                 it are inert.
             conversation_id: Optional conversation UUID to filter results.
             limit: Maximum number of results. Defaults to 10.
+            include_image_data: When False, the ``image_data`` BLOB column is
+                returned as None (key still present) so text-only callers --
+                snippet builders -- skip the BLOB I/O (task-260 pattern,
+                task-34399). ``image_mime_type`` is always returned, so
+                callers can still tell an image exists.
 
         Returns:
             A list of matching message dictionaries. Can be empty.
@@ -16658,9 +17559,10 @@ UPDATE db_schema_version
         safe_search_term = build_and_match_query(content_query)
         if not safe_search_term:
             return []
-        base_query = """
+        image_col = "m.image_data" if include_image_data else "NULL AS image_data"
+        base_query = f"""
                      SELECT m.id, m.conversation_id, m.parent_message_id,
-                            m.sender, m.content, m.image_data, m.image_mime_type,
+                            m.sender, m.content, {image_col}, m.image_mime_type,
                             m.timestamp, m.ranking, m.last_modified, m.deleted,
                             m.client_id, m.version, m.feedback, m.role, m.variant_of,
                             m.variant_number, m.is_selected_variant, m.total_variants,
@@ -17888,7 +18790,46 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def list_notes(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    def list_notes(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        preview_chars: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """List non-deleted notes, most recently modified first.
+
+        Args:
+            limit: Maximum number of notes to return.
+            offset: Number of notes to skip.
+            preview_chars: When given (and > 0), each row carries a
+                ``substr(content, 1, preview_chars)`` projection under the
+                ``preview`` key instead of the full ``content`` body -- the
+                same projection ``list_library_notes_page`` ships for list
+                surfaces, so a large listing stops transferring every note
+                body (task-34399). Callers that render or export full bodies
+                must keep the default.
+
+        Returns:
+            A list of note dictionaries. With ``preview_chars`` unset the
+            dicts are the full rows (unchanged historical behavior); with it
+            set, ``content`` is replaced by the truncated ``preview``.
+        """
+        if preview_chars is not None and int(preview_chars) > 0:
+            query = (
+                "SELECT id, title, substr(content, 1, ?) AS preview, "
+                "created_at, last_modified, deleted, client_id, version "
+                "FROM notes WHERE deleted = 0 ORDER BY last_modified DESC "
+                "LIMIT ? OFFSET ?"
+            )
+            try:
+                cursor = self.execute_query(query, (int(preview_chars), limit, offset))
+                return [dict(row) for row in cursor.fetchall()]
+            except CharactersRAGDBError as e:
+                logger.error(
+                    f"Database error listing notes: exception_type={type(e).__name__}"
+                )
+                raise
         # Using _list_generic_items but ensuring table name and order_by_col are correct for notes
         return self._list_generic_items("notes", "last_modified DESC", limit, offset)
 
@@ -17905,9 +18846,7 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
-    def list_deleted_notes(
-        self, limit: int = 20, offset: int = 0
-    ) -> Dict[str, Any]:
+    def list_deleted_notes(self, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
         """Page the soft-deleted notes behind the Library Notes Trash view.
 
         task-32144: the inverse of ``list_notes``' visibility. Both the page
@@ -17972,10 +18911,54 @@ UPDATE db_schema_version
             LIMIT ?
         """
 
+    #: TASK-34000.11: titles per ``IN (...)`` statement when a body names
+    #: more bare ``[[Title]]`` links than SQLite's default variable limit
+    #: comfortably holds. One statement per chunk, never one per title.
+    _NOTE_TITLE_RESOLVE_CHUNK = 200
+
     @staticmethod
-    def replace_note_links(
-        cursor: sqlite3.Cursor, note_id: str, content: str
-    ) -> None:
+    def _resolve_note_titles(
+        cursor: sqlite3.Cursor, titles: Sequence[str], *, source_note_id: str
+    ) -> Dict[str, str]:
+        """Map each typed title to the ONE live note that carries it.
+
+        TASK-34000.11 (AC#2): a typed ``[[Title]]`` records an edge only when
+        exactly one live note has that title, case-insensitively (``COLLATE
+        NOCASE``) and whitespace-trimmed; a title no note has, or two live
+        notes share, resolves to nothing -- a backlink never points at a
+        guess. A soft-deleted twin does not count. One ``SELECT`` per chunk
+        of titles, whatever the body names.
+
+        Args:
+            cursor: The caller's open transaction cursor.
+            titles: The bare titles the body names (``bare_wikilink_titles``).
+            source_note_id: The note being written; it never resolves to
+                itself.
+
+        Returns:
+            ``{title.casefold(): note_id}`` for every title with exactly one
+            live match.
+        """
+        wanted = list(dict.fromkeys(title.strip() for title in titles if title.strip()))
+        if not wanted:
+            return {}
+        grouped: Dict[str, set] = {}
+        chunk_size = CharactersRAGDB._NOTE_TITLE_RESOLVE_CHUNK
+        for start in range(0, len(wanted), chunk_size):
+            chunk = wanted[start : start + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            cursor.execute(
+                "SELECT title, id FROM notes WHERE deleted = 0 AND id != ? "
+                f"AND title COLLATE NOCASE IN ({placeholders})",
+                (str(source_note_id), *chunk),
+            )
+            for row in cursor.fetchall():
+                key = str(row["title"]).strip().casefold()
+                grouped.setdefault(key, set()).add(str(row["id"]))
+        return {key: next(iter(ids)) for key, ids in grouped.items() if len(ids) == 1}
+
+    @staticmethod
+    def replace_note_links(cursor: sqlite3.Cursor, note_id: str, content: str) -> None:
         """Rewrite one note's outgoing links to match its body.
 
         Call this from every writer of ``notes.content``, inside that writer's
@@ -17983,13 +18966,36 @@ UPDATE db_schema_version
         Both ChaChaNotes note writers do; so do the import target's two, which
         write their own SQL for version and client-id reasons.
 
+        TASK-34000.11 (AC#2): besides the ``(note://<id>)`` tails, a bare
+        ``[[Title]]``/``[[Title|alias]]`` outside a code span records an edge
+        when ``_resolve_note_titles`` finds exactly one live note with that
+        title. The body is NEVER modified here (ADR-027): identity is derived
+        at write time, the text stays as typed, and a note saved before this
+        rule picks its typed-link edges up on its next save. Import bodies
+        get the same rule through the executor's call, so a vault note that
+        names a pre-existing Library note by title now links to it.
+
         Args:
             cursor: The caller's open transaction cursor.
             note_id: The note whose body was written.
             content: The body as written.
         """
+        # Lazy on purpose: the models module is pure, but importing it at
+        # module scope here would make the DB module the first importer of
+        # the Notes package.
+        from tldw_chatbook.Notes.note_import_plan_models import bare_wikilink_titles  # noqa: PLC0415
+
         cursor.execute("DELETE FROM note_links WHERE source_note_id = ?", (note_id,))
         targets = extract_note_link_targets(content, source_note_id=note_id)
+        titles = bare_wikilink_titles(content)
+        if titles:
+            resolved = CharactersRAGDB._resolve_note_titles(
+                cursor, titles, source_note_id=note_id
+            )
+            for title in titles:
+                target = resolved.get(title.casefold())
+                if target and target not in targets:
+                    targets.append(target)
         if targets:
             cursor.executemany(
                 "INSERT INTO note_links(source_note_id, target_note_id) VALUES (?, ?)",
@@ -18029,6 +19035,64 @@ UPDATE db_schema_version
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    #: TASK-34000.11: the ``[[`` picker's rows for an empty query -- the most
+    #: recently modified live notes (``idx_notes_last_modified``), never the
+    #: open note itself.
+    _LINK_CANDIDATES_RECENT_SQL = """
+            SELECT id, title FROM notes
+            WHERE deleted = 0 AND id != ?
+            ORDER BY last_modified DESC, id
+            LIMIT ?
+        """
+    #: The typed-query form. The MATCH parameter is the FIXED ``title :
+    #: ( … )`` column filter around an expression ``build_notes_filter_match``
+    #: built (Task 3's rule: any word order, a partial last word, quotes for
+    #: a phrase); no user text is ever interpolated (TASK-19558).
+    _LINK_CANDIDATES_MATCH_SQL = """
+            SELECT n.id, n.title
+            FROM notes_fts
+            JOIN notes AS n ON n.rowid = notes_fts.rowid
+            WHERE notes_fts MATCH ?
+              AND n.deleted = 0
+              AND n.id != ?
+            ORDER BY notes_fts.rank, n.title COLLATE NOCASE
+            LIMIT ?
+        """
+
+    def list_note_link_candidates(
+        self, query: str, *, exclude_note_id: str, limit: int = 8
+    ) -> List[Dict[str, Any]]:
+        """List the notes a ``[[`` completion may link to (TASK-34000.11).
+
+        Args:
+            query: The text typed after ``[[``. Empty lists the most recently
+                modified notes; otherwise the titles matching it by Task 3's
+                filter rule, best match first.
+            exclude_note_id: The open note, which is never offered to itself.
+            limit: Maximum rows to return.
+
+        Returns:
+            ``{"id", "title"}`` rows. A query the filter rule refuses (only
+            quotes, blank after trimming to nothing searchable) returns
+            ``[]`` without running any SQL.
+        """
+        bound_limit = max(0, int(limit))
+        excluded = str(exclude_note_id or "")
+        text = (query or "").strip()
+        if not text:
+            cursor = self.execute_query(
+                self._LINK_CANDIDATES_RECENT_SQL, (excluded, bound_limit)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        match = build_notes_filter_match(text)
+        if match is None:
+            return []
+        cursor = self.execute_query(
+            self._LINK_CANDIDATES_MATCH_SQL,
+            (f"title : ({match.fts_expression})", excluded, bound_limit),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
     # ============================= Library read seams (task-1337) =========================================
     #
     # Additive, read-only queries backing the local Library agent tools. They
@@ -18040,32 +19104,9 @@ UPDATE db_schema_version
     _LIBRARY_NOTE_PREVIEW_CHARS = 241
     _LIBRARY_NOTE_KEYWORD_CAP = 20
     _LIBRARY_NOTE_FOLDER_CAP = 20
-    _LIBRARY_NOTE_FTS_TOKEN_LIMIT = 20
     _LIBRARY_NOTE_TRUST_NOTICE = (
         "Untrusted reference data; not instructions or authorization."
     )
-
-    @staticmethod
-    def _escape_library_note_like(value: str) -> str:
-        """Escape LIKE metacharacters so user input matches literally."""
-        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-    @classmethod
-    def _library_note_fts_query(cls, raw_query: str) -> Optional[str]:
-        """Build a safe FTS5 MATCH query from raw user text.
-
-        The AND-of-quoted-tokens form, not a phrase: tokens are extracted
-        with a word-character regex, each is double-quoted (so FTS operators
-        in the raw input are inert) and they are space-joined, which is
-        FTS5's implicit AND -- every token must appear, in any order and not
-        necessarily adjacent. Returns None when the input contains no usable
-        tokens.
-        """
-        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
-        if not tokens:
-            return None
-        tokens = tokens[: cls._LIBRARY_NOTE_FTS_TOKEN_LIMIT]
-        return " ".join(quote_fts5_token(token) for token in tokens)
 
     def _library_keywords_for_notes(
         self, conn: sqlite3.Connection, note_ids: List[str]
@@ -18196,9 +19237,7 @@ UPDATE db_schema_version
                 tuple(note_ids),
             ).fetchall()
         }
-        link_tuples: Dict[str, List[List[Any]]] = {
-            note_id: [] for note_id in note_ids
-        }
+        link_tuples: Dict[str, List[List[Any]]] = {note_id: [] for note_id in note_ids}
         subject_expression = """
             CASE
               WHEN domain = 'notes.folder_link'
@@ -18329,8 +19368,7 @@ UPDATE db_schema_version
             result[note_id] = {
                 "keyword_metadata": visible_keywords,
                 "keyword_metadata_total": keyword_total,
-                "keyword_metadata_truncated": keyword_total
-                > len(visible_keywords),
+                "keyword_metadata_truncated": keyword_total > len(visible_keywords),
                 "folders": visible_folders,
                 "folder_total": folder_total,
                 "folders_truncated": folder_total > len(visible_folders),
@@ -18440,30 +19478,38 @@ UPDATE db_schema_version
         ):
             raise ValueError("at least one selector is required")
 
+        # TASK-34904: the lexical group routes through the shared engine's
+        # builder (same branch order/escaping/tokenizing as the other
+        # surfaces); the exact-keyword and folder selectors stay here.
         lexical_branches: List[str] = []
         lexical_params: List[Any] = []
         fts_query: Optional[str] = None
+        lexical_hit_fields: Dict[int, List[str]] = {}
         if normalized_query is not None:
-            like_pattern = f"%{self._escape_library_note_like(normalized_query)}%"
-            fts_query = self._library_note_fts_query(normalized_query)
-            lexical_branches = [
-                "LOWER(title) = LOWER(?)",
-                "title LIKE ? ESCAPE '\\'",
-                "content LIKE ? ESCAPE '\\'",
-            ]
-            lexical_params = [normalized_query, like_pattern, like_pattern]
-            if fts_query is not None:
-                lexical_branches.append(
-                    "rowid IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?)"
-                )
-                lexical_params.append(fts_query)
-            lexical_branches.append(
+            (
+                lexical_branches,
+                lexical_params,
+                lexical_hit_fields,
+                _fts_query_unused,
+            ) = build_lexical_group(
+                "title",
+                (
+                    ("title LIKE ? ESCAPE '\\'", "title"),
+                    ("content LIKE ? ESCAPE '\\'", "content"),
+                ),
+                (
+                    (
+                        "rowid IN (SELECT rowid FROM notes_fts "
+                        "WHERE notes_fts MATCH ?)",
+                        "content",
+                    ),
+                ),
                 "id IN (SELECT nk.note_id FROM note_keywords nk "
                 "JOIN keywords k ON nk.keyword_id = k.id "
                 "WHERE k.deleted = 0 "
-                "AND k.keyword LIKE ? ESCAPE '\\')"
+                "AND k.keyword LIKE ? ESCAPE '\\')",
+                normalized_query,
             )
-            lexical_params.append(like_pattern)
 
         selectors: List[str] = []
         selector_params: List[Any] = []
@@ -18558,18 +19604,12 @@ UPDATE db_schema_version
                 item = self._library_note_item(
                     row, keywords_by_note, organization_by_note
                 )
-                matched_fields = set()
                 if normalized_query is not None:
-                    if row["hit_0"] or row["hit_1"]:
-                        matched_fields.add("title")
-                    content_hit_indexes = [2] + (
-                        [3] if fts_query is not None else []
+                    matched_fields = set(
+                        matched_fields_from_hits(row, lexical_hit_fields)
                     )
-                    keyword_hit_index = 4 if fts_query is not None else 3
-                    if any(row[f"hit_{index}"] for index in content_hit_indexes):
-                        matched_fields.add("content")
-                    if row[f"hit_{keyword_hit_index}"]:
-                        matched_fields.add("keywords")
+                else:
+                    matched_fields = set()
                 exact_keyword_is_linked = normalized_keyword is not None and any(
                     value == normalized_keyword
                     for value in keywords_by_note.get(row["id"], [])
@@ -18676,29 +19716,6 @@ UPDATE db_schema_version
     # ``length(content)`` plus a bounded ``substr`` window.
 
     _LIBRARY_CONVERSATION_KEYWORD_CAP = 20
-    _LIBRARY_CONVERSATION_FTS_TOKEN_LIMIT = 20
-
-    @staticmethod
-    def _escape_library_conversation_like(value: str) -> str:
-        """Escape LIKE metacharacters so user input matches literally."""
-        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-    @classmethod
-    def _library_conversation_fts_query(cls, raw_query: str) -> Optional[str]:
-        """Build a safe FTS5 MATCH query from raw user text.
-
-        The AND-of-quoted-tokens form, not a phrase: tokens are extracted
-        with a word-character regex, each is double-quoted (so FTS operators
-        in the raw input are inert) and they are space-joined, which is
-        FTS5's implicit AND -- every token must appear, in any order and not
-        necessarily adjacent. Returns None when the input contains no usable
-        tokens.
-        """
-        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
-        if not tokens:
-            return None
-        tokens = tokens[: cls._LIBRARY_CONVERSATION_FTS_TOKEN_LIMIT]
-        return " ".join(quote_fts5_token(token) for token in tokens)
 
     def _library_keywords_for_conversations(
         self, conn: sqlite3.Connection, conversation_ids: List[str]
@@ -18735,6 +19752,7 @@ UPDATE db_schema_version
             "last_modified": row["last_modified"],
             "version": row["version"],
             "archived": bool(row["archived"]),
+            "archived_at": row["archived_at"],
             "workspace_id": row["workspace_id"],
             "scope_type": row["scope_type"],
             "state": row["state"],
@@ -18772,7 +19790,7 @@ UPDATE db_schema_version
                 ).fetchone()["count"]
                 cursor = conn.execute(
                     f"""
-                    SELECT id, title, created_at, last_modified, version, archived, workspace_id, scope_type, state
+                    SELECT id, title, created_at, last_modified, version, archived, archived_at, workspace_id, scope_type, state
                     FROM conversations
                     WHERE deleted = 0 AND {archive_clause}
                     ORDER BY last_modified DESC, rowid DESC
@@ -18825,98 +19843,66 @@ UPDATE db_schema_version
         Raises:
             CharactersRAGDBError: If a database error occurs.
         """
-        like_pattern = f"%{self._escape_library_conversation_like(query)}%"
-        fts_query = self._library_conversation_fts_query(query)
-
-        branches = [
-            "LOWER(title) = LOWER(?)",
-            "title LIKE ? ESCAPE '\\'",
-            "EXISTS (SELECT 1 FROM messages m "
-            "WHERE m.conversation_id = conversations.id AND m.deleted = 0 "
-            "AND m.content LIKE ? ESCAPE '\\')",
-        ]
-        params: List[Any] = [query, like_pattern, like_pattern]
-        title_hit_indexes = [0, 1]
-        message_hit_indexes = [2]
-        if fts_query is not None:
-            title_hit_indexes.append(len(branches))
-            branches.append(
-                "rowid IN (SELECT rowid FROM conversations_fts "
-                "WHERE conversations_fts MATCH ?)"
-            )
-            params.append(fts_query)
-            message_hit_indexes.append(len(branches))
-            branches.append(
-                "id IN (SELECT m.conversation_id FROM messages m "
-                "WHERE m.deleted = 0 AND m.rowid IN "
-                "(SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?))"
-            )
-            params.append(fts_query)
-        keyword_hit_index = len(branches)
-        branches.append(
-            "id IN (SELECT ck.conversation_id FROM conversation_keywords ck "
-            "JOIN keywords k ON ck.keyword_id = k.id "
-            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
-        )
-        params.append(like_pattern)
-
-        where_clause = " OR ".join(f"({branch})" for branch in branches)
-        hit_selects = ", ".join(
-            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
-        )
-
         archive_clause = self._conversation_archive_scope_clause(archive_scope)
         self._validate_conversation_page_coordinates(limit, offset)
-        try:
-            with self.transaction() as conn:
-                total = conn.execute(
-                    f"SELECT COUNT(*) AS count FROM conversations "
-                    f"WHERE deleted = 0 AND {archive_clause} AND ({where_clause})",
-                    tuple(params),
-                ).fetchone()["count"]
-                cursor = conn.execute(
-                    f"""
-                    SELECT id, title, created_at, last_modified, version, archived, workspace_id, scope_type, state,
-                           {hit_selects}
-                    FROM conversations
-                    WHERE deleted = 0 AND {archive_clause} AND ({where_clause})
-                    ORDER BY (LOWER(title) = LOWER(?)) DESC,
-                             last_modified DESC, rowid DESC
-                    LIMIT ? OFFSET ?
-                    """,
-                    tuple(params + params + [query, limit, offset]),
-                )
-                rows = cursor.fetchall()
-                keywords_by_conversation = self._library_keywords_for_conversations(
-                    conn, [row["id"] for row in rows]
-                )
-            lowered_query = query.lower()
-            items = []
-            for row in rows:
-                item = self._library_conversation_item(row, keywords_by_conversation)
-                matched_fields = set()
-                if any(row[f"hit_{index}"] for index in title_hit_indexes):
-                    matched_fields.add("title")
-                if any(row[f"hit_{index}"] for index in message_hit_indexes):
-                    matched_fields.add("message")
-                if row[f"hit_{keyword_hit_index}"]:
-                    matched_fields.add("keywords")
-                item["matched_fields"] = sorted(matched_fields)
-                item["matched_keywords"] = [
-                    keyword
-                    for keyword in keywords_by_conversation.get(row["id"], [])
-                    if lowered_query in keyword.lower()
-                ][: self._LIBRARY_CONVERSATION_KEYWORD_CAP]
-                items.append(item)
-            return {"items": items, "total": total}
-        except sqlite3.Error as e:
-            logger.error(
-                "Error searching library conversations "
-                f"(query_chars={len(query)}, limit={limit}, offset={offset}): exception_type={type(e).__name__}"
-            )
-            raise CharactersRAGDBError(
-                f"Failed to search library conversations: {e}"
-            ) from e
+        spec = self._library_conversation_search_spec(archive_clause)
+        return library_search_page(self, spec, query=query, limit=limit, offset=offset)
+
+    def _library_conversation_search_spec(
+        self, archive_clause: str
+    ) -> "LibrarySearchSpec":
+        """Per-call search spec (TASK-34904): the archive clause is validated
+        by the caller and injected as the extra WHERE predicate.
+
+        TASK-34784 (preserved from the retired hand-written body): the
+        message-content LIKE subquery is deliberately UNCORRELATED -- one
+        bounded pass over ``messages`` shared by COUNT/page/hit projections,
+        never a leading-wildcard LIKE inside a correlated EXISTS (8.77 ms ->
+        3.29/5.99 ms per no-match search at 50x50; correlated-EXISTS
+        precedent task-33261/PERF-02). Do not convert these branches to
+        correlated EXISTS forms."""
+        return LibrarySearchSpec(
+            table="conversations",
+            base_filter="deleted = 0",
+            extra_where=archive_clause,
+            exact_column="title",
+            substring_branches=(
+                ("title LIKE ? ESCAPE '\\'", "title"),
+                (
+                    "id IN (SELECT m.conversation_id FROM messages m "
+                    "WHERE m.deleted = 0 AND m.content LIKE ? ESCAPE '\\')",
+                    "message",
+                ),
+            ),
+            fts_branches=(
+                (
+                    "rowid IN (SELECT rowid FROM conversations_fts "
+                    "WHERE conversations_fts MATCH ?)",
+                    "title",
+                ),
+                (
+                    "id IN (SELECT m.conversation_id FROM messages m "
+                    "WHERE m.deleted = 0 AND m.rowid IN "
+                    "(SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?))",
+                    "message",
+                ),
+            ),
+            keyword_branch=(
+                "id IN (SELECT ck.conversation_id FROM conversation_keywords ck "
+                "JOIN keywords k ON ck.keyword_id = k.id "
+                "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+            ),
+            page_columns=(
+                "id, title, created_at, last_modified, version, archived, archived_at, "
+                "workspace_id, scope_type, state"
+            ),
+            tiebreaker="rowid DESC",
+            fetch_keywords=self._library_keywords_for_conversations,
+            make_item=self._library_conversation_item,
+            make_database_error=lambda message: CharactersRAGDBError(message),
+            error_prefix="Failed to search library conversations: ",
+            log_label="library conversations search",
+        )
 
     @staticmethod
     def _library_message_revision(version: int, total_chars: int) -> str:
@@ -19317,9 +20303,7 @@ UPDATE db_schema_version
             or any(character not in "0123456789abcdef" for character in fingerprint)
         ):
             fingerprint = hashlib.sha256(
-                ("cancelled:" + str(receipt["requested_keywords_json"])).encode(
-                    "utf-8"
-                )
+                ("cancelled:" + str(receipt["requested_keywords_json"])).encode("utf-8")
             ).hexdigest()
         base_version = stored_request.get("expected_version")
         if not isinstance(base_version, int) or isinstance(base_version, bool):
@@ -19401,7 +20385,13 @@ UPDATE db_schema_version
         params = (now, next_version_val, self.client_id, note_id, expected_version)
 
         try:
-            with self.transaction() as conn:
+            # TASK-34789: read-then-write, so the write lock is taken up
+            # front. Deferred, a commit from any other connection between
+            # the version read below and the UPDATE made SQLite refuse the
+            # upgrade at once ("database is locked", no busy wait) and the
+            # Library reported "Delete failed" -- reproduced with notes-sync
+            # wiring creating the Agent_Lessons folder mid-delete.
+            with self.transaction(immediate=True) as conn:
                 try:
                     current_db_version = self._get_current_db_version(
                         conn, "notes", "id", note_id
@@ -19470,43 +20460,6 @@ UPDATE db_schema_version
             )
             raise
 
-    @staticmethod
-    def _ensure_notes_fts_update_trigger_handles_undelete(
-        conn: sqlite3.Connection,
-    ) -> None:
-        """Repair a legacy Notes FTS update trigger only when required.
-
-        Args:
-            conn: Active database connection used during schema initialization.
-        """
-        trigger_row = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
-            ("notes_au",),
-        ).fetchone()
-        trigger_sql = "" if trigger_row is None else str(trigger_row["sql"] or "")
-        normalized_sql = " ".join(trigger_sql.lower().split())
-        if (
-            "where old.deleted = 0" in normalized_sql
-            and "where new.deleted = 0" in normalized_sql
-        ):
-            return
-
-        conn.execute("DROP TRIGGER IF EXISTS notes_au")
-        conn.execute(
-            """
-            CREATE TRIGGER notes_au
-            AFTER UPDATE ON notes BEGIN
-              INSERT INTO notes_fts(notes_fts,rowid,title,content)
-              SELECT 'delete',old.rowid,old.title,old.content
-              WHERE old.deleted = 0;
-
-              INSERT INTO notes_fts(rowid,title,content)
-              SELECT new.rowid,new.title,new.content
-              WHERE new.deleted = 0;
-            END;
-            """
-        )
-
     def restore_note(self, note_id: str, expected_version: int) -> Optional[bool]:
         """Restore one soft-deleted note using optimistic locking.
 
@@ -19530,7 +20483,8 @@ UPDATE db_schema_version
         params = (now, next_version_val, self.client_id, note_id, expected_version)
 
         try:
-            with self.transaction() as conn:
+            # TASK-34789: read-then-write, same as ``soft_delete_note``.
+            with self.transaction(immediate=True) as conn:
                 current_state = conn.execute(
                     "SELECT deleted, version FROM notes WHERE id = ?", (note_id,)
                 ).fetchone()
@@ -20969,10 +21923,20 @@ UPDATE db_schema_version
     def get_sync_log_entries(
         self,
         since_change_id: int = 0,
-        limit: Optional[int] = None,
+        limit: Optional[int] = 500,
         entity_type: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Retrieves sync log entries newer than a given change_id, optionally filtered by entity type."""
+        """Retrieves sync log entries newer than a given change_id, optionally filtered by entity type.
+
+        Args:
+            since_change_id: Only entries with a strictly greater change_id
+                are returned.
+            limit: Maximum number of entries to return. Defaults to 500 so
+                an unbounded backlog can never be pulled whole into memory
+                (task-34399); pass ``None`` explicitly for the old
+                unbounded read, or a caller-specific bound.
+            entity_type: Optional entity filter (e.g. ``"notes"``).
+        """
         query_parts = ["SELECT * FROM sync_log WHERE change_id > ?"]
         params_list: List[Any] = [since_change_id]
 
@@ -21195,6 +22159,57 @@ UPDATE db_schema_version
             )
             raise CharactersRAGDBError(
                 "Failed to delete sync log entries before threshold"
+            ) from e
+
+    def delete_sync_log_entries_older_than(self, cutoff_timestamp: str) -> int:
+        """Delete ``sync_log`` rows whose ``timestamp`` predates a cutoff.
+
+        Time-based retention (task-34389, ADR-229): the companion to
+        :meth:`prune_sync_log`, which bounds the log by REACHABILITY. This
+        method bounds it by AGE -- one parameterized ``DELETE`` over the
+        indexed ``timestamp`` column, so a journal row older than the
+        configured window leaves the database even when it is still the
+        frontier row of a live entity.
+
+        ``sync_log.timestamp`` stores ISO-8601 UTC strings in the
+        ``YYYY-MM-DDTHH:MM:SS.mmmZ`` shape every writer emits (the triggers
+        via ``strftime('%Y-%m-%dT%H:%M:%fZ', 'now')``), so the comparison is
+        a plain lexicographic string compare and the caller passes the cutoff
+        in that same shape. Rows at or after the cutoff are never touched,
+        which is what keeps change_id-cursor readers (the only production
+        reader) seeing every unpruned change.
+
+        Args:
+            cutoff_timestamp: Inclusive-exclusive cutoff in the
+                ``YYYY-MM-DDTHH:MM:SS.mmmZ`` form; rows strictly older are
+                deleted.
+
+        Returns:
+            The number of rows actually deleted.
+
+        Raises:
+            ValueError: If ``cutoff_timestamp`` is not a non-empty string.
+            CharactersRAGDBError: If the deletion fails.
+        """
+        if not isinstance(cutoff_timestamp, str) or not cutoff_timestamp:
+            raise ValueError("cutoff_timestamp must be a non-empty string.")
+        try:
+            with self.transaction() as conn:
+                deleted = conn.execute(
+                    "DELETE FROM sync_log WHERE timestamp < ?",
+                    (cutoff_timestamp,),
+                ).rowcount
+            logger.info(
+                f"Deleted {deleted} sync_log entries older than {cutoff_timestamp} "
+                f"from db_sha256={self._db_diagnostic_ref}."
+            )
+            return deleted
+        except (CharactersRAGDBError, sqlite3.Error) as e:
+            logger.error(
+                f"Error deleting sync_log entries older than cutoff: exception_type={type(e).__name__}"
+            )
+            raise CharactersRAGDBError(
+                "Failed to delete sync log entries older than cutoff"
             ) from e
 
     def prune_sync_log(self) -> int:
@@ -21795,14 +22810,16 @@ UPDATE db_schema_version
                     interval,
                     repetitions,
                     ease_factor,
-                    # TASK-32803.2: store the SAME shape SQLite's
-                    # CURRENT_TIMESTAMP uses -- space separator, no `T`, no
-                    # offset, no microseconds -- so the lexical `<=` in the
-                    # due queries is a real time comparison. `.isoformat()`
-                    # wrote `2026-09-19T02:13:11.35+00:00`, whose `T` (0x54)
-                    # sorts AFTER a space (0x20), so a card due at 02:13
-                    # today read as not-due until the UTC day rolled over.
-                    next_review.strftime("%Y-%m-%d %H:%M:%S"),
+                    # ADR-224 (superseding TASK-32803.2's write shape): store
+                    # the package-canonical UTC shape
+                    # (YYYY-MM-DDTHH:MM:SS.mmmZ). 32803.2 matched the legacy
+                    # space-separated rows so the lexical `<=` in the due
+                    # queries was a real time comparison; the v78→v79
+                    # migration normalized those rows, so the canonical
+                    # shape now provides that guarantee index-sargably.
+                    # last_review/updated_at stay CURRENT_TIMESTAMP: they
+                    # are payload-only (never filtered or ordered on).
+                    to_utc_iso(next_review),
                     card_id,
                 ),
             )
@@ -21818,28 +22835,44 @@ UPDATE db_schema_version
                 (review_id, card_id, rating, interval, ease_factor),
             )
 
+    #: The due-card queries, ADR-224 style: RAW ``next_review`` comparison
+    #: against a Python-produced canonical now (``_get_current_utc_timestamp_iso``)
+    #: over the v78→v79-normalized column, so ``idx_flashcards_next_review``
+    #: serves the range probes instead of a full-table ``datetime()`` scan.
+    #: NULL means "never reviewed" and sorts due-first, exactly as the old
+    #: ``datetime()`` expression ordered it. Named for the EXPLAIN QUERY PLAN
+    #: assertions in ``Tests/ChaChaNotesDB/test_sargable_timestamps.py``.
+    _DUE_FLASHCARDS_WHERE_SQL = (
+        "SELECT f.* FROM flashcards f "
+        "JOIN decks d ON d.id = f.deck_id "
+        "WHERE f.is_deleted = 0 AND f.is_suspended = 0 "
+        "AND d.is_deleted = 0 "
+        "AND (f.next_review IS NULL OR f.next_review <= ?)"
+    )
+    _DUE_FLASHCARDS_SQL = _DUE_FLASHCARDS_WHERE_SQL + " ORDER BY f.next_review ASC"
+    _COUNT_DUE_FLASHCARDS_SQL = (
+        "SELECT COUNT(*) AS cnt FROM flashcards f "
+        "JOIN decks d ON d.id = f.deck_id "
+        "WHERE f.is_deleted = 0 AND f.is_suspended = 0 AND d.is_deleted = 0 "
+        "AND (f.next_review IS NULL OR f.next_review <= ?)"
+    )
+
     def get_due_flashcards(
         self, deck_id: Optional[str] = None, limit: int = 20
     ) -> List[Dict[str, Any]]:
         """Get flashcards due for review."""
-        query = """
-            SELECT f.* FROM flashcards f
-            JOIN decks d ON d.id = f.deck_id
-            WHERE f.is_deleted = 0 AND f.is_suspended = 0
-                AND d.is_deleted = 0
-                AND (f.next_review IS NULL OR datetime(f.next_review) <= datetime('now'))
-        """
-        params = []
+        query = self._DUE_FLASHCARDS_WHERE_SQL
+        params: List[Any] = [self._get_current_utc_timestamp_iso()]
 
         if deck_id:
             query += " AND f.deck_id = ?"
             params.append(deck_id)
 
-        # TASK-32803.2 / Qodo #5: order by the NORMALIZED time, matching the
-        # WHERE clause. Sorting the raw text placed a legacy T-separated row
-        # after a same-date space-separated row, so get_next_review_candidate
-        # (limit=1) could serve a chronologically-later card first.
-        query += " ORDER BY datetime(f.next_review) ASC LIMIT ?"
+        # TASK-32803.2 / Qodo #5 kept chronological order by sorting the
+        # NORMALIZED time; ADR-224 makes raw order chronological (the column
+        # is uniformly canonical since the v78→v79 migration), preserving
+        # that guarantee for get_next_review_candidate (limit=1).
+        query += " ORDER BY f.next_review ASC LIMIT ?"
         params.append(limit)
 
         # Qodo #3: use the standard read path like count_due_flashcards.
@@ -21855,13 +22888,9 @@ UPDATE db_schema_version
             passed -- the exact total the Library rail badge displays.
             Uses the identical WHERE clause as ``get_due_flashcards``.
         """
-        query = """
-            SELECT COUNT(*) AS cnt FROM flashcards f
-            JOIN decks d ON d.id = f.deck_id
-            WHERE f.is_deleted = 0 AND f.is_suspended = 0 AND d.is_deleted = 0
-              AND (f.next_review IS NULL OR datetime(f.next_review) <= datetime('now'))
-        """
-        cursor = self.execute_query(query)
+        query = self._COUNT_DUE_FLASHCARDS_SQL
+        params: Tuple[Any, ...] = (self._get_current_utc_timestamp_iso(),)
+        cursor = self.execute_query(query, params)
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
@@ -24409,7 +25438,9 @@ class TransactionContextManager:
                         self.cursor = None
                 finally:
                     if self.connection_use_token is not None:
-                        self.db._connection_quiescence.end_use(self.connection_use_token)
+                        self.db._connection_quiescence.end_use(
+                            self.connection_use_token
+                        )
                         self.connection_use_token = None
         finally:
             self._maintenance_context.__exit__(exc_type, exc_val, exc_tb)
@@ -24536,3 +25567,304 @@ class TransactionContextManager:
 #
 # End of ChaChaNotes_DB.py
 #######################################################################################################################
+
+
+# Defining callbacks consumed by the optional finite Character display only.
+_CHARACTER_REFRESH_READERS = tuple(
+    (
+        CharactersRAGDB,
+        name,
+        descriptor,
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        __file__,
+        __spec__,
+        getattr(__spec__, "origin", None),
+    )
+    for name in (
+        "get_local_authority_id",
+        "get_character_conversation_search_revision",
+        "get_connection",
+        "close_connection",
+        "_close_connection_handle",
+        "transaction",
+    )
+    for descriptor in (vars(CharactersRAGDB)[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)
+
+
+# Definition-time source for the optional finite browser callback.
+_CONSOLE_BROWSER_NOTES_SOURCE = (
+    globals(),
+    globals()["__file__"],
+    globals()["__spec__"],
+    getattr(globals()["__spec__"], "origin", None),
+    tuple(
+        (owner, name, inspect.getattr_static(owner, name))
+        for owner, names in (
+            (
+                CharactersRAGDB,
+                (
+                    "_after_conversation_page_count",
+                    "_close_connection_handle",
+                    "_conversation_archive_scope_clause",
+                    "_conversation_character_scope_clause",
+                    "_conversation_deleted_scope_clause",
+                    "_conversation_search_filter",
+                    "_fts_prefix_match_expression",
+                    "_get_thread_connection",
+                    "_normalize_conversation_character_scope",
+                    "_normalize_conversation_state",
+                    "_normalize_nullable_text",
+                    "_normalize_scope",
+                    "_validate_conversation_page_coordinates",
+                    "close_connection",
+                    "count_messages_for_conversations",
+                    "execute_query",
+                    "get_connection",
+                    "get_keywords_for_conversations",
+                    "search_conversations_page",
+                    "transaction",
+                ),
+            ),
+            (TransactionContextManager, ("__init__", "__enter__", "__exit__")),
+        )
+        for name in (*names, "__getattribute__", "__dict__")
+    ),
+    tuple(
+        (name, globals()[name])
+        for name in (
+            "CharactersRAGDB",
+            "TransactionContextManager",
+            "_core_operation",
+            "_core_closing",
+            "_core_cached_connection",
+            "_register_core_connection",
+            "connect_private_sqlite",
+            "_QuiescentSQLiteConnection",
+        )
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in tuple(
+            function
+            for owner, names in (
+                (
+                    CharactersRAGDB,
+                    (
+                        "_after_conversation_page_count",
+                        "_close_connection_handle",
+                        "_conversation_archive_scope_clause",
+                        "_conversation_character_scope_clause",
+                        "_conversation_deleted_scope_clause",
+                        "_conversation_search_filter",
+                        "_fts_prefix_match_expression",
+                        "_get_thread_connection",
+                        "_normalize_conversation_character_scope",
+                        "_normalize_conversation_state",
+                        "_normalize_nullable_text",
+                        "_normalize_scope",
+                        "_validate_conversation_page_coordinates",
+                        "close_connection",
+                        "count_messages_for_conversations",
+                        "execute_query",
+                        "get_connection",
+                        "get_keywords_for_conversations",
+                        "search_conversations_page",
+                        "transaction",
+                    ),
+                ),
+                (TransactionContextManager, ("__init__", "__enter__", "__exit__")),
+            )
+            for name in names
+            for descriptor in (vars(owner)[name],)
+            for function in (
+                descriptor.__func__ if type(descriptor) is staticmethod else descriptor,
+            )
+        )
+        + (CharactersRAGDB._get_thread_connection.__wrapped__,)
+    ),
+)
+
+
+# Definition-time identities for the optional finite stock browser callback.
+# No handle, authority verdict or query result is retained by these records.
+_CONSOLE_BROWSER_NOTES_CORE_SOURCE = (
+    _core_operation.__wrapped__.__globals__,
+    _core_operation.__wrapped__.__globals__["__file__"],
+    _core_operation.__wrapped__.__globals__["__spec__"],
+    getattr(_core_operation.__wrapped__.__globals__["__spec__"], "origin", None),
+    (),
+    tuple(
+        (name, _core_operation.__wrapped__.__globals__[name])
+        for name in (
+            "_core_operation",
+            "_core_closing",
+            "_core_getter",
+            "_core_access",
+            "_core_cached_connection",
+            "_register_core_connection",
+            "_repository_participant",
+        )
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in tuple(
+            _core_operation.__wrapped__.__globals__[name]
+            for name in (
+                "_core_operation",
+                "_core_closing",
+                "_core_getter",
+                "_core_access",
+                "_core_cached_connection",
+                "_register_core_connection",
+                "_repository_participant",
+            )
+        )
+        + (_core_operation.__wrapped__, _core_closing.__wrapped__)
+    ),
+)
+
+
+# Definition-time identities for the optional finite stock browser callback.
+# No handle, authority verdict or query result is retained by these records.
+_CONSOLE_BROWSER_NOTES_CLOSE_SOURCE = (
+    globals(),
+    globals()["__file__"],
+    globals()["__spec__"],
+    getattr(globals()["__spec__"], "origin", None),
+    tuple(
+        (CharactersRAGDB, name, inspect.getattr_static(CharactersRAGDB, name))
+        for name in ("_close_connection_handle", "__getattribute__", "__dict__")
+    ),
+    tuple((name, globals()[name]) for name in ("CharactersRAGDB", "_core_closing")),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in (CharactersRAGDB._close_connection_handle,)
+    ),
+)
+
+
+# Definition-time identities for the optional finite stock browser callback.
+# No handle, authority verdict or query result is retained by these records.
+_CONSOLE_BROWSER_NOTES_CLOSING_SOURCE = (
+    _core_operation.__wrapped__.__globals__,
+    _core_operation.__wrapped__.__globals__["__file__"],
+    _core_operation.__wrapped__.__globals__["__spec__"],
+    getattr(_core_operation.__wrapped__.__globals__["__spec__"], "origin", None),
+    (),
+    tuple(
+        (name, _core_operation.__wrapped__.__globals__[name])
+        for name in ("_core_closing", "_repository_participant", "_repository_types")
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in tuple(
+            _core_operation.__wrapped__.__globals__[name]
+            for name in (
+                "_core_closing",
+                "_repository_participant",
+                "_repository_types",
+            )
+        )
+        + (_core_closing.__wrapped__,)
+    ),
+)
+
+
+# Definition-time identities for the optional finite stock browser callback.
+# No handle, authority verdict or query result is retained by these records.
+_CONSOLE_BROWSER_NOTES_RETIREMENT_SOURCE = (
+    _QuiescentSQLiteConnection.close.__globals__,
+    _QuiescentSQLiteConnection.close.__globals__["__file__"],
+    _QuiescentSQLiteConnection.close.__globals__["__spec__"],
+    getattr(_QuiescentSQLiteConnection.close.__globals__["__spec__"], "origin", None),
+    tuple(
+        (owner, name, inspect.getattr_static(owner, name))
+        for owner, names in (
+            (
+                _QuiescentSQLiteConnection.close.__globals__[
+                    "SQLiteConnectionQuiescenceRegistry"
+                ],
+                ("is_registered", "unregister", "__getattribute__", "__dict__"),
+            ),
+            (_QuiescentSQLiteConnection, ("close",)),
+        )
+        for name in names
+    ),
+    tuple(
+        (name, _QuiescentSQLiteConnection.close.__globals__[name])
+        for name in ("SQLiteConnectionQuiescenceRegistry", "_QuiescentSQLiteConnection")
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in (
+            _QuiescentSQLiteConnection.close.__globals__[
+                "SQLiteConnectionQuiescenceRegistry"
+            ].is_registered,
+            _QuiescentSQLiteConnection.close.__globals__[
+                "SQLiteConnectionQuiescenceRegistry"
+            ].unregister,
+            _QuiescentSQLiteConnection.close,
+        )
+    ),
+)

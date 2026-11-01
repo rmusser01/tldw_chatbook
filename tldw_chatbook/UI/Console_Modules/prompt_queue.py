@@ -13,8 +13,10 @@ session switches are observed at call time rather than frozen at construction.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from contextlib import AbstractContextManager
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, TYPE_CHECKING
 
@@ -28,14 +30,14 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleControllerActivity,
-    ConsoleDispatchRecoveryAction,
-    ConsoleDispatchRecoveryState,
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_display_state import (
     QUEUE_REASON_FULL,
     QUEUE_REASON_PREPARING,
+    QUEUE_REASON_RECEIVED_PREPARING,
     QUEUE_REASON_RUN_HOLD,
+    SEND_LABEL_SENDING,
 )
 from tldw_chatbook.Chat.console_prompt_queue import (
     MAX_CONSOLE_QUEUE_ENTRIES,
@@ -62,19 +64,31 @@ def commit_queued_draft_transaction(
     undo_histories: dict[str, Any],
     store: Any,
     sync_command_popup: Callable[[], None],
+    notify: Callable[[str], None] | None = None,
+    _captured_inputs: Any = None,
 ) -> None:
-    """Clear only the admitted draft while keeping unsent text out of history."""
+    """Clear only the admitted draft while keeping unsent text out of history.
 
-    remaining = ""
-    if visible_session_id == session_id and composer is not None:
-        composer.commit_captured_draft(stash)
-        remaining = composer.draft_text()
-        sync_command_popup()
+    TASK-33620.15.2: the sent-draft commit takes it out, so a hidden chat
+    keeps what was typed after it, and a draft that cannot leave is
+    announced as queued instead of left there silently.
+    """
+    from .sent_draft import take_out_sent_draft
+
     undo_histories.pop(session_id, None)
-    try:
-        store.set_session_draft(session_id, remaining)
-    except KeyError:
-        pass
+    take_out_sent_draft(
+        session_id,
+        stash,
+        composer=composer,
+        visible_session_id=visible_session_id,
+        store=store,
+        undo_histories=undo_histories,
+        notify=notify or (lambda _text: None),
+        verb="queued",
+        captured_inputs=_captured_inputs,
+    )
+    if visible_session_id == session_id and composer is not None:
+        sync_command_popup()
 
 
 #: Assistant-message statuses each typed queue retry action can re-run.
@@ -144,8 +158,35 @@ class ConsolePromptQueuePresentation:
     pause_label: str
     primary_action: str
     pause_enabled: bool
-    recovery_actions: tuple[ConsoleDispatchRecoveryAction, ...] = ()
     turn_recovery_id: str | None = field(default=None, repr=False)
+
+
+#: TASK-33621.2: the widest unsent-turn summary that leaves whole Restore and
+#: Discard buttons on an 80-column shelf (80 - 9 - 15, less a margin).
+TURN_RECOVERY_SUMMARY_CELLS = 52
+
+
+def turn_recovery_label(
+    reason: str, *, budget: int = TURN_RECOVERY_SUMMARY_CELLS
+) -> str:
+    """Return the unsent-turn summary: the refusal reason, fitted to ``budget``.
+
+    Args:
+        reason: The controller's refusal copy, or "" when none was retained.
+        budget: Cells the label may use on the shelf.
+
+    Returns:
+        ``Not sent: <reason>`` (ellipsized), or the generic label. A reason
+        that already starts "Not sent" is not prefixed twice (TASK-33621.4).
+    """
+    text = " ".join(str(reason or "").split()).rstrip(".")
+    for lead in ("Not sent:", "Not sent —"):
+        if text.startswith(lead):
+            text = text[len(lead) :].lstrip()
+    if not text:
+        return "Unsent turn needs attention"
+    label = f"Not sent: {text}"
+    return label if len(label) <= budget else label[: budget - 1].rstrip() + "…"
 
 
 def derive_prompt_queue_presentation(
@@ -153,10 +194,11 @@ def derive_prompt_queue_presentation(
     activity: ConsoleControllerActivity,
     *,
     composer_collapsed: bool = False,
-    dispatch_recovery: ConsoleDispatchRecoveryState | None = None,
     dispatch_recovery_blocked: bool = False,
     turn_recovery_id: str | None = None,
+    turn_recovery_reason: str = "",
     failed_turn_preview: str | None = None,
+    sending: bool = False,
 ) -> ConsolePromptQueuePresentation:
     """Derive exact visible queue vocabulary from bounded previews only.
 
@@ -167,12 +209,14 @@ def derive_prompt_queue_presentation(
         activity: The session's controller activity; a live accepted turn or
             an occupied agent slot decides the Send/Queue/Preparing label.
         composer_collapsed: True hides the shelf whatever its state.
-        dispatch_recovery: A pending dispatch recovery, whose copy and typed
-            actions replace the queue's own state and primary action.
         dispatch_recovery_blocked: True when a response recovery blocks the
-            queue; the shelf shows a disabled Resume.
+            queue; the shelf shows a disabled Resume. The recovery's own
+            actions live only on the #console-dispatch-recovery card: the
+            shelf never carries them (TASK-33625.5).
         turn_recovery_id: An unsent turn needing attention. It outranks every
             other state and keeps the shelf visible with no queued entries.
+        turn_recovery_reason: Why that turn was refused; the shelf states it
+            in place of the generic label (TASK-33621.2).
         failed_turn_preview: Bounded one-line preview of the prompt whose turn
             failed and paused the queue (the caller's ``make_prompt_preview``),
             or ``None`` when the newest assistant message on the active
@@ -183,11 +227,14 @@ def derive_prompt_queue_presentation(
             attachments); the shelf then shows a bare "Turn failed" with
             Retry. A FAILED pause given ``None`` offers Resume, because a
             Retry there could only refuse (TASK-33621.19).
+        sending: An Enter is acknowledged on screen but not yet admitted
+            (TASK-33620.5): Send reads "Sending..." and refuses, and its
+            reason is the queue's, never the empty-draft copy.
 
     Returns:
         The immutable shelf/composer presentation: Send label and gate, shelf
-        visibility, state label, next waiting preview, primary action and its
-        label, and any dispatch-recovery actions.
+        visibility, state label, next waiting preview, and primary action and
+        its label.
     """
 
     count = snapshot.total_count
@@ -197,7 +244,11 @@ def derive_prompt_queue_presentation(
     # names the actual wait and fits the strip's 52-cell budget. Only a
     # prompt-chain turn is ever queue-accepted: regenerate / continue / an
     # agent wake occupy the slot with no chain, so no queue opens behind them.
-    if activity.occupies_slot and not queue_owned:
+    if sending and not activity.occupies_slot and not queue_owned:
+        send_label = SEND_LABEL_SENDING
+        send_enabled = False
+        send_tooltip = QUEUE_REASON_PREPARING
+    elif activity.occupies_slot and not queue_owned:
         send_label = "Preparing..."
         send_enabled = False
         send_tooltip = (
@@ -270,26 +321,21 @@ def derive_prompt_queue_presentation(
         "",
     )
     if turn_recovery_id is not None:
-        state_label = "Unsent turn needs attention"
+        # An empty queue drops the "Queue 0/10 · " prefix (sync_presentation).
+        prefix = len(f"Queue {count}/{MAX_CONSOLE_QUEUE_ENTRIES} · ") if count else 0
+        state_label = turn_recovery_label(
+            turn_recovery_reason, budget=TURN_RECOVERY_SUMMARY_CELLS - prefix
+        )
         pause_label = ""
         primary_action = "turn-recovery"
         pause_enabled = False
-        recovery_actions = ()
-    elif dispatch_recovery is not None:
-        state_label = dispatch_recovery.visible_copy
-        pause_label = ""
-        primary_action = "dispatch-recovery"
-        pause_enabled = False
-        recovery_actions = dispatch_recovery.actions
     elif dispatch_recovery_blocked:
         state_label = "Paused for response recovery"
         pause_label = "Resume"
         primary_action = "toggle-pause"
         pause_enabled = False
-        recovery_actions = ()
     else:
         pause_enabled = count > 0
-        recovery_actions = ()
     return ConsolePromptQueuePresentation(
         revision=snapshot.revision,
         count=count,
@@ -304,7 +350,6 @@ def derive_prompt_queue_presentation(
         pause_label=pause_label,
         primary_action=primary_action,
         pause_enabled=pause_enabled,
-        recovery_actions=recovery_actions,
         turn_recovery_id=turn_recovery_id,
     )
 
@@ -317,7 +362,10 @@ class ConsolePromptQueueRegion(Widget):
     # #console-prompt-queue-row Horizontal has no rule: its own defaults
     # (1fr x 1fr, horizontal layout) fill this region, which max-height
     # clamps to one row. No min-height sits beside a fixed `height: 1`:
-    # it could never take effect.
+    # it could never take effect. The two Buttons keep Button's own
+    # `width: auto` (label + line-pad): fixed widths clipped 'Manage' to
+    # 'Mana' and 'Keep draining' to 'Keep' (TASK-33625.4). min-width 8
+    # undoes Button's 16; Pause's 15 keeps its short labels one size.
     BUNDLED_CSS = """
     ConsolePromptQueueRegion {
         display: none;
@@ -347,14 +395,12 @@ class ConsolePromptQueueRegion(Widget):
     }
 
     #console-prompt-queue-manage {
-        width: 8;
         min-width: 8;
         height: 1;
         padding: 0 1;
     }
 
     #console-prompt-queue-pause {
-        width: 15;
         min-width: 15;
         height: 1;
         padding: 0 1;
@@ -365,9 +411,14 @@ class ConsolePromptQueueRegion(Widget):
     }
 
     /* TASK-33621.19: a narrow shelf's summary (the named 'Turn failed: "..."'
-       is its longest label) truncates instead of pushing Retry off-screen. */
+       is its longest label) truncates instead of pushing Retry off-screen.
+       TASK-33625.4: it also gives up its min-width 20. The shelf spans the
+       Console shell (rails open or not), so this only binds in a terminal
+       under 47 columns, where Manage + Keep draining (27 cells) now stay
+       whole instead of painting 'Keep dra'. */
     ConsolePromptQueueRegion.-narrow #console-prompt-queue-summary {
         width: 1fr;
+        min-width: 0;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
@@ -423,6 +474,7 @@ class ConsolePromptQueueRegion(Widget):
         self._last_render_key = key
         self._session_id = session_id
         self._presentation = presentation
+        was_visible = self.has_class("-visible")
         self.set_class(presentation.shelf_visible, "-visible")
         try:
             summary = self.query_one("#console-prompt-queue-summary", Static)
@@ -431,57 +483,54 @@ class ConsolePromptQueueRegion(Widget):
             pause = self.query_one("#console-prompt-queue-pause", Button)
         except NoMatches:
             return True
-        summary.update(
-            f"Queue {presentation.count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
+        summary_text = (
+            presentation.state_label
+            if presentation.primary_action == "turn-recovery" and not presentation.count
+            else f"Queue {presentation.count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
             f"{presentation.state_label}"
         )
-        preview.update(
+        preview_text = (
             f' · Next: "{presentation.next_preview}"'
             if presentation.next_preview
             else ""
         )
+        # TASK-33620.15.7: a send moves the revision and the Send-button
+        # fields of this projection on every run, which the shelf does not
+        # draw; only copy the shelf shows may request a whole-screen layout.
+        copy_changed = was_visible != presentation.shelf_visible
+        if summary.content != summary_text:
+            summary.update(summary_text)
+            copy_changed = True
+        if preview.content != preview_text:
+            preview.update(preview_text)
+            copy_changed = True
         if presentation.primary_action == "turn-recovery":
-            manage.label = "Restore"
+            manage_label = "Restore"
             manage.disabled = False
             manage.tooltip = "Restore this unsent turn."
-            pause.label = "Discard"
+            pause_label = "Discard"
             pause.disabled = False
             pause.tooltip = "Discard this unsent turn."
-        elif presentation.primary_action == "dispatch-recovery":
-            first = (
-                presentation.recovery_actions[0]
-                if presentation.recovery_actions
-                else None
-            )
-            second = (
-                presentation.recovery_actions[1]
-                if len(presentation.recovery_actions) > 1
-                else None
-            )
-            manage.label = first.label if first is not None else "Unavailable"
-            manage.disabled = first is None or not first.enabled
-            manage.tooltip = (
-                first.disabled_reason or first.label
-                if first is not None
-                else presentation.state_label
-            )
-            pause.label = second.label if second is not None else "Unavailable"
-            pause.disabled = second is None or not second.enabled
-            pause.tooltip = (
-                second.disabled_reason or second.label
-                if second is not None
-                else presentation.state_label
-            )
         else:
-            manage.label = "Manage"
+            manage_label = "Manage"
             manage.disabled = presentation.count == 0
             manage.tooltip = "Open the prompt queue manager."
-            pause.label = presentation.pause_label
+            pause_label = presentation.pause_label
             pause.disabled = not presentation.pause_enabled
-            pause.tooltip = (
-                f"{presentation.pause_label} this session's prompt queue."
-            )
-        self.refresh(layout=True)
+            pause.tooltip = f"{presentation.pause_label} this session's prompt queue."
+        relabel_manage = manage.label != manage_label
+        relabel_pause = pause.label != pause_label
+        manage.label = manage_label
+        pause.label = pause_label
+        if copy_changed or relabel_manage or relabel_pause:
+            self.refresh(layout=True)
+        # A Button caches its box model per its OWN layout count, so a new
+        # label keeps the old width unless the Button itself is re-laid
+        # out: 'Pause' -> 'Keep draining' painted 'Keep' (TASK-33625.4).
+        if relabel_manage:
+            manage.refresh(layout=True)
+        if relabel_pause:
+            pause.refresh(layout=True)
         return True
 
     def on_resize(self) -> None:
@@ -505,16 +554,6 @@ class ConsolePromptQueueRegion(Widget):
                     presentation.revision,
                     f"turn-recovery:restore:{presentation.turn_recovery_id}",
                 )
-            elif (
-                presentation.primary_action == "dispatch-recovery"
-                and presentation.recovery_actions
-                and self._on_primary_requested is not None
-            ):
-                self._on_primary_requested(
-                    self._session_id,
-                    presentation.revision,
-                    presentation.recovery_actions[0].action_id.value,
-                )
             elif self._on_manage_requested is not None:
                 self._on_manage_requested(self._session_id, presentation.revision)
             else:
@@ -533,26 +572,12 @@ class ConsolePromptQueueRegion(Widget):
                     presentation.revision,
                     f"turn-recovery:discard:{presentation.turn_recovery_id}",
                 )
-            elif (
-                presentation.primary_action == "dispatch-recovery"
-                and len(presentation.recovery_actions) > 1
-                and self._on_primary_requested is not None
-            ):
-                self._on_primary_requested(
-                    self._session_id,
-                    presentation.revision,
-                    presentation.recovery_actions[1].action_id.value,
-                )
             elif presentation.primary_action == "review":
                 if self._on_manage_requested is not None:
-                    self._on_manage_requested(
-                        self._session_id, presentation.revision
-                    )
+                    self._on_manage_requested(self._session_id, presentation.revision)
                 else:
                     self.post_message(
-                        self.ManageRequested(
-                            self._session_id, presentation.revision
-                        )
+                        self.ManageRequested(self._session_id, presentation.revision)
                     )
             elif self._on_primary_requested is not None:
                 self._on_primary_requested(
@@ -590,9 +615,36 @@ class ConsolePromptQueueUIController:
         load_recovered_turn: Callable[[str], None],
         edit_refusal: Callable[[str], str],
         sync_ui: Callable[[], Awaitable[None]],
+        guardian_checker_getter: Callable[[], Any] | None = None,
+        append_captured_system_message: Callable[[str, str], Awaitable[None]] | None = None,
+        turn_recovery_reason: Callable[[str], str] = lambda _session_id: "",
+        sending_accessor: Callable[[str], bool] | None = None,
+        precapture: (
+            Callable[[str], Awaitable[Callable[[], AbstractContextManager[None]]]]
+            | None
+        ) = None,
+        capture_configuration_async: Callable[
+            [str, Any], Awaitable["ConsoleTurnConfigurationSnapshot"]
+        ]
+        | None = None,
+        launch_chain_async: Callable[
+            [str, str, "ConsoleDraftStash | None", Any], Awaitable[str]
+        ]
+        | None = None,
     ) -> None:
+        """Wire the dispatcher to its owners.
+
+        Args:
+            precapture: TASK-33620.15. Reads a send's service-owned turn
+                authority off the UI pump and returns the context in which
+                ``capture_configuration``/``launch_chain`` use it. ``None``
+                captures everything inline, as before.
+        """
+        self._precapture = precapture
         self._chat_controller_accessor = chat_controller_accessor
         self._capture_configuration = capture_configuration
+        self._capture_configuration_async = capture_configuration_async
+        self._async_capture_sync_source = capture_configuration
         self._ensure_active_session = ensure_active_session
         self._blocked_reason_accessor = blocked_reason_accessor
         self._setup_blocked_reason_accessor = setup_blocked_reason_accessor
@@ -601,14 +653,20 @@ class ConsolePromptQueueUIController:
         self._focus_composer = focus_composer
         self._note_follow_intent = note_follow_intent
         self._launch_chain = launch_chain
+        self._launch_chain_async = launch_chain_async
+        self._async_launch_sync_source = launch_chain
         self._commit_captured_draft = commit_captured_draft
         self._commit_queued_draft = commit_queued_draft
         self._turn_recovery_ids = turn_recovery_ids
+        self._turn_recovery_reason = turn_recovery_reason
         self._restore_turn_recovery = restore_turn_recovery
         self._discard_turn_recovery = discard_turn_recovery
         self._load_recovered_turn = load_recovered_turn
         self._edit_refusal = edit_refusal
         self._sync_ui = sync_ui
+        self._sending_accessor = sending_accessor
+        self._guardian_checker_getter = guardian_checker_getter
+        self._append_captured_system_message = append_captured_system_message
 
     async def handle_primary_intent(
         self,
@@ -619,6 +677,10 @@ class ConsolePromptQueueUIController:
         on_recovery_complete: Callable[[], None] | None = None,
     ) -> None:
         """Apply the shelf's state-specific primary action and repaint.
+
+        Response recovery actions (retry_response, retry_anyway, discard) come
+        only from the #console-dispatch-recovery card; the shelf never offers
+        them (TASK-33625.5).
 
         Args:
             session_id: Session whose recovery or queue action is requested.
@@ -716,7 +778,8 @@ class ConsolePromptQueueUIController:
         if operation == "restore":
             try:
                 self._restore_turn_recovery(turn_id)
-            except (KeyError, RuntimeError):
+            except Exception:
+                # Storage cleanup may fail; keep recovery available for retry.
                 self._notify(
                     "That unsent turn could not be restored safely.", "warning"
                 )
@@ -726,7 +789,15 @@ class ConsolePromptQueueUIController:
             await self._sync_ui()
             self._focus_composer()
             return
-        if not self._discard_turn_recovery(turn_id):
+        try:
+            discarded = self._discard_turn_recovery(turn_id)
+        except Exception:
+            self._notify(
+                "That unsent turn could not be discarded safely. Try again.", "warning"
+            )
+            await self._sync_ui()
+            return
+        if not discarded:
             self._notify("That unsent turn is no longer available.", "warning")
         await self._sync_ui()
 
@@ -744,7 +815,9 @@ class ConsolePromptQueueUIController:
             session_id, expected_revision=expected_revision
         )
         if result.status is QueueMutationStatus.STALE_REVISION:
-            self._notify("The prompt queue changed. Review it and try again.", "warning")
+            self._notify(
+                "The prompt queue changed. Review it and try again.", "warning"
+            )
         elif not result.applied and result.status is not QueueMutationStatus.UNCHANGED:
             self._notify(
                 result.detail or "That prompt queue action is unavailable.",
@@ -770,7 +843,7 @@ class ConsolePromptQueueUIController:
             and snapshot.pause_reason is PromptQueuePauseReason.FAILED
             else None
         )
-        return derive_prompt_queue_presentation(
+        presentation = derive_prompt_queue_presentation(
             snapshot,
             activity,
             composer_collapsed=composer_collapsed,
@@ -780,10 +853,39 @@ class ConsolePromptQueueUIController:
                 )
             ),
             turn_recovery_id=turn_recovery_id,
+            turn_recovery_reason=(
+                self._turn_recovery_reason(session_id) if turn_recovery_id else ""
+            ),
             failed_turn_preview=(
                 failed_turn.preview if failed_turn is not None else None
             ),
+            sending=bool(
+                self._sending_accessor and self._sending_accessor(session_id)
+            ),
         )
+        runtime = getattr(controller, "_hooks_v2_runtime", None)
+        if runtime is not None and runtime.has_received_intents(
+            session_id, unpromoted_only=True
+        ):
+            return replace(
+                presentation,
+                send_label="Preparing...",
+                send_enabled=False,
+                send_tooltip=QUEUE_REASON_RECEIVED_PREPARING,
+            )
+        if controller._chat_start.is_prepared(session_id):
+            return replace(
+                presentation,
+                send_label="Send",
+                send_enabled=True,
+                send_tooltip="Send this draft and withdraw the prepared background start.",
+            )
+        if controller._chat_start.is_accepted(session_id):
+            # Native starts own no FIFO chain; they have already been accepted.
+            return replace(
+                presentation, send_label="Running", send_enabled=False, send_tooltip=""
+            )
+        return presentation
 
     def recovery_turn(
         self, session_id: str, *, action: str
@@ -812,8 +914,10 @@ class ConsolePromptQueueUIController:
             return None
         target = None
         try:
-            messages = self._chat_controller_accessor().store.iter_messages_newest_first(
-                session_id
+            messages = (
+                self._chat_controller_accessor().store.iter_messages_newest_first(
+                    session_id
+                )
             )
             for item in messages:
                 if target is None:
@@ -866,6 +970,27 @@ class ConsolePromptQueueUIController:
             expected_revision=expected_revision,
         )
 
+    def _capture_user_configuration(self, session_id: str) -> Any:
+        """Issue actor provenance only from user queue/edit event producers."""
+        return self._with_user_origin(
+            session_id, self._capture_configuration(session_id)
+        )
+
+    def _with_user_origin(self, session_id: str, configuration: Any) -> Any:
+        from dataclasses import replace
+
+        controller = self._chat_controller_accessor()
+        runtime = getattr(controller, "_archive_recovery_runtime", None)
+        if runtime is None:
+            owner = getattr(getattr(controller, "app", None), "console_runtime", None)
+            if owner is not None:
+                runtime = owner.ensure_archive_recovery()
+        if runtime is None or configuration is None:
+            return configuration
+        return replace(
+            configuration, recovery_user_origin=runtime.issue_user_proof(session_id)
+        )
+
     def edit_waiting(
         self,
         session_id: str,
@@ -887,7 +1012,7 @@ class ConsolePromptQueueUIController:
             entry_id=entry_id,
             text=text,
             expected_revision=expected_revision,
-            configuration=self._capture_configuration(session_id),
+            configuration=self._capture_user_configuration(session_id),
         )
 
     def move_waiting(
@@ -1023,22 +1148,130 @@ class ConsolePromptQueueUIController:
             detail="Unknown prompt queue recovery action.",
         )
 
+    async def _capture_configuration_for_dispatch(
+        self, session_id: str, expected_controller: Any = None
+    ) -> "ConsoleTurnConfigurationSnapshot":
+        """Prepare production snapshots while preserving injected sync callbacks."""
+        sync_callback = self._capture_configuration
+        if (
+            self._capture_configuration_async is None
+            or sync_callback is not self._async_capture_sync_source
+        ):
+            return self._capture_user_configuration(session_id)
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        controller = expected_controller or self._chat_controller_accessor()
+        callback = self._capture_configuration_async
+        context = await callback(session_id, controller)
+        if (
+            self._chat_controller_accessor() is not controller
+            or self._capture_configuration_async is not callback
+            or self._capture_configuration is not sync_callback
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+        return self._with_user_origin(session_id, context)
+
     async def dispatch(
         self,
         draft: str,
         *,
         session_id: str | None = None,
         stash: "ConsoleDraftStash | None" = None,
+        _captured_inputs: Any = None,
     ) -> ConsolePromptDispatchResult:
         """Send now, queue behind accepted work, or refuse without draft loss.
 
         ``session_id`` pins visible composer sends to the chat that owned the
         captured draft. Other callers retain the active-session fallback.
-        """
 
-        blocked_reason = self._blocked_reason_accessor().strip()
+        TASK-33620.15: a pinned send that will build a turn reads its
+        service-owned turn authority on a worker thread, after the send gate
+        and before the session-pinned gates. Keys flow during that await, so
+        the gate, which reads the VISIBLE chat, is read first: in the stretch
+        where the hook gate checked that this send's chat is the visible one.
+        """
+        callbacks = (
+            self._launch_chain_async,
+            self._commit_captured_draft,
+            self._commit_queued_draft,
+        )
+        guardian_redacted = False
+        # Guardian pre-send check (ADR-204 contract 4). This hook runs at
+        # the very head of dispatch -- BEFORE the blocked-reason refusal
+        # gate below, and therefore BEFORE ADR-148 ``UserPromptSubmit``
+        # hooks fire: the verified hook-emission call site lives far
+        # downstream in ``Chat.console_chat_controller._submit_draft_body``
+        # (the "UserPromptSubmit" ``fire_async``), which dispatch reaches
+        # only via ``_stage_normal_chain`` -> ``_launch_chain`` -> the
+        # controller submit chain. Consequences, pinned by
+        # ``Tests/Guardian/test_dispatch_seam.py``: a Guardian ``block``
+        # short-circuits the send before any user hook runs; a checker
+        # ``allow`` still counts the typed intent ahead of the hooks; a
+        # later hook block never un-counts the hit. The hook-emission
+        # point itself is untouched.
+        guardian_checker = (
+            self._guardian_checker_getter()
+            if self._guardian_checker_getter is not None
+            else None
+        )
+        captured_gate: tuple[str, str] | None = None
+        if guardian_checker is not None:
+            if not session_id:
+                self._ensure_active_session()
+                session_id = self._chat_controller_accessor().store.active_session_id or ""
+            if not session_id:
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    detail="A chat could not be prepared. Your draft is preserved.",
+                )
+            # Snapshot visible setup authority before Guardian's first await.
+            # Refusal still follows Guardian (typed intent) and precedes hooks.
+            captured_gate = (
+                self._blocked_reason_accessor().strip(),
+                self._setup_blocked_reason_accessor().strip(),
+            )
+            try:
+                guardian_result = await guardian_checker.check(draft, session_id=session_id)
+            except Exception:  # noqa: BLE001 - ADR204 preserves sends on checker failure
+                # Fail-open belt-and-suspenders (ADR-204 contract 5): the
+                # checker's own fail-open owns the loud part; this guard
+                # only guarantees a broken checker can never eat a send.
+                logger.opt(exception=True).warning(
+                    "Guardian checker raised at the dispatch seam; send proceeds"
+                )
+                guardian_result = None
+            guardian_action = (
+                guardian_result.get("action") if guardian_result else None
+            )
+            if guardian_action == "block":
+                # Route through the same refusal plumbing as the blocked
+                # reason below: system row, warning notification, refocus,
+                # REFUSED result with the rule's notice as the detail.
+                guardian_notice = guardian_result.get("notice")
+                guardian_detail = (
+                    guardian_notice["text"]
+                    if guardian_notice
+                    else "Guardian declined this message."
+                )
+                await self._append_owned_dispatch_message(guardian_detail, session_id)
+                if self._chat_controller_accessor().store.active_session_id == session_id:
+                    self._notify(guardian_detail, "warning")
+                    self._focus_composer()
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED, session_id=session_id, detail=guardian_detail
+                )
+            if guardian_action == "redact":
+                # Rewrite the draft in memory; the send continues with the
+                # redacted text (notify notices were already surfaced by
+                # the checker itself).
+                redacted = guardian_result.get("redacted_draft")
+                if isinstance(redacted, str) and redacted:
+                    draft = redacted
+                    guardian_redacted = True
+
+        blocked_reason = captured_gate[0] if captured_gate is not None else self._blocked_reason_accessor().strip()
         if blocked_reason:
-            setup_reason = self._setup_blocked_reason_accessor().strip()
+            setup_reason = captured_gate[1] if captured_gate is not None else self._setup_blocked_reason_accessor().strip()
             visible = (
                 setup_reason
                 if setup_reason
@@ -1047,19 +1280,91 @@ class ConsolePromptQueueUIController:
                 )
                 else blocked_reason
             )
-            await self._append_system_message(visible)
-            if visible == setup_reason:
-                self._notify(visible, "warning")
-            self._focus_composer()
+            await self._append_owned_dispatch_message(visible, session_id)
+            if session_id is None or self._chat_controller_accessor().store.active_session_id == session_id:
+                if visible == setup_reason:
+                    self._notify(visible, "warning")
+                self._focus_composer()
             return ConsolePromptDispatchResult(
                 ConsolePromptDispatchStatus.REFUSED, detail=visible
             )
 
+        prepared: Callable[[], AbstractContextManager[None]] = contextlib.nullcontext
+        if (
+            session_id is not None
+            and self._precapture is not None
+            and (
+                self._capture_configuration_async is None
+                or self._capture_configuration is not self._async_capture_sync_source
+            )
+            and self._dispatch_builds_turn(session_id)
+        ):
+            prepared = await self._precapture(session_id)
         if session_id is None:
             self._ensure_active_session()
         controller = self._chat_controller_accessor()
         if session_id is None:
             session_id = controller.store.active_session_id or ""
+        chat_start = getattr(controller, "_chat_start", None)
+        if chat_start is not None:
+            await chat_start.withdraw_for_manual(session_id)
+
+        def require_pressed_current():
+            if _captured_inputs is None:
+                return
+            from tldw_chatbook.Widgets.Console.console_composer_bar import (
+                ConsoleDraftStash,
+            )
+            from .sent_draft import as_typed
+
+            image_only = stash is None and not draft and not _captured_inputs.draft
+            if not image_only and (
+                type(stash) is not ConsoleDraftStash
+                or (stash.text != draft and not guardian_redacted)
+                or as_typed(stash).text != _captured_inputs.draft
+            ):
+                raise RuntimeError("Pressed Console draft changed.")
+            if (
+                self._chat_controller_accessor() is not controller
+                or any(
+                    original is not current
+                    for original, current in zip(
+                        callbacks,
+                        (
+                            self._launch_chain_async,
+                            self._commit_captured_draft,
+                            self._commit_queued_draft,
+                        ),
+                    )
+                )
+                or not controller.store.session_inputs_are_current(
+                    _captured_inputs, include_draft=False
+                )
+            ):
+                raise RuntimeError("Pressed Console inputs or callbacks changed.")
+
+        def queue_kwargs():
+            if _captured_inputs is None:
+                return {}
+            from tldw_chatbook.Chat.console_chat_controller import (
+                _CONSOLE_RECEIVED_QUEUE_METHOD,
+            )
+            from tldw_chatbook.Chat.console_received_dispatch import (
+                stock_native_methods,
+            )
+
+            function, code = _CONSOLE_RECEIVED_QUEUE_METHOD
+
+            def before_admission():
+                require_pressed_current()
+                if not stock_native_methods(
+                    controller, (("queue_prompt", function, code),)
+                ):
+                    raise RuntimeError("Pressed Console queue source changed.")
+
+            before_admission()
+            return {"_before_admission": before_admission}
+
         snapshot = controller.prompt_queue_registry.snapshot(session_id)
         activity = controller.activity_for(session_id)
 
@@ -1073,18 +1378,58 @@ class ConsolePromptQueueUIController:
             )
 
         if activity.accepted_live_turn or snapshot.total_count > 0:
-            queued = await controller.queue_prompt(
-                session_id,
-                text=draft,
-                expected_revision=snapshot.revision,
-                configuration=self._capture_configuration(session_id),
-            )
+            try:
+                with prepared():
+                    configuration = await self._capture_configuration_for_dispatch(
+                        session_id, controller
+                    )
+            except (RuntimeError, ValueError) as exc:
+                if self._capture_configuration_async is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
+            try:
+                queued = await controller.queue_prompt(
+                    session_id,
+                    text=draft,
+                    expected_revision=snapshot.revision,
+                    configuration=configuration,
+                    **queue_kwargs(),
+                )
+            except (RuntimeError, ValueError) as exc:
+                if _captured_inputs is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
             if queued.status is QueueMutationStatus.REROUTE_NORMAL_SEND:
                 return await self._stage_normal_chain(
-                    controller, session_id, draft, stash
+                    controller,
+                    session_id,
+                    draft,
+                    stash,
+                    prepared,
+                    _captured_inputs=_captured_inputs,
+                    _require_pressed_current=require_pressed_current,
+                    _queue_kwargs=queue_kwargs,
+                    _allow_transformed_draft=guardian_redacted,
                 )
             if queued.applied:
-                self._commit_queued_draft(session_id, stash)
+                if _captured_inputs is None:
+                    self._commit_queued_draft(session_id, stash)
+                else:
+                    self._commit_queued_draft(
+                        session_id, stash, _captured_inputs=_captured_inputs
+                    )
                 await self._sync_ui()
                 return ConsolePromptDispatchResult(
                     ConsolePromptDispatchStatus.QUEUED, session_id=session_id
@@ -1099,7 +1444,36 @@ class ConsolePromptQueueUIController:
                 session_id=session_id,
                 detail=refusal,
             )
-        return await self._stage_normal_chain(controller, session_id, draft, stash)
+        return await self._stage_normal_chain(
+            controller,
+            session_id,
+            draft,
+            stash,
+            prepared,
+            _captured_inputs=_captured_inputs,
+            _require_pressed_current=require_pressed_current,
+            _queue_kwargs=queue_kwargs,
+            _allow_transformed_draft=guardian_redacted,
+        )
+
+    async def _append_owned_dispatch_message(self, text: str, session_id: str | None) -> None:
+        if session_id and self._append_captured_system_message is not None:
+            await self._append_captured_system_message(text, session_id)
+        elif session_id is None or self._chat_controller_accessor().store.active_session_id == session_id:
+            await self._append_system_message(text)
+
+    def _dispatch_builds_turn(self, session_id: str) -> bool:
+        """Whether ``dispatch`` would now capture a turn rather than refuse it.
+
+        TASK-33620.15: the preparing gate, read-only, so a send it refuses
+        is refused at once. The rarer refusal copy (emergency stop, the
+        parallel-run cap, recovery) is evaluated once, after the read, where
+        ``dispatch`` always did.
+        """
+        controller = self._chat_controller_accessor()
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        activity = controller.activity_for(session_id)
+        return not (activity.preparing_before_acceptance and snapshot.total_count == 0)
 
     async def _stage_normal_chain(
         self,
@@ -1107,6 +1481,12 @@ class ConsolePromptQueueUIController:
         session_id: str,
         draft: str,
         stash: "ConsoleDraftStash | None",
+        prepared: Callable[[], AbstractContextManager[None]] = contextlib.nullcontext,
+        *,
+        _captured_inputs=None,
+        _require_pressed_current=None,
+        _queue_kwargs=None,
+        _allow_transformed_draft=False,
     ) -> ConsolePromptDispatchResult:
         # Re-check the controller gate at the exact manual/queue boundary.
         # An accepted-turn race is retried as queue admission once, while a
@@ -1125,14 +1505,46 @@ class ConsolePromptQueueUIController:
             )
         if activity.accepted_live_turn:
             snapshot = controller.prompt_queue_registry.snapshot(session_id)
-            queued = await controller.queue_prompt(
-                session_id,
-                text=draft,
-                expected_revision=snapshot.revision,
-                configuration=self._capture_configuration(session_id),
-            )
+            try:
+                with prepared():
+                    configuration = await self._capture_configuration_for_dispatch(
+                        session_id, controller
+                    )
+            except (RuntimeError, ValueError) as exc:
+                if self._capture_configuration_async is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
+            try:
+                queued = await controller.queue_prompt(
+                    session_id,
+                    text=draft,
+                    expected_revision=snapshot.revision,
+                    configuration=configuration,
+                    **(_queue_kwargs() if _queue_kwargs is not None else {}),
+                )
+            except (RuntimeError, ValueError) as exc:
+                if _captured_inputs is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
             if queued.applied:
-                self._commit_queued_draft(session_id, stash)
+                if _captured_inputs is None:
+                    self._commit_queued_draft(session_id, stash)
+                else:
+                    self._commit_queued_draft(
+                        session_id, stash, _captured_inputs=_captured_inputs
+                    )
                 await self._sync_ui()
                 return ConsolePromptDispatchResult(
                     ConsolePromptDispatchStatus.QUEUED, session_id=session_id
@@ -1141,16 +1553,37 @@ class ConsolePromptQueueUIController:
                 return self._refuse_queue_mutation(queued, session_id, stash)
         self._note_follow_intent()
         try:
-            self._launch_chain(draft, session_id)
+            if (
+                self._launch_chain_async is not None
+                and self._launch_chain is self._async_launch_sync_source
+            ):
+                if _captured_inputs is None:
+                    await self._launch_chain_async(draft, session_id, stash, controller)
+                else:
+                    _require_pressed_current()
+                    await self._launch_chain_async(
+                        draft,
+                        session_id,
+                        stash,
+                        controller,
+                        _captured_inputs=_captured_inputs,
+                        **({"_allow_transformed_draft": True} if _allow_transformed_draft else {}),
+                    )
+            elif _captured_inputs is not None:
+                raise RuntimeError("Pressed Console launch changed.")
+            else:
+                with prepared():
+                    self._launch_chain(draft, session_id)
         except (RuntimeError, ValueError) as exc:
-            detail = str(exc) or "Console runtime refused this turn."
+            detail = _preparation_refusal_detail(exc)
             self._notify(detail, "warning")
             return ConsolePromptDispatchResult(
                 ConsolePromptDispatchStatus.REFUSED,
                 session_id=session_id,
                 detail=detail,
             )
-        self._commit_captured_draft(session_id, stash)
+        if _captured_inputs is None:
+            self._commit_captured_draft(session_id, stash)
         return ConsolePromptDispatchResult(
             ConsolePromptDispatchStatus.SENT, session_id=session_id
         )
@@ -1189,3 +1622,20 @@ __all__ = [
     "commit_queued_draft_transaction",
     "derive_prompt_queue_presentation",
 ]
+
+
+def _preparation_refusal_detail(error: RuntimeError | ValueError) -> str:
+    """Keep the internal preparation reason out of the composer notice."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    if (
+        isinstance(error, RecoveryRequired)
+        and str(error) == "console_snapshot_owner_changed"
+    ):
+        return "Chat or settings changed while preparing Send. Your draft was kept; send again."
+    return str(error) or "Console runtime refused this turn."
+
+
+_CONSOLE_PROMPT_QUEUE_DISPATCH = (
+    ConsolePromptQueueUIController.dispatch, ConsolePromptQueueUIController.dispatch.__code__
+)

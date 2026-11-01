@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console ! │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                       Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Reply with just: hi                                                                                                                       │
+                       Context ◂  │   Reply with just: hi  ✕ ◆ Reply with just: hi ✕  Reply with just: hi  ✕ ◆ Reply with just: hi ✕    New tab     Temporary                                │
+ 0 other agents running, 1        │                                                                                                                                                          │
+ waiting for approval.            │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                            ✕  │
+   Terminal                       │ █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█ │
+ ───────────────────────────────  │ █                                                                                                                                                      █ │
+ Workspaces                  ▸    │ █  Approval required                                                                                                                                   █ │
+ ───────────────────────────────  │ █  tldw_chatbook · chat_with_llm                                                                                                                       █ │
+ Conversations               ▾    │ █  {"message":"hi"}                                                                                                                                    █ │
+       Archive this chat          │ █  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Approve once      Deny                                                                                                  █ │
+         Archived chats           │ █  ▊  Once                ▼  ▎                                                                                                                         █ │
+       Search all chats…          │ █  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                                         █ │
+   Reply with just: hi            │ █  This call only.                                                                                                                                     █ │
+                                  │ █   ▶ Reason if denied (optional)                                                                                                                      █ │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │ █    Approve all        Submit         Deny all                                                                                                        █ │
+  ▊  Filter visible   ▎           │ █                                                                                                                                                      █ │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │ █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█ │
+                                  │                                                                                                                                                          │
+  Chats                      ▾    │                                                                                                                                                          │◂ Inspect
+   Reply with just: hi      ✋    │                                                                                                                                                          │
+   Approval required              │                                                                                                                                                          │
+   Reply with just: hi      💬    │                                                                                                                                                          │
+   [1 Sub-Agents]                 │                                                                                                                                                          │
+   Reply with just: hi      ✋    │                                                                                                                                                          │
+   Approval required              │                                                                                                                                                          │
+   Reply with just: hi      💬    │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+ ───────────────────────────────  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ Character · No chats        ▸    │   User                                                                                                                                                   │
+ ───────────────────────────────  │   Reply with just: hi                                                                                                                                    │
+ Model                       ▸    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ───────────────────────────────▂ │  ▊ Assistant  Waiting for your approval · 17s                                                                                                            │
+ Agent                       ▾    │  ▊   ▸ mcp__tldw_chatbook__chat_with_llm                                                                                         · Awaiting approval     │
+  Agent: running · step 1         │  ▊     Review approval                                                                                                                                   │
+  · model                         │  ▊                                                                                                                                                       │
+   View full log                  │  ▊                                                                                                                                                       │
+ ▼ Details                        │  ▊                                                                                                                                                       │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  1 appr
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Waiting for your approva…     Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-4.1-nano     System Prompt: off     Assistant: General     Sources: 0     Tools:
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                                          Type to queue      Queue         Dictate   Redirect  Stop
+
+  Ctrl+G stop run | Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Ctrl+P · Ctrl+Q

@@ -1,0 +1,40 @@
+{
+  "only_two_reviewed_owner_aggregates_changed": true,
+  "all_other_fields_and_sink_topology_unchanged": true,
+  "changes": {
+    "owners": [
+      {
+        "before": {
+          "call_count": 69,
+          "diagnostic_digest": "3583c9aa681f2416bfbe",
+          "owner": "TASK-492",
+          "path": "tldw_chatbook/Chat/console_chat_controller.py",
+          "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+        },
+        "after": {
+          "call_count": 71,
+          "diagnostic_digest": "8d81d4d3e73c41d9fde8",
+          "owner": "TASK-492",
+          "path": "tldw_chatbook/Chat/console_chat_controller.py",
+          "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+        }
+      },
+      {
+        "before": {
+          "call_count": 12,
+          "diagnostic_digest": "2533f6bd53b98703a253",
+          "owner": "TASK-494",
+          "path": "tldw_chatbook/Workspaces/registry_service.py",
+          "reason": "remaining Chatbook production diagnostic owner"
+        },
+        "after": {
+          "call_count": 13,
+          "diagnostic_digest": "70f1e32dfd5b2c3650f0",
+          "owner": "TASK-494",
+          "path": "tldw_chatbook/Workspaces/registry_service.py",
+          "reason": "remaining Chatbook production diagnostic owner"
+        }
+      }
+    ]
+  }
+}

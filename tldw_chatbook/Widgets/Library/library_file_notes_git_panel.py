@@ -191,12 +191,9 @@ class CommitPanelReviewProjection:
         included_notes = tuple(self.included_notes)
         if (
             type(self.repository) is not RepositoryIdentity
-            or tuple(item.note for item in included_notes)
-            != self.review.included_notes
+            or tuple(item.note for item in included_notes) != self.review.included_notes
         ):
-            raise ValueError(
-                "included note projections must exactly match the review"
-            )
+            raise ValueError("included note projections must exactly match the review")
         object.__setattr__(self, "included_notes", included_notes)
 
     @property
@@ -204,8 +201,7 @@ class CommitPanelReviewProjection:
         """Return non-zero change counts in the stable review order."""
         counts = {
             change_type: sum(
-                note.change_type == change_type
-                for note in self.included_notes
+                note.change_type == change_type for note in self.included_notes
             )
             for change_type in ("New", "Modified", "Deleted", "Moved")
         }
@@ -246,9 +242,7 @@ class PushPanelReviewProjection:
             or len(self.review.candidate.included_notes)
             != len(self.availability.change_types)
         ):
-            raise ValueError(
-                "push review provenance must exactly match its candidate"
-            )
+            raise ValueError("push review provenance must exactly match its candidate")
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,8 +320,7 @@ def _grapheme_spans(text: str) -> list[tuple[int, int, int]]:
         if index + 1 < len(spans):
             next_start, next_end, next_width = spans[index + 1]
             current_is_indicator = (
-                end == start + 1
-                and 0x1F1E6 <= ord(text[start]) <= 0x1F1FF
+                end == start + 1 and 0x1F1E6 <= ord(text[start]) <= 0x1F1FF
             )
             next_is_indicator = (
                 next_end == next_start + 1
@@ -385,11 +378,7 @@ def _middle_elide_cells(text: str, width: int) -> str:
 
 def _fit_two_line_copy(text: str, width: int) -> str:
     """Fit copy to explicit lines so word wrapping cannot create a third."""
-    text = (
-        text.replace("\r\n", r"\n")
-        .replace("\r", r"\r")
-        .replace("\n", r"\n")
-    )
+    text = text.replace("\r\n", r"\n").replace("\r", r"\r").replace("\n", r"\n")
     if width <= 0 or cell_len(text) <= width:
         return text
 
@@ -433,15 +422,9 @@ def _group_path_for_display(row: SessionGitRow) -> str:
 
 def _push_destination_summary(destination: PushDestinationProjection) -> str:
     """Format only the sanitized projection without reconstructing a URL."""
-    host = (
-        f"[{destination.host}]"
-        if ":" in destination.host
-        else destination.host
-    )
+    host = f"[{destination.host}]" if ":" in destination.host else destination.host
     principal = (
-        host
-        if destination.ssh_user is None
-        else f"{destination.ssh_user}@{host}"
+        host if destination.ssh_user is None else f"{destination.ssh_user}@{host}"
     )
     return (
         f"{destination.scheme} · {principal}:{destination.port} · "
@@ -1428,8 +1411,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "What",
                         id="file-notes-git-commit-review-what-heading",
                         classes=(
-                            "file-notes-git-commit-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-commit-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1448,8 +1430,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Where",
                         id="file-notes-git-commit-review-where-heading",
                         classes=(
-                            "file-notes-git-commit-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-commit-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1469,8 +1450,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Impact",
                         id="file-notes-git-commit-review-impact-heading",
                         classes=(
-                            "file-notes-git-commit-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-commit-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1534,8 +1514,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Recovery",
                         id="file-notes-git-commit-review-recovery-heading",
                         classes=(
-                            "file-notes-git-commit-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-commit-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1661,8 +1640,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "What",
                         id="file-notes-git-push-review-what-heading",
                         classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-push-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1690,8 +1668,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Where",
                         id="file-notes-git-push-review-where-heading",
                         classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-push-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1721,8 +1698,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Impact",
                         id="file-notes-git-push-review-impact-heading",
                         classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-push-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1742,8 +1718,7 @@ class LibraryFileNotesGitPanel(Vertical):
                         "Recovery",
                         id="file-notes-git-push-review-recovery-heading",
                         classes=(
-                            "file-notes-git-push-copy "
-                            "file-notes-git-review-heading"
+                            "file-notes-git-push-copy file-notes-git-review-heading"
                         ),
                         markup=False,
                     )
@@ -1907,9 +1882,7 @@ class LibraryFileNotesGitPanel(Vertical):
         if not self.is_mounted:
             return
         footer = self.query_one("#file-notes-git-push-footer")
-        visible = tuple(
-            button for button in footer.query(Button) if button.display
-        )
+        visible = tuple(button for button in footer.query(Button) if button.display)
         requirements = tuple(
             cell_len(str(button.label)) + button.styles.padding.width
             for button in visible
@@ -1951,11 +1924,7 @@ class LibraryFileNotesGitPanel(Vertical):
             widget = self.query_one(selector, Static)
             widget.set_class(complete, "-complete-copy")
             width = widget.content_region.width or self.content_region.width
-            fitted = (
-                text
-                if complete or width <= 0
-                else _fit_two_line_copy(text, width)
-            )
+            fitted = text if complete or width <= 0 else _fit_two_line_copy(text, width)
             widget.update(fitted)
 
     def _set_repository_text(self, text: str) -> None:
@@ -1986,11 +1955,7 @@ class LibraryFileNotesGitPanel(Vertical):
             return
         focused = self.screen.focused
         available = self._commit_availability is not None
-        count = (
-            self._commit_availability.staged_note_count
-            if available
-            else 0
-        )
+        count = self._commit_availability.staged_note_count if available else 0
         button = self.query_one("#file-notes-git-commit-staged", Button)
         zero = self.query_one("#file-notes-git-commit-zero", Static)
         button.label = f"Commit staged ({count})"
@@ -2126,9 +2091,7 @@ class LibraryFileNotesGitPanel(Vertical):
             # complete ref IS the audit evidence (task-32265 is scoped to
             # the pre-commit disclosure).
             "local-branch": f"Local branch: {candidate.local_branch_ref}",
-            "remote": (
-                f"Configured remote: {review.configured_remote_label}"
-            ),
+            "remote": (f"Configured remote: {review.configured_remote_label}"),
             "ref": f"Full destination ref: {destination.destination_ref}",
             "endpoint": (
                 f"Sanitized endpoint: {_push_destination_summary(destination)}"
@@ -2261,11 +2224,7 @@ class LibraryFileNotesGitPanel(Vertical):
             else (
                 "file-notes-git-push-result"
                 if phase == "result"
-                else (
-                    "file-notes-git-push-progress"
-                    if phase != "list"
-                    else None
-                )
+                else ("file-notes-git-push-progress" if phase != "list" else None)
             )
         )
         for widget in self.query(".file-notes-git-push-phase"):
@@ -2284,9 +2243,7 @@ class LibraryFileNotesGitPanel(Vertical):
             visible = {"file-notes-git-push-back-session", action_id}
         else:
             visible = set()
-        for button in self.query_one(
-            "#file-notes-git-push-footer"
-        ).query(Button):
+        for button in self.query_one("#file-notes-git-push-footer").query(Button):
             button.display = button.id in visible
             button.disabled = False
         self.query_one("#file-notes-git-push-back-to-files", Button).label = (
@@ -2296,9 +2253,9 @@ class LibraryFileNotesGitPanel(Vertical):
         )
         if phase == "result" and self._push_result is not None:
             action_id = _PUSH_RESULT_ACTION_BUTTON[self._push_result.action]
-            self.query_one(f"#{action_id}", Button).disabled = (
-                not self._push_result.action_enabled
-            )
+            self.query_one(
+                f"#{action_id}", Button
+            ).disabled = not self._push_result.action_enabled
         self._sync_disabled_action_presentation()
         self._sync_push_footer_layout(self.size.width)
 
@@ -2439,8 +2396,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "#file-notes-git-commit-review-repository",
             Static,
         ).update(
-            "Repository: "
-            f"{_repository_path_for_display(repository.worktree_root)}"
+            f"Repository: {_repository_path_for_display(repository.worktree_root)}"
         )
         self.query_one(
             "#file-notes-git-commit-review-branch",
@@ -2486,8 +2442,7 @@ class LibraryFileNotesGitPanel(Vertical):
             "Chatbook will select no unrelated worktree paths"
         )
         counts = " · ".join(
-            f"{label} {amount}"
-            for label, amount in projection.change_counts
+            f"{label} {amount}" for label, amount in projection.change_counts
         )
         self.query_one(
             "#file-notes-git-commit-review-change-counts",
@@ -2578,15 +2533,11 @@ class LibraryFileNotesGitPanel(Vertical):
         self.query_one(
             "#file-notes-git-commit-execution-title",
             Static,
-        ).update(
-            f"Committing {_session_note_count(projection.staged_note_count)}..."
-        )
+        ).update(f"Committing {_session_note_count(projection.staged_note_count)}...")
         self.query_one(
             "#file-notes-git-commit-execution-detail",
             Static,
-        ).update(
-            "Git is updating the branch; cancellation is unavailable."
-        )
+        ).update("Git is updating the branch; cancellation is unavailable.")
         self._show_commit_phase("executing")
 
     def render_commit_recovery_checking(self) -> None:
@@ -2652,13 +2603,8 @@ class LibraryFileNotesGitPanel(Vertical):
         self._show_commit_phase("result")
         if outcome.state in {"blocked", "failed_unchanged"}:
             self._focus_commit_control("#file-notes-git-commit-edit")
-        elif (
-            outcome.state == "uncertain"
-            and projection.recovery is not None
-        ):
-            self._focus_commit_control(
-                "#file-notes-git-commit-check-again"
-            )
+        elif outcome.state == "uncertain" and projection.recovery is not None:
+            self._focus_commit_control("#file-notes-git-commit-check-again")
 
     def return_to_commit_list(
         self,
@@ -2712,8 +2658,7 @@ class LibraryFileNotesGitPanel(Vertical):
         visible_selector = phase_selectors.get(phase)
         for widget in self.query(".file-notes-git-commit-phase"):
             widget.display = (
-                visible_selector is not None
-                and f"#{widget.id}" == visible_selector
+                visible_selector is not None and f"#{widget.id}" == visible_selector
             )
 
         disclosure = self.query_one(
@@ -2749,8 +2694,7 @@ class LibraryFileNotesGitPanel(Vertical):
         elif (
             phase == "result"
             and self._commit_result is not None
-            and self._commit_result.outcome.state
-            in {"blocked", "failed_unchanged"}
+            and self._commit_result.outcome.state in {"blocked", "failed_unchanged"}
         ):
             visible_footer = (
                 "#file-notes-git-commit-edit",
@@ -2761,15 +2705,11 @@ class LibraryFileNotesGitPanel(Vertical):
             and self._commit_result is not None
             and self._commit_result.outcome.state == "uncertain"
         ):
-            visible_footer = (
-                "#file-notes-git-commit-check-again",
-            )
+            visible_footer = ("#file-notes-git-commit-check-again",)
         else:
             visible_footer = ()
         self._set_commit_footer_buttons(visible_footer)
-        self._sync_commit_footer_layout(
-            self.content_region.width or self.size.width
-        )
+        self._sync_commit_footer_layout(self.content_region.width or self.size.width)
         self.call_after_refresh(self._sync_commit_body_height)
 
     def _sync_commit_body_height(self) -> None:
@@ -2808,9 +2748,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self,
         visible_selectors: tuple[str, ...],
     ) -> None:
-        for button in self.query_one(
-            "#file-notes-git-commit-footer"
-        ).query(Button):
+        for button in self.query_one("#file-notes-git-commit-footer").query(Button):
             selector = f"#{button.id}"
             button.display = selector in visible_selectors
             button.disabled = False
@@ -2882,10 +2820,7 @@ class LibraryFileNotesGitPanel(Vertical):
         await list_view.clear()
         if generation != self._commit_note_render_generation:
             return
-        await list_view.extend(
-            _CommitIncludedNoteListItem(note)
-            for note in notes
-        )
+        await list_view.extend(_CommitIncludedNoteListItem(note) for note in notes)
         if generation != self._commit_note_render_generation:
             return
         list_view.index = 0 if notes else None
@@ -2909,8 +2844,7 @@ class LibraryFileNotesGitPanel(Vertical):
         path = _repository_path_for_display(note.display_path)
         selected.update(f"{note.change_type}: {path}")
         selected.display = (
-            self._commit_phase == "review"
-            and self._commit_included_expanded
+            self._commit_phase == "review" and self._commit_included_expanded
         )
 
     def render_status(
@@ -3151,11 +3085,7 @@ class LibraryFileNotesGitPanel(Vertical):
         self._replace_rows(None)
 
     def _sync_empty_state(self) -> None:
-        ready_empty = (
-            not self._replacing_rows
-            and self._status_ready
-            and not self._rows
-        )
+        ready_empty = not self._replacing_rows and self._status_ready and not self._rows
         self.query_one("#file-notes-git-empty", Static).display = ready_empty
         self.query_one("#file-notes-git-rows", ListView).display = (
             bool(self._rows) and not self._replacing_rows
@@ -3309,11 +3239,7 @@ class LibraryFileNotesGitPanel(Vertical):
 
     def _selected_row(self) -> SessionGitRow | None:
         return next(
-            (
-                row
-                for row in self._rows
-                if row.group_id == self._selected_group_id
-            ),
+            (row for row in self._rows if row.group_id == self._selected_group_id),
             None,
         )
 
@@ -3357,14 +3283,10 @@ class LibraryFileNotesGitPanel(Vertical):
             self._fit_fixed_regions()
             selected_note.display = True
         can_mutate = (
-            self._status_ready
-            and not self._mutating
-            and not self._replacing_rows
+            self._status_ready and not self._mutating and not self._replacing_rows
         )
         show_stage = (
-            self._trusted
-            and selected is not None
-            and selected.stage_action is not None
+            self._trusted and selected is not None and selected.stage_action is not None
         )
         stage_selected.display = show_stage
         stage_selected.disabled = not can_mutate
@@ -3386,24 +3308,15 @@ class LibraryFileNotesGitPanel(Vertical):
         unstage_count = sum(row.unstage_eligible for row in self._rows)
         stage_all.label = f"Stage all ({stage_count})"
         unstage_all.label = f"Unstage all ({unstage_count})"
-        bulk_available = (
-            self._trusted
-            and (stage_count > 0 or unstage_count > 0)
-        )
-        if (
-            focused is not None
-            and (
-                (
-                    not (show_stage or show_unstage)
-                    and focused in {stage_selected, unstage_selected}
-                )
-                or (
-                    not bulk_available
-                    and (
-                        focused is bulk_toggle
-                        or focused in {stage_all, unstage_all}
-                    )
-                )
+        bulk_available = self._trusted and (stage_count > 0 or unstage_count > 0)
+        if focused is not None and (
+            (
+                not (show_stage or show_unstage)
+                and focused in {stage_selected, unstage_selected}
+            )
+            or (
+                not bulk_available
+                and (focused is bulk_toggle or focused in {stage_all, unstage_all})
             )
         ):
             if self._trust_available and trust.display:
@@ -3456,9 +3369,7 @@ class LibraryFileNotesGitPanel(Vertical):
         identity instead -- see `_entry_focus_anchor`.
         """
         focused = self.screen.focused
-        return focused is not None and (
-            focused is self or self in focused.ancestors
-        )
+        return focused is not None and (focused is self or self in focused.ancestors)
 
     def _entry_focus_is_still_ours(self, anchor: Widget | None) -> bool:
         """Return whether the armed entry focus may still be taken.
@@ -3694,10 +3605,7 @@ class LibraryFileNotesGitPanel(Vertical):
             focused is not None
             and focused.id is not None
             and focused.can_focus
-            and any(
-                node is list_surface
-                for node in focused.ancestors_with_self
-            )
+            and any(node is list_surface for node in focused.ancestors_with_self)
         ):
             self._commit_entry_focus = (
                 projection.binding_key,
@@ -3705,9 +3613,7 @@ class LibraryFileNotesGitPanel(Vertical):
             )
         else:
             self._commit_entry_focus = None
-        self.post_message(
-            self.CommitStagedRequested(projection.binding_key)
-        )
+        self.post_message(self.CommitStagedRequested(projection.binding_key))
         active = self._active_commit_draft
         if active is not None and active.binding_key == projection.binding_key:
             projection = replace(
@@ -3766,13 +3672,10 @@ class LibraryFileNotesGitPanel(Vertical):
         event.stop()
         operation_id = self._push_operation_id
         if (
-            self._push_phase
-            in {"checking_candidate", "checking_remote"}
+            self._push_phase in {"checking_candidate", "checking_remote"}
             and operation_id is not None
         ):
-            self.post_message(
-                self.PushOperationRequested("cancel_check", operation_id)
-            )
+            self.post_message(self.PushOperationRequested("cancel_check", operation_id))
 
     @on(Button.Pressed, "#file-notes-git-push-back-to-files")
     def _back_to_files_push_continues_pressed(
@@ -3801,10 +3704,7 @@ class LibraryFileNotesGitPanel(Vertical):
             or projection is None
             or (
                 action != "back_to_session"
-                and (
-                    projection.action != action
-                    or not projection.action_enabled
-                )
+                and (projection.action != action or not projection.action_enabled)
             )
         ):
             return
@@ -3985,8 +3885,7 @@ class LibraryFileNotesGitPanel(Vertical):
         elif (
             self._commit_phase == "result"
             and self._commit_result is not None
-            and self._commit_result.outcome.state
-            in {"blocked", "failed_unchanged"}
+            and self._commit_result.outcome.state in {"blocked", "failed_unchanged"}
         ):
             self._edit_commit_message()
 
@@ -4094,8 +3993,7 @@ class PushEndpointDetailsDialog(SafeModalDismissMixin, ModalScreen[None]):
             )
             yield TextArea(
                 "\n".join(
-                    f"{label}: {value}"
-                    for label, value in self.selectable_details
+                    f"{label}: {value}" for label, value in self.selectable_details
                 ),
                 id="file-notes-push-endpoint-details-text",
                 read_only=True,

@@ -8,13 +8,14 @@
 $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
-/* TASK-33003.6: 3:1 per theme (themes.py BOUNDARY_VARIABLE). */
+/* TASK-33003.6, TASK-33003.15: 3:1 per theme (themes.py BOUNDARY_VARIABLE). */
 $ds-grid-line: $tldw-boundary;
-$ds-column-line: $surface-lighten-2;
+$ds-column-line: $tldw-boundary;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
 $ds-text-disabled: $text-disabled;
 $ds-action-focus: $primary;
+$ds-focus-list-tint: 12%;
 $ds-focus-fg: $ds-text-primary;
 /* TASK-345: the focus background must be visibly distinct from resting
    surfaces — it previously aliased $ds-surface-raised (= $surface), which
@@ -39,7 +40,9 @@ $ds-input-focus-accent: $primary;
 /* task-1586 control convention: editable fields carry a one-column left
    edge at rest — presence of the edge (a structural marker), not its
    color, distinguishes controls from prose. Quieter than text at rest
-   (3:1, TASK-33003.6), the edge flips to thick $ds-action-focus on focus.
+   (3:1, TASK-33003.6), the edge flips to thick $ds-active-fg on focus
+   (TASK-36479: $ds-action-focus fell under 3:1 on $surface in 27 of the
+   89 measurable themes).
    Left borders cost a column, never a row, so dense one-row forms keep
    their height. */
 $ds-control-edge: $tldw-boundary;
@@ -61,6 +64,13 @@ $ds-status-error: $error;
    theme polarity (agentic_terminal resolves to #FF929C, within a hair of
    the old hand-tuned value). */
 $ds-status-error-readable: $text-error;
+/* Roleplay frame B1: the readable warning foreground, the sibling of
+   $ds-status-error-readable for warning words that must be READ (the
+   Roleplay header's Unsaved chip). $warning, the decorative status hue,
+   measured below AA on the panel surface in 29 of the 70 registered themes
+   (and $error in 40); Textual's generated $text-warning clears AA on all 70
+   (Tests/UI/test_theme_contrast.py; Tests/UI/test_roleplay_stylesheet.py). */
+$ds-status-warning-readable: $text-warning;
 /* task-14824 (3): Textual's stock placeholder colour ($text-disabled)
    measured 3.52:1 on an enabled ingest field and 3.49:1 on a disabled one
    -- below AA for normal text, and a 0.03 delta means a placeholder is
@@ -142,8 +152,11 @@ $ds-console-workspace-grid-height: 1fr;
 $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
-$ds-library-note-task-actions-min-width: 61;
 $ds-workflow-navigator-width: 27;
+$ds-workflow-dialog-max-width: 100;
+$ds-setup-voice-wide-share: 21fr;
+$ds-setup-voice-medium-share: 14fr;
+$ds-setup-voice-narrow-share: 11fr;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -177,12 +190,19 @@ $ds-space-inset: $ds-space-1;
  * status lines, chip rows) use the compact height. */
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
+$ds-control-action-min-width: 6;
 /* Default/minimum height for multi-line text inputs. */
 $ds-textarea-min-height: 5;
 /* TASK-33004.4 (spec §6): Switch model is 140 columns at 211x44 and
  * 235x52 (120 until the final review let ids render whole); its auto
  * height caps at $ds-percent-80 (_console_panels.tcss). */
 $ds-model-switcher-width: 140;
+/* Chat settings (Ctrl+O) is 176 columns at 211x44 and 235x52 (150 until
+ * TASK-33007 capture finding 15): a row is label 18 + control 13 + Source
+ * 20 + help, and the longest help (a blank row whose support is unknown)
+ * is 119 cells, cut at 150. 176 leaves it whole with a scrollbar showing.
+ * Capped at $ds-percent-95 below that (_console_panels.tcss). */
+$ds-chat-settings-width: 176;
 /* Fill the parent's inline axis (ADR-161 task 8a): the tokenized expression
  * of the recurring `width: 100%` on promoted full-width components (status
  * areas, message bodies). Raw percentage widths in moved rules map here. */
@@ -286,6 +306,9 @@ $ds-size-90: 90;
 $ds-size-92: 92;
 $ds-size-94: 94;
 $ds-size-96: 96;
+/* TASK-33003.22: 100 joins the size scale, a round rung of the cap ladder
+   beside 96/104/110/120 (the workflow run dialog's column cap). */
+$ds-size-100: 100;
 /* task 11 (ADR-161 §3.10): splash progress-bar cap (single consumer). */
 $ds-splash-progress-cap: 100;
 $ds-size-104: 104;
@@ -350,6 +373,19 @@ $ds-watchlists-artifacts-detail-share: 8fr;
 $ds-agentic-mcp-table-cap: 70%;
 $ds-agentic-prompt-vars-pane: 27;
 $ds-agentic-mcp-compact-canvas-share: 7fr;
+/* task-35151: the MCP hub triad's rail+canvas row wrapper share of the
+   grid -- rail + canvas fractions (3fr+5fr base, 2fr+7fr compact) rolled
+   up so nesting the row preserves each pane's exact prior share of the
+   grid (8fr base = 3+5, 9fr compact = 2+7). */
+$ds-agentic-mcp-row-share: 8fr;
+$ds-agentic-mcp-compact-row-share: 9fr;
+/* TASK-33003.22 (ADR-161 §3.10): the first-run voice radio's row shares
+   (features/_wizards.tcss), single-consumer feature geometry named like
+   the groups above. Each share follows its labels' width: "No voice for
+   now", then PocketTTS/OmniVoice, then OpenAI/Custom. */
+$ds-wizards-voice-long-share: 21fr;
+$ds-wizards-voice-mid-share: 14fr;
+$ds-wizards-voice-short-share: 11fr;
 /* task 11 (ADR-161 §3.10): the Research Workspace chat pane's minimum
    columns in its two fr-sharing layout modes (single consumer). */
 $ds-research-chat-pane-floor: 58;
@@ -375,6 +411,8 @@ $ds-widgets-skeleton-title-share: 60%;
 /* task 11 (ADR-161 §3.10): message-body viewport scroll caps
    (components/_messages.tcss, single consumer). */
 $ds-messages-scroll-cap: 50vh;
+/* Folder picker leaves room for its filter, pager and actions. */
+$ds-note-folder-picker-max-height: 50vh;
 $ds-messages-text-scroll-cap: 40vh;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's
@@ -482,9 +520,6 @@ $ds-theme-preview-dark-ink: #000000;
 $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
 
-/* Wide Conversation settings dialog preserved from upstream. */
-$ds-console-settings-wide-max-width: 196;
-
 /* Conversation Inspector: readable split-pane geometry (ADR-171). */
 $ds-inspector-modal-width: 120;
 $ds-inspector-modal-height: 42;
@@ -494,3 +529,13 @@ $ds-conversation-action-width: 4;
 $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
+
+/* Living portraits: visible-time motion within a fixed fitted canvas. */
+$ds-portrait-blink-min: 3s;
+$ds-portrait-blink-max: 7s;
+$ds-portrait-idle-cycle: 6s;
+$ds-portrait-idle-offset-px: 0;
+
+/* Offline portrait review uses the Console renderer at a fixed cell budget. */
+$ds-portrait-review-cols: 24;
+$ds-portrait-review-lines: 13;

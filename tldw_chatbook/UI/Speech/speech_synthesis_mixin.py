@@ -338,10 +338,7 @@ class SpeechSynthesisMixin:
             return "Voices are still loading; wait before generating"
         if (
             provider_id in self._stale_providers
-            or (
-                not reference_only_clone
-                and not self._catalog_generation_allowed
-            )
+            or (not reference_only_clone and not self._catalog_generation_allowed)
             or catalog.health.state != "available"
             or not catalog.health.fresh
             or not revision_matches

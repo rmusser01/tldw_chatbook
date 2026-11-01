@@ -1,0 +1,19 @@
+# Fix round 1 / I-3: bundle re-import into a FRESH isolated profile (socket p1p1-t1-2, 160x45).
+# bundle.zip = the 122-note bundle exported live from p1p1-t1-1 (holds 'Paper notes: Retrieval practice', keywords meeting, thesis).
+# Steps: launch.sh p1p1-t1-2 empty -> Ctrl+Q -> import_bundle.py under the run's own env (TLDW_CONFIG_PATH, HOME, XDG_*, keyring null; LocalChatbookService.import_chatbook, the product seam) -> REUSE=1 relaunch.
+
+=== import_bundle.py (LocalChatbookService.import_chatbook, app stopped) ===
+db_paths={'ChaChaNotes': '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.nlrev-harness/runs/p1p1-t1-2/data/nl_review/tldw_chatbook_ChaChaNotes.db', 'Prompts': '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.nlrev-harness/runs/p1p1-t1-2/data/nl_review/tldw_chatbook_prompts.db', 'Media': '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.nlrev-harness/runs/p1p1-t1-2/data/nl_review/tldw_chatbook_media_v2.db'}
+selections: {'note': 122}
+import result: {'success': True, 'message': 'Successfully imported 122/122 items', 'path': '/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/.nlrev-harness/runs/p1p1-t1-2/home/bundle.zip', 'name': 'bundle'}
+
+# sqlite3 -readonly $HARNESS/runs/p1p1-t1-2/data/nl_review/tldw_chatbook_ChaChaNotes.db (app running; with the app stopped -readonly cannot create the -shm and fails with error 14)
+id|title|body_head|fence_pos|keywords
+3eee976f-5912-408e-a3f9-f55ab970ba2f|Paper notes: Retrieval practice|# Advisor meeting — 2026-09-24\n\nAt|0|meeting, thesis
+active_notes=122
+notes_whose_body_starts_with_a_fence=0
+
+# TASK-34000.81 evidence (pre-existing, not this task): the colliding pair both carry the SECOND note's body:
+title|body_head
+Meeting notes 2026-09-30|# Meeting Notes\n\nDuplicate-ish
+Meeting Notes 2026-09-30|# Meeting Notes\n\nDuplicate-ish

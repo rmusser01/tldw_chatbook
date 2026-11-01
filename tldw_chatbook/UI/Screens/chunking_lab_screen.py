@@ -35,6 +35,7 @@ from tldw_chatbook.UI.Chunking_Lab_Modules.results_region import ResultsRegion
 from tldw_chatbook.UI.Chunking_Lab_Modules.sample_region import (
     SAMPLE_BYTES,
     SampleRegion,
+    SampleTextArea,
     read_sample_excerpt,
     read_sample_file,
     sample_source_label,
@@ -251,6 +252,8 @@ class ChunkingLabScreen(BaseAppScreen):
         self._edit_task = None
         self._render_generation = 0
         self._input_generation = 0
+        self._sample_load_generation = 0
+        self._sample_input_revision = 0
         self._rendered_session = None
         self._results_cache = {}
         self._result_epoch = None
@@ -258,6 +261,7 @@ class ChunkingLabScreen(BaseAppScreen):
         self._active_region = "sample"
         self._initializing = True
         self._leaving = False
+        self._pin_ready = False
 
     def compose_content(self) -> ComposeResult:
         yield Static(
@@ -401,6 +405,7 @@ class ChunkingLabScreen(BaseAppScreen):
             self.query_one("#lab-retry", Button).disabled = False
         finally:
             self._ready.set()
+            self._refresh_action_support()
 
     def _message(self, text: str) -> None:
         self.query_one("#lab-message", Static).update(text)
@@ -435,27 +440,31 @@ class ChunkingLabScreen(BaseAppScreen):
             if value["role"] == "B"
         )
 
-    def queue_edit(self, operation, *args, **kwargs) -> None:
+    def queue_edit(self, operation, *args, applicable=None, **kwargs) -> None:
         """Queue a delta, never a stale whole-session computation."""
         if self._initializing or self._leaving or self.coordinator is None:
             return
         self._observe_result_revisions()
         self._input_generation += 1
-        self._edits.append(partial(operation, *args, **kwargs))
+        self._edits.append((partial(operation, *args, **kwargs), applicable))
         if self._edit_task is None or self._edit_task.done():
             self._edit_task = asyncio.create_task(self._apply_edits())
 
     async def _apply_edits(self) -> None:
         while True:
             while self._edits:
-                edit = self._edits.popleft()
+                edit, applicable = self._edits.popleft()
                 while True:
+                    if applicable is not None and not applicable():
+                        break
                     before = self.coordinator.session
                     if self.coordinator.guarded:
                         await asyncio.sleep(0.01)
                         continue
                     try:
                         changed = await asyncio.to_thread(edit, before)
+                        if applicable is not None and not applicable():
+                            break
                         if self.coordinator.session is not before:
                             continue
                         self._observe_result_revisions()
@@ -480,6 +489,7 @@ class ChunkingLabScreen(BaseAppScreen):
     @on(SampleRegion.Changed)
     def sample_changed(self, event: SampleRegion.Changed) -> None:
         event.stop()
+        self._sample_input_revision = event.revision
         self.queue_edit(
             lambda session: lab_state.replace_sample(
                 session, event.text, {"kind": "paste"}
@@ -529,6 +539,7 @@ class ChunkingLabScreen(BaseAppScreen):
             )
         )
         a = b = None
+        pin_ready = False
         stale = set()
         previous_ids, previous_sides = set(), set()
         choices = session.view.get("result_choices", {})
@@ -565,8 +576,20 @@ class ChunkingLabScreen(BaseAppScreen):
                 a = result
             else:
                 b = result
+                current_b = candidate.get("current_run_id")
+                pin_ready = session.results.get(current_b, {}).get(
+                    "status"
+                ) == "completed" and not (
+                    current_b in stale
+                    if current_b == run_id
+                    else await asyncio.to_thread(
+                        lab_state.is_result_stale, session, candidate_id
+                    )
+                )
+        # The consumer owns its final sample echo: a same-session status
+        # render may have deferred that echo while this edit task was running.
         if (
-            generation != self._render_generation
+            (generation != self._render_generation and not edit_complete)
             or session is not self.coordinator.session
             or not self.is_mounted
             or not self.query("#lab-message")
@@ -579,8 +602,10 @@ class ChunkingLabScreen(BaseAppScreen):
         }
         # Never replace visible newer keystrokes with a delayed preparation.
         editing = self._edit_task is not None and not self._edit_task.done()
+        sample_editor = self.query_one("#lab-sample-text", SampleTextArea)
         if (
             inputs == self._input_generation
+            and sample_editor.sample_revision == self._sample_input_revision
             and not self._edits
             and (edit_complete or not editing)
         ):
@@ -593,7 +618,9 @@ class ChunkingLabScreen(BaseAppScreen):
             with self.query_one(SampleRegion).prevent(TextArea.Changed):
                 if editor.text != sample:
                     editor.load_text(sample)
-            self.query_one(EditorRegion).present(draft, validation, document)
+                    self._sample_input_revision = sample_editor.sample_revision
+            if generation == self._render_generation:
+                self.query_one(EditorRegion).present(draft, validation, document)
         self.query_one(SampleRegion).disabled = (
             self.coordinator.guarded or self._leaving
         )
@@ -655,17 +682,8 @@ class ChunkingLabScreen(BaseAppScreen):
         self.query_one("#lab-status", Static).update(
             status_text + (" · Preview running" if self.coordinator.busy else "")
         )
-        for identity in ("run", "both", "pin", "save-a", "save-b", "retry"):
-            self.query_one(f"#lab-{identity}", Button).disabled = (
-                self.coordinator.guarded or self._leaving
-            )
-        for identity in ("run", "both"):
-            self.query_one(f"#lab-{identity}", Button).disabled |= self.coordinator.busy
-        has_a = any(c["role"] == "A" for c in session.candidates.values())
-        self.query_one("#lab-both", Button).disabled |= not has_a
-        self.query_one("#lab-save-a", Button).disabled |= not has_a
-        self.query_one("#lab-pin", Button).label = "Replace A" if has_a else "Pin A"
-        self.query_one("#lab-cancel", Button).disabled = not self.coordinator.busy
+        self._pin_ready = pin_ready
+        self._refresh_action_support()
         self._rendered_session = session
         self._layout()
 
@@ -728,15 +746,114 @@ class ChunkingLabScreen(BaseAppScreen):
             lambda session: lab_state.update_view(session, {"region": selected_region})
         )
 
-    def on_descendant_focus(self) -> None:
-        local_keys = (
-            not isinstance(self.focused, (Input, TextArea, Select))
-            and self.coordinator is not None
+    def _action_support(self) -> dict[str, bool]:
+        """Project control gates and readiness without replacing action validation."""
+        owner = self.coordinator
+        available = owner is not None and not owner.guarded and not self._leaving
+        has_a = owner is not None and any(
+            candidate["role"] == "A" for candidate in owner.session.candidates.values()
         )
+        return {
+            "run": available and not owner.busy,
+            "both": available and has_a and not owner.busy,
+            # Pin/Run/Save still explain invalid or incomplete authored inputs.
+            "pin": available,
+            "pin-ready": available and self._pin_ready,
+            "save-a": available and has_a,
+            "save-b": available,
+            "retry": not self._leaving
+            and (available or (owner is None and self._ready.is_set())),
+            "cancel": owner is not None and owner.busy,
+        }
+
+    def _shortcut_entries(
+        self, support: dict[str, bool]
+    ) -> tuple[tuple[str, str], ...]:
         hints = (("f6", "region"), ("f1", "help"))
-        if local_keys:
-            hints += (("r", "run B"), ("p", "pin A"), ("s", "save B"))
-        self.register_footer_shortcuts(source="chunking_lab", shortcuts=hints)
+        if not isinstance(self.focused, (Input, TextArea, Select)):
+            hints += tuple(
+                (key, label)
+                for key, action, label in (
+                    ("r", "run", "run B"),
+                    ("p", "pin-ready", "pin A"),
+                    ("s", "save-b", "save B"),
+                )
+                if support[action]
+            )
+        return hints
+
+    def _refresh_action_support(self) -> None:
+        """Refresh in place on state changes as well as focus changes."""
+        if not self.query("#lab-run"):
+            return
+        support = self._action_support()
+        for identity, enabled in support.items():
+            if identity != "pin-ready":
+                self.query_one(f"#lab-{identity}", Button).disabled = not enabled
+        has_a = self.coordinator is not None and any(
+            candidate["role"] == "A"
+            for candidate in self.coordinator.session.candidates.values()
+        )
+        self.query_one("#lab-pin", Button).label = "Replace A" if has_a else "Pin A"
+        self.register_footer_shortcuts(
+            source="chunking_lab", shortcuts=self._shortcut_entries(support)
+        )
+        self.refresh_bindings()
+
+    def on_descendant_focus(self) -> None:
+        self._refresh_action_support()
+
+    def action_show_workbench_help(self) -> None:
+        """Describe this Lab's current actions, including compact/editor scope."""
+        from tldw_chatbook.UI.Workbench.help import (
+            WorkbenchHelpPanel,
+            WorkbenchHelpState,
+        )
+
+        support = self._action_support()
+        notes = [
+            "Tab/Shift+Tab move between controls; F6 cycles Sample, Configure and "
+            "Results. F1 opens or closes this help at every width.",
+            "Printable r/p/s belong to Input, TextArea and Select while focused. "
+            "Move focus to a button to use eligible Lab shortcuts; eligible action "
+            "buttons are also available at narrow widths.",
+            "Run and Save validate the current draft when activated; incomplete "
+            "or unsupported inputs receive guidance without discarding edits.",
+        ]
+        if self.coordinator is None:
+            notes.append(
+                "Local recovery must load before authoring. Use Retry after a load "
+                "failure; recovery inspection remains read-only."
+            )
+        elif self._leaving or self.coordinator.guarded:
+            notes.append(
+                "Authoring actions are unavailable while a session transition settles."
+            )
+        elif self.coordinator.busy:
+            notes.append(
+                "Preview running: Run B and Run both are unavailable until it "
+                "finishes. Cancel stops the preview; eligible authoring and Save "
+                "actions remain available."
+            )
+        if not support["pin-ready"]:
+            notes.append(
+                "Pin requires a completed current B result with unchanged inputs. "
+                "When authoring is available, Pin still explains missing or stale results."
+            )
+        self.app.push_screen(
+            WorkbenchHelpPanel(
+                WorkbenchHelpState(
+                    route_id="chunking_lab",
+                    title="Chunking Lab",
+                    notes_heading="Current actions and scope",
+                    notes=tuple(notes),
+                    shortcuts=(
+                        ("escape", "Back to Library (an expanded Select closes first)"),
+                    )
+                    + self._shortcut_entries(support),
+                )
+            )
+        )
 
     async def _safe(self, operation) -> None:
         try:
@@ -1042,6 +1159,14 @@ class ChunkingLabScreen(BaseAppScreen):
 
     async def file_operation(self, action: str, choice: dict) -> None:
         """Execute one explicit user-selected bounded local file operation off-loop."""
+        if action in {"sample-file", "excerpt"}:
+            # A newer request revokes this intent even if its read later fails.
+            self._sample_load_generation += 1
+            load_generation = self._sample_load_generation
+            editor = self.query_one("#lab-sample-text", SampleTextArea)
+            revision = editor.sample_revision
+            owner = self.coordinator
+            epoch = owner.session.epoch
         await self.drain_edits()
         selected = choice["path"]
         if action == "restore":
@@ -1072,6 +1197,20 @@ class ChunkingLabScreen(BaseAppScreen):
             await self._refresh_session()
             return
         if action in {"sample-file", "excerpt"}:
+            original_sample = owner.session.samples[owner.session.view["sample_hash"]]
+
+            def applicable():
+                current = owner.session
+                return (
+                    self.is_mounted
+                    and not self._leaving
+                    and self.coordinator is owner
+                    and current.epoch == epoch
+                    and load_generation == self._sample_load_generation
+                    and editor.sample_revision == revision
+                    and current.samples[current.view["sample_hash"]] is original_sample
+                )
+
             text, source = (
                 await asyncio.to_thread(
                     read_sample_excerpt,
@@ -1082,8 +1221,12 @@ class ChunkingLabScreen(BaseAppScreen):
                 if action == "excerpt"
                 else await asyncio.to_thread(read_sample_file, selected)
             )
+            if not applicable():
+                return
+            # Recheck on the UI loop after the real queued transition computes.
             self.queue_edit(
-                lambda session: lab_state.replace_sample(session, text, source)
+                lambda session: lab_state.replace_sample(session, text, source),
+                applicable=applicable,
             )
             await self.drain_edits()
         elif action in {"export-recovery", "export-template"}:
@@ -1249,6 +1392,7 @@ class ChunkingLabScreen(BaseAppScreen):
     async def confirm_navigation(self) -> bool:
         """Cancel and commit before route teardown; failures retain visible recovery."""
         self._leaving = True
+        self._refresh_action_support()
         try:
             await self.drain_edits()
             if self.coordinator is not None:
@@ -1261,6 +1405,7 @@ class ChunkingLabScreen(BaseAppScreen):
             return False
         finally:
             self._leaving = False
+            self._refresh_action_support()
 
     async def confirm_quit(self) -> bool:
         return await self.confirm_navigation()

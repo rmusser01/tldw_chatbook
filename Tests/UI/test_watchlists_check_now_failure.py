@@ -127,9 +127,7 @@ async def test_a_failed_fetch_is_reported_as_a_failure_and_leaves_a_trace():
     assert runs[0]["failure_category"] == "connection_failure"
     assert runs[0]["retryable"] is True
     assert runs[0]["error_msg"] == "The source could not be reached."
-    assert runs[0]["next_action"] == (
-        "Retry when the network or source is available."
-    )
+    assert runs[0]["next_action"] == ("Retry when the network or source is available.")
 
 
 @pytest.mark.asyncio

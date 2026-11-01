@@ -269,9 +269,7 @@ def test_canonicalization_variant_rows_get_no_hint(variant):
     )
 
 
-@pytest.mark.parametrize(
-    "singular", ["note", "media", "conversation", "prompt"]
-)
+@pytest.mark.parametrize("singular", ["note", "media", "conversation", "prompt"])
 def test_singular_twin_of_each_variant_still_gets_a_hint(singular):
     """The control that makes the exclusion above a reading, not a tautology.
 

@@ -522,9 +522,7 @@ class SpeechProfileMixin:
 
         clone_save = artifact.clone_profile_save_eligible
         modal = (
-            TTSCloneProfileSaveReviewModal()
-            if clone_save
-            else TTSProfileNameModal()
+            TTSCloneProfileSaveReviewModal() if clone_save else TTSProfileNameModal()
         )
         active = self._active_profile_name_modal
         if active is not None:
@@ -630,7 +628,9 @@ class SpeechProfileMixin:
         style_state = availability
         is_profile_test = preset.profile_id is not None
         if self._profile_test_error and is_profile_test:
-            copy = "Testing voice profile — Needs test. The sample could not be verified."
+            copy = (
+                "Testing voice profile — Needs test. The sample could not be verified."
+            )
             style_state = "unverified"
         elif availability == "unavailable":
             copy = (

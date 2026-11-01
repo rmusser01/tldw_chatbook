@@ -25,13 +25,20 @@ from uuid import uuid4
 
 from loguru import logger
 
-from .activation import AgentActivationRequired, guarded, worker_guard
+from .activation import (
+    AgentActivationRequired,
+    guarded,
+    history_execution,
+    standard_history_resolver,
+    worker_guard,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
 
     from .execution_capacity import ExecutionOwner, RuntimeCapacity
     from .agent_worktree import AgentWorktree
+    from .fleet_coordinator import PeerMessenger
     from .fleet_messages import MessageInbox, MessageReader, MessageSender
     from .run_log import RunLogWriter
     from .local_tool_provider import RunAdmittedWorkspaceRoot
@@ -48,6 +55,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     entry_for,
     split_custom_endpoint_id,
 )
+from tldw_chatbook.Chat.console_provider_support import GENERATION_FIELD_REQUEST_KEYS  # noqa: F401 - lazy request helper compatibility seam
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
 from tldw_chatbook.Chat.sampling_params import params_to_dict, params_to_tuple
@@ -63,7 +71,7 @@ from tldw_chatbook.Chat.console_history_budget import count_console_messages_tok
 
 from .agent_models import (
     WorkOrigin,
-    check_host_context,
+    check_host_context,  # noqa: F401 - lazy request helper compatibility seam
     PluginContextText,
     MESSAGE_TOOL_NAMES,
     AGENT_LIFECYCLE_INDEX_BASE,
@@ -93,22 +101,29 @@ from .agent_models import (
     STEP_SPAWN,
     STEP_TOOL_CALL,
     FENCE_TOOL_RESULT_PREFIX,
+    FIND_TOOLS_NAME,
+    LOAD_TOOLS_NAME,
     TOOL_OUTCOME_CANCELLED,
     TOOL_OUTCOME_TIMEOUT,
     TERMINAL_RUN_STATUSES,
     AgentConfig,
     AgentDefinition,
+    FirstRequestSchemaPlan,
     AgentStep,
     ContinuationEventContext,
-    ModelTurn,
+    ModelTurn,  # noqa: F401 - lazy request helper compatibility seam
     ProviderContinuationEvent,
     RunOutcome,
+    RunBudget,
+    RunTerminationReason,
     SkillFileBindings,
     SpawnAdmissionRefusal,
+    SpawnAdmissionReplay,
     ToolCall,
     ToolLoadSelection,
     ToolResult,
     ToolReviewValue,
+    ToolCatalogEntry,
     ToolSchema,
     clamp_child_budget,
     contain_child_budget,
@@ -146,6 +161,7 @@ from .agent_runtime import (
     run_agent_loop,
     safe_utc_timestamp,
 )
+
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (fallback_chain imports at the resolve site.)
 from .fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPT_MAX_CHARS,
@@ -154,10 +170,10 @@ from .fleet_coordinator import (
     FleetHandle,
     RetainedTranscript,
 )
-from .human_input_wait import human_input_wait_active
+from .human_input_wait import human_input_wait_active  # noqa: F401 - lazy request helper compatibility seam
 from .native_tools import (
-    ensure_tool_call_ids,
-    parse_native_tool_calls,
+    ensure_tool_call_ids,  # noqa: F401 - lazy request helper compatibility seam
+    parse_native_tool_calls,  # noqa: F401 - lazy request helper compatibility seam
     provider_supports_native_tools,
     schemas_to_openai_tools,
 )
@@ -165,7 +181,7 @@ from .run_context import (
     CurrentRunActor,
     clean_subagent_label,
     use_run_actor,
-    use_tool_call_id,
+    use_tool_call_id,  # noqa: F401 - lazy request helper compatibility seam
 )
 from .run_log import _setting
 from tldw_chatbook.config import coerce_bool_setting, coerce_int_setting
@@ -186,33 +202,27 @@ from .project_instruction_resolver import (
     StartupInstructionCandidate,
 )
 from .project_instruction_runtime import (
-    PROJECT_INSTRUCTION_ROW_KEY,
+    PROJECT_INSTRUCTION_ROW_KEY,  # noqa: F401 - lazy request helper compatibility seam
     InstructionActivationLedger,
     InstructionChainPayloadState,
     InstructionDeliveryReceipt,
     InstructionPreparation,
 )
 from .tool_catalog import (
-    CHECK_AGENTS_SCHEMA,
+    CHECK_AGENTS_SCHEMA as CHECK_AGENTS_SCHEMA,
+    WAIT_AGENTS_SCHEMA as WAIT_AGENTS_SCHEMA,
+    SEND_TO_AGENT_SCHEMA as SEND_TO_AGENT_SCHEMA,
+    build_spawn_schema as build_spawn_schema,
     NEW_CHAT_TOOL_SCHEMA,
     FORK_CHAT_TOOL_SCHEMA,
-    build_chat_create_schema,
-    build_find_tools_schema,
-    INSTALL_SKILL_TOOL_SCHEMA,
-    PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA,
-    LOAD_TOOLS_SCHEMA,
     RUN_LOG_SLICE_TOOL_SCHEMA,
     RUN_LOG_STATS_TOOL_SCHEMA,
-    RUN_SKILL_SCRIPT_TOOL_SCHEMA,
     SEARCH_RUN_LOG_TOOL_SCHEMA,
-    SEND_TO_AGENT_SCHEMA,
-    SKILL_FILE_TOOL_SCHEMA,
-    WAIT_AGENTS_SCHEMA,
     ToolCatalogRegistry,
-    ToolExecutionPolicy,
-    build_spawn_schema,
+    ToolExecutionPolicy,  # noqa: F401 - lazy request helper compatibility seam
     probe_initial_catalog,
 )
+
 
 def get_internal_prompt(prompt_id: str) -> str:
     """Resolve an internal prompt without putting ``Internal_Prompts`` on boot.
@@ -262,21 +272,6 @@ def __getattr__(name: str):
 
 TRUNCATION_NOTICE = "\n[truncated]"
 
-
-#: ``AgentConfig.sampling_params`` keys -> ``chat_api_call`` kwarg names,
-#: verified against the real signature (Chat/Chat_Functions.py ``def
-#: chat_api_call``); the key set is exactly ``KNOWN_SAMPLING_PARAM_KEYS``
-#: (Chat/sampling_params.py), which the preset/registry validators enforce
-#: upstream, so a direct map lookup can never miss for resolver-produced
-#: params.
-_CHAT_CALL_PARAM_MAP = {
-    "temperature": "temp", "top_p": "topp", "min_p": "minp", "top_k": "topk",
-    "max_tokens": "max_tokens", "seed": "seed",
-    "presence_penalty": "presence_penalty", "frequency_penalty": "frequency_penalty",
-    "reasoning_effort": "reasoning_effort", "reasoning_summary": "reasoning_summary",
-    "verbosity": "verbosity", "thinking_effort": "thinking_effort",
-    "thinking_budget_tokens": "thinking_budget_tokens",
-}
 
 #: ``[agents]`` key sizing the fleet: how many sub-agents of one turn may
 #: be live at once. **A value of 1 means the fleet is OFF** and every spawn
@@ -726,20 +721,6 @@ class ModelRequest:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class FirstRequestSchemaPlan:
-    """Pure disclosure/runtime-schema plan for a primary first request."""
-
-    active_schemas: tuple[ToolSchema, ...]
-    runtime_schemas: tuple[ToolSchema, ...]
-    offer_find_load: bool
-    log_active: bool
-    system_prompt: str
-    agent_definitions: tuple[AgentDefinition, ...] | None = None
-    fleet_max_live: int | None = None
-    request_fits: bool = True
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
 class RunLogRequestPlan:
     """Configured first-request log disclosure and history bounds."""
 
@@ -782,6 +763,7 @@ def build_first_request_schema_plan(
     fleet_active: bool = False,
     progress_available: bool = False,
     reporting_available: bool = False,
+    peers_available: bool = False,
     worktree_merge_enabled: bool = False,
     fork_chat_enabled: bool = False,
     new_chat_enabled: bool = False,
@@ -791,6 +773,12 @@ def build_first_request_schema_plan(
     discovery_system_prompt: str | None = None,
     spawn_override_enabled: bool = False,
     spawn_override_targets: tuple[tuple[str, tuple[str, ...]], ...] = (),
+    context_window: object | None = None,
+    plain_system_prompt: str | None = None,
+    catalog_entries: tuple[ToolCatalogEntry, ...] | None = None,
+    schema_loader: Callable[[str], ToolSchema] | None = None,
+    allow_discovery: bool = True,
+    fallback_tools: tuple[str, ...] = (),
 ) -> FirstRequestSchemaPlan:
     """Choose direct disclosure only when schema share and request both fit.
 
@@ -822,147 +810,161 @@ def build_first_request_schema_plan(
         spawn_override_targets: Allowlisted ``(provider, models)`` pairs the
             spawn schema enumerates when the override gate is open;
             identity-only, from ``_spawn_override_targets``.
+        context_window: The send's own ``ContextWindowResolution``; when given,
+            the plan is sized against it (an unverified one conservatively,
+            see ``first_request_window``) instead of the static catalog limit.
+        plain_system_prompt: Prompt sent when no tool is disclosed, so a
+            tool-less request carries no instructions for an absent protocol.
+        catalog_entries: Optional disposable catalog metadata for inspection.
+        schema_loader: Read-only loader for that metadata; grants no execution
+            or registration authority.
+        allow_discovery: ``False`` for plain chat's light surface
+            (TASK-34100.5.3): when its few tools do not fit directly the
+            request carries none, rather than ``find_tools``/``load_tools``.
+        fallback_tools: Names disclosed directly when the whole allowed set
+            does not fit and discovery is off or does not fit either -- plain
+            chat's safe set (TASK-34100.5.3 review round 3, R3-3), so turning
+            one more tool on never leaves fewer tools than the default.
 
     Returns:
         A frozen schema plan whose ``request_fits`` flag proves whether any
         provider request can be dispatched within the current context budget.
     """
+    from .first_request_schemas import build_runtime_schema_plan, build_compact_schema_plan
+
+    if config.review_binding is not None:
+        skill_file_enabled = install_skill_enabled = run_skill_script_enabled = False
+        managed_skill_promotion_enabled = fork_chat_enabled = new_chat_enabled = False
+        reporting_available = peers_available = progress_available = False
+        fleet_active = run_log_active = False
+    api_endpoint = config.execution_provider or api_endpoint
     direct_prompt = direct_system_prompt or config.system_prompt
     discovery_prompt = discovery_system_prompt or config.system_prompt
 
     def _deferred_names() -> tuple[str, ...]:
         try:
-            entries = registry.list_catalog()
+            entries = (
+                catalog_entries
+                if catalog_entries is not None
+                else registry.list_catalog()
+            )
         except Exception:  # noqa: BLE001 -- an unreadable catalog lists nothing
             return ()
         allowed = frozenset(allowed_tools)
         return tuple(
             entry.name
             for entry in entries
-            if entry.name not in MESSAGE_TOOL_NAMES and (not allowed or entry.name in allowed)
+            if entry.name not in MESSAGE_TOOL_NAMES
+            and (not allowed or entry.name in allowed)
         )
 
-    def make_plan(
-        active: tuple[ToolSchema, ...], offer_find_load: bool, system_prompt: str
-    ) -> FirstRequestSchemaPlan:
-        runtime: list[ToolSchema] = []
-        if config.budget.max_subagents > 0:
-            # ADR-147 Task 7: provider/model override args appear ONLY when
-            # the operator opted in; the enumerated targets let the master
-            # pick a VALID one. With no definitions and the gate closed,
-            # build_spawn_schema returns SPAWN_TOOL_SCHEMA itself -- the
-            # pre-ADR-147 payload stays byte-identical.
-            runtime.append(build_spawn_schema(
-                agent_definitions or (),
-                override_enabled=spawn_override_enabled,
-                override_targets=spawn_override_targets,
-            ))
-        if fleet_active and agent_kind == AGENT_KIND_PRIMARY:
-            runtime.extend(
-                (WAIT_AGENTS_SCHEMA, CHECK_AGENTS_SCHEMA, SEND_TO_AGENT_SCHEMA)
-            )
-            if worktree_merge_enabled:
-                from .tool_catalog import (
-                    DISCARD_AGENT_WORKTREE_SCHEMA,
-                    MERGE_AGENT_WORKTREE_SCHEMA,
-                )
+    make_plan = functools.partial(
+        build_runtime_schema_plan,
+        config=config,
+        review_spawn_enabled=registry.resolve_owner_for_name("code_review_prepare") is not None,
+        agent_definitions=agent_definitions,
+        fleet_max_live=fleet_max_live,
+        agent_kind=agent_kind,
+        fleet_active=fleet_active,
+        progress_available=progress_available,
+        reporting_available=reporting_available,
+        peers_available=peers_available,
+        worktree_merge_enabled=worktree_merge_enabled,
+        spawn_override_enabled=spawn_override_enabled,
+        spawn_override_targets=spawn_override_targets,
+        skill_file_enabled=skill_file_enabled,
+        install_skill_enabled=install_skill_enabled,
+        managed_skill_promotion_enabled=managed_skill_promotion_enabled,
+        run_skill_script_enabled=run_skill_script_enabled,
+        fork_chat_enabled=fork_chat_enabled,
+        new_chat_enabled=new_chat_enabled,
+        run_log_active=run_log_active,
+        deferred_names=_deferred_names,
+    )
 
-                runtime.extend((MERGE_AGENT_WORKTREE_SCHEMA, DISCARD_AGENT_WORKTREE_SCHEMA))
-        if progress_available and agent_kind == AGENT_KIND_PRIMARY:
-            from .fleet_message_tools import READ_AGENT_MESSAGES_SCHEMA, READ_INSTRUCTIONS
+    # TASK-34100.5.3: the light surface never falls back to find/load
+    # discovery; its fallback is the tool-less request on the plain prompt.
+    discovery = (
+        make_plan((), True, discovery_prompt)
+        if allow_discovery
+        else make_plan((), False, plain_system_prompt or direct_prompt)
+    )
 
-            runtime.append(READ_AGENT_MESSAGES_SCHEMA)
-            if READ_INSTRUCTIONS not in system_prompt:
-                system_prompt += "\n\n" + READ_INSTRUCTIONS
-        if reporting_available and agent_kind == AGENT_KIND_SUBAGENT:
-            from .fleet_message_tools import REPORT_TO_SUPERVISOR_SCHEMA, REPORT_INSTRUCTIONS
-
-            runtime.append(REPORT_TO_SUPERVISOR_SCHEMA)
-            if REPORT_INSTRUCTIONS not in system_prompt:
-                system_prompt += "\n\n" + REPORT_INSTRUCTIONS
-        if offer_find_load:
-            # TASK-26007: the deferred surface NAMES what exists -- the
-            # model must never conclude a present capability is absent.
-            runtime.extend(
-                (
-                    build_find_tools_schema(_deferred_names()),
-                    LOAD_TOOLS_SCHEMA,
-                )
-            )
-        if skill_file_enabled:
-            runtime.append(SKILL_FILE_TOOL_SCHEMA)
-        if install_skill_enabled and agent_kind == AGENT_KIND_PRIMARY:
-            runtime.append(INSTALL_SKILL_TOOL_SCHEMA)
-        if managed_skill_promotion_enabled and agent_kind == AGENT_KIND_PRIMARY:
-            runtime.append(PREPARE_MANAGED_SKILL_PROMOTION_TOOL_SCHEMA)
-        if run_skill_script_enabled:
-            runtime.append(RUN_SKILL_SCRIPT_TOOL_SCHEMA)
-        if fork_chat_enabled:
-            # TASK-32874: the DISCLOSED schema is built per run (preset
-            # roster + gated override args, ADR-147 pattern); the static
-            # constant remains only as the nothing-to-add identity base.
-            # TASK-32531: disclosed to sub-agents too (children are scoped
-            # to the parent conversation; confirm still gates every call).
-            runtime.append(
-                build_chat_create_schema(
-                    FORK_CHAT_TOOL_SCHEMA,
-                    agent_definitions or (),
-                    override_enabled=spawn_override_enabled,
-                    override_targets=spawn_override_targets,
-                )
-            )
-        if new_chat_enabled:
-            runtime.append(
-                build_chat_create_schema(
-                    NEW_CHAT_TOOL_SCHEMA,
-                    agent_definitions or (),
-                    override_enabled=spawn_override_enabled,
-                    override_targets=spawn_override_targets,
-                )
-            )
-        log_active = bool(
-            agent_kind == AGENT_KIND_PRIMARY
-            and run_log_active
-            and (runtime or active)
+    def direct_plan(
+        names: tuple[str, ...], context_limit: int
+    ) -> FirstRequestSchemaPlan | None:
+        """Every one of ``names`` disclosed directly, or ``None`` if they do not fit."""
+        active = probe_initial_catalog(
+            registry,
+            names,
+            int(context_limit * DIRECT_DISCLOSURE_CONTEXT_FRACTION),
+            lambda schemas: catalog_schema_tokens(
+                schemas,
+                model=config.model,
+                api_endpoint=api_endpoint,
+                native_tools=config.native_tools,
+                reasoning_replay=config.reasoning_replay,
+            ),
+            catalog_entries=catalog_entries,
+            schema_loader=schema_loader,
         )
-        if log_active:
-            runtime.extend(
-                (
-                    SEARCH_RUN_LOG_TOOL_SCHEMA,
-                    RUN_LOG_STATS_TOOL_SCHEMA,
-                    RUN_LOG_SLICE_TOOL_SCHEMA,
-                )
-            )
-        return FirstRequestSchemaPlan(
-            active_schemas=active,
-            runtime_schemas=tuple(runtime),
-            offer_find_load=offer_find_load,
-            log_active=log_active,
-            system_prompt=system_prompt,
-            agent_definitions=agent_definitions,
-            fleet_max_live=fleet_max_live,
-        )
-
-    discovery = make_plan((), True, discovery_prompt)
-
-    def validated_fallback(context_limit: int) -> FirstRequestSchemaPlan:
-        if _first_request_plan_fits(
-            discovery,
+        if active is None:
+            return None
+        plan = make_plan(active, False, direct_prompt)
+        if not _first_request_plan_fits(
+            plan,
             config=config,
             api_endpoint=api_endpoint,
             messages=messages,
             context_limit=context_limit,
         ):
+            return None
+        return plan
+
+    def validated_fallback(context_limit: int) -> FirstRequestSchemaPlan:
+        discovery_fits = _first_request_plan_fits(
+            discovery,
+            config=config,
+            api_endpoint=api_endpoint,
+            messages=messages,
+            context_limit=context_limit,
+        )
+        if allow_discovery and discovery_fits:
+            return discovery
+        # TASK-34100.5.3 review round 3 (R3-3): the safe set survives the
+        # trimming ahead of the opt-in extras that no longer fit beside it.
+        wanted = frozenset(fallback_tools)
+        safe_set = tuple(name for name in allowed_tools if name in wanted)
+        if safe_set and len(safe_set) < len(allowed_tools):
+            safe_plan = direct_plan(safe_set, context_limit)
+            if safe_plan is not None:
+                return safe_plan
+        if discovery_fits:
             return discovery
         no_tools = FirstRequestSchemaPlan(
             active_schemas=(),
             runtime_schemas=(),
             offer_find_load=False,
             log_active=False,
-            system_prompt=direct_prompt,
+            system_prompt=plain_system_prompt or direct_prompt,
             agent_definitions=agent_definitions,
             fleet_max_live=fleet_max_live,
         )
+        compact = build_compact_schema_plan(
+            no_tools, discovery, context_limit=context_limit,
+            response_reserve_tokens=config.response_reserve_tokens,
+            progress_available=progress_available,
+            reporting_available=reporting_available, peers_available=peers_available,
+            agent_kind=agent_kind,
+        )
+        if _first_request_plan_fits(
+            compact,
+            config=config,
+            api_endpoint=api_endpoint,
+            messages=messages,
+            context_limit=context_limit,
+        ):
+            return compact
         return dataclasses.replace(
             no_tools,
             request_fits=_first_request_plan_fits(
@@ -975,36 +977,104 @@ def build_first_request_schema_plan(
         )
 
     try:
-        context_limit = get_model_token_limit(config.model, api_endpoint)
+        from .first_request_window import planning_window
+
+        # TASK-34100.5 AC#6: plan against the send's own window when known.
+        unclamped = config
+        planned = planning_window(
+            context_window, config.response_reserve_tokens, provider=api_endpoint
+        )
+        if planned is not None:
+            context_limit = planned[0]
+            config = dataclasses.replace(config, response_reserve_tokens=planned[1])
+        else:
+            context_limit = get_model_token_limit(config.model, api_endpoint)
+
+        def settle(plan: FirstRequestSchemaPlan) -> FirstRequestSchemaPlan:
+            # A guessed window only shapes tool disclosure; whether the request
+            # fits a window nobody verified is the send preflight's call.
+            if plan.request_fits or planned is None or getattr(
+                context_window, "verified", False
+            ) is True:
+                return plan
+            return dataclasses.replace(plan, request_fits=_first_request_plan_fits(
+                plan, config=unclamped, api_endpoint=api_endpoint,
+                messages=messages, context_limit=context_window.tokens,
+            ))
         if type(context_limit) is not int or context_limit <= 0:
             return discovery
-        schema_limit = int(context_limit * DIRECT_DISCLOSURE_CONTEXT_FRACTION)
-        active = probe_initial_catalog(
-            registry,
-            allowed_tools,
-            schema_limit,
-            lambda schemas: catalog_schema_tokens(
-                schemas,
-                model=config.model,
-                api_endpoint=api_endpoint,
-                native_tools=config.native_tools,
-                reasoning_replay=config.reasoning_replay,
-            ),
-        )
-        if active is None:
-            return validated_fallback(context_limit)
-        direct = make_plan(active, False, direct_prompt)
-        if not _first_request_plan_fits(
-            direct,
-            config=config,
-            api_endpoint=api_endpoint,
-            messages=messages,
-            context_limit=context_limit,
-        ):
-            return validated_fallback(context_limit)
+        direct = direct_plan(allowed_tools, context_limit)
+        if direct is None:
+            return settle(validated_fallback(context_limit))
         return direct
     except Exception:
         return discovery
+
+
+def compose_model_request_surface(
+    config: AgentConfig,
+    schemas: list[ToolSchema],
+    messages: list[dict],
+    *,
+    native: bool,
+    log_active: bool = False,
+    trusted_role: Literal["primary", "subagent"] = "primary",
+    repository_target_enabled: bool = False,
+    protocol_cache: dict | None = None,
+) -> tuple[str, list[dict]]:
+    """Compose the shared provider-visible system prompt and native tool rows.
+
+    Preview and dispatch use identical protocol and runtime guidance. This pure
+    projection neither composes providers nor grants execution authority.
+    """
+    if protocol_cache is None:
+        protocol_cache = {}
+    system_content = config.system_prompt
+    tools: list[dict] = []
+    if native:
+        tools = schemas_to_openai_tools(schemas)
+    else:
+        # The cache spans the parent/child run tree, so key the complete
+        # immutable schema representation rather than names alone: a child
+        # may legitimately expose a narrower definition under the same name.
+        protocol_key = tuple(repr(schema) for schema in schemas)
+        protocol_text = protocol_cache.get(protocol_key)
+        if protocol_text is None:
+            protocol_text = render_tool_protocol(schemas)
+            protocol_cache[protocol_key] = protocol_text
+        if protocol_text:
+            system_content = f"{system_content}\n\n{protocol_text}"
+    if log_active:
+        system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+    from .canvas_tool_provider import build_canvas_runtime_guidance
+
+    canvas_guidance = build_canvas_runtime_guidance(
+        schemas, messages=messages, system_prompt=config.system_prompt
+    )
+    if canvas_guidance:
+        system_content = f"{system_content}\n\n{canvas_guidance}"
+    from tldw_chatbook.Notes.agent_lessons import (
+        build_agent_lessons_runtime_guidance,
+    )
+    from .agent_lesson_promotion import build_agent_lesson_promotion_guidance
+
+    guidance = build_agent_lessons_runtime_guidance(schemas, trusted_role=trusted_role)
+    if guidance:
+        system_content = f"{system_content}\n\n{guidance}"
+    promotion_guidance = build_agent_lesson_promotion_guidance(
+        schemas,
+        trusted_role=trusted_role,
+        repository_target_enabled=repository_target_enabled,
+    )
+    if promotion_guidance:
+        system_content = f"{system_content}\n\n{promotion_guidance}"
+    system_content = _append_workspace_context_note(
+        system_content, config.workspace_context_note
+    )
+    system_content = append_personal_context(
+        system_content, config.personal_context_block
+    )
+    return system_content, tools
 
 
 def catalog_schema_tokens(
@@ -1063,7 +1133,8 @@ def _first_request_plan_fits(
     if type(reserve) is not int or reserve < 0:
         return False
     native = config.native_tools and provider_supports_native_tools(
-        api_endpoint, reasoning_replay=config.reasoning_replay
+        config.execution_provider or api_endpoint,
+        reasoning_replay=config.reasoning_replay,
     )
     schemas = plan.runtime_schemas + plan.active_schemas
     system_content = plan.system_prompt
@@ -1269,12 +1340,27 @@ def _replace_process_handles(content: str, handles: Mapping[str, str]) -> str:
     return content
 
 
+def _body_free_review_step(step: AgentStep) -> AgentStep:
+    """Keep review lifecycle identity while omitting bodies from projections."""
+    return dataclasses.replace(
+        step,
+        summary="",
+        result="",
+        args=None,
+        field_states={**step.field_states, "payload": "omitted"},
+    )
+
+
 def _safe_agent_step_record(
     run_id: str,
     step: AgentStep,
     durable_handles: Mapping[str, str] | None = None,
+    *,
+    omit_content: bool = False,
 ) -> dict[str, Any]:
     """Serialize one step without persisting tool payloads or local-only links."""
+    if omit_content:
+        step = _body_free_review_step(step)
     record = dataclasses.asdict(step)
     states = dict(step.field_states)
     if step.summary:
@@ -1295,9 +1381,7 @@ def _safe_agent_step_record(
             record["summary"] = safe_summary
             if safe_summary != summary:
                 states["summary"] = (
-                    "redacted"
-                    if REDACTION_MARKER in safe_summary
-                    else "truncated"
+                    "redacted" if REDACTION_MARKER in safe_summary else "truncated"
                 )
     if step.args is not None:
         record["args"] = None
@@ -1318,15 +1402,12 @@ def _safe_agent_step_record(
             record["result"] = REDACTION_MARKER
             states["result"] = "redacted"
         else:
-            durable_result = _replace_process_handles(
-                scrubbed, durable_handles or {}
-            )
+            durable_result = _replace_process_handles(scrubbed, durable_handles or {})
             record["result"] = durable_result
             if durable_result != result:
                 states["result"] = (
                     "redacted"
-                    if REDACTION_MARKER in durable_result
-                    or durable_result != scrubbed
+                    if REDACTION_MARKER in durable_result or durable_result != scrubbed
                     else "truncated"
                 )
             else:
@@ -1385,9 +1466,7 @@ _DURABLE_SUMMARY_MAX_DEPTH = 64
 _REASONING_FIELD_NAMES = frozenset(
     {"reasoning", "reasoning_content", "chain_of_thought"}
 )
-_LOCAL_PATH_FIELD_NAMES = frozenset(
-    {"path", "file_path", "file", "cwd", "directory"}
-)
+_LOCAL_PATH_FIELD_NAMES = frozenset({"path", "file_path", "file", "cwd", "directory"})
 
 
 def _without_think_blocks(content: str) -> tuple[str, bool]:
@@ -1564,9 +1643,7 @@ def _safe_bounded_summary(
             structured, structured_altered = _sanitize_summary_value(
                 structured, max_chars=max_chars
             )
-            if file_payload or (
-                content_has_local_path and not structured_altered
-            ):
+            if file_payload or (content_has_local_path and not structured_altered):
                 summary = "[local path withheld]"
             else:
                 summary = json.dumps(structured, ensure_ascii=False, sort_keys=True)
@@ -1976,7 +2053,16 @@ def _call_with_timeout(
         operation = owner.reserve_tool() if owner is not None else None
     except (CapacityRefused, AutomaticWorkRefused) as exc:
         return ToolResult(
-            ok=False, error=f"tool call refused: {exc}", dispatch_state="not_started"
+            ok=False,
+            error=f"tool call refused: {exc}",
+            dispatch_state="not_started",
+            termination_reason=(
+                exc.termination_reason
+                if isinstance(exc, AutomaticWorkRefused)
+                else RunTerminationReason.PREFLIGHT_REFUSED
+            )
+            if automatic_work is not None and automatic_work.goal is not None
+            else None,
         )
     box: dict = {"dispatch_state": "not_started"}
 
@@ -2000,7 +2086,7 @@ def _call_with_timeout(
                     else result
                 )
         except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
-            box["error"] = str(exc)
+            box["error"] = exc
         finally:
             if operation is not None:
                 operation.finish()
@@ -2052,12 +2138,25 @@ def _call_with_timeout(
     if "error" in box:
         return ToolResult(
             ok=False,
-            error=box["error"],
+            error=str(box["error"]),
+            termination_reason=(
+                box["error"].termination_reason
+                if isinstance(box["error"], AutomaticWorkRefused)
+                else RunTerminationReason.UNKNOWN_EFFECT
+                if automatic_work is not None and automatic_work.goal is not None
+                else None
+            ),
             dispatch_state=box.get("dispatch_state", "settled"),
         )
     result = box.get("result")
     if result is None:
-        return ToolResult(ok=False, error=f"tool call produced no result: {tool_name}")
+        return ToolResult(
+            ok=False,
+            error=f"tool call produced no result: {tool_name}",
+            termination_reason=RunTerminationReason.UNKNOWN_EFFECT
+            if automatic_work is not None and automatic_work.goal is not None
+            else None,
+        )
     return result
 
 
@@ -2084,6 +2183,23 @@ class _OwnerSeqAllocator:
 RunModelScope = Callable[[str, str], contextlib.AbstractContextManager[None]]
 
 
+def _tool_availability_refusal(
+    name: str,
+    allowed_tools: tuple[str, ...],
+    disclosed_names: set[str],
+    registry: ToolCatalogRegistry,
+) -> ToolResult | None:
+    """Explain missing disclosure only after checking the run's allow-list."""
+    if name not in allowed_tools or registry.resolve_name(name) is None:
+        return ToolResult.blocked(f"Tool not permitted: {name}")
+    if name not in disclosed_names:
+        return ToolResult.blocked(
+            f"Tool schema not loaded: {name}. Call load_tools alone with "
+            f"ids=[{json.dumps(name)}], including all tools to retain, then retry."
+        )
+    return None
+
+
 class AgentService:
     """Run one agent turn (primary + any sub-agents) and persist it."""
 
@@ -2103,6 +2219,7 @@ class AgentService:
         hooks_v2_engine: Any = None,
         hooks_v2_session_id: str | None = None,
         hooks_v2_turn_id: str | None = None,
+        on_primary_budget_settled: Callable[[RunBudget | bool], None] | None = None,
         hooks_v2_required_handler_ids: (
             Callable[[str], tuple[str, ...] | None] | None
         ) = None,
@@ -2142,6 +2259,7 @@ class AgentService:
             Callable[[str, str, list[str]], ToolResult] | None
         ) = None,
         post_tool_call: Callable[[str, str, dict, str, bool, str], None] | None = None,
+        archive_recovery_provider: Any | None = None,
         fork_chat_tool: Callable[[dict], ToolResult] | None = None,
         new_chat_tool: Callable[[dict], ToolResult] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
@@ -2164,10 +2282,17 @@ class AgentService:
         on_child_settled: Callable[[str | None, str], None] | None = None,
         managed_child_required: bool = False,
         managed_child_resume: Callable[[RetainedTranscript], object] | None = None,
-        persist_provider_continuation: Callable[[ProviderContinuationEvent], None]
-        | None = None,
+        persist_provider_continuation: (
+            Callable[[ProviderContinuationEvent], None] | None
+        ) = None,
         expand_provider_continuation: (
             Callable[[ProviderContinuationCheckpoint], list[dict]] | None
+        ) = None,
+        acknowledge_provider_continuation: (
+            Callable[
+                [ProviderContinuationEvent, ProviderContinuationEvent, str | None], None
+            ]
+            | None
         ) = None,
         prepare_provider_continuation_request: bool = False,
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
@@ -2180,8 +2305,9 @@ class AgentService:
         ) = None,
         propagate_trace_call_persistence_errors: bool = False,
         wall_clock: Callable[[], datetime] = _utc_now,
-        inline_child_model_scope: Callable[[], contextlib.AbstractContextManager]
-        | None = None,
+        inline_child_model_scope: (
+            Callable[[], contextlib.AbstractContextManager] | None
+        ) = None,
         run_model_scope: RunModelScope | None = None,
         runtime_capacity: RuntimeCapacity | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
@@ -2189,6 +2315,7 @@ class AgentService:
         worktree_repo_authority: RunAdmittedWorkspaceRoot | None = None,
         app_config: Mapping[str, Any] | None = None,
         on_tool_activity: Callable[[AgentStep, str, str], None] | None = None,
+        on_resolved_target: Callable[[str, str, str], None] | None = None,
     ) -> None:
         from .execution_capacity import RuntimeCapacity
         from .automatic_work_runtime import current_automatic_work
@@ -2219,6 +2346,7 @@ class AgentService:
         self._primary_trace_call_persistence_error: Exception | None = None
         self._on_step = on_step
         self._on_tool_activity = on_tool_activity
+        self._on_resolved_target = on_resolved_target
         self.skill_runner = skill_runner
         # task-3 (skills-foundation): per-run authorization + reader for the
         # skill_file runtime tool. `None` (the default, and every caller
@@ -2256,6 +2384,7 @@ class AgentService:
         )
         self._hooks_v2_session_id = hooks_v2_session_id
         self._hooks_v2_turn_id = hooks_v2_turn_id
+        self._on_primary_budget_settled = on_primary_budget_settled
         self._hooks_v2_required_handler_ids = hooks_v2_required_handler_ids
         self._hooks_v2_definition_requirements = hooks_v2_definition_requirements
         self._hooks_v2_render_context = hooks_v2_render_context
@@ -2340,6 +2469,7 @@ class AgentService:
         # this seam existed.
         self._post_tool_call = post_tool_call
         # Primary-only by design (ADR-150): children never create chats in v1.
+        self._archive_recovery_provider = archive_recovery_provider
         self._fork_chat_tool = fork_chat_tool
         self._new_chat_tool = new_chat_tool
         # Round-1 review fix (spec §3.1): the writer is per RUN TREE, not
@@ -2465,6 +2595,7 @@ class AgentService:
         self._on_child_settled = on_child_settled
         self.managed_child_required = managed_child_required
         self.managed_child_resume = managed_child_resume
+        self.acknowledge_provider_continuation = acknowledge_provider_continuation
         self.persist_provider_continuation = persist_provider_continuation
         self.expand_provider_continuation = expand_provider_continuation
         self.prepare_provider_continuation_request = bool(
@@ -2536,9 +2667,7 @@ class AgentService:
             self._tool_result_pruning = None
         if stale_image_retirement is not None:
             self._stale_image_retirement = stale_image_retirement
-        elif coerce_bool_setting(
-            _setting("retire_stale_images", False), default=False
-        ):
+        elif coerce_bool_setting(_setting("retire_stale_images", False), default=False):
             self._stale_image_retirement = StaleImageSettings(
                 keep_recent_turns=coerce_int_setting(
                     _setting("retire_images_keep_recent_turns", 4),
@@ -2596,58 +2725,21 @@ class AgentService:
     ) -> ModelRequest:
         """Build the exact bounded messages and native tools sent on a turn."""
         native = config.native_tools and provider_supports_native_tools(
-            api_endpoint, reasoning_replay=config.reasoning_replay
+            config.execution_provider or api_endpoint,
+            reasoning_replay=config.reasoning_replay,
         )
         schemas = runtime_schemas + list(active_schemas)
-        system_content = config.system_prompt
-        tools: list[dict] = []
-        if native:
-            tools = schemas_to_openai_tools(schemas)
-        else:
-            # The cache spans the parent/child run tree, so key the complete
-            # immutable schema representation rather than names alone: a child
-            # may legitimately expose a narrower definition under the same name.
-            protocol_key = tuple(repr(schema) for schema in schemas)
-            protocol_text = self._tool_protocol_cache.get(protocol_key)
-            if protocol_text is None:
-                protocol_text = render_tool_protocol(schemas)
-                self._tool_protocol_cache[protocol_key] = protocol_text
-            if protocol_text:
-                system_content = f"{system_content}\n\n{protocol_text}"
-        if log_active:
-            system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
-        from .canvas_tool_provider import build_canvas_runtime_guidance
-
-        canvas_guidance = build_canvas_runtime_guidance(
-            schemas, messages=messages, system_prompt=config.system_prompt
-        )
-        if canvas_guidance:
-            system_content = f"{system_content}\n\n{canvas_guidance}"
-        from tldw_chatbook.Notes.agent_lessons import (
-            build_agent_lessons_runtime_guidance,
-        )
-        from .agent_lesson_promotion import build_agent_lesson_promotion_guidance
-
-        guidance = build_agent_lessons_runtime_guidance(
-            schemas, trusted_role=trusted_role
-        )
-        if guidance:
-            system_content = f"{system_content}\n\n{guidance}"
-        promotion_guidance = build_agent_lesson_promotion_guidance(
-            schemas,
+        system_content, tools = compose_model_request_surface(
+            config, schemas, messages, native=native, log_active=log_active,
             trusted_role=trusted_role,
             repository_target_enabled=self.project_instruction_context is not None,
-        )
-        if promotion_guidance:
-            system_content = f"{system_content}\n\n{promotion_guidance}"
-        system_content = _append_workspace_context_note(
-            system_content, config.workspace_context_note
-        )
-        system_content = append_personal_context(
-            system_content, config.personal_context_block
+            protocol_cache=self._tool_protocol_cache,
         )
         raw_payload = [{"role": "system", "content": system_content}, *messages]
-        raw_payload = self._prune_send_payload(raw_payload, native=native)
+        if config.review_binding is not None:
+            raw_payload = self._review_history_for_request(config, raw_payload, native=native)
+        else:
+            raw_payload = self._prune_send_payload(raw_payload, native=native)
         evict_enabled = log_active and self._run_log_evict_enabled
         min_recent_rounds = self._run_log_min_recent_rounds
         payload = bound_history_for_send(
@@ -2669,12 +2761,29 @@ class AgentService:
             tools=tuple(tools),
         )
 
+    def _review_history_for_request(
+        self, config, messages, *, native, continuation_groups=()
+    ):
+        from tldw_chatbook.Agents.code_review_history import review_history_for_request
+
+        return review_history_for_request(
+            self, config, messages, native=native, continuation_groups=continuation_groups
+        )
+
+    def review_input_capacity(
+        self, config: AgentConfig, api_endpoint: str, request: ModelRequest
+    ) -> int | None:
+        from tldw_chatbook.Agents.code_review_history import review_input_capacity
+
+        return review_input_capacity(self, config, api_endpoint, request)
+
     def safe_project_instruction_tokens(
         self,
         config: AgentConfig,
         api_endpoint: str,
         request: ModelRequest,
         candidate_rows: list[dict],
+        *, input_budget_tokens: int | None = None,
     ) -> int:
         """Return fail-safe remaining tokens for whole project context rows."""
         try:
@@ -2707,15 +2816,22 @@ class AgentService:
             return 0
         if type(used) is not int or used < 0:
             return 0
-        return max(0, limit - reserve - used)
+        available = limit - reserve
+        if input_budget_tokens is not None:
+            if type(input_budget_tokens) is not int or input_budget_tokens < 0:
+                return 0
+            available = min(available, input_budget_tokens)
+        return max(0, available - used)
 
     def _project_instruction_request_fits(
         self,
         config: AgentConfig,
         api_endpoint: str,
         request: ModelRequest,
+        *,
+        input_budget_tokens: int | None = None,
     ) -> bool:
-        """Return whether an exact staged request fits its raw input budget."""
+        """Fit an exact request, optionally narrowed by its compact plan."""
         try:
             limit = get_model_token_limit(config.model, api_endpoint)
             reserve = config.response_reserve_tokens
@@ -2749,7 +2865,12 @@ class AgentService:
                 used += schema_tokens
         except Exception:
             return False
-        return used <= limit - reserve
+        available = limit - reserve
+        if input_budget_tokens is not None:
+            if type(input_budget_tokens) is not int or input_budget_tokens < 0:
+                return False
+            available = min(available, input_budget_tokens)
+        return used <= available
 
     def _startup_delivery_for_request(
         self,
@@ -2757,6 +2878,7 @@ class AgentService:
         config: AgentConfig,
         api_endpoint: str,
         request: ModelRequest,
+        *, input_budget_tokens: int | None = None,
     ) -> InstructionChainDelivery:
         """Whole-source admit a captured source against one chain request."""
         source = candidate.source
@@ -2765,7 +2887,8 @@ class AgentService:
         if source is not None:
             row = build_project_instruction_row(source)
             available = self.safe_project_instruction_tokens(
-                config, api_endpoint, request, [row]
+                config, api_endpoint, request, [row],
+                input_budget_tokens=input_budget_tokens,
             )
             try:
                 required = count_tokens_messages(
@@ -2792,11 +2915,13 @@ class AgentService:
         config: AgentConfig,
         api_endpoint: str,
         request: ModelRequest,
+        *, input_budget_tokens: int | None = None,
     ) -> InstructionSnapshot:
         """Freeze primary admission plus content-free captured metadata."""
         source = candidate.source
         delivery = self._startup_delivery_for_request(
-            candidate, config, api_endpoint, request
+            candidate, config, api_endpoint, request,
+            input_budget_tokens=input_budget_tokens,
         )
         primary_outcomes = delivery.outcomes
         return InstructionSnapshot(
@@ -2835,6 +2960,7 @@ class AgentService:
         runtime_schemas: list,
         messages: list[dict],
         active_schemas: tuple,
+        input_budget_tokens: int | None = None,
         log_active: bool = False,
         trusted_role: Literal["primary", "subagent"] = "primary",
     ) -> tuple[ModelRequest, InstructionSnapshot]:
@@ -2853,6 +2979,7 @@ class AgentService:
             config,
             api_endpoint,
             base_request,
+            input_budget_tokens=input_budget_tokens,
         )
         request_messages = messages
         source = snapshot.startup_source
@@ -2885,9 +3012,7 @@ class AgentService:
             ).ready
         )
 
-    def _prune_send_payload(
-        self, payload: list[dict], *, native: bool
-    ) -> list[dict]:
+    def _prune_send_payload(self, payload: list[dict], *, native: bool) -> list[dict]:
         """TASK-25911: shrink large stale tool results before eviction.
 
         Deterministic, LLM-free, and OFF unless configured. The stats log
@@ -2895,10 +3020,7 @@ class AgentService:
         protocol-aware round boundary keeps native pairs whole across the
         recency fence.
         """
-        if (
-            self._tool_result_pruning is None
-            and self._stale_image_retirement is None
-        ):
+        if self._tool_result_pruning is None and self._stale_image_retirement is None:
             return payload
         boundary = _make_round_boundary(native=native)
         if self._tool_result_pruning is not None:
@@ -2953,367 +3075,31 @@ class AgentService:
         payload_state: InstructionChainPayloadState | None = None,
         staged_delivery: dict[str, InstructionDeliveryReceipt] | None = None,
         on_context_assembled: Callable[[tuple[str, ...]], None] | None = None,
+        input_budget_tokens: int | None = None,
         first_request_fits: bool = True,
         run_id: str | None = None,
     ):
-        native = config.native_tools and provider_supports_native_tools(
-            api_endpoint, reasoning_replay=config.reasoning_replay
+        from .agent_request_execution import make_call_model
+
+        return make_call_model(
+            self,
+            config,
+            api_endpoint,
+            runtime_schemas,
+            log_active,
+            continuation_groups,
+            continuation_owner_key,
+            continuation_owner_message_id,
+            trusted_role=trusted_role,
+            project_instruction_context=project_instruction_context,
+            chain_id=chain_id,
+            payload_state=payload_state,
+            staged_delivery=staged_delivery,
+            on_context_assembled=on_context_assembled,
+            input_budget_tokens=input_budget_tokens,
+            first_request_fits=first_request_fits,
+            run_id=run_id,
         )
-        initial_context_checked = False
-        context_observed = False
-        staged = staged_delivery if staged_delivery is not None else {}
-        # TASK-1272 (Phase 3): the ONLY gate on whether eviction may run at
-        # all is (a) `log_active` -- the SAME condition, reused verbatim,
-        # that gates the search_run_log tool and the prompt section above,
-        # so eviction is never offered a run that has nothing durable to
-        # recover from -- and (b) the opt-in `[agents] run_log_evict_
-        # enabled` flag, off by default so existing runs stay byte-identical
-        # until a user turns it on (requirement #5). Resolved once here,
-        # not per turn: neither operand can change during a run.
-        evict_requested = self._run_log_evict_enabled
-        # TASK-1272 follow-up (live-verified 2026-07-28): the minimum-
-        # recent-rounds floor, resolved once alongside evict_enabled for
-        # the same reason -- it cannot change during a run. Unused when
-        # evict_enabled is False, but resolving it unconditionally keeps
-        # this closure's config reads in one place rather than split
-        # across a conditional.
-        min_recent_rounds = self._run_log_min_recent_rounds
-        # task-245: one render per active-set change, not per turn. Keyed by
-        # schema NAMES (the set only ever grows via load_tools — AC #2), and
-        # scoped to this closure = this run, so sub-agents (their own
-        # _run_one -> their own closure) never share a cache. Byte-stable
-        # repeated turns are the precondition for provider-side prompt
-        # caching (see Docs/superpowers/reviews/
-        # 2026-07-17-provider-prompt-caching-note.md).
-        protocol_key: tuple | None = None
-        protocol_text = ""
-        run_log_schema_names = {
-            SEARCH_RUN_LOG_TOOL_SCHEMA.name,
-            RUN_LOG_STATS_TOOL_SCHEMA.name,
-            RUN_LOG_SLICE_TOOL_SCHEMA.name,
-        }
-
-        def call_model(
-            messages: list[dict],
-            active_schemas: tuple,
-            current_continuation: ProviderContinuationCheckpoint | None = None,
-        ) -> ModelTurn:
-            nonlocal protocol_key, protocol_text, initial_context_checked, context_observed
-            if (
-                project_instruction_context is not None
-                and payload_state is not None
-                and not initial_context_checked
-            ):
-                payload_state.capture(messages, active_schemas, ())
-                try:
-                    initial = project_instruction_context.initial_context_for_chain(
-                        chain_id, payload_state
-                    )
-                except Exception:  # noqa: BLE001 - content-free boundary
-                    raise _ProjectInstructionPayloadError(
-                        "project_instruction_delivery_failed"
-                    ) from None
-                initial_context_checked = True
-                if initial.status == "retry_with_context":
-                    messages.extend(dict(row) for row in initial.ephemeral_rows)
-                    staged["receipt"] = initial.delivery_receipt
-            effective_log_active = bool(
-                log_active
-                and self.run_log_writer is not None
-                and self.run_log_writer.is_active
-            )
-            effective_runtime_schemas = [
-                schema
-                for schema in runtime_schemas
-                if effective_log_active or schema.name not in run_log_schema_names
-            ]
-            schemas = effective_runtime_schemas + list(active_schemas)
-            system_content = config.system_prompt
-            call_kwargs: dict = {}
-            if native:
-                # Native mode: the provider carries the tool catalog in
-                # tools= — no fence-protocol section in the system prompt.
-                tools = schemas_to_openai_tools(schemas)
-                if tools:
-                    call_kwargs["tools"] = tools
-            else:
-                key = tuple(repr(schema) for schema in schemas)
-                if key != protocol_key:
-                    protocol_text = render_tool_protocol(schemas)
-                    protocol_key = key
-                if protocol_text:
-                    system_content = f"{config.system_prompt}\n\n{protocol_text}"
-            if effective_log_active:
-                system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
-            from .canvas_tool_provider import build_canvas_runtime_guidance
-
-            canvas_guidance = build_canvas_runtime_guidance(
-                schemas, messages=messages, system_prompt=config.system_prompt
-            )
-            if canvas_guidance:
-                system_content = f"{system_content}\n\n{canvas_guidance}"
-            from tldw_chatbook.Notes.agent_lessons import (
-                build_agent_lessons_runtime_guidance,
-            )
-            from .agent_lesson_promotion import build_agent_lesson_promotion_guidance
-
-            guidance = build_agent_lessons_runtime_guidance(
-                schemas, trusted_role=trusted_role
-            )
-            if guidance:
-                system_content = f"{system_content}\n\n{guidance}"
-            promotion_guidance = build_agent_lesson_promotion_guidance(
-                schemas,
-                trusted_role=trusted_role,
-                repository_target_enabled=(
-                    self.project_instruction_context is not None
-                ),
-            )
-            if promotion_guidance:
-                system_content = f"{system_content}\n\n{promotion_guidance}"
-            # Non-default workspace: append the environment note LAST, as a
-            # stable per-turn suffix (cache-friendly, like the sections
-            # above). ``_is_subagent`` prefix-matches the SENT system content;
-            # keeping the identity prompt first leaves detection unaffected.
-            system_content = _append_workspace_context_note(
-                system_content, config.workspace_context_note
-            )
-            system_content = append_personal_context(
-                system_content, config.personal_context_block
-            )
-            # TASK-1272 (Phase 3): bound the SEND payload, never
-            # `run_agent_loop`'s own `messages` -- that list is untouched,
-            # see `bound_history_for_send`'s docstring. A no-op (returns
-            # `raw_payload` unchanged) whenever `evict_enabled` is False.
-            effective_groups = continuation_groups
-            payload_messages = [dict(message) for message in messages]
-            if current_continuation is not None:
-                if not continuation_owner_key or not continuation_owner_message_id:
-                    raise ValueError("Active provider continuation requires an owner.")
-                current_group = ContinuationOwnerGroup(
-                    owner_message_id=continuation_owner_message_id,
-                    checkpoint=current_continuation,
-                    rounds=current_continuation.rounds,
-                )
-                effective_groups = tuple(
-                    group
-                    for group in continuation_groups
-                    if group.owner_message_id != continuation_owner_message_id
-                ) + (current_group,)
-                expected_call_ids = tuple(
-                    call.call_id for call in current_continuation.rounds[-1].calls
-                )
-                for message in reversed(payload_messages):
-                    raw_calls = message.get("tool_calls")
-                    call_ids = (
-                        tuple(
-                            call.get("id")
-                            for call in raw_calls
-                            if isinstance(call, Mapping)
-                        )
-                        if isinstance(raw_calls, list)
-                        else ()
-                    )
-                    if (
-                        message.get("role") == "assistant"
-                        and call_ids == expected_call_ids
-                    ):
-                        message[continuation_owner_key] = continuation_owner_message_id
-                        break
-            raw_payload = [
-                {"role": "system", "content": system_content}
-            ] + payload_messages
-            raw_payload = self._prune_send_payload(raw_payload, native=native)
-            gateway_prepares_continuation = bool(
-                effective_groups and self.prepare_provider_continuation_request
-            )
-            payload = bound_history_for_send(
-                raw_payload,
-                model=config.model,
-                provider=api_endpoint,
-                native=native,
-                enabled=effective_log_active and evict_requested,
-                min_recent_rounds=min_recent_rounds,
-                count_fn=lambda rows, _model: _count_model_messages(
-                    rows,
-                    config.model,
-                    api_endpoint,
-                    reasoning_replay=config.reasoning_replay,
-                ),
-                continuation_groups=(
-                    () if gateway_prepares_continuation else effective_groups
-                ),
-                continuation_owner_key=continuation_owner_key or "id",
-            )
-            if continuation_owner_key is not None and not gateway_prepares_continuation:
-                payload = [
-                    {
-                        key: value
-                        for key, value in message.items()
-                        if key != continuation_owner_key
-                    }
-                    for message in payload
-                ]
-            if gateway_prepares_continuation:
-                call_kwargs["continuation_groups"] = effective_groups
-            receipt = staged.get("receipt")
-            if receipt is not None:
-                request = ModelRequest(
-                    messages=tuple(dict(message) for message in payload),
-                    tools=tuple(call_kwargs.get("tools", ())),
-                )
-                request_fits = self._project_instruction_request_fits(
-                    config, api_endpoint, request
-                )
-                row_keys = tuple(
-                    row.get(PROJECT_INSTRUCTION_ROW_KEY)
-                    for row in payload
-                    if row.get(PROJECT_INSTRUCTION_ROW_KEY) in receipt.row_keys
-                )
-                if not request_fits or row_keys != receipt.row_keys:
-                    raise _ProjectInstructionPayloadError(
-                        "project instruction context could not fit"
-                    )
-                assert project_instruction_context is not None
-                try:
-                    project_instruction_context.mark_payload_sent(receipt, payload)
-                except Exception:  # noqa: BLE001 - content-free boundary
-                    raise _ProjectInstructionPayloadError(
-                        "project_instruction_delivery_failed"
-                    ) from None
-                staged.pop("receipt", None)
-            if not first_request_fits:
-                raise _ProjectInstructionPayloadError(
-                    "first request exceeds model context budget"
-                )
-            if on_context_assembled is not None and not context_observed:
-                categories = ["system"]
-                if config.workspace_context_note:
-                    categories.append("workspace")
-                if any(
-                    row.get(PROJECT_INSTRUCTION_ROW_KEY)
-                    or row.get(EPHEMERAL_ORIGIN_KEY)
-                    for row in payload
-                ):
-                    categories.insert(0, "project")
-                try:
-                    on_context_assembled(tuple(categories))
-                except Exception:  # noqa: BLE001 — capture never fails a request
-                    logger.warning("agent_context_capture_failed")
-                context_observed = True
-            # Review F1: while a checkpointed call is on the wire the
-            # redirect stream-cut is disarmed (see _primary_cut_suppress).
-            suppress_cut = current_continuation is not None and run_id is not None
-            if suppress_cut:
-                self._primary_cut_suppress.add(run_id)
-            try:
-                # ADR-147 (Task 6): this run's OWN resolved sampling params
-                # and base_url ride the call -- for a spawned child they are
-                # the resolver's target (never the parent's params, which
-                # simply are not on its config); both stay absent for a
-                # primary, leaving every pre-existing call byte-identical.
-                # Keys are drawn from KNOWN_SAMPLING_PARAM_KEYS by the
-                # upstream validators, so the map lookup is total.
-                for param_key, param_value in config.sampling_params:
-                    call_kwargs[_CHAT_CALL_PARAM_MAP[param_key]] = param_value
-                if config.base_url:
-                    call_kwargs["api_base_url"] = config.base_url
-                resp = self.chat_call(
-                    api_endpoint=api_endpoint,
-                    messages_payload=check_host_context(payload),
-                    streaming=False,
-                    model=config.model,
-                    **call_kwargs,
-                )
-            finally:
-                if suppress_cut:
-                    self._primary_cut_suppress.discard(run_id)
-            text = _response_text(resp)
-            # TASK-18603: cache-aware. Identical to the flat sum whenever
-            # this turn read nothing from a prompt cache.
-            tokens = _budget_weighted_tokens(
-                resp, provider=api_endpoint, model=config.model
-            )
-            provider_continuation = getattr(resp, "provider_continuation", None)
-            if provider_continuation is not None and not isinstance(
-                provider_continuation, ProviderContinuationCheckpoint
-            ):
-                raise ValueError("Provider continuation metadata is malformed.")
-            if tokens is None:
-                # Provider reported no usage -> estimate from sent payload +
-                # response text (native tool_calls JSON is not separately
-                # counted here; the prompt term dominates the per-turn total).
-                # Strip a provider prefix ("openai/gpt-4o-mini" -> "gpt-4o-mini")
-                # so the tokenizer's model-family framing detection matches, and
-                # pass the endpoint as the provider hint for the chars ratio.
-                est_model = (
-                    config.model.split("/", 1)[-1]
-                    if "/" in config.model
-                    else config.model
-                )
-                tokens = _count_model_messages(
-                    payload,
-                    config.model,
-                    api_endpoint,
-                    reasoning_replay=config.reasoning_replay,
-                    tokenizer_model=est_model,
-                ) + estimate_tokens(text, est_model, provider=api_endpoint)
-            thinking_envelope = getattr(resp, "thinking_envelope", None)
-            thinking_echo = None
-            if thinking_envelope is not None:
-                from tldw_chatbook.Chat.console_thinking_capture import (
-                    CALL_THINKING_KEY,
-                )
-                from tldw_chatbook.Chat.thinking_blocks import ThinkingEnvelope
-
-                if not isinstance(thinking_envelope, ThinkingEnvelope):
-                    raise ValueError("Call thinking metadata is malformed.")
-                thinking_echo = {
-                    "role": "assistant",
-                    "content": text,
-                    CALL_THINKING_KEY: thinking_envelope,
-                }
-            if not native:
-                return ModelTurn(
-                    text=text,
-                    assistant_message=thinking_echo,
-                    tokens=tokens,
-                    provider_continuation=provider_continuation,
-                )
-            message = _response_message(resp)
-            # Id-less entries get synthesized ids BEFORE parsing, and the
-            # SAME normalized list feeds the assistant echo — the echo and
-            # its role="tool" replies must always pair by id (PR #648
-            # review: a split convention 400s on strict providers).
-            raw_calls = ensure_tool_call_ids(message.get("tool_calls"))
-            if raw_calls:
-                message = {**message, "tool_calls": raw_calls}
-            tool_calls = parse_native_tool_calls(message)
-            assistant_message = thinking_echo
-            if tool_calls:
-                assistant_message = {
-                    **(thinking_echo or {}),
-                    "role": "assistant",
-                    "content": text,
-                    "tool_calls": raw_calls,
-                }
-                if (
-                    provider_continuation is not None
-                    and continuation_owner_key
-                    and continuation_owner_message_id
-                ):
-                    assistant_message[continuation_owner_key] = (
-                        continuation_owner_message_id
-                    )
-            return ModelTurn(
-                text=text,
-                tool_calls=tool_calls,
-                assistant_message=assistant_message,
-                tokens=tokens,
-                provider_continuation=provider_continuation,
-            )
-
-        return call_model
 
     def _build_effective_model_request(
         self,
@@ -3428,9 +3214,7 @@ class AgentService:
                 # TASK-28227: a consumed redirect lowers the abort flag --
                 # the NEXT model call must not be cut by a correction that
                 # was already delivered. Same lock as the post, so no gap.
-                if any(
-                    source == STEERING_SOURCE_REDIRECT for source, _ in drained
-                ):
+                if any(source == STEERING_SOURCE_REDIRECT for source, _ in drained):
                     flag = self._primary_redirect_flags.get(run_id)
                     if flag is not None:
                         flag.clear()
@@ -3490,6 +3274,9 @@ class AgentService:
         self, call: ToolCall, result: ToolResult, duration: float, run_id: str
     ) -> None:
         """Deliver one completion to the observer; never let it break the run."""
+        from .agent_request_execution import end_checks_after_refusal
+
+        end_checks_after_refusal(self, call, result, run_id)
         hook = self.post_tool_dispatch
         if hook is None:
             return
@@ -3511,7 +3298,10 @@ class AgentService:
         mistaken for a gate denial or a provider failure. Duration is 0.0:
         nothing ran.
         """
-        if self.post_tool_dispatch is None or review is None:
+        if review is None or (
+            self.post_tool_dispatch is None
+            and self.registry.resolve_owner_for_name("code_review_read") is None
+        ):
             return review
 
         def observed(calls):
@@ -3542,214 +3332,18 @@ class AgentService:
         validate_prepared_call: Callable | None = None,
         install_post_checkpoint: Callable | None = None,
     ):
-        """Build this run's ``LoopDeps.invoke_tool``.
+        from .agent_request_execution import make_invoke_tool
 
-        Args:
-            config: This run's config (allow-list and budgets).
-            disclosed_names: The tool names whose schemas this run has.
-            should_cancel: Cooperative cancellation probe.
-            run_id: THIS run's id, used for the legacy primary-actor fallback.
-            run_actor: Exact primary/subagent attribution, bound via
-                ``run_context.use_run_actor`` around each invocation so the
-                permission gates can find
-                this run's own approval stamps (PR2a Task 5). Bound
-                INSIDE the callable handed to ``_call_with_timeout``, so
-                it is established on the per-call daemon thread that
-                actually runs the tool -- a ``ContextVar`` set on this
-                thread would not be visible there.
-
-                Keyword-REQUIRED, with no default, deliberately: a
-                defaulted ``""`` would turn a future caller that forgets
-                it (PR2a Task 6 adds dispatch paths) into a SILENT
-                fail-closed degradation -- every approved tool refused
-                for want of a stamp it can no longer find -- instead of
-                a loud ``TypeError`` at the call site.
-        """
-        from .execution_capacity import CapacityRefused, current_execution_owner
-
-        # Captured as the deps are built, which is immediately before the
-        # loop records its own `started`. Being marginally early makes the
-        # remaining-budget clamp conservative, which is the safe direction.
-        run_started = self.clock()
-
-        actor = run_actor or CurrentRunActor("primary", run_id, None)
-
-        owner = current_execution_owner()
-
-        def invoke_tool(call: ToolCall) -> ToolResult:
-            if should_cancel():
-                return ToolResult(
-                    ok=False,
-                    error="tool call cancelled before start",
-                    outcome=TOOL_OUTCOME_CANCELLED,
-                    dispatch_state="not_started",
-                )
-            if (
-                call.name not in config.allowed_tools
-                or call.name not in disclosed_names
-            ):
-                return ToolResult.blocked(f"Tool not permitted: {call.name}")
-
-            def _invoke() -> ToolResult:
-                from .automatic_work_runtime import current_automatic_work
-
-                with use_run_actor(actor), use_tool_call_id(call.call_id):
-                    automatic_work = current_automatic_work()
-                    if automatic_work is not None:
-                        from .automatic_work_budget import AutomaticWorkRefused
-
-                        try:
-                            automatic_work.check()
-                        except AutomaticWorkRefused:
-                            return ToolResult.blocked(
-                                "automatic work refused before dispatch"
-                            )
-                    if validate_prepared_call is not None:
-                        try:
-                            definition = validate_prepared_call(call)
-                        except Exception:  # noqa: BLE001 -- fail closed
-                            return ToolResult.blocked(
-                                "hook: final dispatch identity refused"
-                            )
-                        result = self.registry.invoke_by_name(
-                            call.name, call.args, expected_definition=definition
-                        )
-                    else:
-                        result = self.registry.invoke_by_name(call.name, call.args)
-                    return (
-                        dataclasses.replace(result, dispatch_state="settled")
-                        if result.dispatch_state is None
-                        else result
-                    )
-
-            if (
-                self.registry.execution_policy_for(call.name)
-                is ToolExecutionPolicy.DEFINITIVE_AFTER_START
-            ):
-                if should_cancel():
-                    return ToolResult(
-                        ok=False,
-                        error=f"tool call cancelled before start: {call.name}",
-                        outcome=TOOL_OUTCOME_CANCELLED,
-                        dispatch_state="not_started",
-                    )
-                try:
-                    operation = owner.reserve_tool() if owner is not None else None
-                except CapacityRefused as exc:
-                    return ToolResult.blocked(f"tool call refused: {exc}")
-                result = ToolResult(ok=False, error=f"tool call failed: {call.name}")
-                try:
-                    try:
-                        result = _invoke()
-                    except BaseException:  # noqa: BLE001 - protocol boundary
-                        # This branch runs synchronously after the approved
-                        # mutation has started.  Every terminal -- including
-                        # control-flow BaseExceptions raised by a provider --
-                        # must collapse to one scrubbed result instead of
-                        # escaping the agent loop or being mistaken for the
-                        # pre-start cooperative-cancel outcome above.
-                        result = ToolResult(
-                            ok=False,
-                            error=f"tool call failed: {call.name}",
-                            dispatch_state="settled",
-                        )
-                    return result
-                finally:
-                    try:
-                        if install_post_checkpoint is not None:
-                            install_post_checkpoint(call, result)
-                    finally:
-                        if operation is not None:
-                            operation.finish()
-                    self._notify_tool_terminal(
-                        run_id,
-                        call.call_id or call.name,
-                        call.name,
-                    )
-                    self._notify_tool_result_terminal(
-                        run_id,
-                        call.call_id or call.name,
-                        call.name,
-                        result,
-                    )
-
-            timeout = self.registry.timeout_for(call.name) or (
-                config.budget.max_tool_call_seconds
-            )
-            if timeout and timeout > 0:
-                # TASK-25913: the loop only checks max_wall_seconds between
-                # iterations, so a call left on its own ceiling could outlive
-                # the run's budget by nearly an hour under Console's config.
-                # Resolved once here, at dispatch -- an approval wait that
-                # happens afterwards must not shrink a running call.
-                timeout, clamped_by_wall_budget = _effective_tool_timeout(
-                    timeout,
-                    run_started,
-                    getattr(config.budget, "max_wall_seconds", 0),
-                    self.clock,
-                )
-                if timeout is None:
-                    # Budget already spent: refuse rather than start work that
-                    # would be abandoned mid-flight and could still take effect.
-                    return ToolResult(
-                        ok=False,
-                        error=(
-                            f"tool call not started: {call.name} "
-                            "(the run's wall-clock budget is exhausted)"
-                        ),
-                        outcome=TOOL_OUTCOME_TIMEOUT,
-                        dispatch_state="not_started",
-                    )
-                # task-31386: a per-call abandon request rides the same
-                # poll as the run-wide Stop, but only inside this wrapper --
-                # `should_cancel` itself stays False, so the loop continues.
-                _mark_tool_call_inflight(run_id, call.call_id or call.name, call.name)
-                try:
-                    return _call_with_timeout(
-                        _invoke,
-                        timeout,
-                        call.name,
-                        lambda: should_cancel() or tool_call_abandon_requested(run_id),
-                        # ADR-067: pause the per-call clock while a human
-                        # decision is pending for THIS run, so an approval/
-                        # confirm wait inside the invoke outlives the ceiling.
-                        pauses_deadline=lambda: human_input_wait_active(run_id),
-                        execution_owner=self,
-                        clamped_by_wall_budget=clamped_by_wall_budget,
-                        owner=owner,
-                    )
-                finally:
-                    _clear_tool_call_inflight(run_id)
-            try:
-                operation = owner.reserve_tool() if owner is not None else None
-            except CapacityRefused as exc:
-                return ToolResult(
-                    ok=False,
-                    error=f"tool call refused: {exc}",
-                    dispatch_state="not_started",
-                )
-            try:
-                return _invoke()
-            finally:
-                if operation is not None:
-                    operation.finish()
-
-        if self.post_tool_dispatch is None and install_post_checkpoint is None:
-            # AC#5: no observer, no wrapper -- the closure above is returned
-            # untouched, so an unconfigured install pays nothing.
-            return invoke_tool
-
-        def observed_invoke_tool(call: ToolCall) -> ToolResult:
-            observation_started = self.clock()
-            result = invoke_tool(call)
-            if install_post_checkpoint is not None:
-                install_post_checkpoint(call, result)
-            self._fire_post_tool_dispatch(
-                call, result, self.clock() - observation_started, run_id
-            )
-            return result
-
-        return observed_invoke_tool
+        return make_invoke_tool(
+            self,
+            config,
+            disclosed_names,
+            should_cancel,
+            run_id=run_id,
+            run_actor=run_actor,
+            validate_prepared_call=validate_prepared_call,
+            install_post_checkpoint=install_post_checkpoint,
+        )
 
     # -- fleet helpers (PR2a Task 6) --------------------------------------
 
@@ -3788,6 +3382,8 @@ class AgentService:
             event = self._fleet_cancels.get(handle_id)
             if event is not None:
                 event.set()
+            if self._fleet is not None:
+                self._fleet.revoke_child_messages(handle_id)
         # PR2a Task 7: the cancel Event alone does not reach a child that
         # is BLOCKED on a human approval -- that wait sits on the child's
         # own per-call daemon thread with a card still on screen, and the
@@ -3832,9 +3428,7 @@ class AgentService:
             # remains the backstop.
             logger.warning("could not revoke pending approvals")
 
-    def _notify_tool_terminal(
-        self, run_id: str, call_key: str, tool_name: str
-    ) -> None:
+    def _notify_tool_terminal(self, run_id: str, call_key: str, tool_name: str) -> None:
         """Report one definitive provider terminal without affecting it."""
         callback = self._on_tool_terminal
         if callback is None:
@@ -4142,6 +3736,13 @@ class AgentService:
             self._revoke_run_approvals(handle.run_id)
             try:
                 self._set_terminal_status(handle.run_id, RUN_CANCELLED)
+                review_owner = self.registry.resolve_owner_for_name(
+                    "code_review_prepare"
+                )
+                if review_owner is not None:
+                    self._settle_review_capture(
+                        review_owner[1].service, handle.run_id, close_capture=False
+                    )
             except Exception:  # noqa: BLE001 — a DB failure here must not
                 # take down a turn that has already produced its answer.
                 logger.warning("could not mark abandoned sub-agent run cancelled")
@@ -4187,9 +3788,7 @@ class AgentService:
             latest = max(
                 durable,
                 key=lambda step: (
-                    int(step["owner_seq"])
-                    if step.get("owner_seq") is not None
-                    else -1,
+                    int(step["owner_seq"]) if step.get("owner_seq") is not None else -1,
                     int(step.get("index", -1)),
                 ),
                 default=None,
@@ -4209,11 +3808,7 @@ class AgentService:
         except Exception:  # noqa: BLE001 — callers fall back to run ownership
             return None
         intended = next(
-            (
-                step
-                for step in steps
-                if step["index"] == index and step["kind"] == kind
-            ),
+            (step for step in steps if step["index"] == index and step["kind"] == kind),
             None,
         )
         if intended is not None:
@@ -4280,8 +3875,7 @@ class AgentService:
             )
         except Exception as exc:  # noqa: BLE001 — capture is best effort
             logger.warning(
-                "could not persist agent run lifecycle "
-                "run_id={} kind={} error_type={}",
+                "could not persist agent run lifecycle run_id={} kind={} error_type={}",
                 run_id,
                 kind,
                 _safe_exception_type(exc),
@@ -4404,7 +3998,9 @@ class AgentService:
                 _safe_exception_type(exc),
             )
             try:
-                persisted = self.db.set_status(run_id, status, result, budget_tokens=budget_tokens)
+                persisted = self.db.set_status(
+                    run_id, status, result, budget_tokens=budget_tokens
+                )
                 if persisted:
                     self._maybe_emit_run_webhook(run_id, status)
                 return persisted
@@ -4435,7 +4031,9 @@ class AgentService:
                 try:
                     if self.db.get_run(run_id)["status"] in TERMINAL_RUN_STATUSES:
                         if budget_tokens is not None:
-                            self.db.set_status(run_id, status, budget_tokens=budget_tokens)
+                            self.db.set_status(
+                                run_id, status, budget_tokens=budget_tokens
+                            )
                         return False
                 except Exception:  # noqa: BLE001 — retry owns containment
                     pass
@@ -4461,7 +4059,9 @@ class AgentService:
             logger.warning("could not persist atomic terminal diagnostic")
         if diagnostic_written:
             try:
-                return self.db.set_status(run_id, status, result, budget_tokens=budget_tokens)
+                return self.db.set_status(
+                    run_id, status, result, budget_tokens=budget_tokens
+                )
             except Exception as exc:  # noqa: BLE001 — refusal remains contained
                 logger.warning(
                     "could not persist terminal status fallback "
@@ -4537,7 +4137,8 @@ class AgentService:
             if not source_is_current(True):
                 return (
                     "worktree isolation refused [source_authority_revoked]: the selected "
-                    "repository binding changed during worktree creation" + retention_message
+                    "repository binding changed during worktree creation"
+                    + retention_message
                 )
             child_identity = agent_worktree._worktree_root_identity(
                 created.worktree_path
@@ -4548,7 +4149,8 @@ class AgentService:
             if not source_is_current(True):
                 return (
                     "worktree isolation refused [source_authority_revoked]: the selected "
-                    "repository binding changed during ownership capture" + retention_message
+                    "repository binding changed during ownership capture"
+                    + retention_message
                 )
             child_common_dir, child_common_identity = (
                 agent_worktree._git_common_directory_identity(created.worktree_path)
@@ -4562,7 +4164,8 @@ class AgentService:
             ):
                 return (
                     "worktree isolation refused [ownership_capture_failed]: the created "
-                    "checkout no longer matches its admitted repository" + retention_message
+                    "checkout no longer matches its admitted repository"
+                    + retention_message
                 )
 
             repository = AgentWorktreeRepository(self.db)
@@ -4735,7 +4338,13 @@ class AgentService:
                 step_dicts.append(
                     (
                         step.index,
-                        _safe_agent_step_record(run_id, step, durable_handles),
+                        _safe_agent_step_record(
+                            run_id,
+                            step,
+                            durable_handles,
+                            omit_content=getattr(self.registry, "_review_service", None)
+                            is not None,
+                        ),
                     )
                 )
         except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
@@ -4750,16 +4359,13 @@ class AgentService:
                 self.db.insert_steps_at_indices(run_id, step_dicts)
             except Exception as exc:  # noqa: BLE001 — best-effort capture
                 logger.warning(
-                    "could not persist terminal agent steps "
-                    "run_id={} error_type={}",
+                    "could not persist terminal agent steps run_id={} error_type={}",
                     run_id,
                     _safe_exception_type(exc),
                 )
         terminal_step = max(
             outcome.steps,
-            key=lambda step: (
-                step.owner_seq if step.owner_seq is not None else -1
-            ),
+            key=lambda step: step.owner_seq if step.owner_seq is not None else -1,
             default=None,
         )
         terminal_event_id = None
@@ -4800,9 +4406,7 @@ class AgentService:
             if terminal_event_id is None:
                 diagnostic = AgentStep(
                     index=(
-                        AGENT_LIFECYCLE_INDEX_BASE
-                        + 200
-                        + (terminal_step.index % 100)
+                        AGENT_LIFECYCLE_INDEX_BASE + 200 + (terminal_step.index % 100)
                     ),
                     kind="capture_failed",
                     summary="Terminal agent step capture failed",
@@ -4825,7 +4429,12 @@ class AgentService:
                     )
                 except Exception:  # noqa: BLE001 — non-recursive containment
                     logger.warning("could not persist terminal capture diagnostic")
-        durable_result = _safe_terminal_result(outcome.final_text)
+        review_capture = getattr(self.registry, "_review_service", None)
+        durable_result = (
+            ""
+            if review_capture is not None
+            else _safe_terminal_result(outcome.final_text)
+        )
         if durable_result is not None:
             durable_result = _replace_process_handles(
                 durable_result, durable_handles or {}
@@ -4843,6 +4452,41 @@ class AgentService:
             ),
             incomplete=(outcome.status == RUN_ERROR and terminal_event_id is None),
         )
+
+        if review_capture is not None:
+            self._settle_review_capture(review_capture, run_id, terminal_event_id or "")
+
+    def _settle_review_capture(
+        self,
+        service,
+        run_id: str,
+        receipt_id: str | None = None,
+        *,
+        close_capture: bool = True,
+    ) -> None:
+        """Close only an actually associated attempt; never raises (see helper)."""
+        from .agent_request_execution import settle_review_capture
+
+        settle_review_capture(
+            self, service, run_id, receipt_id, close_capture=close_capture
+        )
+
+    def _fork_review_child(
+        self, service, *, actor, max_tool_result_chars: int, grant=None
+    ) -> AgentService:
+        """Retain execution owners, with private actor/catalog state for this run."""
+        from copy import copy
+
+        fork = copy(self)
+        # Request construction writes this cache; keep child schemas private and
+        # independent of a later primary turn clearing its own protocol cache.
+        fork._tool_protocol_cache = {}
+        fork.registry = self.registry.for_review_child(
+            service.for_run(
+                actor, grant=grant, max_tool_result_chars=max_tool_result_chars
+            )
+        )
+        return fork
 
     def _run_owned(
         self,
@@ -4865,8 +4509,9 @@ class AgentService:
         try:
             if self.work_origin is WorkOrigin.AUTOMATIC and automatic_work is None:
                 raise AutomaticWorkRefused("acceptance_required")
-            with owner.activate(), (
-                automatic_work.scope() if automatic_work else contextlib.nullcontext()
+            with (
+                owner.activate(),
+                automatic_work.scope() if automatic_work else contextlib.nullcontext(),
             ):
                 if automatic_work is not None:
                     automatic_work.check()
@@ -4875,15 +4520,17 @@ class AgentService:
                         and not automatic_work.ledger.commit(
                             automatic_child_reservation,
                             owner_id=automatic_work.owner_id,
-                            limits=AutomaticWorkLimits.from_settings(),
+                            limits=AutomaticWorkLimits.from_settings(
+                                automatic_work.policy_kind()
+                            ),
                         )
                     ):
                         raise AutomaticWorkRefused("child_already_launched")
                     # A survivor drops its parent's Stop probe, but keeps this
                     # chain deadline and kill switch for its entire lifetime.
                     run_cancel = kwargs["should_cancel"]
-                    kwargs["should_cancel"] = (
-                        lambda: run_cancel() or automatic_work.should_cancel()
+                    kwargs["should_cancel"] = lambda: (
+                        run_cancel() or automatic_work.should_cancel()
                     )
                 if fleet_child:
                     scope = self._child_model_scope()
@@ -4895,15 +4542,25 @@ class AgentService:
                     return self._run_one(**kwargs)
         finally:
             try:
-                if automatic_work is not None and automatic_child_reservation is not None:
-                    # Only uncommitted work can refund. Model setup may already
-                    # own a driver before raising, so a committed launch stays.
-                    automatic_work.ledger.release(
-                        automatic_child_reservation, owner_id=automatic_work.owner_id
-                    )
+                if (
+                    kwargs["agent_kind"] == AGENT_KIND_PRIMARY
+                    and self._archive_recovery_provider is not None
+                ):
+                    self._archive_recovery_provider.finish()
             finally:
-                if finish_root:
-                    owner.finish_root()
+                try:
+                    if (
+                        automatic_work is not None
+                        and automatic_child_reservation is not None
+                    ):
+                        # Only uncommitted work can refund; preserve owned driver cleanup.
+                        automatic_work.ledger.release(
+                            automatic_child_reservation,
+                            owner_id=automatic_work.owner_id,
+                        )
+                finally:
+                    if finish_root:
+                        owner.finish_root()
 
     @guarded
     def _run_one(
@@ -4949,6 +4606,7 @@ class AgentService:
         ) = None,
         seeded_steering_with_causes: tuple[tuple[str, str, str | None], ...] = (),
         progress_sender_factory: Callable[[], MessageSender | None] | None = None,
+        peer_messenger_factory: Callable[[], PeerMessenger | None] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         continuation_owner_message_id: str | None = None,
         continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
@@ -4976,6 +4634,10 @@ class AgentService:
         resolved_model: str | None = None,
         resolved_base_url: str | None = None,
         resolved_params_json: str | None = None,
+        fallback_targets_json: str | None = None,
+        active_fallback_index: int = 0,
+        review_launch=None,
+        review_service=None,
     ) -> tuple[str, RunOutcome]:
         if parent_run_id is None and self._hooks_v2_lifecycle is not None:
             config = self._hooks_v2_lifecycle.inherit_root_budget(
@@ -5040,6 +4702,8 @@ class AgentService:
                 resolved_model=resolved_model,
                 resolved_base_url=resolved_base_url,
                 resolved_params_json=resolved_params_json,
+                fallback_targets_json=fallback_targets_json,
+                active_fallback_index=active_fallback_index,
             )
             lifecycle_owner_seq = 0
             lifecycle_event_id = (
@@ -5077,9 +4741,33 @@ class AgentService:
                 else self._next_owner_seq(run_id)
             )
             lifecycle_event_id = self._latest_durable_event_id(run_id)
+        if (
+            agent_kind == AGENT_KIND_PRIMARY
+            and self._archive_recovery_provider is not None
+            and not self._archive_recovery_provider.activate(run_id)
+        ):
+            raise RuntimeError("Archive recovery run admission refused")
         owner = current_execution_owner()
         if owner is not None:
             owner.bind_run(run_id)
+        if review_launch is not None:
+            actor = CurrentRunActor(
+                "subagent",
+                run_id,
+                parent_run_id,
+                label=subagent_display_label(agent_definition, task),
+            )
+            from .agent_request_execution import attach_review_launch
+
+            attach_review_launch(review_service, review_launch, run_id)
+            self = self._fork_review_child(
+                review_service,
+                actor=actor,
+                grant=review_launch.grant,
+                max_tool_result_chars=config.budget.max_tool_result_chars,
+            )
+            progress_sender_factory = peer_messenger_factory = None
+            drain_mailbox = drain_mailbox_with_causes = None
         # PR2a Task 6: a threaded child's run id does not exist until this
         # line, and its spawning parent has long since returned a handle to
         # the model. This hook is how the id gets back to the coordinator
@@ -5096,14 +4784,35 @@ class AgentService:
         if agent_kind == AGENT_KIND_PRIMARY:
             writer.bind(run_id)
         started = self.clock()
+        if config.review_binding is not None:
+            bound_review = self.registry._review_service
+            bound_review.check_deadline = (
+                time.monotonic() + config.budget.max_wall_seconds
+            )
+            bound_review.check_cancelled = should_cancel
+            bound_review.check_budget_expired = lambda: (
+                self.clock() - started >= config.budget.max_wall_seconds
+            )
         from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
         from .automatic_work_runtime import current_automatic_work
 
         message_chain_id = self._work_chain_id
         message_automatic = current_automatic_work()
         progress_sender = progress_sender_factory() if progress_sender_factory else None
+        peer_messenger = peer_messenger_factory() if peer_messenger_factory else None
         progress_reader: MessageReader | None = None
 
+        if agent_kind != AGENT_KIND_PRIMARY:
+            from .archive_recovery_tool_provider import RECOVERY_RESERVED_TOOL_NAMES
+
+            config = dataclasses.replace(
+                config,
+                allowed_tools=tuple(
+                    name
+                    for name in config.allowed_tools
+                    if name not in RECOVERY_RESERVED_TOOL_NAMES
+                ),
+            )
         schema_plan = first_request_schema_plan
         if schema_plan is None:
             # ADR-147 Task 7: the master sees provider/model override args
@@ -5155,8 +4864,15 @@ class AgentService:
                     else 1
                 ),
                 agent_kind=agent_kind,
-                progress_available=bool(agent_kind == AGENT_KIND_PRIMARY and (self._message_inbox or (self._fleet and self._fleet.message_inbox))),
+                progress_available=bool(
+                    agent_kind == AGENT_KIND_PRIMARY
+                    and (
+                        self._message_inbox
+                        or (self._fleet and self._fleet.message_inbox)
+                    )
+                ),
                 reporting_available=progress_sender is not None,
+                peers_available=peer_messenger is not None,
                 spawn_override_enabled=bool(
                     spawn_routing and spawn_routing.spawn_override_enabled
                 ),
@@ -5191,6 +4907,10 @@ class AgentService:
         # allow-list filter here without reading it (a caller narrowing
         # `allowed_tools` is NOT narrowing the runtime layer, by design).
         runtime_schemas = list(schema_plan.runtime_schemas)
+        if config.review_binding is not None:
+            runtime_schemas = [
+                s for s in runtime_schemas if s.name in {"find_tools", "load_tools"}
+            ]
         # PR2a Task 6: this run's fleet, or None when there is none. A
         # sub-agent NEVER gets one -- depth-1 is structural (a child's
         # max_subagents is clamped to 0, so it has nothing to wait on),
@@ -5213,8 +4933,15 @@ class AgentService:
             progress_inbox = self._message_inbox or (
                 fleet.message_inbox if fleet is not None else None
             )
-        if progress_sender is not None:
-            from .fleet_message_tools import REPORT_TO_SUPERVISOR_SCHEMA, REPORT_INSTRUCTIONS
+        # A plain fallback was costed without schemas or progress guidance.
+        # Do not silently turn it back into a tool-bearing request.
+        plan_has_tools = bool(runtime_schemas or active)
+        late_progress = plan_has_tools and schema_plan.schema_input_budget_tokens is None
+        if progress_sender is not None and late_progress:
+            from .fleet_message_tools import (
+                REPORT_TO_SUPERVISOR_SCHEMA,
+                REPORT_INSTRUCTIONS,
+            )
 
             if REPORT_TO_SUPERVISOR_SCHEMA not in runtime_schemas:
                 runtime_schemas.append(REPORT_TO_SUPERVISOR_SCHEMA)
@@ -5223,8 +4950,26 @@ class AgentService:
                     config,
                     system_prompt=config.system_prompt + "\n\n" + REPORT_INSTRUCTIONS,
                 )
-        if progress_inbox is not None:
-            from .fleet_message_tools import READ_AGENT_MESSAGES_SCHEMA, READ_INSTRUCTIONS
+        if peer_messenger is not None and late_progress:
+            from .fleet_message_tools import (
+                LIST_PEER_AGENTS_SCHEMA,
+                PEER_INSTRUCTIONS,
+                SEND_TO_PEER_SCHEMA,
+            )
+
+            for peer_schema in (LIST_PEER_AGENTS_SCHEMA, SEND_TO_PEER_SCHEMA):
+                if peer_schema not in runtime_schemas:
+                    runtime_schemas.append(peer_schema)
+            if PEER_INSTRUCTIONS not in config.system_prompt:
+                config = dataclasses.replace(
+                    config,
+                    system_prompt=config.system_prompt + "\n\n" + PEER_INSTRUCTIONS,
+                )
+        if progress_inbox is not None and late_progress:
+            from .fleet_message_tools import (
+                READ_AGENT_MESSAGES_SCHEMA,
+                READ_INSTRUCTIONS,
+            )
 
             if READ_AGENT_MESSAGES_SCHEMA not in runtime_schemas:
                 runtime_schemas.append(READ_AGENT_MESSAGES_SCHEMA)
@@ -5261,6 +5006,17 @@ class AgentService:
         # Task 7: reused verbatim (not re-derived) as the gate on whether the
         # system prompt's RUN_LOG_PROMPT_SECTION gets appended below, so the
         # prompt can never mention a tool this run didn't actually disclose.
+        if self._automatic_work is not None and self._automatic_work.goal is not None:
+            goal = self._automatic_work.goal
+            active = [
+                schema for schema in active if schema.name in config.allowed_tools
+            ]
+            disclosed_names = {schema.name for schema in active}
+            runtime_schemas = [
+                schema
+                for schema in runtime_schemas
+                if goal.permits_runtime(schema.name)
+            ]
         log_active = schema_plan.log_active
         project_context = self.project_instruction_context
         payload_state: InstructionChainPayloadState | None = None
@@ -5280,7 +5036,8 @@ class AgentService:
                 ),
                 safe_token_allowance=lambda request, rows: (
                     self.safe_project_instruction_tokens(
-                        config, api_endpoint, request, rows
+                        config, api_endpoint, request, rows,
+                        input_budget_tokens=schema_plan.schema_input_budget_tokens,
                     )
                 ),
                 count_tokens=lambda rows: count_tokens_messages(
@@ -5297,6 +5054,7 @@ class AgentService:
         ):
             _request, snapshot = self.build_project_instruction_request(
                 candidate=self.startup_instruction_candidate,
+                input_budget_tokens=schema_plan.schema_input_budget_tokens,
                 config=config,
                 api_endpoint=api_endpoint,
                 runtime_schemas=runtime_schemas,
@@ -5346,6 +5104,7 @@ class AgentService:
                 config,
                 api_endpoint,
                 child_request,
+                input_budget_tokens=schema_plan.schema_input_budget_tokens,
             )
         elif (
             legacy_delivery_enabled and snapshot is not None and chain_delivery is None
@@ -5363,7 +5122,15 @@ class AgentService:
             )
 
         def find_tools(query: str):
-            return [entry for entry in self.registry.find(query, allowed_names=config.allowed_tools) if entry.name not in MESSAGE_TOOL_NAMES]
+            entries = [
+                entry
+                for entry in self.registry.find(
+                    query, allowed_names=config.allowed_tools
+                )
+                if entry.name not in MESSAGE_TOOL_NAMES
+            ]
+            logger.info("agent tool discovery matches={} run={}", len(entries), run_id)
+            return entries
 
         def load_schemas(
             ids: list[str], current_messages: list[dict], call: ToolCall
@@ -5410,7 +5177,10 @@ class AgentService:
                     except KeyError:
                         invalid.append(tool_id)
                         continue
-                if schema.name not in config.allowed_tools or schema.name in MESSAGE_TOOL_NAMES:
+                if (
+                    schema.name not in config.allowed_tools
+                    or schema.name in MESSAGE_TOOL_NAMES
+                ):
                     invalid.append(tool_id)
                     continue
                 if schema.name in seen_names:
@@ -5425,9 +5195,7 @@ class AgentService:
             ) -> ToolLoadSelection:
                 return ToolLoadSelection(
                     accepted=tuple(item[2] for item in selected),
-                    omitted_for_budget=tuple(
-                        tool_id for _, tool_id in sorted(omitted)
-                    ),
+                    omitted_for_budget=tuple(tool_id for _, tool_id in sorted(omitted)),
                     invalid_inputs=tuple(invalid),
                 )
 
@@ -5436,9 +5204,7 @@ class AgentService:
                 selected: list[tuple[int, str, ToolSchema]],
             ) -> bool:
                 working_set = (
-                    tuple(item[2] for item in selected)
-                    if selected
-                    else tuple(active)
+                    tuple(item[2] for item in selected) if selected else tuple(active)
                 )
                 try:
                     request = self._build_effective_model_request(
@@ -5449,6 +5215,13 @@ class AgentService:
                         working_set,
                         log_active,
                     )
+                    if schema_plan.schema_input_budget_tokens is not None:
+                        return self._project_instruction_request_fits(
+                            config,
+                            api_endpoint,
+                            request,
+                            input_budget_tokens=schema_plan.schema_input_budget_tokens,
+                        )
                     return self._project_instruction_request_fits(
                         config, api_endpoint, request
                     )
@@ -5459,9 +5232,7 @@ class AgentService:
                 candidate = [*accepted, item]
                 selection = ToolLoadSelection(
                     accepted=tuple(entry[2] for entry in candidate),
-                    omitted_for_budget=tuple(
-                        tool_id for _, tool_id in sorted(omitted)
-                    ),
+                    omitted_for_budget=tuple(tool_id for _, tool_id in sorted(omitted)),
                     invalid_inputs=tuple(invalid),
                 )
                 if selection_fits(selection, candidate):
@@ -5479,7 +5250,18 @@ class AgentService:
                 omitted.append((removed[0], removed[1]))
                 selection = selection_for(accepted)
             if not accepted and not selection_fits(selection, accepted):
-                return ToolLoadSelection(details_omitted_for_budget=True)
+                selection = ToolLoadSelection(details_omitted_for_budget=True)
+            logger.info(
+                "agent schema load requested={} accepted={} omitted={} invalid={} "
+                "details_omitted={} names={} run={}",
+                len(ids),
+                len(accepted),
+                len(omitted),
+                len(invalid),
+                int(selection.details_omitted_for_budget),
+                json.dumps([item[2].name[:64] for item in accepted[:8]]),
+                run_id,
+            )
             return selection
 
         def replace_disclosed_names(names: frozenset[str]) -> None:
@@ -5487,6 +5269,21 @@ class AgentService:
             disclosed_names.update(names)
 
         sub_agent_spawns = 0
+        child_started = False  # this spawn call left a possibly-run child charged
+        review_owner = self.registry.resolve_owner_for_name("code_review_prepare")
+        if review_owner is not None and agent_kind != AGENT_KIND_SUBAGENT:
+            from .code_review_tool_provider import CodeReviewToolProvider
+
+            if type(review_owner[1]) is CodeReviewToolProvider:
+                review_adapter = review_owner[1].service
+                previous_capacity = review_adapter.capacity
+                review_adapter.capacity = lambda: dataclasses.replace(
+                    previous_capacity(),
+                    remaining_children=max(
+                        0, config.budget.max_subagents - sub_agent_spawns
+                    ),
+                    children_per_turn=config.budget.max_subagents,
+                )
         # Handles THIS run started, in spawn order. The coordinator is
         # deliberately not run-scoped (PR 3a wants children that outlive
         # their spawning turn), so "all my sub-agents" has to be tracked
@@ -5513,11 +5310,15 @@ class AgentService:
                         owner_id=automatic_work.owner_id,
                         kind="child_launch",
                         amount=1,
-                        limits=AutomaticWorkLimits.from_settings(),
+                        limits=AutomaticWorkLimits.from_settings(
+                            automatic_work.policy_kind()
+                        ),
                     ).id
                 return (
                     self.runtime_capacity.begin_execution(
-                        origin=self.work_origin, conversation_id=conversation_id, child=True
+                        origin=self.work_origin,
+                        conversation_id=conversation_id,
+                        child=True,
                     ),
                     reservation_id,
                     None,
@@ -5538,11 +5339,15 @@ class AgentService:
                     )
                 if not isinstance(exc, CapacityRefused):
                     raise
-                return None, None, SpawnAdmissionRefusal(
-                    ok=False,
-                    error=(
-                        f"runtime sub-agent limit reached ({exc}); wait for running "
-                        "agents and cleanup to finish, then retry"
+                return (
+                    None,
+                    None,
+                    SpawnAdmissionRefusal(
+                        ok=False,
+                        error=(
+                            f"runtime sub-agent limit reached ({exc}); wait for running "
+                            "agents and cleanup to finish, then retry"
+                        ),
                     ),
                 )
 
@@ -5586,6 +5391,10 @@ class AgentService:
                     agent=agent_name,
                     isolation=isolation,
                     definition_wall_seconds=definition_wall_seconds,
+                    # Live metadata follows the active frozen config. The
+                    # resolved_* kwargs remain the original persisted audit.
+                    resolved_provider=child_kwargs["config"].provider,
+                    resolved_model=child_kwargs["config"].model,
                 )
                 if handle is None:
                     # At the live cap. Unlike a budget refusal this is
@@ -5633,8 +5442,10 @@ class AgentService:
                         resolved_provider=child_kwargs.get("resolved_provider"),
                         resolved_model=child_kwargs.get("resolved_model"),
                         resolved_base_url=child_kwargs.get("resolved_base_url"),
-                        resolved_params_json=child_kwargs.get(
-                            "resolved_params_json"
+                        resolved_params_json=child_kwargs.get("resolved_params_json"),
+                        fallback_targets_json=child_kwargs.get("fallback_targets_json"),
+                        active_fallback_index=child_kwargs.get(
+                            "active_fallback_index", 0
                         ),
                     )
                 except Exception as exc:  # noqa: BLE001 — spawn refusal, never parent abort
@@ -5650,6 +5461,24 @@ class AgentService:
                     return None, SpawnAdmissionRefusal(
                         ok=False, error="could not create durable sub-agent run"
                     )
+                if child_kwargs.get("review_launch") is not None:
+                    from .agent_request_execution import attach_review_launch
+                    from .code_review_models import ReviewRefused
+
+                    try:
+                        attach_review_launch(
+                            child_kwargs["review_service"],
+                            child_kwargs["review_launch"],
+                            child_run_id,
+                        )
+                    except ReviewRefused as exc:
+                        # No worker was started. Settle the precreated native
+                        # state before the existing admission-refusal unwind.
+                        fleet.finish(handle.handle_id, RUN_ERROR, error=exc.reason)
+                        self._set_terminal_status(
+                            child_run_id, RUN_ERROR, result=exc.reason
+                        )
+                        return None, SpawnAdmissionRefusal(ok=False, error=exc.reason)
                 owner_seq, lifecycle_event_id = self._append_run_lifecycle(
                     child_run_id,
                     STEP_AGENT_RUN_RESERVED,
@@ -5703,8 +5532,19 @@ class AgentService:
                 # without cancelling the parent.
                 child_cancel = threading.Event()
                 child_kwargs["continuation_agent_kind"] = "fleet"
-                child_kwargs["progress_sender_factory"] = lambda: fleet.bind_progress_sender(
-                    handle.handle_id, parent_run_id=run_id, chain_id=message_chain_id
+                child_kwargs["progress_sender_factory"] = lambda: (
+                    fleet.bind_progress_sender(
+                        handle.handle_id,
+                        parent_run_id=run_id,
+                        chain_id=message_chain_id,
+                    )
+                )
+                child_kwargs["peer_messenger_factory"] = lambda: (
+                    fleet.bind_peer_messenger(
+                        handle.handle_id,
+                        parent_run_id=run_id,
+                        chain_id=message_chain_id,
+                    )
                 )
                 # PR3b Task 1: THIS child's steering drain -- a closure over
                 # its own mailbox on the conversation-lifetime coordinator,
@@ -5713,8 +5553,8 @@ class AgentService:
                 # (the run_child style) so the closure can never pick up a
                 # later spawn's handle.
                 child_kwargs["drain_mailbox_with_causes"] = (
-                    lambda handle_id=handle.handle_id: (
-                        fleet.drain_steering_with_causes(handle_id)
+                    lambda handle_id=handle.handle_id: fleet.drain_steering_with_causes(
+                        handle_id
                     )
                 )
                 child_kwargs["drain_mailbox"] = lambda handle_id=handle.handle_id: (
@@ -5828,6 +5668,9 @@ class AgentService:
                         )
                         status = child_outcome.status
                         result_text = child_outcome.final_text
+                        if child_kwargs.get("review_launch") is not None:
+                            claim = child_kwargs["review_launch"]
+                            result_text = f"review {claim.review_id}; slot {claim.slot.slot_id}; read originals with code_review_read"
                         total_tokens_spent = child_outcome.total_tokens
                         final_messages = child_outcome.final_messages
                         if status != RUN_DONE:
@@ -5919,6 +5762,13 @@ class AgentService:
                                 logger.warning(
                                     "could not persist terminal status for sub-agent run"
                                 )
+                        if (
+                            child_run_id
+                            and child_kwargs.get("review_service") is not None
+                        ):
+                            self._settle_review_capture(
+                                child_kwargs["review_service"], child_run_id
+                            )
                         # PR3a-2 Task 2: the settle signal, LAST -- after
                         # `fleet.finish` and after the terminal-status
                         # fallback, so at fire time the row is terminal on
@@ -5956,6 +5806,7 @@ class AgentService:
                         finally:
                             admission_decided.set()
 
+                thread = None
                 try:
                     thread = threading.Thread(
                         target=run_child_owned,
@@ -5964,43 +5815,61 @@ class AgentService:
                     )
                     thread.start()
                 except Exception as exc:  # noqa: BLE001 — thread exhaustion
-                    # `Thread.start()` raises RuntimeError ("can't start new
-                    # thread") when the process is out of thread slots. Every
-                    # piece of state this spawn reserved has to be unwound
-                    # here, because NOTHING else will: `run_child` never runs,
-                    # so the handle would stay live forever -- making the
-                    # end-of-turn settle burn the ENTIRE remaining wall-clock
-                    # waiting for a child that does not exist. Registering the
-                    # thread only AFTER a successful start is the other half:
-                    # `_settle_fleet` joins every registered thread, and
-                    # joining an unstarted one raises RuntimeError out of
-                    # `run_turn`, skipping `write_manifest()` and
-                    # `run_log_writer.close()` (leaking a file descriptor).
-                    fleet.finish(
-                        handle.handle_id,
-                        RUN_ERROR,
-                        error=f"could not start sub-agent thread: {exc}",
-                    )
-                    try:
-                        self._set_terminal_status(child_run_id, RUN_ERROR)
-                    finally:
+                    if (
+                        child_kwargs.get("review_launch") is not None
+                        and thread is not None
+                        and thread.ident is not None
+                    ):
+                        # An exception after native start is not a non-start proof.
+                        # Keep its charge/association and use normal worker settlement.
+                        logger.warning(
+                            "review child start raised after worker admission"
+                        )
+                    else:
+                        # `Thread.start()` raises RuntimeError ("can't start new
+                        # thread") when the process is out of thread slots. Every
+                        # piece of state this spawn reserved has to be unwound
+                        # here, because NOTHING else will: `run_child` never runs,
+                        # so the handle would stay live forever -- making the
+                        # end-of-turn settle burn the ENTIRE remaining wall-clock
+                        # waiting for a child that does not exist. Registering the
+                        # thread only AFTER a successful start is the other half:
+                        # `_settle_fleet` joins every registered thread, and
+                        # joining an unstarted one raises RuntimeError out of
+                        # `run_turn`, skipping `write_manifest()` and
+                        # `run_log_writer.close()` (leaking a file descriptor).
+                        fleet.finish(
+                            handle.handle_id,
+                            RUN_ERROR,
+                            error=f"could not start sub-agent thread: {exc}",
+                        )
                         try:
-                            self._retire_agent_worktree(child_run_id, handle.handle_id, discard=True)
-                        except Exception:
-                            logger.opt(exception=True).warning(
-                                "could not retire agent worktree routing for handle {}",
-                                handle.handle_id,
-                            )
-                    self._fleet_cancels.pop(handle.handle_id, None)
-                    if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
-                        my_handle_ids.pop()
-                    # No child was created, so this spawn costs no slot --
-                    # same rule as the cap refusal above.
-                    logger.warning("could not start sub-agent thread")
-                    return None, SpawnAdmissionRefusal(
-                        ok=False,
-                        error=f"could not start sub-agent: {exc}",
-                    )
+                            self._set_terminal_status(child_run_id, RUN_ERROR)
+                        finally:
+                            try:
+                                self._retire_agent_worktree(
+                                    child_run_id, handle.handle_id, discard=True
+                                )
+                            except Exception:
+                                logger.opt(exception=True).warning(
+                                    "could not retire agent worktree routing for handle {}",
+                                    handle.handle_id,
+                                )
+                        self._fleet_cancels.pop(handle.handle_id, None)
+                        if my_handle_ids and my_handle_ids[-1] == handle.handle_id:
+                            my_handle_ids.pop()
+                        # No child was created, so this spawn costs no slot --
+                        # same rule as the cap refusal above.
+                        if child_kwargs.get("review_launch") is not None:
+                            with contextlib.suppress(ReviewRefused):
+                                child_kwargs["review_service"].retire_unstarted_launch(
+                                    child_kwargs["review_launch"], child_run_id
+                                )
+                        logger.warning("could not start sub-agent thread")
+                        return None, SpawnAdmissionRefusal(
+                            ok=False,
+                            error=f"could not start sub-agent: {exc}",
+                        )
                 admission_decided.wait()
                 if admission_refused:
                     try:
@@ -6017,23 +5886,109 @@ class AgentService:
                     try:
                         if child_reservation is not None:
                             self._automatic_work.ledger.release(
-                                child_reservation, owner_id=self._automatic_work.owner_id
+                                child_reservation,
+                                owner_id=self._automatic_work.owner_id,
                             )
                     finally:
                         child_owner.finish_root()
 
-        def spawn(
-            spawn_task: str,
+        def initialize_child_hooks(child_kwargs, child_task, *, inline=False):
+            nonlocal sub_agent_spawns
+            if hook_run is None:
+                return None
+            child_config = child_kwargs["config"]
+            from .hooks_v2.lifecycle import narrow_child
+            from .hooks_v2.validation import CAPS
+            from .tool_catalog import ToolDefinitionSnapshot
+
+            child_plan = build_first_request_schema_plan(
+                self.registry,
+                child_config.allowed_tools,
+                child_config,
+                child_kwargs["api_endpoint"],
+                child_kwargs["messages"],
+                skill_file_enabled=bool(
+                    self.skill_file_bindings is not None
+                    and self.skill_file_bindings.authorized
+                ),
+                install_skill_enabled=False,
+                run_skill_script_enabled=self._run_skill_script_tool is not None,
+                run_log_active=False,
+                agent_kind=AGENT_KIND_SUBAGENT,
+                reporting_available=bool(fleet is not None and not inline),
+                peers_available=bool(fleet is not None and not inline),
+            )
+            tool_ids = {
+                name: self.registry.snapshot_for_hook(name).tool_id
+                for name in child_config.allowed_tools
+            }
+            tool_ids.update(
+                {
+                    schema.name: ToolDefinitionSnapshot.from_schema(
+                        schema, "runtime", 0, id(schema)
+                    ).tool_id
+                    for schema in child_plan.runtime_schemas
+                }
+            )
+            child_scope = self._hooks_v2_lifecycle.open_scope(parent=run_id)
+            event = self._hooks_v2_lifecycle.event(
+                "SubagentStart",
+                run_id=run_id,
+                turn_id=self._hooks_v2_turn_id,
+                data={
+                    "child_task": child_task,
+                    "tool_ids": list(tool_ids.values()),
+                    "budget_caps": {
+                        key: getattr(child_config.budget, key) for key in CAPS
+                    },
+                    **({"model": child_config.model} if child_config.model else {}),
+                    **(
+                        {"provider": child_config.provider}
+                        if child_config.provider
+                        else {}
+                    ),
+                },
+                initiator="child",
+            )
+            try:
+                result = self._hooks_v2_engine._sync(
+                    self._hooks_v2_lifecycle.fire(
+                        event, child_scope, current=lambda: not should_cancel()
+                    )
+                )
+                child_config, selected_ids = narrow_child(
+                    child_config, result, tool_ids
+                )
+                child_kwargs["config"] = child_config
+                child_kwargs["hook_tool_ids"] = selected_ids
+                child_kwargs["messages"] += list(
+                    self._hooks_v2_lifecycle.context.blocks(child_scope, "child")
+                )
+            except Exception:  # noqa: BLE001 -- hook boundary
+                sub_agent_spawns -= 1
+                return ToolResult(
+                    ok=False,
+                    error="sub-agent initialization refused",
+                    dispatch_state="settled",
+                )
+            finally:
+                self._hooks_v2_lifecycle.close_scope(child_scope)
+            return None
+
+        def _spawn(
+            spawn_task: str | None = None,
             *,
+            review_id: str | None = None,
+            review_slot_id: str | None = None,
             allowed_tools: tuple[str, ...] | None = None,
             agent: str | None = None,
             inline: bool = False,
             spawn_step_index: int | None = None,
             isolation: str | None = None,
-            provider: str = "",
-            model: str = "",
+            provider: str | None = None,
+            model: str | None = None,
         ) -> ToolResult:
-            nonlocal sub_agent_spawns
+            nonlocal sub_agent_spawns, child_started
             # Task-12 review Finding 2: this closure is THE single spawn
             # path -- the loop calls it directly for the native
             # spawn_subagent tool (agent_runtime.py), and invoke_tool's
@@ -6068,7 +6023,84 @@ class AgentService:
                     "tool allow-list, so passing both leaves the child's "
                     "permissions ambiguous."
                 )
-            resolved = None
+            review_claim = None
+            scoped_service = None
+            if review_id is not None or review_slot_id is not None:
+                if (
+                    not review_id
+                    or not review_slot_id
+                    or spawn_task is not None
+                    or agent is not None
+                    or allowed_tools is not None
+                    or provider is not None
+                    or model is not None
+                    or isolation is not None
+                    or inline
+                ):
+                    return SpawnAdmissionRefusal(ok=False, error="invalid_review_spawn")
+                from .code_review_models import ReviewRefused
+                from .code_review_tool_provider import CodeReviewToolProvider
+
+                owner = self.registry.resolve_owner_for_name("code_review_prepare")
+                if owner is None or type(owner[1]) is not CodeReviewToolProvider:
+                    return SpawnAdmissionRefusal(
+                        ok=False, error="stage_grant_unavailable"
+                    )
+                scoped_service = owner[1].service
+                try:
+                    review_claim = scoped_service.claim_review_slot(
+                        review_id, review_slot_id
+                    )
+                    if review_claim.receipt is not None:
+                        return SpawnAdmissionReplay(
+                            **dataclasses.asdict(review_claim.receipt)
+                        )
+                    if not review_claim.launch_allowed:
+                        return SpawnAdmissionRefusal(
+                            ok=False, error="review_launch_pending"
+                        )
+                    slot = review_claim.slot
+                    override = slot.choice.destination
+                    resolve_spawn_target(
+                        self._app_config,
+                        parent_provider=parent_raw_provider or api_endpoint,
+                        parent_model=config.model,
+                        preset=dataclasses.replace(
+                            slot.definition,
+                            provider=slot.target.provider,
+                            model=slot.target.model,
+                        ),
+                        override_provider=slot.target.provider if override else "",
+                        override_model=slot.target.model if override else "",
+                        routing=load_agents_routing_config(),
+                    )
+                    refusal = scoped_service.destination_check(slot.target)
+                    if refusal:
+                        raise ReviewRefused(refusal)
+                    inline = (
+                        fleet is None
+                        or _coerce_max_live_subagents(
+                            _setting(MAX_LIVE_SUBAGENTS_KEY, DEFAULT_MAX_LIVE_SUBAGENTS)
+                        )
+                        == 1
+                    )
+                    if slot.role == "verifier":
+                        review_claim.binding = review_claim.binding.model_copy(
+                            update={
+                                "check_feedback_mode": "unavailable_inline"
+                                if fleet is None or inline
+                                else "primary_handoff"
+                            }
+                        )
+                    spawn_task = scoped_service.launch_task(review_claim)
+                except (ReviewRefused, RoutingError) as exc:
+                    return SpawnAdmissionRefusal(
+                        ok=False,
+                        error=getattr(
+                            exc, "reason", getattr(exc, "code", "review_launch_refused")
+                        ),
+                    )
+            resolved = review_claim.slot.definition if review_claim else None
             if agent:
                 # PR3a-1 Task 6a, recorded because the Task 6 audit got
                 # this half-right and the half it missed is the reachable
@@ -6110,24 +6142,61 @@ class AgentService:
             # supervisor model. `resolved` (the named preset, when given) is
             # an input here; the legacy preset `model`-only override below
             # is gone -- the resolver owns that path now.
-            try:
-                target = resolve_spawn_target(
-                    self._app_config,
-                    # Raw identity first (custom-ep:<slug>): an inheriting
-                    # child of a registry-endpoint parent resolves to the
-                    # endpoint itself — snapshotting its registry base URL —
-                    # not the flattened execution family (qodo PR-2651 High).
-                    parent_provider=(parent_raw_provider or api_endpoint),
-                    parent_model=config.model,
-                    preset=resolved,
-                    override_provider=provider,
-                    override_model=model,
-                    routing=load_agents_routing_config(),
+            if review_claim is not None:
+                target = review_claim.slot.target
+                fallback_targets = review_claim.slot.fallbacks
+                from .agent_routing import execution_provider_for_target
+            else:
+                try:
+                    target = resolve_spawn_target(
+                        self._app_config,
+                        # Raw identity first (custom-ep:<slug>): an inheriting
+                        # child of a registry-endpoint parent resolves to the
+                        # endpoint itself — snapshotting its registry base URL —
+                        # not the flattened execution family (qodo PR-2651 High).
+                        parent_provider=(parent_raw_provider or api_endpoint),
+                        parent_model=config.model,
+                        preset=resolved,
+                        override_provider=provider,
+                        override_model=model,
+                        routing=load_agents_routing_config(),
+                    )
+                except RoutingError as err:
+                    return SpawnAdmissionRefusal(
+                        ok=False, error=f"[{err.code}] ({err.level}) {err}"
+                    )
+                from .agent_routing import (
+                    execution_provider_for_target,
+                    freeze_spawn_target,
+                    resolve_preset_fallback_targets,
                 )
-            except RoutingError as err:
-                return SpawnAdmissionRefusal(
-                    ok=False, error=f"[{err.code}] {err}"
-                )
+
+                try:
+                    fallback_targets = resolve_preset_fallback_targets(
+                        self._app_config,
+                        resolved,
+                        primary_provider=target.provider,
+                        primary_model=target.model,
+                    )
+                    if fallback_targets:
+                        target = freeze_spawn_target(
+                            self._app_config,
+                            target,
+                            selected_endpoint=(
+                                config.base_url
+                                if target.provider
+                                == (parent_raw_provider or api_endpoint)
+                                else None
+                            ),
+                        )
+                except RoutingError as err:
+                    return SpawnAdmissionRefusal(
+                        ok=False, error=f"[{err.code}] ({err.level}) {err}"
+                    )
+            child_execution_provider = (
+                target.execution_provider
+                or execution_provider_for_target(self._app_config, target.provider)
+            )
             if sub_agent_spawns >= config.budget.max_subagents:
                 return ToolResult(
                     ok=False,
@@ -6258,25 +6327,42 @@ class AgentService:
                         resolved, child_system_prompt, child_allowed_tools
                     )
                 )
+            if review_claim is not None:
+                child_allowed_tools = tuple(
+                    name
+                    for name in child_allowed_tools
+                    if name in {"code_review_read", "code_review_submit"}
+                )
+                plugin_instructions = ()
             child_config = AgentConfig(
+                review_binding=review_claim.binding if review_claim else None,
                 model=child_model,
                 # Children report provider-level faults against the same
                 # provider the parent is using (review minor, 2026-08-31 --
                 # previously they reported "unknown provider").
-                provider=config.provider,
+                provider=target.provider,
+                execution_provider=child_execution_provider,
+                preset_fallback_targets=fallback_targets,
                 system_prompt=child_system_prompt,
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
                 native_tools=config.native_tools,
                 reasoning_replay=(
-                    config.reasoning_replay if child_model == config.model else None
+                    config.reasoning_replay
+                    if child_model == config.model
+                    and target.provider == (parent_raw_provider or api_endpoint)
+                    else None
                 ),
                 # A sub-agent operates on the same workspace roots as its
                 # parent, so it inherits the same environment note verbatim
                 # (appended to its own prompt in call_model, after its identity
                 # prefix). Empty for the default workspace, so no change there.
-                workspace_context_note=config.workspace_context_note,
-                personal_context_block=config.personal_context_block,
+                workspace_context_note=""
+                if review_claim
+                else config.workspace_context_note,
+                personal_context_block=""
+                if review_claim
+                else config.personal_context_block,
                 response_reserve_tokens=config.response_reserve_tokens,
                 # The resolved target's own endpoint override and sampling
                 # params (ADR-147) -- empty/None on the plain inherit path's
@@ -6319,6 +6405,43 @@ class AgentService:
                 # onto the child run row so resume/continuation (Task 8)
                 # reuses IT rather than live re-resolution. Params persist
                 # as JSON only when the resolver produced any.
+                fallback_targets_json=(
+                    json.dumps(
+                        [
+                            {
+                                "provider": target.provider,
+                                "model": child_model,
+                                "base_url": target.base_url,
+                                "params_json": json.dumps(
+                                    params_to_dict(target.params)
+                                ),
+                                "execution_provider": child_execution_provider,
+                            },
+                            *[
+                                {
+                                    "provider": candidate.provider,
+                                    "model": candidate.model,
+                                    "base_url": candidate.target.base_url
+                                    if candidate.target
+                                    else None,
+                                    "params_json": json.dumps(
+                                        params_to_dict(candidate.target.params)
+                                    )
+                                    if candidate.target
+                                    else "{}",
+                                    "execution_provider": candidate.target.execution_provider
+                                    if candidate.target
+                                    else "",
+                                    "ready": candidate.ready,
+                                    "skip_reason": candidate.skip_reason,
+                                }
+                                for candidate in fallback_targets
+                            ],
+                        ]
+                    )
+                    if fallback_targets
+                    else None
+                ),
                 resolved_provider=target.provider,
                 resolved_model=child_model,
                 resolved_base_url=target.base_url,
@@ -6326,7 +6449,9 @@ class AgentService:
                     json.dumps(params_to_dict(target.params)) if target.params else None
                 ),
                 agent_kind=AGENT_KIND_SUBAGENT,
-                task=spawn_task,
+                task=f"Review {review_id} slot {review_slot_id}"
+                if review_claim
+                else spawn_task,
                 parent_run_id=run_id,
                 spawn_event_id=spawn_event_id,
                 spawn_parent_event_id=spawn_event_id or f"agent-run:{run_id}",
@@ -6349,6 +6474,10 @@ class AgentService:
                 # record numbers unique across it.
                 run_log_writer=writer,
             )
+            if review_claim is not None:
+                child_kwargs.update(
+                    review_launch=review_claim, review_service=scoped_service
+                )
             if isolation not in (None, "worktree"):
                 # I2 (TASK-28238 P2 T7 final fix wave): the model-supplied
                 # value is an unenforced JSON-fence string, not a schema
@@ -6387,82 +6516,12 @@ class AgentService:
                         f"{refusal.message}"
                     ),
                 )
-            if hook_run is not None:
-                from .hooks_v2.lifecycle import narrow_child
-                from .hooks_v2.validation import CAPS
-                from .tool_catalog import ToolDefinitionSnapshot
-
-                child_plan = build_first_request_schema_plan(
-                    self.registry,
-                    child_config.allowed_tools,
-                    child_config,
-                    api_endpoint,
-                    child_kwargs["messages"],
-                    skill_file_enabled=bool(
-                        self.skill_file_bindings is not None
-                        and self.skill_file_bindings.authorized
-                    ),
-                    install_skill_enabled=False,
-                    run_skill_script_enabled=self._run_skill_script_tool is not None,
-                    run_log_active=False,
-                    agent_kind=AGENT_KIND_SUBAGENT,
-                    reporting_available=bool(fleet is not None and not inline),
-                )
-                tool_ids = {
-                    name: self.registry.snapshot_for_hook(name).tool_id
-                    for name in child_config.allowed_tools
-                }
-                tool_ids.update(
-                    {
-                        schema.name: ToolDefinitionSnapshot.from_schema(
-                            schema, "runtime", 0, id(schema)
-                        ).tool_id
-                        for schema in child_plan.runtime_schemas
-                    }
-                )
-                child_scope = self._hooks_v2_lifecycle.open_scope(parent=run_id)
-                event = self._hooks_v2_lifecycle.event(
-                    "SubagentStart",
-                    run_id=run_id,
-                    turn_id=self._hooks_v2_turn_id,
-                    data={
-                        "child_task": spawn_task,
-                        "tool_ids": list(tool_ids.values()),
-                        "budget_caps": {
-                            key: getattr(child_config.budget, key) for key in CAPS
-                        },
-                        **({"model": child_config.model} if child_config.model else {}),
-                        **(
-                            {"provider": child_config.provider}
-                            if child_config.provider
-                            else {}
-                        ),
-                    },
-                    initiator="child",
-                )
-                try:
-                    result = self._hooks_v2_engine._sync(
-                        self._hooks_v2_lifecycle.fire(
-                            event, child_scope, current=lambda: not should_cancel()
-                        )
-                    )
-                    child_config, selected_ids = narrow_child(
-                        child_config, result, tool_ids
-                    )
-                    child_kwargs["config"] = child_config
-                    child_kwargs["hook_tool_ids"] = selected_ids
-                    child_kwargs["messages"] += list(
-                        self._hooks_v2_lifecycle.context.blocks(child_scope, "child")
-                    )
-                except Exception:  # noqa: BLE001 -- hook boundary
-                    sub_agent_spawns -= 1
-                    return ToolResult(
-                        ok=False,
-                        error="sub-agent initialization refused",
-                        dispatch_state="settled",
-                    )
-                finally:
-                    self._hooks_v2_lifecycle.close_scope(child_scope)
+            failure = initialize_child_hooks(
+                child_kwargs, child_kwargs["task"], inline=inline
+            )
+            if failure is not None:
+                return failure
+            child_config = child_kwargs["config"]
             if fleet is None or inline:
                 # -- INLINE path: byte-identical to every release before
                 # PR2a. Kept, not merely tolerated: with no fleet there is
@@ -6499,6 +6558,7 @@ class AgentService:
                         else contextlib.nullcontext()
                     )
                     with scope:
+                        child_started = True  # proven refusals below still return
                         _child_id, child_outcome = self._run_owned(
                             execution_owner=child_owner,
                             automatic_child_reservation=child_reservation,
@@ -6506,18 +6566,37 @@ class AgentService:
                             **child_kwargs,
                         )
                 except Exception as exc:
+                    from .code_review_models import ReviewRefused
+
+                    if (
+                        review_claim is not None
+                        and review_claim.run_id is None
+                        and isinstance(exc, ReviewRefused)
+                    ):
+                        # Inline attachment precedes model/tool execution too.
+                        # A proven refusal may unwind; an uncertain failure may not.
+                        if child_owner.run_id is not None:
+                            self._set_terminal_status(
+                                child_owner.run_id, RUN_ERROR, result=exc.reason
+                            )
+                        sub_agent_spawns -= 1
+                        return SpawnAdmissionRefusal(ok=False, error=exc.reason)
                     if child_owner.run_id is None:
                         sub_agent_spawns -= 1
                         return SpawnAdmissionRefusal(
                             ok=False,
                             error=f"could not start sub-agent ({type(exc).__name__}); retry when available",
                         )
+                    if review_claim is not None and review_claim.run_id is not None:
+                        self._set_terminal_status(child_owner.run_id, RUN_ERROR)
+                        self._settle_review_capture(scoped_service, child_owner.run_id)
                     raise
                 finally:
                     try:
                         if child_reservation is not None:
                             self._automatic_work.ledger.release(
-                                child_reservation, owner_id=self._automatic_work.owner_id
+                                child_reservation,
+                                owner_id=self._automatic_work.owner_id,
                             )
                     finally:
                         child_owner.finish_root()
@@ -6539,6 +6618,21 @@ class AgentService:
                 cap = config.budget.max_subagent_result_chars
                 if len(text) > cap:
                     text = text[:cap] + TRUNCATION_NOTICE
+                if review_claim is not None:
+                    self._settle_review_capture(scoped_service, _child_id)  # 2nd try
+                    receipt_text = (
+                        f"sub-agent {child_outcome.status}; run {_child_id}; "
+                        f"review {review_id}; slot {review_slot_id}; read originals with code_review_read"
+                    )
+                    review_claim.receipt = ToolResult(
+                        ok=child_outcome.status == RUN_DONE,
+                        content=receipt_text
+                        if child_outcome.status == RUN_DONE
+                        else "",
+                        error=receipt_text if child_outcome.status != RUN_DONE else "",
+                        dispatch_state="settled",
+                    )
+                    return review_claim.receipt
                 if child_outcome.status != RUN_DONE:
                     return ToolResult(
                         ok=False, error=f"sub-agent {child_outcome.status}: {text}"
@@ -6550,7 +6644,7 @@ class AgentService:
             # extracted it verbatim so the continuation path launches
             # through the exact same machinery).
             handle, failure = _launch_fleet_child(
-                spawn_task,
+                child_kwargs["task"],
                 (resolved.name if resolved else None),
                 child_kwargs,
                 isolation,
@@ -6562,6 +6656,14 @@ class AgentService:
             )
             if failure is not None:
                 return failure
+            if review_claim is not None:
+                review_claim.receipt = ToolResult(
+                    ok=True,
+                    content=(
+                        f"started {handle.handle_id}; review {review_id}; slot {review_slot_id}"
+                    ),
+                )
+                return review_claim.receipt
             snippet = spawn_task[:_SPAWN_ECHO_CHARS]
             return ToolResult(
                 ok=True,
@@ -6571,6 +6673,47 @@ class AgentService:
                     "result before you answer."
                 ),
             )
+
+        def spawn(*args, **kwargs):
+            nonlocal sub_agent_spawns, child_started
+            scoped = "review_id" in kwargs or "review_slot_id" in kwargs
+            if scoped and (
+                args
+                or set(kwargs) != {"review_id", "review_slot_id"}
+                or any(
+                    not isinstance(kwargs.get(key), str) or not kwargs[key].strip()
+                    for key in ("review_id", "review_slot_id")
+                )
+            ):
+                return SpawnAdmissionRefusal(ok=False, error="invalid_review_spawn")
+            spawns_before, result, child_started = sub_agent_spawns, None, False
+            try:
+                result = _spawn(*args, **kwargs)
+                return result
+            finally:
+                # An exception (result None) returns the slot only if no child may
+                # have run (the ceiling counts started children); restore, as some
+                # paths gave it back. It also releases an unaccepted claim.
+                if result is None and not child_started:
+                    sub_agent_spawns = spawns_before
+                if (
+                    (result is None or not result.ok)
+                    and getattr(result, "error", "") != "review_launch_pending"
+                    and kwargs.get("review_id")
+                    and kwargs.get("review_slot_id")
+                ):
+                    owner = self.registry.resolve_owner_for_name("code_review_prepare")
+                    if owner is not None:
+                        from .code_review_models import ReviewRefused
+
+                        try:
+                            owner[1].service.release_unaccepted_claim(
+                                kwargs["review_id"], kwargs["review_slot_id"]
+                            )
+                        except ReviewRefused:
+                            # A missing or revoked scope has nothing safe to
+                            # release; preserve the original admission refusal.
+                            pass
 
         def wait_agents(ids: list[str] | None = None) -> ToolResult:
             """Block until the named (or all) children finish; collect them.
@@ -6676,6 +6819,58 @@ class AgentService:
                     self._cancel_fleet_handles(pending)
                     stopped_children = True
                     break
+                if review_owner is not None:
+                    from .code_review_models import ReviewRefused
+
+                    try:
+                        notice = review_owner[1].service.pending_check_for_wait(
+                            run_id,
+                            tuple(
+                                known[hid].run_id
+                                for hid in targets
+                                if known[hid].run_id
+                            ),
+                        )
+                    except ReviewRefused:
+                        notice = None
+                    if notice is not None:
+                        terminal = [hid for hid in targets if hid not in pending]
+                        payload = {
+                            "status": "check_requested",
+                            "review_id": notice.review_id,
+                            "proposal_id": notice.proposal_id,
+                            "child_run_id": notice.child_run_id,
+                            "completed": "",
+                        }
+                        limit = review_owner[1].service.result_limit
+                        overhead = len(json.dumps(payload, separators=(",", ":")))
+                        if overhead > limit:
+                            from .agent_request_execution import end_review_checks
+
+                            end_review_checks(
+                                self,
+                                run_id,
+                                "tool_check_notice_transport_unavailable",
+                                unstarted_only=True,
+                            )
+                            return ToolResult(
+                                ok=False, error="check_notice_transport_unavailable"
+                            )
+                        if terminal:
+                            # JSON escaping can expand each character six-fold.
+                            remaining = (limit - overhead) // 6
+                            if remaining:
+                                payload["completed"] = self._format_wait_result(
+                                    fleet,
+                                    terminal,
+                                    dataclasses.replace(
+                                        config.budget, max_tool_result_chars=remaining
+                                    ),
+                                    "",
+                                )
+                        return ToolResult(
+                            ok=True, content=json.dumps(payload, separators=(",", ":"))
+                        )
                 time.sleep(_FLEET_POLL_SECONDS)
             if stopped_children:
                 # Give the children just cancelled a bounded chance to
@@ -6959,11 +7154,15 @@ class AgentService:
             # this path's pre-Task-8 behavior byte-identical: inherit the
             # parent's endpoint, take the definition's CURRENT model.
             snapshot = None
+            fallback_state = None
             if retained.run_id is not None:
                 try:
                     snapshot = self.db.get_run_resolved_target(retained.run_id)
-                except Exception:  # noqa: BLE001 — a read failure is a miss
-                    snapshot = None
+                    fallback_state = self.db.get_run_fallback_state(retained.run_id)
+                except Exception:  # noqa: BLE001 — fail closed on frozen route reads
+                    return SpawnAdmissionRefusal(
+                        ok=False, error="could not read frozen child target"
+                    )
             if snapshot is not None:
                 child_endpoint = snapshot["provider"]
                 child_model = snapshot["model"] or config.model
@@ -6994,13 +7193,22 @@ class AgentService:
                 # Children report provider-level faults against the same
                 # provider the parent is using (review minor, 2026-08-31 --
                 # previously they reported "unknown provider").
-                provider=config.provider,
+                provider=child_endpoint,
+                execution_provider=(
+                    fallback_state["active_target"].get("execution_provider", "")
+                    if fallback_state
+                    else ""
+                ),
                 system_prompt=child_system_prompt,
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
                 native_tools=config.native_tools,
                 reasoning_replay=(
-                    config.reasoning_replay if child_model == config.model else None
+                    config.reasoning_replay
+                    if child_model == config.model
+                    and child_endpoint == (parent_raw_provider or api_endpoint)
+                    and not (fallback_state and fallback_state["active_index"])
+                    else None
                 ),
                 workspace_context_note=config.workspace_context_note,
                 personal_context_block=config.personal_context_block,
@@ -7010,7 +7218,19 @@ class AgentService:
                 base_url=child_base_url,
                 sampling_params=child_sampling_params,
             )
-            seed = [*plugin_instructions, *(dict(m) for m in retained.messages)]
+            # Re-project the current preset once, retaining unrelated context.
+            origins = {row["content"].checked_origins() for row in plugin_instructions}
+            seed = [
+                *plugin_instructions,
+                *(
+                    dict(message)
+                    for message in retained.messages
+                    if not (
+                        isinstance(message.get("content"), PluginContextText)
+                        and message["content"].checked_origins() in origins
+                    )
+                ),
+            ]
             retained_steering = retained.steering_with_causes or tuple(
                 (source, text, None) for source, text in retained.steering
             )
@@ -7046,14 +7266,47 @@ class AgentService:
                 # target. The legacy miss branch leaves them NULL -- a
                 # pre-v21 row's continuations keep re-resolving live, as
                 # they always have.
-                resolved_provider=snapshot["provider"] if snapshot else None,
-                resolved_model=child_model if snapshot else None,
-                resolved_base_url=snapshot["base_url"] if snapshot else None,
-                resolved_params_json=snapshot["params_json"] if snapshot else None,
+                fallback_targets_json=fallback_state["targets_json"]
+                if fallback_state
+                else None,
+                active_fallback_index=fallback_state["active_index"]
+                if fallback_state
+                else 0,
+                resolved_provider=(
+                    fallback_state["original_target"]["provider"]
+                    if fallback_state
+                    else snapshot["provider"]
+                    if snapshot
+                    else None
+                ),
+                resolved_model=(
+                    fallback_state["original_target"]["model"]
+                    if fallback_state
+                    else child_model
+                    if snapshot
+                    else None
+                ),
+                resolved_base_url=(
+                    fallback_state["original_target"]["base_url"]
+                    if fallback_state
+                    else snapshot["base_url"]
+                    if snapshot
+                    else None
+                ),
+                resolved_params_json=(
+                    fallback_state["original_target"]["params_json"]
+                    if fallback_state
+                    else snapshot["params_json"]
+                    if snapshot
+                    else None
+                ),
             )
             child_kwargs["spawn_parent_event_id"] = (
                 child_kwargs["spawn_event_id"] or f"agent-run:{run_id}"
             )
+            failure = initialize_child_hooks(child_kwargs, retained.task)
+            if failure is not None:
+                return failure
             handle, failure = _launch_fleet_child(
                 retained.task,
                 (resolved.name if resolved else None),
@@ -7330,6 +7583,34 @@ class AgentService:
                 else None
             ),
         )
+        if review_owner is not None and agent_kind != AGENT_KIND_SUBAGENT:
+            from .code_review_tool_provider import CodeReviewToolProvider
+
+            if type(review_owner[1]) is CodeReviewToolProvider:
+                review_owner[1].service.bind_native_run(
+                    run_actor, chain_id=self._work_chain_id
+                )
+                review_owner[1].service.check_deadline = time.monotonic() + max(
+                    0, config.budget.max_wall_seconds - (self.clock() - started)
+                )
+                process_owner = self.registry.resolve_owner_for_name("shell_exec")
+                review_owner[1].service.check_process_provider = (
+                    process_owner[1] if process_owner else None
+                )
+                if review_owner[1].service.native_coordinator is not None:
+                    registry = self.registry
+                    allowed_source_names = frozenset(config.allowed_tools)
+                    review_owner[1].service.source_permission = lambda name, args: (
+                        registry.authorize_review_source(
+                            name,
+                            args,
+                            allowed_names=allowed_source_names,
+                            expected_binding_id=review_owner[
+                                1
+                            ].service.source_authority.admitted.binding_id,
+                        )
+                    )
+
         builtin_invoke_tool = self._make_invoke_tool(
             config,
             disclosed_names,
@@ -7393,13 +7674,11 @@ class AgentService:
                 # alone let an undisclosed skill name execute the instant
                 # the model guessed it, even behind a >8-tool catalog where
                 # progressive disclosure is supposed to gate exactly this.
-                if (
-                    call.name not in config.allowed_tools
-                    or call.name not in disclosed_names
-                ):
-                    return _observed_skill_result(
-                        ToolResult.blocked(f"Tool not permitted: {call.name}")
-                    )
+                refusal = _tool_availability_refusal(
+                    call.name, config.allowed_tools, disclosed_names, self.registry
+                )
+                if refusal is not None:
+                    return _observed_skill_result(refusal)
                 # Cheap early exit before rendering the skill: the
                 # authoritative check-and-increment lives in `spawn` itself
                 # (shared with the native spawn_subagent path), so the
@@ -7576,53 +7855,65 @@ class AgentService:
             scope = str(args.get("scope") or "run").strip().lower()
             if scope == "conversation":
                 try:
-                    offset = int(args.get("offset") or 0)
-                    # task-1273 review finding A: the cap is pushed INTO the
-                    # query (both `limit` and `agent_kind`) rather than
-                    # fetched-then-discarded -- a long-lived conversation's
-                    # run count (primary + every sub-agent run it has ever
-                    # spawned) must never size this query. `count_runs` is a
-                    # second, O(1)-row query that gets the EXACT total
-                    # without materializing it, so the coverage line can
-                    # still report a precise omitted count rather than only
-                    # "more exist".
-                    windowed = self.db.list_runs(
-                        conversation_id,
-                        include_superseded=True,
-                        limit=MAX_CROSS_RUN_RUNS,
-                        agent_kind=AGENT_KIND_PRIMARY,
-                    )
-                    total_primary_count = self.db.count_runs(
-                        conversation_id,
-                        include_superseded=True,
-                        agent_kind=AGENT_KIND_PRIMARY,
-                    )
-                    omitted_run_count = max(0, total_primary_count - len(windowed))
-                    resolved_runs: list = []
-                    for run in windowed:
-                        candidate_id = run.get("id")
-                        if candidate_id == run_id:
-                            # This run's own directory is already known --
-                            # never re-resolved (avoids a redundant glob and
-                            # any race with THIS run's still-open writer).
-                            resolved_runs.append((candidate_id, log_dir))
-                        else:
-                            resolved_runs.append(
-                                (candidate_id, resolve_existing_log_dir(candidate_id))
-                            )
-                    cross_result = search_across_runs(
-                        resolved_runs,
-                        current_run_id=run_id,
-                        contains=contains,
-                        pattern=pattern,
-                        tool=str(args.get("tool", "")),
-                        type=str(args.get("type", "")),
-                        status=str(args.get("status", "")),
-                        kind=str(args.get("kind", "")),
-                        from_record=int(args.get("from_record") or 0),
-                        to_record=int(args.get("to_record") or 0),
-                        context=int(args.get("context") or 0),
-                    )
+                    with history_execution(self) as history_root:
+                        offset = int(args.get("offset") or 0)
+                        # task-1273 review finding A: the cap is pushed INTO the
+                        # query (both `limit` and `agent_kind`) rather than
+                        # fetched-then-discarded -- a long-lived conversation's
+                        # run count (primary + every sub-agent run it has ever
+                        # spawned) must never size this query. `count_runs` is a
+                        # second, O(1)-row query that gets the EXACT total
+                        # without materializing it, so the coverage line can
+                        # still report a precise omitted count rather than only
+                        # "more exist".
+                        windowed = self.db.list_runs(
+                            conversation_id,
+                            include_superseded=True,
+                            limit=MAX_CROSS_RUN_RUNS,
+                            agent_kind=AGENT_KIND_PRIMARY,
+                        )
+                        total_primary_count = self.db.count_runs(
+                            conversation_id,
+                            include_superseded=True,
+                            agent_kind=AGENT_KIND_PRIMARY,
+                        )
+                        omitted_run_count = max(0, total_primary_count - len(windowed))
+                        standard_resolver = standard_history_resolver(
+                            resolve_existing_log_dir
+                        )
+                        resolved_runs: list = []
+                        for run in windowed:
+                            candidate_id = run.get("id")
+                            if candidate_id == run_id:
+                                # This run's own directory is already known --
+                                # never re-resolved (avoids a redundant glob and
+                                # any race with THIS run's still-open writer).
+                                resolved_runs.append((candidate_id, log_dir))
+                            else:
+                                if standard_resolver:
+                                    directory = (
+                                        resolve_existing_log_dir(
+                                            candidate_id, root=history_root
+                                        )
+                                        if history_root is not None
+                                        else None
+                                    )
+                                else:
+                                    directory = resolve_existing_log_dir(candidate_id)
+                                resolved_runs.append((candidate_id, directory))
+                        cross_result = search_across_runs(
+                            resolved_runs,
+                            current_run_id=run_id,
+                            contains=contains,
+                            pattern=pattern,
+                            tool=str(args.get("tool", "")),
+                            type=str(args.get("type", "")),
+                            status=str(args.get("status", "")),
+                            kind=str(args.get("kind", "")),
+                            from_record=int(args.get("from_record") or 0),
+                            to_record=int(args.get("to_record") or 0),
+                            context=int(args.get("context") or 0),
+                        )
                 except (TypeError, ValueError, OverflowError) as exc:
                     return ToolResult(
                         ok=False, error=f"Invalid search arguments: {exc}"
@@ -7939,14 +8230,14 @@ class AgentService:
                 content was withheld/redacted, the writer is inactive, or
                 the write failed; a privacy-safe audit row is still kept.
             """
+            if config.review_binding is not None:
+                return None
             content = str(payload.get("content", ""))
             tool_name = str(payload.get("tool", ""))
             safe_content, altered = _safe_run_log_content(
                 record_type, content, tool_name
             )
-            durable_content = _replace_process_handles(
-                safe_content, durable_handle_ids
-            )
+            durable_content = _replace_process_handles(safe_content, durable_handle_ids)
             altered = altered or durable_content != safe_content
             record_number = writer.append(
                 run_id=run_id,
@@ -7958,6 +8249,20 @@ class AgentService:
                 call_id=str(payload.get("call_id", "")),
             )
             return None if altered else record_number
+
+        def guard_calls(calls):
+            if config.review_binding is not None:
+                from .code_review_models import ReviewRefused
+
+                try:
+                    self.registry._review_service.validate_run(config.review_binding)
+                except ReviewRefused as exc:
+                    return {call.call_id or call.name: exc.reason for call in calls}
+            return (
+                self.guard_tool_calls(calls, run_id)
+                if self.guard_tool_calls is not None
+                else {}
+            )
 
         def prepare_project_instructions(
             calls: list[ToolCall],
@@ -8005,6 +8310,7 @@ class AgentService:
             on_context_assembled=lambda categories: context_callback_ref["callback"](
                 categories
             ),
+            input_budget_tokens=schema_plan.schema_input_budget_tokens,
             first_request_fits=schema_plan.request_fits,
         )
 
@@ -8016,36 +8322,68 @@ class AgentService:
         # required (shaping and the protocol-text cache resolve at build
         # time), but LoopDeps itself is never rebuilt -- TASK-25913's
         # wall-budget origin is untouched by a switch.
-        def _build_for_candidate(candidate_endpoint: str):
-            try:
-                # The candidate runs ITS OWN configured model, not the
-                # primary's -- an anthropic model id sent verbatim to cohere
-                # is a guaranteed invalid-model failure (review C3b). Empty
-                # means "let the handler use its provider default", the same
-                # resolution the rest of the app applies.
-                from tldw_chatbook.config import get_cli_setting
+        def _build_for_candidate(candidate):
+            from .fallback_chain import FallbackCandidate
 
-                candidate_model = str(
-                    get_cli_setting(
-                        f"api_settings.{candidate_endpoint}", "model", ""
+            explicit = isinstance(candidate, FallbackCandidate)
+            candidate_endpoint = candidate.provider if explicit else candidate
+            try:
+                if explicit:
+                    target = candidate.target
+                    if target is None:
+                        return None
+                    if config.review_binding is not None:
+                        service = self.registry._review_service
+                        service.validate_run(config.review_binding)
+                        if service.destination_check(target):
+                            return None
+                        resolve_spawn_target(
+                            self._app_config,
+                            parent_provider=api_endpoint,
+                            parent_model=config.model,
+                            preset=AgentDefinition(
+                                name="review fallback",
+                                instructions="",
+                                provider=target.provider,
+                                model=target.model,
+                            ),
+                            routing=load_agents_routing_config(),
+                        )
+                    candidate_config = dataclasses.replace(
+                        config,
+                        model=target.model,
+                        provider=target.provider,
+                        execution_provider=target.execution_provider,
+                        base_url=target.base_url,
+                        sampling_params=target.params,
+                        reasoning_replay=None,
                     )
-                    or ""
-                )
-                candidate_config = dataclasses.replace(
-                    config,
-                    model=candidate_model,
-                    provider=candidate_endpoint,
-                    # Endpoint/model approval belongs only to the resolved primary.
-                    reasoning_replay=None,
-                )
+                else:
+                    from tldw_chatbook.config import get_cli_setting
+
+                    candidate_model = str(
+                        get_cli_setting(
+                            f"api_settings.{candidate_endpoint}", "model", ""
+                        )
+                        or ""
+                    )
+                    candidate_config = dataclasses.replace(
+                        config,
+                        model=candidate_model,
+                        provider=candidate_endpoint,
+                        execution_provider="",
+                        base_url=None,
+                        sampling_params=(),
+                        reasoning_replay=None,
+                    )
                 return self._make_call_model(
                     candidate_config,
                     candidate_endpoint,
                     runtime_schemas,
                     log_active,
-                    continuation_groups,
-                    continuation_owner_key,
-                    continuation_owner_message_id,
+                    () if explicit else continuation_groups,
+                    None if explicit else continuation_owner_key,
+                    None if explicit else continuation_owner_message_id,
                     run_id=run_id,
                     trusted_role=trusted_guidance_role,
                     project_instruction_context=project_context,
@@ -8055,31 +8393,71 @@ class AgentService:
                     on_context_assembled=lambda categories: context_callback_ref[
                         "callback"
                     ](categories),
-                    first_request_fits=schema_plan.request_fits,
+                    input_budget_tokens=schema_plan.schema_input_budget_tokens,
+                    first_request_fits=True if explicit else schema_plan.request_fits,
                 )
-            except Exception:  # noqa: BLE001 -- a broken candidate is skipped
+            except Exception:  # noqa: BLE001 -- construction failure remains a visible skip
                 return None
 
         fallback_runtime = None
-        from .fallback_chain import FallbackRuntime, resolve_fallback_chain  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+        from .fallback_chain import FallbackRuntime, resolve_fallback_chain
 
-        resolved_chain = resolve_fallback_chain(
-            getattr(config, "fallback_providers", None),
-            api_endpoint,
-            self._provider_is_ready,
-        )
-        if resolved_chain:
-            fallback_runtime = FallbackRuntime(
-                candidates=tuple(resolved_chain),
-                build=_build_for_candidate,
+        if config.preset_fallback_targets:
+            # Retained/private continuation never opens another preset chain.
+            if (
+                resumed_from_run_id is None
+                and not continuation_groups
+                and restore_provider_continuation is None
+            ):
+
+                def select_preset_target(candidate) -> None:
+                    self.db.set_run_active_fallback(run_id, candidate.index)
+                    if self._fleet is not None:
+                        self._fleet.set_resolved_target(
+                            run_id, candidate.provider, candidate.model
+                        )
+                    if self._on_resolved_target is not None:
+                        try:
+                            self._on_resolved_target(
+                                run_id, candidate.provider, candidate.model
+                            )
+                        except Exception as exc:  # noqa: BLE001 - observation cannot alter dispatch
+                            logger.warning(
+                                "agent_target_observer_failed error_type={}",
+                                _safe_exception_type(exc),
+                            )
+
+                fallback_runtime = FallbackRuntime(
+                    candidates=tuple(
+                        dataclasses.replace(
+                            candidate, native=config.native_tools and candidate.native
+                        )
+                        for candidate in config.preset_fallback_targets
+                    ),
+                    build=_build_for_candidate,
+                    pre_tool_only=True,
+                    select=select_preset_target,
+                )
+        else:
+            resolved_chain = resolve_fallback_chain(
+                getattr(config, "fallback_providers", None),
+                api_endpoint,
+                self._provider_is_ready,
             )
+            if resolved_chain:
+                fallback_runtime = FallbackRuntime(
+                    tuple(resolved_chain), _build_for_candidate
+                )
 
         def observe_step(step: AgentStep) -> None:
             try:
                 if not step.created_at:
                     step.created_at = safe_utc_timestamp(self.wall_clock)
                 record = _safe_agent_step_record(
-                    run_id, step, durable_handle_ids
+                    run_id,
+                    step,
+                    durable_handle_ids,
+                    omit_content=config.review_binding is not None,
                 )
                 self.db.insert_steps_at_indices(run_id, [(step.index, record)])
             except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
@@ -8117,12 +8495,19 @@ class AgentService:
                 except Exception:  # noqa: BLE001 — non-recursive containment
                     logger.warning("could not persist control capture diagnostic")
             if self._on_step is not None:
-                self._on_step(step, agent_kind, run_id)
+                callback_step = (
+                    _body_free_review_step(step)
+                    if config.review_binding is not None
+                    else step
+                )
+                self._on_step(callback_step, agent_kind, run_id)
 
         def observe_trace_step(step: AgentStep) -> None:
             """Persist lifecycle-only rows without changing legacy step callbacks."""
             try:
-                record = _safe_agent_step_record(run_id, step)
+                record = _safe_agent_step_record(
+                    run_id, step, omit_content=config.review_binding is not None
+                )
                 self.db.insert_steps_at_indices(run_id, [(step.index, record)])
             except Exception as exc:  # noqa: BLE001 — trace capture is best-effort
                 logger.warning(
@@ -8164,7 +8549,7 @@ class AgentService:
             """Persist safe presence-only facts at the exact request seam."""
             attached = context_steps_ref.get("attached")
             injected = context_steps_ref.get("injected")
-            if attached is None or injected is None:
+            if attached is None or injected is None or attached.status == "completed":
                 return
             observed_at = _now_iso()
             attached.summary = f"{', '.join(categories)} context attached"
@@ -8198,18 +8583,14 @@ class AgentService:
             if drain_mailbox_with_causes is not None:
                 entries.extend(drain_mailbox_with_causes())
             elif drain_mailbox is not None:
-                entries.extend(
-                    (source, text, None) for source, text in drain_mailbox()
-                )
+                entries.extend((source, text, None) for source, text in drain_mailbox())
             # Review F5 (defensive): today this closure is wired for
             # subagents only, but if seeded causal steering is ever extended
             # to a primary, a drain that bypassed _primary_drain_for would
             # leave the abort flag up forever -- every re-ask cut until
             # EMPTY_TURN_LIMIT. Clearing here keeps the invariant "a drain
             # that consumed a redirect entry lowers the flag" wiring-proof.
-            if any(
-                source == STEERING_SOURCE_REDIRECT for source, _t, _c in entries
-            ):
+            if any(source == STEERING_SOURCE_REDIRECT for source, _t, _c in entries):
                 flag = self._primary_redirect_flags.get(run_id)
                 if flag is not None:
                     flag.clear()
@@ -8255,14 +8636,40 @@ class AgentService:
             return True
 
         def report_to_supervisor(args: dict) -> ToolResult:
-            from .fleet_message_tools import report as report_progress, refused as refuse_progress
+            from tldw_chatbook.Backup_Recovery.participants import (
+                run_finite_local_worker,
+            )
+
+            from .fleet_message_tools import (
+                refused as refuse_progress,
+            )
+            from .fleet_message_tools import (
+                report as report_progress,
+            )
 
             if progress_sender is None or not progress_authorized():
                 return refuse_progress()
-            return report_progress(progress_sender, args)
+            return run_finite_local_worker(report_progress, progress_sender, args)
+
+        def list_peer_agents(args: dict) -> ToolResult:
+            from .fleet_message_tools import list_peers, refused
+
+            if peer_messenger is None or not progress_authorized():
+                return refused()
+            return list_peers(peer_messenger, args)
+
+        def send_to_peer(args: dict) -> ToolResult:
+            from .fleet_message_tools import refused, send_peer
+
+            if peer_messenger is None or not progress_authorized():
+                return refused()
+            return send_peer(peer_messenger, args)
 
         def read_agent_messages(args: dict) -> ToolResult:
-            from .fleet_message_tools import collect as collect_progress, refused as refuse_progress
+            from .fleet_message_tools import (
+                collect as collect_progress,
+                refused as refuse_progress,
+            )
 
             if progress_reader is None or not progress_authorized():
                 return refuse_progress()
@@ -8357,6 +8764,17 @@ class AgentService:
                 ),
             )
 
+            runtime_tool_names = frozenset(schema.name for schema in runtime_schemas)
+
+            def prepare_hook_call(call: ToolCall) -> ToolCall | ToolResult:
+                if call.name not in runtime_tool_names:
+                    refusal = _tool_availability_refusal(
+                        call.name, config.allowed_tools, disclosed_names, self.registry
+                    )
+                    if refusal is not None:
+                        return refusal
+                return hook_run.prepare_call(call)
+
             if self._hooks_v2_engine.mcp_executor is not None:
                 from .hooks_v2.mcp_executor import MCPHookContext
 
@@ -8377,9 +8795,51 @@ class AgentService:
                     ),
                     run_id=run_id,
                 )
+        recovery_search = recovery_restore = None
+        if (
+            agent_kind == AGENT_KIND_PRIMARY
+            and self._archive_recovery_provider is not None
+        ):
+            raw_search, raw_restore = self._archive_recovery_provider.build_closures()
+
+            def recovery_gate(name: str) -> ToolResult | None:
+                if name not in config.allowed_tools or name not in disclosed_names:
+                    return ToolResult.blocked(f"Tool not permitted: {name}")
+                return self.registry.check_archive_recovery_call(name)
+
+            def recovery_invoke(
+                name: str, callback: Any, arguments: dict, **kwargs: Any
+            ) -> ToolResult:
+                refusal = recovery_gate(name)
+                if refusal is not None:
+                    return refusal
+                if should_cancel():
+                    return ToolResult.blocked("Recovery call cancelled before start.")
+                try:
+                    operation = owner.reserve_tool() if owner is not None else None
+                except CapacityRefused as exc:
+                    return ToolResult.blocked(f"tool call refused: {exc}")
+                try:
+                    return callback(arguments, **kwargs)
+                finally:
+                    if operation is not None:
+                        operation.finish()
+
+            def recovery_search(arguments: dict) -> ToolResult:
+                return recovery_invoke(
+                    "search_archived_conversations", raw_search, arguments
+                )
+
+            def recovery_restore(arguments: dict, *, call_id: str) -> ToolResult:
+                return recovery_invoke(
+                    "request_conversation_restore",
+                    raw_restore,
+                    arguments,
+                    call_id=call_id,
+                )
 
         deps = LoopDeps(
-            prepare_hook_call=hook_run.prepare_call if hook_run else None,
+            prepare_hook_call=prepare_hook_call if hook_run else None,
             accept_hook_preparation=hook_run.validate_dispatch if hook_run else None,
             validate_hook_dispatch=(
                 (lambda call: hook_run.validate_dispatch(call, accept_context=False))
@@ -8405,13 +8865,15 @@ class AgentService:
                 trace_step_index=step_index,
                 dispatch_call_id=call_id,
             ),
-            spawn_at_step=lambda task, step_index, agent_name, isolation, provider=None, model=None: spawn(
-                task,
-                agent=agent_name,
-                spawn_step_index=step_index,
-                isolation=isolation,
-                provider=provider or "",
-                model=model or "",
+            spawn_at_step=lambda task, step_index, agent_name, isolation, provider=None, model=None: (
+                spawn(
+                    task,
+                    agent=agent_name,
+                    spawn_step_index=step_index,
+                    isolation=isolation,
+                    provider=provider or "",
+                    model=model or "",
+                )
             ),
             find_tools=find_tools,
             load_schemas=load_schemas,
@@ -8449,8 +8911,9 @@ class AgentService:
                 run_id,
             ),
             guard_tool_calls=(
-                (lambda calls: self.guard_tool_calls(calls, run_id))
-                if self.guard_tool_calls is not None
+                guard_calls
+                if config.review_binding is not None
+                or self.guard_tool_calls is not None
                 else None
             ),
             is_tool_call_preauthorized=(
@@ -8497,14 +8960,18 @@ class AgentService:
             # session's primary). `None` (the default) stays a true no-op.
             post_tool_call=(
                 (
-                    lambda name, call_id, tool_args, content, ok: (
-                        self._post_tool_call(
-                            name, call_id, tool_args, content, ok, run_id
-                        )
+                    lambda name, call_id, tool_args, content, ok: self._post_tool_call(
+                        name, call_id, tool_args, content, ok, run_id
                     )
                 )
                 if self._post_tool_call is not None
                 else None
+            ),
+            search_archived_conversations=(
+                recovery_search if agent_kind == AGENT_KIND_PRIMARY else None
+            ),
+            request_conversation_restore=(
+                recovery_restore if agent_kind == AGENT_KIND_PRIMARY else None
             ),
             fork_chat=self._fork_chat_tool,
             new_chat=self._new_chat_tool,
@@ -8562,12 +9029,14 @@ class AgentService:
                 if seeded_steering_with_causes or drain_mailbox_with_causes is not None
                 else None
             ),
-            report_to_supervisor=(
-                report_to_supervisor if progress_sender is not None else None
-            ),
-            read_agent_messages=(
-                read_agent_messages if progress_inbox is not None else None
-            ),
+            report_to_supervisor=report_to_supervisor
+            if progress_sender is not None
+            else None,
+            list_peer_agents=list_peer_agents if peer_messenger is not None else None,
+            send_to_peer=send_to_peer if peer_messenger is not None else None,
+            read_agent_messages=read_agent_messages
+            if progress_inbox is not None
+            else None,
             on_record=on_record,
             project_tool_record=self.registry.project_tool_record,
             has_tool_record_projection=lambda call: (
@@ -8589,6 +9058,7 @@ class AgentService:
         )
         if self.persist_provider_continuation is not None:
             deps.persist_provider_continuation = self.persist_provider_continuation
+        deps.acknowledge_provider_continuation = self.acknowledge_provider_continuation
         deps.expand_provider_continuation = self.expand_provider_continuation
         budget_tokens_known = True
         lifecycle_owner_seq, lifecycle_event_id = self._append_run_lifecycle(
@@ -8673,6 +9143,13 @@ class AgentService:
                         # "not running" -- the honest-refusal contract for a
                         # finished or crashed run (AC#5).
                         self._unregister_primary_mailbox(run_id)
+            except AutomaticWorkRefused as error:
+                budget_tokens_known = False
+                outcome = RunOutcome(
+                    status=RUN_STUCK,
+                    steps=[],
+                    termination_reason=error.termination_reason,
+                )
             except _ProjectInstructionPayloadError as error:
                 budget_tokens_known = False
                 outcome = RunOutcome(
@@ -8680,11 +9157,17 @@ class AgentService:
                     steps=[self._service_error_step(run_id, str(error))],
                 )
             except Exception as exc:  # noqa: BLE001 — a run never raises out
-                from tldw_chatbook.Chat.provider_failures import (
-                    describe_stream_failure,
-                )
+                from tldw_chatbook.Chat.Chat_Deps import ChatAPIError
                 from tldw_chatbook.Chat.console_trace_service import (
                     TraceCallPersistenceError,
+                )
+                from tldw_chatbook.Chat.provider_failures import (
+                    FAILURE_SUMMARY_MAX_CHARS,
+                    describe_stream_failure,
+                )
+                from tldw_chatbook.LLM_Calls.provider_outcomes import (
+                    PreEffectPermanentError,
+                    PreEffectRateLimitError,
                 )
 
                 budget_tokens_known = False
@@ -8700,11 +9183,22 @@ class AgentService:
                 # instead — this summary becomes user-facing failure copy.
                 outcome = RunOutcome(
                     status=RUN_ERROR,
+                    termination_reason=(
+                        RunTerminationReason.PRE_EFFECT_RATE_LIMIT
+                        if isinstance(exc, PreEffectRateLimitError)
+                        else RunTerminationReason.PRE_EFFECT_PERMANENT
+                        if isinstance(exc, PreEffectPermanentError)
+                        else RunTerminationReason.UNKNOWN_EFFECT
+                    ),
                     steps=[
                         self._service_error_step(
-                            run_id, describe_stream_failure(exc)[:500]
+                            run_id,
+                            describe_stream_failure(exc)[:FAILURE_SUMMARY_MAX_CHARS],
                         )
                     ],
+                    console_copy=(
+                        exc.console_copy if isinstance(exc, ChatAPIError) else None
+                    ),
                 )
         finally:
             # A BaseException still owns its normal control-flow semantics, but
@@ -8738,8 +9232,22 @@ class AgentService:
                     config.budget,
                     self.clock() - started,
                 )
+            if (
+                parent_run_id is None
+                and self._on_primary_budget_settled is not None
+                and "outcome" in locals()
+            ):
+                from .hooks_v2.lifecycle import remaining_root_budget
+
+                self._on_primary_budget_settled(
+                    remaining_root_budget(
+                        outcome, config.budget, self.clock() - started
+                    )
+                )
             self._notify_run_terminal(run_id)
-        self._persist(run_id, outcome, durable_handle_ids, budget_tokens_known=budget_tokens_known)
+        self._persist(
+            run_id, outcome, durable_handle_ids, budget_tokens_known=budget_tokens_known
+        )
         return run_id, outcome
 
     # -- public ----------------------------------------------------------
@@ -8916,9 +9424,7 @@ class AgentService:
             for candidate in candidates:
                 current = self.db.get_run(candidate["id"])
                 if current is not None and current["status"] == RUN_SUPERSEDED:
-                    self._record_terminal_lifecycle(
-                        candidate["id"], RUN_SUPERSEDED
-                    )
+                    self._record_terminal_lifecycle(candidate["id"], RUN_SUPERSEDED)
         sidecar = tuple(continuation_sidecar)
         if sidecar and (continuation_target is None or not continuation_owner_key):
             raise ValueError(
@@ -8973,9 +9479,7 @@ class AgentService:
             first_request_schema_plan is not None
             and first_request_schema_plan.agent_definitions is not None
         ):
-            self._turn_definitions = list(
-                first_request_schema_plan.agent_definitions
-            )
+            self._turn_definitions = list(first_request_schema_plan.agent_definitions)
         else:
             self._turn_definitions = [
                 definition_from_row(row)
@@ -9063,6 +9567,9 @@ class AgentService:
         # the two calls below, which is the run-log writer's lifetime
         # question -- owned by Task 3, not answered here. Nothing in this
         # ordering changes for it: whatever still settles, settles first.
+        from .agent_request_execution import end_review_checks
+
+        end_review_checks(self, run_id, "primary_ended")
         try:
             self._settle_fleet(config, should_cancel, turn_started)
         except Exception:  # noqa: BLE001 — the answer is already produced

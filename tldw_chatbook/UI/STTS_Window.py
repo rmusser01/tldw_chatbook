@@ -22,6 +22,7 @@ from textual.widgets import (
     Rule,
 )
 from textual.css.query import QueryError
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
@@ -552,22 +553,42 @@ class AudioBookGenerationWidget(Widget):
                 severity="warning",
             )
 
-    def _handle_file_selection(self, path: Optional[str]) -> None:
-        """Handle file selection for audiobook content"""
+    async def _handle_file_selection(self, path: Optional[str]) -> None:
+        """Handle file selection for audiobook content.
+
+        TASK-34394: the file read runs via `asyncio.to_thread` (same
+        pattern as `_load_studio_preferences`) -- audiobook source files
+        can be whole books, and reading them synchronously here stalls
+        the event loop mid-callback.
+        """
         if not path:
             return
 
         try:
-            # Read the file content
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content_preview = self.query_one("#content-preview", TextArea)
+            source_before_read = self.content_text
+            preview_before_read = content_preview.text
+
+            # Read the file content off the event loop.
+            def _read_audiobook_text() -> str:
+                with open(path, "r", encoding="utf-8") as f:
+                    return f.read()
+
+            content = await asyncio.to_thread(_read_audiobook_text)
+
+            # Changed can still be queued behind this awaiting callback while
+            # the child editor has already accepted newer input.
+            if (
+                not self.is_attached
+                or self.content_text != source_before_read
+                or self.query_one("#content-preview", TextArea) is not content_preview
+                or content_preview.text != preview_before_read
+            ):
+                return
 
             # Update content preview
             self.content_text = content
-            content_preview = self.query_one("#content-preview", TextArea)
-            content_preview.load_text(
-                content[:1000] + "..." if len(content) > 1000 else content
-            )
+            content_preview.load_text(content)
             content_preview.disabled = False
 
             # Auto-detect chapters. This used to be gated by an
@@ -609,9 +630,7 @@ class AudioBookGenerationWidget(Widget):
 
         notes_scope_service = getattr(self.app, "notes_scope_service", None)
         if notes_scope_service is None:
-            self.app.notify(
-                "Notes are unavailable in this session.", severity="error"
-            )
+            self.app.notify("Notes are unavailable in this session.", severity="error")
             return
 
         user_id = getattr(self.app, "notes_user_id", None) or "default_user"
@@ -676,21 +695,14 @@ class AudioBookGenerationWidget(Widget):
         # Load combined content
         self.content_text = "\n".join(combined_content)
         content_preview = self.query_one("#content-preview", TextArea)
-        preview_text = (
-            self.content_text[:1000] + "..."
-            if len(self.content_text) > 1000
-            else self.content_text
-        )
-        content_preview.load_text(preview_text)
+        content_preview.load_text(self.content_text)
         content_preview.disabled = False
 
         # Auto-detect chapters (see task-15478: the switch that
         # used to gate this is gone from the composed UI).
         self._detect_chapters()
 
-        self.app.notify(
-            f"Imported {len(selected_ids)} note(s)", severity="information"
-        )
+        self.app.notify(f"Imported {len(selected_ids)} note(s)", severity="information")
 
     def _import_from_conversation(self) -> None:
         """Import content from a conversation.
@@ -764,9 +776,7 @@ class AudioBookGenerationWidget(Widget):
             )
 
         if not conversations:
-            self.app.notify(
-                "No conversations found in database", severity="warning"
-            )
+            self.app.notify("No conversations found in database", severity="warning")
             return
 
         try:
@@ -806,9 +816,7 @@ class AudioBookGenerationWidget(Widget):
             return
 
         if not messages:
-            self.app.notify(
-                "No messages found in conversation", severity="warning"
-            )
+            self.app.notify("No messages found in conversation", severity="warning")
             return
 
         # Build content based on options
@@ -839,12 +847,7 @@ class AudioBookGenerationWidget(Widget):
         # Load combined content
         self.content_text = "\n".join(content_parts)
         content_preview = self.query_one("#content-preview", TextArea)
-        preview_text = (
-            self.content_text[:1000] + "..."
-            if len(self.content_text) > 1000
-            else self.content_text
-        )
-        content_preview.load_text(preview_text)
+        content_preview.load_text(self.content_text)
         content_preview.disabled = False
 
         # Auto-detect chapters might not be suitable for
@@ -870,7 +873,12 @@ class AudioBookGenerationWidget(Widget):
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Handle text area content changes"""
         if event.text_area.id == "content-preview":
-            self.content_text = event.text_area.text
+            content = event.text_area.text
+            if content != self.content_text:
+                # Editing invalidates the old result before debounce dispatch,
+                # including a clear that never dispatches a replacement.
+                self._chapter_detect_generation += 1
+            self.content_text = content
             self._queue_debounced_chapter_detection()
 
     def _queue_debounced_chapter_detection(self) -> None:
@@ -991,8 +999,8 @@ class AudioBookGenerationWidget(Widget):
         debounce between them, which is exactly what happens across the
         three one-shot import paths). A monotonically-increasing generation
         id is captured here and threaded through; `_apply_detected_chapters`
-        only applies a result whose generation still matches the latest one
-        dispatched.
+        only applies a result whose generation still matches. Source edits
+        also advance that generation immediately, before debounce dispatch.
         """
         if not self.content_text:
             return
@@ -1031,18 +1039,16 @@ class AudioBookGenerationWidget(Widget):
             )
             return
 
-        self.app.call_from_thread(
-            self._apply_detected_chapters, chapters, generation
-        )
+        self.app.call_from_thread(self._apply_detected_chapters, chapters, generation)
 
     def _apply_detected_chapters(self, chapters: List, generation: int) -> None:
         """Main-thread half of chapter detection: apply results to the UI.
 
         Called via `call_from_thread` from `_detect_chapters_worker`, so it
         must stay main-thread-only (widget queries/mutation, notify). Only
-        applies a result if `generation` still matches the most recently
-        dispatched detection -- a superseded (stale) result is dropped
-        rather than overwriting a newer, already-applied one.
+        applies a result if `generation` still matches the current source
+        and dispatch -- an edit or newer dispatch supersedes the old result,
+        including source clears that schedule no replacement detection.
         """
         if generation != self._chapter_detect_generation:
             logger.debug("Dropping a stale chapter-detection result")
@@ -1247,9 +1253,7 @@ class AudioBookGenerationWidget(Widget):
                 self._last_valid_narrator_voice = event.value
                 return
             prior = self._last_valid_narrator_voice
-            voice_select.value = (
-                prior if prior in available_voice_ids else Select.BLANK
-            )
+            voice_select.value = prior if prior in available_voice_ids else Select.BLANK
 
     def _update_voice_options(self, provider: str) -> None:
         """Update voice options based on provider"""
@@ -1655,6 +1659,13 @@ class STTSWindow(Container):
     }
     """
 
+    class ContentChanged(Message):
+        """The exact window removed or finished replacing its active content."""
+
+        def __init__(self, window: "STTSWindow") -> None:
+            super().__init__()
+            self.window = window
+
     current_view = reactive("playground")
 
     def __init__(
@@ -1877,15 +1888,13 @@ class STTSWindow(Container):
         ):
             return False
         current_view = self.current_view
-        reset_current_tool = (
-            voice_tool_back_token is None
-            and current_view in {"profiles", "blends"}
-        )
+        reset_current_tool = voice_tool_back_token is None and current_view in {
+            "profiles",
+            "blends",
+        }
         if reset_current_tool:
             self._invalidate_voice_tool_navigation()
-        if current_view == "profiles" and (
-            view != "profiles" or reset_current_tool
-        ):
+        if current_view == "profiles" and (view != "profiles" or reset_current_tool):
             try:
                 content = self.query_one(".stts-content", Container)
             except QueryError:
@@ -1987,6 +1996,7 @@ class STTSWindow(Container):
         # Await both sides of the replacement so a rapid rail action cannot
         # prune nested controls while their Mount events are still queued.
         await content_container.remove_children()
+        self.post_message(self.ContentChanged(self))
 
         # Add new content based on view
         self._mounted_view = new_view
@@ -2105,6 +2115,8 @@ class STTSWindow(Container):
                     *(select._mounted_event.wait() for select in select_nodes)
                 )
                 break
+
+        self.post_message(self.ContentChanged(self))
 
         # Selection styling is the rail's job now. These lines used to
         # `query_one("#view-*-btn")` for the four view buttons; those live on
@@ -2430,8 +2442,7 @@ class STTSWindow(Container):
                 self._voice_tool_back_in_progress = False
                 self._set_voice_tool_back_disabled(False)
             logger.error(
-                "Could not return to the originating Speech view "
-                "(exception_type={})",
+                "Could not return to the originating Speech view (exception_type={})",
                 type(exc).__name__,
             )
             return

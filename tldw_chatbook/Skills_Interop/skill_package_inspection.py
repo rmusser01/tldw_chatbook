@@ -38,9 +38,7 @@ class SkillPackageInspection:
     recovery_actions: tuple[str, ...] = ()
 
 
-FRAMEWORK_MESSAGE = (
-    "This repository is a framework, not an installable Codex skill."
-)
+FRAMEWORK_MESSAGE = "This repository is a framework, not an installable Codex skill."
 FRAMEWORK_RECOVERY_ACTIONS = (
     "Choose a repository subdirectory that contains SKILL.md.",
     "Use its project instructions when that is the intended integration.",

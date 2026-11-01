@@ -1,0 +1,350 @@
+{
+  "before": {
+    "cycles": 6,
+    "resume_to_input_median_ms": 794.6263999983785,
+    "resume_to_input_worst_ms": 1411.5447000076529,
+    "resume_to_attach_median_ms": 797.9628000030061,
+    "resume_to_attach_worst_ms": 1414.6922000072664,
+    "worst_loop_overshoot_median_ms": 224.29580000811256,
+    "worst_loop_overshoot_ms": 305.53469999926165,
+    "draft_retained_all": true,
+    "attach_reconciled_all": true,
+    "native_presentation_config_samples": 0,
+    "top_overlapping_resume_functions": [
+      [
+        "textual_css_fastpath.py",
+        "apply",
+        45
+      ],
+      [
+        "wiring.py",
+        "<lambda>",
+        14
+      ],
+      [
+        "workspace.py",
+        "_build_console_workspace_context_state",
+        13
+      ],
+      [
+        "workspace.py",
+        "_with_console_conversation_browser_state",
+        13
+      ],
+      [
+        "textual_css_fastpath.py",
+        "_ordered_candidates",
+        12
+      ],
+      [
+        "ChaChaNotes_DB.py",
+        "execute_query",
+        12
+      ],
+      [
+        "chat_conversation_service.py",
+        "get_conversation_appearances",
+        12
+      ],
+      [
+        "console_spend_projection.py",
+        "run",
+        12
+      ],
+      [
+        "config_sync.py",
+        "run_console_presentation_sync",
+        12
+      ],
+      [
+        "config_sync.py",
+        "run_console_config_sync",
+        12
+      ],
+      [
+        "workspace.py",
+        "_console_conversation_appearance_map",
+        12
+      ],
+      [
+        "config_sync.py",
+        "<lambda>",
+        12
+      ],
+      [
+        "console_spend_projection.py",
+        "_run_checked_display_sync",
+        12
+      ],
+      [
+        "workspace.py",
+        "_merge_console_browser_rows",
+        12
+      ],
+      [
+        "ChaChaNotes_DB.py",
+        "get_conversations_metadata_by_ids",
+        12
+      ],
+      [
+        "config_sync.py",
+        "render",
+        12
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_inspector_state",
+        11
+      ],
+      [
+        "chat_screen.py",
+        "_selected_console_conversation_inspector_rows",
+        10
+      ],
+      [
+        "chat_screen.py",
+        "_sync_native_console_chat_ui",
+        10
+      ],
+      [
+        "chat_screen.py",
+        "_current_console_rail_state",
+        10
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  },
+  "after": {
+    "cycles": 6,
+    "resume_to_input_median_ms": 930.2164500040817,
+    "resume_to_input_worst_ms": 1422.5503999914508,
+    "resume_to_attach_median_ms": 933.9994000038132,
+    "resume_to_attach_worst_ms": 1425.0995999900624,
+    "worst_loop_overshoot_median_ms": 239.71190000360366,
+    "worst_loop_overshoot_ms": 364.61859999166336,
+    "draft_retained_all": true,
+    "attach_reconciled_all": true,
+    "native_presentation_config_samples": 0,
+    "top_overlapping_resume_functions": [
+      [
+        "textual_css_fastpath.py",
+        "apply",
+        52
+      ],
+      [
+        "textual_css_fastpath.py",
+        "_ordered_candidates",
+        10
+      ],
+      [
+        "wiring.py",
+        "<lambda>",
+        10
+      ],
+      [
+        "chat_screen.py",
+        "_provider_readiness_app_config",
+        10
+      ],
+      [
+        "config.py",
+        "load_settings",
+        10
+      ],
+      [
+        "chat_screen.py",
+        "_sync_native_console_chat_ui",
+        10
+      ],
+      [
+        "config.py",
+        "_config_file_posture",
+        10
+      ],
+      [
+        "chat_screen.py",
+        "_current_console_rail_state",
+        10
+      ],
+      [
+        "config.py",
+        "_posture_unchanged",
+        10
+      ],
+      [
+        "config.py",
+        "_settings_cache_hit",
+        10
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_inspector_state",
+        9
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_provider_selection_uncached",
+        9
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_provider_selection",
+        9
+      ],
+      [
+        "console_spend_projection.py",
+        "run",
+        9
+      ],
+      [
+        "config_sync.py",
+        "run_console_presentation_sync",
+        9
+      ],
+      [
+        "config_sync.py",
+        "run_console_config_sync",
+        9
+      ],
+      [
+        "config_sync.py",
+        "<lambda>",
+        9
+      ],
+      [
+        "console_spend_projection.py",
+        "_run_checked_display_sync",
+        9
+      ],
+      [
+        "config_sync.py",
+        "render",
+        9
+      ],
+      [
+        "workspace.py",
+        "_build_console_workspace_context_state",
+        8
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  },
+  "final": {
+    "cycles": 6,
+    "resume_to_input_median_ms": 834.6637499998906,
+    "resume_to_input_worst_ms": 1339.1231999994488,
+    "resume_to_attach_median_ms": 839.6447000050102,
+    "resume_to_attach_worst_ms": 1345.574499995564,
+    "worst_loop_overshoot_median_ms": 312.06050000240793,
+    "worst_loop_overshoot_ms": 325.8678000076907,
+    "draft_retained_all": true,
+    "attach_reconciled_all": true,
+    "native_presentation_config_samples": 0,
+    "top_overlapping_resume_functions": [
+      [
+        "textual_css_fastpath.py",
+        "apply",
+        64
+      ],
+      [
+        "wiring.py",
+        "<lambda>",
+        11
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_inspector_state",
+        11
+      ],
+      [
+        "chat_screen.py",
+        "_current_console_rail_state",
+        10
+      ],
+      [
+        "chat_screen.py",
+        "_provider_readiness_app_config",
+        9
+      ],
+      [
+        "config.py",
+        "load_settings",
+        9
+      ],
+      [
+        "config.py",
+        "_config_file_posture",
+        9
+      ],
+      [
+        "config.py",
+        "_posture_unchanged",
+        9
+      ],
+      [
+        "config.py",
+        "_settings_cache_hit",
+        9
+      ],
+      [
+        "ChaChaNotes_DB.py",
+        "execute_query",
+        9
+      ],
+      [
+        "workspace.py",
+        "_build_console_workspace_context_state",
+        9
+      ],
+      [
+        "workspace.py",
+        "_with_console_conversation_browser_state",
+        9
+      ],
+      [
+        "chat_conversation_service.py",
+        "get_conversation_appearances",
+        9
+      ],
+      [
+        "workspace.py",
+        "_console_conversation_appearance_map",
+        9
+      ],
+      [
+        "workspace.py",
+        "_merge_console_browser_rows",
+        9
+      ],
+      [
+        "ChaChaNotes_DB.py",
+        "get_conversations_metadata_by_ids",
+        9
+      ],
+      [
+        "chat_screen.py",
+        "_sync_native_console_chat_ui",
+        8
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_provider_selection_uncached",
+        8
+      ],
+      [
+        "chat_screen.py",
+        "_build_console_provider_selection",
+        8
+      ],
+      [
+        "chat_screen.py",
+        "_active_console_provider_model_display",
+        8
+      ]
+    ],
+    "blocked_network_attempts": 0,
+    "real_profile_refusals": 0
+  }
+}

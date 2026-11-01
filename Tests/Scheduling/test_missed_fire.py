@@ -86,9 +86,7 @@ def test_schema_v2_adds_missed_count(db):
 
 def test_migration_v1_to_v2_preserves_rows(tmp_path):
     database = ScheduledTasksDB(tmp_path / "v1.db")
-    task_id = _make_one_time(
-        database, due_at=NOW, title="pre-migration"
-    )
+    task_id = _make_one_time(database, due_at=NOW, title="pre-migration")
     database.close()
 
     # v1_to_v2.migrate is idempotent; run it again on the existing DB.
@@ -135,9 +133,12 @@ def test_rollbacks_preserve_the_v1_indexes(tmp_path):
     """
     for rollback_fn, expected_version in (
         (v1_to_v2.rollback, 1),
-        (__import__(
-            "tldw_chatbook.Scheduling.db.migrations.v2_to_v3", fromlist=["rollback"]
-        ).rollback, 2),
+        (
+            __import__(
+                "tldw_chatbook.Scheduling.db.migrations.v2_to_v3", fromlist=["rollback"]
+            ).rollback,
+            2,
+        ),
     ):
         database = ScheduledTasksDB(tmp_path / f"idx-{expected_version}.db")
         _make_hourly(database, next_run_at=NOW)
@@ -327,9 +328,7 @@ def test_service_mutation_fires_on_queue_changed(db):
     assert len(fired) == 1
 
     task_id = db.list_reminder_tasks(owner_id="local")[0]["id"]
-    asyncio.run(
-        service.update_reminder(task_id, {"title": "cb-update"})
-    )
+    asyncio.run(service.update_reminder(task_id, {"title": "cb-update"}))
     assert len(fired) == 2
 
     asyncio.run(service.delete_reminder(task_id))

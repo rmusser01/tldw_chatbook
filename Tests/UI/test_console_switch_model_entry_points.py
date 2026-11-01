@@ -16,6 +16,10 @@ real writers own, as in ``test_console_switch_model_keys``):
 from __future__ import annotations
 
 import pytest
+
+# The harness mounts the real ChatScreen/config chain; per-test env redirect
+# trips the config-participant admission (sibling strip suites' opt-in).
+pytestmark = pytest.mark.bootstrap_profile
 from textual.widgets import Button, Input, Static
 
 from Tests.private_profile import private_profile_test
@@ -35,6 +39,10 @@ from tldw_chatbook.UI.Screens.chat_screen import (
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleStatusChips,
+    ConsoleStatusText,
+)
 
 SWITCH_MODEL = "Switch model"
 CHAT_SETTINGS = "Chat settings"
@@ -58,7 +66,15 @@ async def _open_console(harness: _Harness, pilot) -> ChatScreen:
     console = harness.screen
     assert isinstance(console, ChatScreen)
     await _wait_for_selector(console, pilot, "#console-native-composer")
-    await _wait_for_selector(console, pilot, "#console-provider-chip")
+    await _wait_for_selector(console, pilot, "#console-status-text")
+    # TASK-35160: the provider chip is the status line's "provider" segment
+    # now; ready means the provider label is on the line.
+    strip = console.query_one("#console-status-chips", ConsoleStatusChips)
+    await _until(
+        pilot,
+        lambda: "Provider:" in strip.segment_text("provider"),
+        "the provider segment to render",
+    )
     _composer(console).focus()
     await pilot.pause()
     return console
@@ -76,10 +92,10 @@ async def _switcher_ready(harness: _Harness, pilot) -> ConsoleModelPopover:
 
 
 async def _close_chat_settings(harness: _Harness, console: ChatScreen, pilot) -> None:
-    # Cancel, not Esc: Chat settings opens with focus in its provider
-    # search, which keeps Esc for itself (that modal is P6's surface).
+    # Rewritten on purpose by TASK-33007 capture finding 20 (round 2): no
+    # view has a Cancel button any more; Esc close is the close.
     await pilot.pause()
-    harness.screen.query_one("#console-settings-cancel", Button).press()
+    await pilot.press("escape")
     await _until(pilot, lambda: harness.screen is console, "Chat settings to close")
 
 
@@ -141,9 +157,10 @@ async def test_model_query_opens_switch_model_with_find_filled(request) -> None:
 @pytest.mark.asyncio
 @private_profile_test
 async def test_ctrl_o_and_the_rail_change_action_open_their_surfaces(request) -> None:
-    """AC#3, AC#5, AC#6: Ctrl+O opens Chat settings from the composer and from
-    a focused Provider/Model chip; the rail's "Change  Alt+M" opens Switch
-    model; the chips' Enter and the footer's Alt+M/Ctrl+O all work."""
+    """AC#3, AC#5, AC#6: Ctrl+O opens Chat settings from the composer and
+    from a focused provider/model segment of the status line; the rail's
+    "Change  Alt+M" opens Switch model; the segments' Enter and the footer's
+    Alt+M/Ctrl+O all work."""
     app = _console_app()
     harness = _Harness(app)
     async with harness.run_test(size=(211, 44)) as pilot:
@@ -157,24 +174,31 @@ async def test_ctrl_o_and_the_rail_change_action_open_their_surfaces(request) ->
         )
         await _close_chat_settings(harness, console, pilot)
 
-        for chip_id in ("console-provider-chip", "console-model-chip"):
-            chip = console.query_one(f"#{chip_id}", Static)
-            tooltip = str(chip.tooltip)
-            assert f"{SWITCH_MODEL} (Alt+M)" in tooltip, tooltip
-            assert f"{CHAT_SETTINGS} (Ctrl+O)" in tooltip, tooltip
-            chip.focus()
+        # TASK-35160: the provider/model chips are segments of one focusable
+        # status line. Per-segment tooltips are gone -- the Alt+M/Ctrl+O
+        # teaching lives on the footer (asserted below) -- and the Enter /
+        # Ctrl+O routes walk the line's own segment cursor instead of
+        # focusing a chip.
+        for segment_name in ("provider", "model"):
+            line = console.query_one("#console-status-text", ConsoleStatusText)
+            line.focus()
             await pilot.pause()
+            for _ in range(len(line.segment_spans)):
+                if line.segment_spans[line._cursor][0] == segment_name:
+                    break
+                await pilot.press("right")
+            assert line.segment_spans[line._cursor][0] == segment_name
             await pilot.press("enter")
             await _switcher_ready(harness, pilot)
             await pilot.press("escape")
             await _until(pilot, lambda: harness.screen is console, "the switcher to close")
-            chip.focus()
+            line.focus()
             await pilot.pause()
             await pilot.press("ctrl+o")
             await _until(
                 pilot,
                 lambda: isinstance(harness.screen, ConsoleSettingsModal),
-                f"Ctrl+O from #{chip_id}",
+                f"Ctrl+O from the {segment_name} segment",
             )
             await _close_chat_settings(harness, console, pilot)
 
@@ -187,13 +211,148 @@ async def test_ctrl_o_and_the_rail_change_action_open_their_surfaces(request) ->
         await pilot.press("escape")
         await _until(pilot, lambda: harness.screen is console, "the switcher to close")
 
+        # The footer is read with the composer focused (capture finding 20,
+        # round 2): where focus ends after the rail's Change depends on
+        # whether the Model section was already open. The rail-focus footer
+        # is pinned separately, by
+        # test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer
+        # (TASK-33006.20).
+        _composer(console).focus()
         footer = console.query_one(AppFooterStatus)
+        await _until(
+            pilot,
+            lambda: not str(footer._shortcut_display.content).startswith("Esc"),
+            "the composer's footer",
+        )
         shown = str(footer._shortcut_display.content)
         assert "Alt+M switch model" in shown and "Ctrl+O chat settings" in shown
         # TASK-33004.7 review: at the owner's 211x44 the new model hints must
         # not push the Inspect/approval/context-rail accelerators out.
         for hint in ("Alt+I inspect", "Alt+A approval", "Alt+C context rail"):
             assert hint in shown, (hint, shown)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_chat_settings_closed_by_esc_leaves_the_focused_widgets_footer(
+    request,
+) -> None:
+    """TASK-33006.20: after Esc closes Chat settings, the footer is the one for
+    the widget focus went back to. Opened from a rail control it leads with
+    the rail's exits; opened from the composer it is the composer's. At
+    211x44 both keep Alt+A and Alt+C, and so does the Inspect rail's footer
+    with its n/p hint, composer collapsed or not (round-1 review: the rail
+    prefix pushed them off)."""
+    app = _console_app()
+    harness = _Harness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = await _open_console(harness, pilot)
+        footer = console.query_one(AppFooterStatus)
+
+        def shown() -> str:
+            return str(footer._shortcut_display.content)
+
+        def footer_pairs() -> tuple:
+            return console._footer_shortcut_registration[1]
+
+        await open_rail_section(console, pilot, "model")
+        toggle = console.query_one("#console-rail-section-toggle-model", Button)
+        for start, in_rail in ((toggle, True), (_composer(console), False)):
+            start.focus()
+            await pilot.pause()
+            await pilot.press("ctrl+o")
+            await _until(
+                pilot,
+                lambda: isinstance(harness.screen, ConsoleSettingsModal),
+                "Ctrl+O to open Chat settings",
+            )
+            await _close_chat_settings(harness, console, pilot)
+            assert harness.focused is start
+            await _until(
+                pilot,
+                lambda in_rail=in_rail: (
+                    shown().startswith("Esc composer · F6 panes") is in_rail
+                    and "Alt+M switch model" in shown()
+                ),
+                f"the footer of {start.id}",
+            )
+            for hint in ("Alt+A approval", "Alt+C context rail"):
+                assert hint in shown(), (hint, shown())
+        console._set_console_rail_preference(right_open=True)
+        inspect = console.query_one("#console-inspector-rail-collapse", Button)
+        # The Inspect rail adds n/p; a collapsed composer adds its own Esc
+        # hint, and its registration has no Enter send.
+        for collapsed in (False, True):
+            console._set_console_composer_collapsed(collapsed)
+            await pilot.pause()
+            inspect.focus()
+            await _until(
+                pilot,
+                lambda collapsed=collapsed: (
+                    "n/p Sections" in shown()
+                    and (("Enter", "send / queue") in footer_pairs()) is not collapsed
+                ),
+                f"the Inspect footer, composer collapsed={collapsed}",
+            )
+            assert shown().count("Esc ") == 1, shown()
+            for hint in ("Alt+A approval", "Alt+C context rail"):
+                assert hint in shown(), (hint, shown())
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_dialog_over_a_ready_console_names_only_the_keys_that_act(
+    request,
+) -> None:
+    """Capture fix 3 round 1 finding 2 (05a, 05c, 05d): under Switch model over
+    a ready Console the footer still named every Console key, and none acts
+    under a dialog. While one covers the Console the footer names only Ctrl+P
+    and Ctrl+Q (a re-registration included): each key it leaves out is
+    pressed and changes nothing. The Console's keys are back when it closes."""
+    app = _console_app()
+    harness = _Harness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = await _open_console(harness, pilot)
+        drawn = console.query_one(AppFooterStatus).query_one("#footer-key-quit", Static)
+        await _until(
+            pilot, lambda: "Alt+M switch model" in str(drawn.render()), "the footer"
+        )
+
+        await pilot.press("alt+m")
+        switcher = await _switcher_ready(harness, pilot)
+        console._register_console_footer_shortcuts()  # a sync while covered
+        await pilot.pause()
+        drawn_text = str(drawn.render())
+        hinted = {
+            hint.split(" ", 1)[0]
+            for part in drawn_text.split(" | ")
+            for hint in part.split(" · ")
+        }
+        assert hinted == {"Ctrl+P", "Ctrl+Q"}, drawn_text
+
+        for key in (
+            "f1",
+            "f6",
+            "ctrl+shift+f",
+            "alt+m",
+            "ctrl+k",
+            "ctrl+t",
+            "alt+i",
+            "alt+a",
+            "alt+c",
+        ):
+            focused = harness.focused
+            await pilot.press(key)
+            await pilot.pause(0.2)
+            assert harness.screen is switcher and harness.focused is focused, key
+
+        await pilot.press("escape")
+        await _until(pilot, lambda: harness.screen is console, "the dialog to close")
+        await _until(
+            pilot,
+            lambda: "Alt+M switch model" in str(drawn.render()),
+            "the Console's keys to come back",
+        )
 
 
 @pytest.mark.asyncio

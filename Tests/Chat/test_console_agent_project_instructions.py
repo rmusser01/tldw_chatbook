@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+# These owners exercise native config participants selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
 
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
@@ -31,7 +35,6 @@ from tldw_chatbook.Chat import console_chat_controller as controller_mod
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
-    ConsoleRunStatus,
     ProjectInstructionBindingRecovery,
     build_project_instruction_dispatch_notice,
     capture_run_admitted_workspace_roots,
@@ -441,7 +444,7 @@ def test_child_chain_uses_its_own_exact_first_request_budget(monkeypatch, tmp_pa
     monkeypatch.setattr(
         agent_service,
         "_count_model_messages",
-        lambda messages, *_a: (
+        lambda messages, *_a, reasoning_replay=None, tokenizer_model=None: (
             95 if "sub-agent" in str(messages[0].get("content", "")).lower() else 10
         ),
     )
@@ -504,7 +507,7 @@ def test_primary_token_omission_is_delivery_local_when_child_admits(
     monkeypatch.setattr(
         agent_service,
         "_count_model_messages",
-        lambda messages, *_a: (
+        lambda messages, *_a, reasoning_replay=None, tokenizer_model=None: (
             10 if "sub-agent" in str(messages[0].get("content", "")).lower() else 95
         ),
     )
@@ -901,7 +904,12 @@ def test_binding_with_symlinked_ancestor_is_never_auto_selected(tmp_path):
     real_root = real_parent / "repo"
     real_root.mkdir(parents=True)
     alias_parent = tmp_path / "alias"
-    alias_parent.symlink_to(real_parent, target_is_directory=True)
+    try:
+        alias_parent.symlink_to(real_parent, target_is_directory=True)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows host does not grant directory-symlink creation")
+        raise
     binding = _binding(alias_parent / "repo")
 
     with pytest.raises(ProjectInstructionBindingRecovery, match="no_eligible_binding"):
@@ -1050,6 +1058,9 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
     session = store.create_session(workspace_id="w1")
     notices = []
     owning_loop_calls = []
+    confirmation_loop_calls = []
+    confirmation_decisions = []
+    persisted_runs = []
     provider_transmissions = []
     main_thread = threading.get_ident()
 
@@ -1066,6 +1077,9 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
         return "proceed"
 
     class Bridge:
+        def record_run_assistant_message(self, run_id, message_id):
+            persisted_runs.append((run_id, message_id))
+
         def run_reply(self, **kwargs):
             candidate = kwargs["startup_instruction_candidate"]
             delivery = InstructionChainDelivery(
@@ -1082,7 +1096,10 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
                 primary_delivery=delivery,
                 warning_codes=(),
             )
+            before_confirmation = len(owning_loop_calls)
             decision = kwargs["confirm_project_instruction_dispatch"](snapshot)
+            confirmation_loop_calls.extend(owning_loop_calls[before_confirmation:])
+            confirmation_decisions.append(decision)
             if decision == "proceed":
                 provider_transmissions.append(True)
             return "run-1", RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
@@ -1120,10 +1137,106 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
 
     assert result.accepted is True
     assert provider_transmissions == []
-    assert len(owning_loop_calls) == 2
+    # Other authority checks also marshal callbacks; pin the two confirmation
+    # commits themselves, and require clean cancellation rather than a stub error.
+    assert len(confirmation_loop_calls) == 2
+    assert confirmation_decisions == ["cancel"]
+    assert len(notices) == 1
+    assert len(persisted_runs) == 1 and persisted_runs[0][0] == "run-1"
+    state = controller.run_state_for(session.id)
+    assert state.status is ConsoleRunStatus.FAILED
+    assert state.visible_copy == "Response stopped/cancelled."
     assert notices[0].session_id == session.id
     assert notices[0].destination_label == "OpenAI (https://api.example)"
     assert SENTINEL not in repr(notices[0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["notice_key", "session_closed"])
+async def test_state_drift_after_preparation_cancels_before_any_prompt(tmp_path, drift):
+    """Dispatch consent is checked against the state captured at preparation."""
+    from dataclasses import replace
+
+    (tmp_path / "AGENTS.md").write_text(SENTINEL)
+    binding = _binding(tmp_path)
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.db", client_id="instruction-drift")
+    )
+    registry.create_workspace(workspace_id="w1", name="Workspace 1")
+    registry.save_runtime_binding(binding)
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=registry
+    )
+    session = store.create_session(workspace_id="w1")
+    notices, decisions = [], []
+
+    class Bridge:
+        def record_run_assistant_message(self, run_id, message_id):
+            pass
+
+        def run_reply(self, **kwargs):
+            candidate = kwargs["startup_instruction_candidate"]
+            if drift == "notice_key":
+                # Another turn's consent landed after this one was prepared.
+                store.set_session_project_instruction_state(
+                    session.id,
+                    replace(
+                        store.sessions()[0].project_instruction_state,
+                        project_instruction_notice_key="consented-elsewhere",
+                    ),
+                )
+            else:
+                store._sessions.pop(session.id)
+            snapshot = InstructionSnapshot(
+                binding_id=candidate.binding_id,
+                binding_root=candidate.binding_root,
+                locator_fingerprint=candidate.locator_fingerprint,
+                dispatch_started_wall_ns=candidate.dispatch_started_wall_ns,
+                startup_source=candidate.source,
+                global_outcomes=candidate.outcomes,
+                primary_delivery=InstructionChainDelivery(
+                    source_digests=(candidate.source.digest,),
+                    outcomes=candidate.outcomes,
+                ),
+                warning_codes=(),
+            )
+            decisions.append(kwargs["confirm_project_instruction_dispatch"](snapshot))
+            return "run-1", RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
+
+    class Gateway:
+        async def resolve_for_send(self, _selection):
+            return with_destination(
+                ConsoleProviderResolution(
+                    provider="OpenAI",
+                    base_url="https://api.example/v1",
+                    model="test-model",
+                    ready=True,
+                    readiness_key="openai",
+                    execution_key="openai",
+                    max_tokens=128,
+                )
+            )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Gateway(),
+        provider="openai",
+        model="test-model",
+        agent_bridge=Bridge(),
+        agent_runtime_enabled=True,
+        confirm_project_instruction_dispatch=lambda notice: (
+            notices.append(notice) or "proceed"
+        ),
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda callback: callback(),
+        workspace_registry_service=registry,
+    )
+
+    await controller.submit_draft("question")
+
+    assert decisions == ["cancel"]
+    assert notices == []
 
 
 @pytest.mark.asyncio

@@ -553,6 +553,58 @@ def test_citation_pair_migration_and_compatibility_writer_keep_exact_relationshi
         source._load_rag_context_store()
 
 
+def test_citation_pair_abort_rolls_back_staged_rag_context_records(
+    configured_db, monkeypatch
+):
+    import copy
+
+    from Tests.Chat.test_citation_legacy_migration import (
+        _conversation_with_messages,
+        _repository,
+    )
+    from tldw_chatbook.Backup_Recovery import chat_source_participants as chat
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.Chat.citation_legacy_migration import (
+        CitationLegacyMigrationService,
+    )
+
+    db, config = configured_db
+    conversation, messages = _conversation_with_messages(db, 2)
+    path = config.get_user_data_dir() / "tldw_chatbook_chat_rag_context.json"
+    migration = CitationLegacyMigrationService(
+        db=db, repository=_repository(db, enabled=False), sidecar_path=path
+    )
+    source = ChatConversationService(
+        db, rag_context_store_path=path, citation_legacy_migration=migration
+    )
+    chat.bind_citation_services(source, migration)
+
+    # A record staged by a completed operation stays staged until flush.
+    source.record_message_rag_context(
+        conversation, messages[0], rag_context={"query": "kept"}, stage=True
+    )
+    before = copy.deepcopy(source._staged_rag_context_records)
+    assert (conversation, messages[0]) in before
+    original = chat.write_text
+
+    def refused(*args, **kwargs):
+        raise OSError("sidecar write refused")
+
+    monkeypatch.setattr(chat, "write_text", refused)
+    with pytest.raises(OSError, match="sidecar write refused"):
+        source.record_message_rag_context(
+            conversation, messages[1], rag_context={"query": "rolled back"}
+        )
+    # The aborted operation's staged record is rolled back with the rest of
+    # the operation snapshot; the earlier staged record survives untouched.
+    assert source._staged_rag_context_records == before
+    monkeypatch.setattr(chat, "write_text", original)
+    source.flush_rag_context_store()
+    stored = json.loads(path.read_text())["conversations"][conversation]
+    assert set(stored) == {messages[0]}
+    assert stored[messages[0]]["rag_context"] == {"query": "kept"}
+
+
 @pytest.mark.parametrize("mode", ["queued", "preexisting", "executor_cancel"])
 @pytest.mark.asyncio
 async def test_actual_dictionary_scope_job_boundaries(configured_db, monkeypatch, mode):

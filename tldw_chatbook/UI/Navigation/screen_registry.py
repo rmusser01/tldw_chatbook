@@ -7,7 +7,18 @@ from importlib import import_module
 
 from loguru import logger
 
-from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_MEETINGS, TAB_RESEARCH_WORKSPACE
+from tldw_chatbook.Constants import (
+    TAB_CCP,
+    TAB_EVALS,
+    TAB_KANBAN,
+    TAB_LLM,
+    TAB_MEETINGS,
+    TAB_PERSONAS,
+    TAB_RESEARCH_WORKSPACE,
+    TAB_SCHEDULES,
+    TAB_WATCHLISTS_COLLECTIONS,
+    TAB_WORKFLOWS,
+)
 from .shell_destinations import resolve_shell_route
 
 
@@ -65,10 +76,28 @@ class ScreenRoute:
             return None
 
 
+_SCREEN_OWNED_ROUTE_CSS: dict[str, tuple[str, ...]] = {
+    "plugins": ("screen_feature_plugins.tcss",),
+    TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
+    TAB_EVALS: ("screen_feature_evals.tcss",),
+    TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",),
+    TAB_WORKFLOWS: ("screen_feature_workflows.tcss",),
+    TAB_PERSONAS: ("screen_feature_roleplay.tcss",),
+}
+
+
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
+    "plugins": ScreenRoute(
+        "plugins",
+        "plugins",
+        "tldw_chatbook.UI.Screens.plugins_screen",
+        "PluginsScreen",
+    ),
     "chunking_lab": ScreenRoute(
-        "chunking_lab", "library",
-        "tldw_chatbook.UI.Screens.chunking_lab_screen", "ChunkingLabScreen",
+        "chunking_lab",
+        "library",
+        "tldw_chatbook.UI.Screens.chunking_lab_screen",
+        "ChunkingLabScreen",
     ),
     "home": ScreenRoute(
         "home",
@@ -138,10 +167,16 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "WorkflowsScreen",
     ),
     TAB_MEETINGS: ScreenRoute(
-        "meetings", TAB_MEETINGS, "tldw_chatbook.UI.Screens.meetings_screen", "MeetingsScreen"
+        "meetings",
+        TAB_MEETINGS,
+        "tldw_chatbook.UI.Screens.meetings_screen",
+        "MeetingsScreen",
     ),
-    "mcp": ScreenRoute(
-        "mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
+    TAB_KANBAN: ScreenRoute(
+        "kanban",
+        TAB_KANBAN,
+        "tldw_chatbook.UI.Kanban.kanban_board_screen",
+        "KanbanBoardScreen",
     ),
     "acp": ScreenRoute(
         "acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"
@@ -163,9 +198,6 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     ),
     "evals": ScreenRoute(
         "evals", "evals", "tldw_chatbook.UI.Screens.evals_screen", "EvalsScreen"
-    ),
-    "tools_settings": ScreenRoute(
-        "tools_settings", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
     ),
     "llm": ScreenRoute(
         "llm", TAB_LLM, "tldw_chatbook.UI.Screens.llm_screen", "LLMScreen"
@@ -194,7 +226,10 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     # the Workbench migration owner stays "library"
     # (UI/Workbench/route_inventory.py).
     "research": ScreenRoute(
-        "research", "research", "tldw_chatbook.UI.Screens.research_screen", "ResearchScreen"
+        "research",
+        "research",
+        "tldw_chatbook.UI.Screens.research_screen",
+        "ResearchScreen",
     ),
     # Task 1 records the lazy route contract. The screen module is created by
     # the dedicated screen task, so this metadata is intentionally not
@@ -235,10 +270,10 @@ _SCREEN_ALIASES = {
     # rail row, built in Tasks 1-4). Existing startup configs / callers
     # using the legacy "skills" route id resolve to Library instead of the
     # standalone SkillsScreen -- mirrors the "notes"/"prompts" aliases
-    # above exactly. ``skills_screen.py``/``SkillsScreen`` are NOT deleted:
-    # the class is still directly exercised by its own destination-shell
-    # test suite, and its trust passphrase modal is reused by the Library
-    # skill editor's trust panel (Task 4).
+    # above exactly. The standalone ``skills_screen.py`` is deleted
+    # (task-34893); its three trust modals live on in
+    # ``UI/Library_Modules/skills_trust_modals.py`` for the Library skill
+    # editor's trust panel (Task 4).
     "skills": "library",
     # The standalone Ingest screen is retired (task-684.4): importing now
     # lives entirely inside Library's Import media canvas, which gained the
@@ -287,6 +322,9 @@ _SCREEN_ALIASES = {
     # The standalone Customize screen is retired: theme/splash management now
     # lives inside Settings. Legacy "customize" route ids resolve to Settings.
     "customize": "settings",
+    # ADR-240: the MCP destination retired into Settings > Tools & MCP.
+    "mcp": "settings",
+    "tools_settings": "settings",
 }
 
 
@@ -306,8 +344,7 @@ def registered_screen_routes() -> tuple[ScreenRoute, ...]:
     Unlike ``registered_screen_route_ids()`` (ids only), this exposes the
     route metadata itself -- notably ``module_path`` -- so a caller can
     dedupe routes that share one module (e.g. ``"ccp"``/``"personas"`` both
-    target ``personas_screen.PersonasScreen``, ``"tools_settings"``/``"mcp"``
-    both target ``mcp_screen.MCPScreen``) or call ``load_screen_class()``
+    target ``personas_screen.PersonasScreen``) or call ``load_screen_class()``
     directly. Used by the app's background screen-module pre-importer
     (task-15472) to warm ``sys.modules`` after first paint.
 

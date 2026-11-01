@@ -4,6 +4,7 @@ Today it guesses paths (media_db.db / chacha_notes.db) that can never match
 the real tldw_cli_media_v2.db, opens the ChaChaNotes DB with media-schema
 SQL, and on a total miss CREATES a MediaDatabase as a search side effect.
 """
+
 import asyncio
 from pathlib import Path
 import pytest
@@ -34,8 +35,8 @@ def test_missing_media_db_returns_empty_and_creates_nothing(tmp_path):
     service = _make_service(tmp_path, media_db_path=tmp_path / "absent.db")
     results = asyncio.run(service._keyword_search("anything", top_k=5))
     assert results == []
-    assert not (tmp_path / "absent.db").exists()          # no create-on-miss
-    assert list(tmp_path.glob("*.db")) == []              # no rogue DB anywhere
+    assert not (tmp_path / "absent.db").exists()  # no create-on-miss
+    assert list(tmp_path.glob("*.db")) == []  # no rogue DB anywhere
 
 
 def test_traversal_shaped_media_db_path_is_rejected_before_any_db_open(
@@ -123,6 +124,7 @@ def test_keyword_rows_carry_media_source_type(tmp_path):
     # Create a real MediaDatabase and insert one item via its public API
     # (add_media_with_keywords) so media_fts is populated by triggers.
     from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+
     db = MediaDatabase(db_path=str(db_path), client_id="test_keyword_leg")
     media_id, media_uuid, message = db.add_media_with_keywords(
         title="Wombat Field Notes",
@@ -143,11 +145,12 @@ def test_keyword_rows_carry_media_source_type(tmp_path):
 def test_default_resolution_uses_get_media_db_path(monkeypatch, tmp_path):
     sentinel = tmp_path / "sentinel_media.db"
     import tldw_chatbook.config as cfg
+
     monkeypatch.setattr(cfg, "get_media_db_path", lambda **kw: sentinel)
     service = _make_service(tmp_path)  # no explicit path configured
     results = asyncio.run(service._keyword_search("anything", top_k=5))
-    assert results == []                                   # sentinel absent
-    assert not sentinel.exists()                           # still no writes
+    assert results == []  # sentinel absent
+    assert not sentinel.exists()  # still no writes
 
 
 def test_keyword_search_orders_strongest_match_first(tmp_path):
@@ -203,8 +206,7 @@ def test_keyword_search_orders_strongest_match_first(tmp_path):
             (
                 "This section of the report covers general survey "
                 "methodology and background unrelated to any single "
-                "species observation. "
-                * 60
+                "species observation. " * 60
             )
             + "A platypus was mentioned once in passing near the end of "
             "this very long report."
@@ -281,6 +283,6 @@ def test_keyword_rows_render_their_real_title_in_library_evidence(tmp_path):
         f"list: {row['title']!r} (metadata keys: {sorted(results[0].metadata)})"
     )
     # And through the display-state normalizer the panel actually renders.
-    assert (
-        LibraryRagResultRow.from_result(row).title == "Quokka Census Notes"
-    ), "row renders as 'Untitled source' in the evidence list"
+    assert LibraryRagResultRow.from_result(row).title == "Quokka Census Notes", (
+        "row renders as 'Untitled source' in the evidence list"
+    )

@@ -308,6 +308,67 @@ class _Tracer:
         self.active = False
         self.paths: set[str] = set()
         self._fcntl = fcntl
+        from Tests import real_profile_guard
+
+        hook_code = real_profile_guard._hook.__code__
+        protected_code = real_profile_guard._protected.__code__
+        realpath_code = os.path.realpath.__code__
+        join_code = os.path._joinrealpath.__code__
+        original_open, original_lstat = os.open, os.lstat
+        self.guard_probes: list[tuple[str, str]] = []
+
+        def guard_probe(original, target, kwargs, caller) -> bool:
+            # The audit event omits dir_fd. Its real-profile guard therefore
+            # probes this relative name against cwd, before the actual native
+            # descriptor-relative open. Only that exact observed lineage is
+            # instrumentation, never an admission dependency or a blanket
+            # exemption for relative names.
+            if original is not original_lstat or kwargs.get("dir_fd") is not None:
+                return False
+            if not isinstance(target, str) or os.path.isabs(target):
+                return False
+            frame = caller.f_back
+            if frame is None or frame.f_code is not join_code:
+                return False
+            while frame is not None and frame.f_code is join_code:
+                frame = frame.f_back
+            if frame is None or frame.f_code is not realpath_code:
+                return False
+            frame = frame.f_back
+            if frame is None or frame.f_code is not protected_code:
+                return False
+            values = frame.f_locals
+            if not (
+                values.get("arg") == target == values.get("raw")
+                and values.get("dir_fd") is None
+                and values.get("follow") is True
+                and values.get("tree") is False
+            ):
+                return False
+            frame = frame.f_back
+            if frame is None or frame.f_code is not hook_code:
+                return False
+            values = frame.f_locals
+            args = values.get("args", ())
+            if values.get("event") != "open" or len(args) < 3 or args[0] != target:
+                return False
+            frame = frame.f_back
+            if frame is None or frame.f_code is not caller.f_code:
+                return False
+            values = frame.f_locals
+            parent = values.get("kwargs", {}).get("dir_fd")
+            if not (
+                values.get("original") is original_open
+                and values.get("target") == target
+                and isinstance(parent, int)
+                and parent >= 0
+            ):
+                return False
+            resolved = os.path.join(self._fd_path(parent), target)
+            if resolved not in self.paths:
+                return False
+            self.guard_probes.append((target, resolved))
+            return True
 
         def absolute(target, dir_fd=None) -> None:
             if not self.active:
@@ -322,7 +383,8 @@ class _Tracer:
 
         def wrap(original):
             def traced(target=".", *args, **kwargs):
-                absolute(target, kwargs.get("dir_fd"))
+                if not self.active or not guard_probe(original, target, kwargs, sys._getframe()):
+                    absolute(target, kwargs.get("dir_fd"))
                 return original(target, *args, **kwargs)
 
             return traced
@@ -636,3 +698,41 @@ def test_concurrent_derivations_keep_confirmed_evidence(
         startup.close()
 
     assert calls == {"permission": 0, "scope": 0}, calls
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="maps descriptors with F_GETPATH")
+def test_dependency_tracer_preserves_native_and_unattributed_relative_inputs(tmp_path, monkeypatch):
+    """Exclude only the observed guard probe; unknown relative reads remain visible."""
+    selected = tmp_path / "registry.lock"
+    selected.write_bytes(b"private tracer control")
+    selected.chmod(0o600)
+    monkeypatch.chdir(tmp_path)
+    tracer = _Tracer(monkeypatch)
+    parent = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        tracer.active = True
+        try:
+            # A real same-name read outside the guard must not disappear.
+            os.lstat("registry.lock")
+            assert "registry.lock" in tracer.paths
+            tracer.paths.clear()
+            # Native absolute reads remain dependencies too.
+            os.stat(selected)
+            assert str(selected) in tracer.paths
+            tracer.paths.clear()
+            # This real write-open executes the unchanged installed guard.
+            fd = os.open("registry.lock", os.O_RDWR, dir_fd=parent)
+            os.close(fd)
+            assert tracer.paths == {str(selected)}
+            assert tracer.guard_probes == [("registry.lock", str(selected))]
+            tracer.paths.clear()
+            with pytest.raises(FileNotFoundError):
+                os.lstat("unknown-relative-input")
+            # Unknown relative reads are retained, so the completeness oracle
+            # cannot silently treat them as stamped absolute dependencies.
+            assert tracer.paths == {"unknown-relative-input"}
+            assert not tracer.paths <= {str(selected)}
+        finally:
+            tracer.active = False
+    finally:
+        os.close(parent)

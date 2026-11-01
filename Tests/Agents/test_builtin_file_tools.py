@@ -163,7 +163,9 @@ async def test_list_directory_does_not_follow_symlinks_out_of_the_sandbox(
     (sandbox / "legit" / "inside.txt").write_text("y", encoding="utf-8")
 
     monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(sandbox))
-    listing = str(await fot.ListDirectoryTool().execute(directory_path=".", recursive=True))
+    listing = str(
+        await fot.ListDirectoryTool().execute(directory_path=".", recursive=True)
+    )
 
     assert "OUTSIDE_SECRET" not in listing, "symlink escaped the sandbox root"
     assert "inside.txt" in listing, "legitimate nested listing must still work"
@@ -306,7 +308,9 @@ def test_glob_and_grep_absent_by_default(tools_config):
         ("grep_files_enabled", "grep_files"),
     ],
 )
-def test_glob_or_grep_appears_when_its_gate_is_enabled(tools_config, gate_key, tool_name):
+def test_glob_or_grep_appears_when_its_gate_is_enabled(
+    tools_config, gate_key, tool_name
+):
     tools_config[gate_key] = True
     assert tool_name in _names(BuiltinToolProvider())
 

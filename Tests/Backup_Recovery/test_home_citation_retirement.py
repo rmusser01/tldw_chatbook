@@ -4,7 +4,6 @@ import os
 import subprocess
 import sys
 import time
-from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -301,14 +300,13 @@ def _run(
 
         receipt = root / "home" / "restart-process.json"
     try:
-        with log.open("w") if expect_restart else nullcontext() as output:
+        with log.open("w", encoding="utf-8") as output:
             result = subprocess.run(
-                [sys.executable, "-c", script, route, outcome],
+                [sys.executable, "-X", "utf8", "-c", script, route, outcome],
                 cwd=cwd,
                 env=environment,
                 stdout=output,
-                stderr=subprocess.STDOUT if expect_restart else None,
-                capture_output=not expect_restart,
+                stderr=subprocess.STDOUT,
                 text=True,
                 timeout=timeout,
                 check=False,
@@ -329,7 +327,7 @@ def _run(
             except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
                 primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
         raise
-    stdout = log.read_text() if expect_restart else result.stdout
-    stderr = "" if expect_restart else result.stderr
+    stdout = log.read_text(encoding="utf-8", errors="replace")
+    stderr = ""
     assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
     assert "retired and reopened" in stdout

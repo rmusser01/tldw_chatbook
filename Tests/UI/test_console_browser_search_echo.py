@@ -18,6 +18,7 @@ That echo is also what made
 in 5 (3/3 with CPU burners alongside): the "stale result" the failure showed
 was the echo re-arming the stale QUERY, not the stale search's rows winning.
 """
+
 from __future__ import annotations
 
 import pytest

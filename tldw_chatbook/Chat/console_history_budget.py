@@ -198,11 +198,18 @@ def count_provider_continuation_tokens(
     *,
     model: str,
     count_fn: Callable[[list[dict[str, Any]], str], int] | None = None,
+    wire_replayed: bool = False,
 ) -> int:
     """Count canonical private rounds without creating provider wire rows."""
     counter = count_fn or count_console_messages_tokens
     accounting_rows: list[dict[str, Any]] = []
     for round_ in group.rounds:
+        if wire_replayed:
+            if round_.reasoning_blocks:
+                accounting_rows.append(
+                    {"role": "assistant", "content": "".join(round_.reasoning_blocks)}
+                )
+            continue
         calls = [
             {
                 "call_id": call.call_id,

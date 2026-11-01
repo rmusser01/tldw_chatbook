@@ -1,6 +1,7 @@
 """Pure local-server discovery tests (task-188) using httpx.MockTransport."""
 
 import errno
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -110,17 +111,26 @@ def test_a_host_name_refused_on_every_address_reads_as_refused() -> None:
 def test_candidates_include_wellknown_defaults_first() -> None:
     candidates = build_local_server_candidates({})
 
-    # Stock `llama-server` port (8080) first, then Chatbook's documented
-    # convention (9099), then the stock Ollama port.
+    # Each default probes the IPv4 address and hostname, in that order.
+    # Keep llama.cpp's two conventions before Ollama and the Custom engines.
     assert [candidate.base_url for candidate in candidates] == [
         DEFAULT_LLAMACPP_DISCOVERY_URL,
+        "http://localhost:8080",
         DEFAULT_LLAMACPP_BASE_URL,
+        "http://localhost:9099",
         DEFAULT_OLLAMA_DISCOVERY_URL,
+        "http://localhost:11434",
+        "http://127.0.0.1:1234",
+        "http://localhost:1234",
+        "http://127.0.0.1:1337",
+        "http://localhost:1337",
+        "http://127.0.0.1:5001",
+        "http://localhost:5001",
     ]
     assert [candidate.provider_key for candidate in candidates] == [
-        "llama_cpp",
-        "llama_cpp",
-        "ollama",
+        "llama_cpp", "llama_cpp", "llama_cpp", "llama_cpp",
+        "ollama", "ollama",
+        "custom", "custom", "custom", "custom", "custom", "custom",
     ]
 
 
@@ -276,18 +286,21 @@ async def test_ollama_candidate_falls_back_to_api_tags() -> None:
 
 @pytest.mark.asyncio
 async def test_llamacpp_candidate_gets_no_ollama_fallback() -> None:
-    seen_paths: list[str] = []
+    seen_urls: list[str] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.port == 8080:
-            seen_paths.append(request.url.path)
+            seen_urls.append(str(request.url))
             return httpx.Response(404, text="not found")
         raise httpx.ConnectError("refused", request=request)
 
     servers = await discover_local_servers({}, http_client=_client(handler))
 
     assert servers == ()
-    assert seen_paths == ["/v1/models"]
+    assert seen_urls == [
+        "http://127.0.0.1:8080/v1/models",
+        "http://localhost:8080/v1/models",
+    ]
 
 
 # --- probe_models_endpoint (settings-modal Discover button) ------------------
@@ -473,7 +486,11 @@ async def test_probe_handles_recursive_json_as_bounded_failure(monkeypatch) -> N
     def recursive_loads(body: bytes) -> object:
         raise RecursionError("secret recursive decoder detail")
 
-    monkeypatch.setattr(local_discovery_module.json, "loads", recursive_loads)
+    # Replace only this module's json: patching json.loads itself also broke
+    # the storage admission's control-record read (object_pairs_hook).
+    monkeypatch.setattr(
+        local_discovery_module, "json", SimpleNamespace(loads=recursive_loads)
+    )
 
     result = await probe_models_endpoint(
         "http://127.0.0.1:9099",

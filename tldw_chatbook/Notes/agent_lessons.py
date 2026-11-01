@@ -256,9 +256,13 @@ def initialize_agent_lessons_folder(
         if organization_repository is None:
             raise ValueError("synchronized seeding requires an organization repository")
         if organization_repository.db is not db:
-            raise ValueError("organization repository must own the seeded Notes database")
+            raise ValueError(
+                "organization repository must own the seeded Notes database"
+            )
         if organization_repository.server_profile_id != normalized_profile:
-            raise ValueError("organization repository profile does not match seed scope")
+            raise ValueError(
+                "organization repository profile does not match seed scope"
+            )
 
     from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 
@@ -677,15 +681,11 @@ def _is_public_note_id(value: object) -> bool:
         return False
     padding = "=" * (-len(body) % 4)
     try:
-        raw_bytes = base64.b64decode(
-            body + padding, altchars=b"-_", validate=True
-        )
+        raw_bytes = base64.b64decode(body + padding, altchars=b"-_", validate=True)
         raw = raw_bytes.decode("utf-8")
     except (binascii.Error, UnicodeDecodeError, ValueError):
         return False
-    return bool(raw) and not any(
-        character in raw for character in ("/", "\\", "\x00")
-    )
+    return bool(raw) and not any(character in raw for character in ("/", "\\", "\x00"))
 
 
 def _contains_private_key_block(lines: Sequence[str]) -> bool:

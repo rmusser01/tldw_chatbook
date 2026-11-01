@@ -140,9 +140,11 @@ def test_record_check_result_with_stats_really_nests(db, monkeypatch):
     import contextlib
 
     @contextlib.contextmanager
-    def traced(self):
+    def traced(self, **kwargs):
+        # ``**kwargs``: the hot writers open ``transaction(immediate=True)``
+        # since TASK-21233, and a zero-argument double raised TypeError.
         depths.append(getattr(self._local, "transaction_depth", 0) + 1)
-        with original(self) as conn:
+        with original(self, **kwargs) as conn:
             yield conn
 
     monkeypatch.setattr(SubscriptionsDB, "transaction", traced)

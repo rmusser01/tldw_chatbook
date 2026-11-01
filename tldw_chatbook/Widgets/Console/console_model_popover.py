@@ -29,6 +29,7 @@ from math import isfinite
 from typing import Any, ClassVar, Literal, Protocol
 from uuid import uuid4
 
+from rich.cells import cell_len
 from rich.style import Style
 from rich.text import Text
 from textual import events, on
@@ -42,15 +43,17 @@ from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
+from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
 from tldw_chatbook.Chat.console_provider_support import MODEL_FIELD_LABELS
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_VALUE_SOURCE_WORDS,
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
     build_console_provider_options,
+    model_readiness_words,
     provider_left_at_shipped_default,
-    readiness_words,
     resolve_console_value_layers,
+    resolve_effective_chat_configuration,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     QUICK_MODEL_DEFAULT_FIELDS,
@@ -64,15 +67,23 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsSubmission,
     ConsoleSettingsSurface,
     ConsoleSettingsTransfer,
+    pick_base_url,
     remember_model_draft,
 )
 from tldw_chatbook.Chat.provider_catalog import (
-    PROVIDER_CUSTOM_GROUP_KEYS,
+    PROVIDER_LEGACY_ALIAS_KEYS,
     provider_display_name,
 )
-from tldw_chatbook.Chat.provider_endpoint_contract import URL_BASED_PROVIDER_KEYS
-from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS
+from tldw_chatbook.Chat.provider_endpoint_contract import (
+    URL_BASED_PROVIDER_KEYS,
+    canonical_connection_identity,
+)
+from tldw_chatbook.Chat.provider_readiness import (
+    KEYLESS_PROVIDER_KEYS,
+    provider_config_key,
+)
+from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS, temperature_range
+from tldw_chatbook.config import SHIPPED_SAMPLE_MODEL_IDS
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.Console.console_settings_unsaved import unsaved_prompt_copy
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -93,18 +104,30 @@ class ConsoleModelPopoverResult:
     compaction_mode: ContextCompactionMode
 
 
-_CONSOLE_POPOVER_TEMPERATURE_MIN = 0.0
-_CONSOLE_POPOVER_TEMPERATURE_MAX = 2.0
 _FULL_SETTINGS_ACTION = "full_settings"
 #: The value row, in order: exactly the quick default mask (ADR-095 D3), so
 #: Save as model default and Ctrl+N save every value this surface shows.
 VALUE_FIELDS = ("temperature", "max_tokens", "streaming")
 _INVALID = object()
+#: Temperature's range is the draft's provider's (capture finding 25).
 _VALUE_ERRORS = {
-    "temperature": "Temperature must be a finite number from 0 to 2.",
+    "temperature": "Temperature must be a finite number from {low:g} to {high:g}.",
     "max_tokens": "Max tokens must be a whole number of at least 1 (blank: no cap).",
 }
+#: No pair to act on while providers are checked: nothing to type or choose yet.
+_CHECKING_ERROR = "Still checking providers: press Enter again when the list fills."
 
+#: The key row's Enter label on a pair; an opener whose pick also sets the
+#: new-chat default passes ``enter_sets_default`` (capture finding 4).
+APPLY_TO_CHAT_LABEL = "Enter apply to this chat"
+APPLY_TO_CHAT_AND_NEW_CHATS_LABEL = "Enter apply to this chat and new chats"
+#: Round 2 finding 4: Enter's label follows the highlighted row's kind.
+SET_UP_LABEL = "Enter set up in Settings"
+EXPLAIN_LABEL = "Enter explain"
+SHOW_MORE_LABEL = "Enter show them"
+#: No row highlighted (no rows yet, or kept unhighlighted while providers are
+#: checked): Enter refuses there, so the label never promises an apply.
+CHOOSE_FIRST_LABEL = "Enter choose a model first"
 #: Spec §2 / mockup (a): READY PROVIDERS shows this many models per provider.
 TOP_MODELS_PER_PROVIDER = 3
 #: Row caps that keep one open to a screenful; typing searches everything.
@@ -112,17 +135,19 @@ _RECENT_ROWS = 6
 _SETUP_ROWS = 8
 _MATCH_ROWS = 30
 HIGHLIGHT_GLYPH = "▶"
-#: Legacy aliases are hidden unless configured or current (ADR-066); the
-#: built-in custom and custom_2 slots always stay listable (ADR-146).
-_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
 #: Column widths of one pair row (mockup (a)). The model column grows to the
 #: longest id shown, so ids render whole (spec: never truncated); a row too
 #: long for the list ends in an ellipsis (the list is ``nowrap``), so the
-#: note, then readiness, give way before any id does.
+#: note, then readiness, give way before any id does. The provider column
+#: grows to the longest name shown as far as the list still fits the whole
+#: row, note included, and never shrinks below this (TASK-33005.14).
 _MODEL_COLUMNS = 28
 _PROVIDER_COLUMNS = 20
 _CONTEXT_COLUMNS = 5
 _READINESS_COLUMNS = 28
+#: A row's cells beside its model, provider and note: glyph, context,
+#: readiness and the five gaps between the columns (``_prompt``).
+_OTHER_COLUMNS = 1 + _CONTEXT_COLUMNS + _READINESS_COLUMNS + 6
 
 _SETUP_HINTS = {
     "configure_credential": "Enter: add key in Settings",
@@ -149,11 +174,51 @@ def _retries_in_place(readiness: ConsoleSettingsReadiness) -> bool:
     )
 
 
+def _server_listing(
+    readiness: ConsoleSettingsReadiness | None, *known: Sequence[str]
+) -> tuple[str, ...] | None:
+    """The models a server's last listing returned, or None (TASK-33005.12).
+
+    The switcher's local probe (or any test of the same connection) records
+    them in the shared evidence this readiness carries, so reading them sends
+    nothing. Only a server's own listing counts: a URL-based provider or a
+    registry entry; a cloud key check's listing is no catalog. A listing at
+    the probe's bound may stop short of what the server serves, so the
+    ``known`` models (Chat settings' listed ones, its catalog, its saved
+    ones) follow it there.
+    """
+    if readiness is None or readiness.endpoint != "reachable":
+        return None
+    evidence, connection = readiness.evidence, readiness.connection
+    if (
+        evidence is None
+        or connection is None
+        or (
+            connection.custom_endpoint_id is None
+            and connection.provider_key not in URL_BASED_PROVIDER_KEYS
+        )
+    ):
+        return None
+    return _with_known(evidence.model_ids, *known)
+
+
+def _with_known(listed: Sequence[str], *known: Sequence[str]) -> tuple[str, ...]:
+    """A listing, with the ``known`` models after it when it reached the bound."""
+    from tldw_chatbook.Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
+
+    if len(listed) >= MODEL_IDS_MAX_COUNT:
+        listed = [*listed, *(model for models in known for model in models)]
+    return tuple(dict.fromkeys(m for m in map(normalize_model_id, listed) if m))
+
+
 #: Blockers a connection test produced; such a row leads NEEDS SETUP, so the
 #: row cap never hides a stopped local server behind keyless cloud rows.
 _TEST_FAILURES = frozenset({"endpoint_unreachable", "credential_rejected"})
 #: A local probe can change only these rows: Ready, or a failed test.
 _PROBED_BLOCKERS = _TEST_FAILURES | {None}
+#: Keyless servers with no models route (MLX-LM, local-llm): no probe ever
+#: checks them, so a shipped template's endpoint and model read Ready.
+_UNPROBED_SERVERS = KEYLESS_PROVIDER_KEYS - URL_BASED_PROVIDER_KEYS
 
 
 class DraftRebaser(Protocol):
@@ -187,8 +252,10 @@ class DefaultReadinessResolver(Protocol):
 class PairUse(Protocol):
     """One recent provider·model pair (``model_switcher.ModelPairUse``)."""
 
-    provider: str
-    model: str
+    @property
+    def provider(self) -> str: ...
+    @property
+    def model(self) -> str: ...
 
     def used_label(self, now: datetime) -> str: ...
 
@@ -227,13 +294,22 @@ class SwitcherRow:
         return (self.kind, self.provider, self.model)
 
 
-def switcher_readiness_words(readiness: ConsoleSettingsReadiness | None) -> str:
-    """A row's spec §5 word (TASK-33005.3: the one shared mapping)."""
-    return "checking…" if readiness is None else readiness_words(readiness)
+def switcher_readiness_words(
+    readiness: ConsoleSettingsReadiness | None, model: str | None = None
+) -> str:
+    """A row's spec §5 word (TASK-33005.3: the one shared mapping), for the
+    row's own model (TASK-33005.11: a listing verifies only what it listed)."""
+    return "checking…" if readiness is None else model_readiness_words(readiness, model)
 
 
 def _is_ready(readiness: ConsoleSettingsReadiness | None) -> bool:
     return readiness is not None and readiness.operability == "ready_to_send"
+
+
+def _only_needs_a_model(readiness: ConsoleSettingsReadiness | None) -> bool:
+    """Whether a model is all that keeps the provider from sending: every
+    blocker that outranks ``model_missing`` (a key, an endpoint) is clear."""
+    return readiness is not None and readiness.blocker == "model_missing"
 
 
 def provider_key(provider: object) -> str:
@@ -260,32 +336,27 @@ def _fit(text: str, width: int) -> str:
     return text if len(text) <= width else f"{text[: width - 4]}…{text[-3:]}"
 
 
-def _context_copy(tokens: int, verified: bool) -> str:
+def context_copy(tokens: int, verified: bool) -> str:
+    """Return a context window's short size, e.g. ``"200k"``, or ``"?"``.
+
+    Args:
+        tokens: The window size in tokens.
+        verified: Whether the size is known. A provider or application
+            fallback is a guess, so it reads ``"?"`` (unknown), never a size
+            (TASK-33007 #12).
+
+    Returns:
+        The size in ``k`` or ``M`` units, or ``"?"``.
+    """
+    if not verified:
+        return "?"
     if tokens >= 1_000_000:
         size = f"{round(tokens / 1_000_000, 1):g}M"
     elif tokens >= 1_000:
         size = f"{tokens // 1_000}k"
     else:
         size = str(tokens)
-    return size if verified else f"~{size}"
-
-
-def _temperature_in_range(value: float) -> bool:
-    """Return whether a parsed temperature is finite and within modal bounds.
-
-    Args:
-        value: Parsed temperature candidate.
-
-    Returns:
-        True if ``value`` is within ``[0.0, 2.0]``. NaN and infinite values
-        always return False, since any comparison against them is False.
-    """
-    return (
-        isfinite(value)
-        and _CONSOLE_POPOVER_TEMPERATURE_MIN
-        <= value
-        <= _CONSOLE_POPOVER_TEMPERATURE_MAX
-    )
+    return size
 
 
 def _widget_screen_region(widget: Widget) -> Any:
@@ -460,6 +531,11 @@ class ConsoleModelPopover(
         pick_only: bool = False,
         query: str = "",
         connection_prober: ConnectionProber | None = None,
+        served_models: Mapping[str, Sequence[str]] | None = None,
+        highlight_pair: tuple[str, str] | None = None,
+        reopened_provider: str | None = None,
+        enter_sets_default: bool = False,
+        new_chat_readiness_resolver: DefaultReadinessResolver | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -472,12 +548,19 @@ class ConsoleModelPopover(
             providers_models: Saved model list per provider key; the in-memory
                 catalog until ``catalog_loader`` resolves a provider.
             scope_copy: Exact conversation scope label.
+            enter_sets_default: Enter's pick also sets the new-chat default:
+                its label names both, as the scope line does, and Ctrl+N's
+                hint is left out (Enter already does what it does).
             durability_copy: Exact unsaved or temporary durability label.
             draft_rebaser: Controller-owned provider/model rebase callback.
             live_committer: Synchronous exact-origin live commit callback.
             default_readiness_resolver: Configuration-only readiness for one
                 provider/model target; called once per provider per open, in
                 a worker thread.
+            new_chat_readiness_resolver: Ctrl+N's check: the readiness of
+                the connection new chats use, where the rows read another
+                (this chat's Endpoint, TASK-35190);
+                ``default_readiness_resolver`` if None.
             recent_pairs_loader: Reads RECENT after the switcher opens.
             previous_pair: Picks PREVIOUS from RECENT (and process memory).
             catalog_loader: Resolves one provider's cached catalog.
@@ -489,9 +572,42 @@ class ConsoleModelPopover(
                 ``live_committer`` or ``setup_opener``, and NEEDS SETUP rows
                 cannot be picked.
             query: Text Find opens with (``/model <query>``); the best match
-                is highlighted, and nothing applies until Enter.
+                is highlighted, and nothing applies until Enter. The cursor
+                starts after it with nothing selected, so typing adds to it.
             connection_prober: The screen's local-server probe, run once per
                 listed provider per open; this widget calls no network.
+            served_models: Models a Chat settings listing found per provider,
+                listed beside the saved ones (a new entry's, TASK-33006.4), or
+                that a detected server listed. On this chat's own provider
+                they are its listing (TASK-35190, ``_listing``). A served
+                provider is used, so it is listed even as a legacy alias.
+            highlight_pair: The pair highlighted first, until Find changes.
+                Until then its NEEDS SETUP row is preferred to PREVIOUS's or
+                RECENT's copy of the pair. In a list opened with text in Find
+                (``query``), no row cap cuts its row and its provider's NEEDS
+                SETUP rows include its model whatever lists it. With Find
+                empty neither holds: READY PROVIDERS lists three models a
+                provider and NEEDS SETUP one row a provider, so a pair past
+                those is not listed there and the highlight falls back to
+                PREVIOUS, then this chat's pair. Both callers pass the
+                provider's name as ``query``.
+                A pair of a served provider is listed even while providers
+                are checked (the Get started card's detected server: its
+                first listed model, TASK-33008.3). Any other waits for
+                readiness, with nothing highlighted (a NEEDS SETUP row's
+                pair, reopened after its fix, TASK-33008.2).
+            reopened_provider: The provider of the NEEDS SETUP row whose
+                return from Settings reopened the list. Until Find changes,
+                the highlight never leaves that provider: ``highlight_pair``'s
+                row, else the provider's first row (its NEEDS SETUP row
+                before a copy that would apply), else none, and none while
+                providers are checked. No row cap cuts its NEEDS SETUP row,
+                with or without a model. When it can send, its saved model
+                is listed whatever lists it (one just saved in Settings'
+                Model field); with none saved and no models listed it has no
+                row, and READY PROVIDERS opens with its "no models reported"
+                line. Its READY rows are cut at 30
+                matches like any other's, the pair's row excepted.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -504,16 +620,24 @@ class ConsoleModelPopover(
         self._draft = initial_draft
         self._providers_models = providers_models
         self._scope_copy = scope_copy
+        self._enter_sets_default = enter_sets_default
+        self._apply_label = (
+            APPLY_TO_CHAT_AND_NEW_CHATS_LABEL
+            if enter_sets_default
+            else APPLY_TO_CHAT_LABEL
+        )
         self._durability_copy = durability_copy
         self._draft_rebaser = draft_rebaser
         self._live_committer = live_committer
         self._default_readiness_resolver = default_readiness_resolver
+        self._new_chat_readiness_resolver = new_chat_readiness_resolver
         self._recent_pairs_loader = recent_pairs_loader
         self._previous_pair = previous_pair
         self._catalog_loader = catalog_loader
         self._setup_opener = setup_opener
         self._pick_only = pick_only
         self._connection_prober = connection_prober
+        self._served = {provider_key(p): m for p, m in (served_models or {}).items()}
         self._probes_offered: set[str] = set()
         settings = initial_draft.settings
         self._chat_settings = settings
@@ -531,13 +655,22 @@ class ConsoleModelPopover(
         self._guard_focus: Widget | None = None
         self._updating_controls = False
         self._submit_pending = False
+        self._error = ""  # what the error line shows
         self._current: tuple[str, str | None] = (
             str(settings.provider or "").strip(),
             settings.model or None,
         )
         self._query = query
+        self._opened_query = query
+        self._highlight_pair = (
+            (provider_key(highlight_pair[0]), highlight_pair[1])
+            if highlight_pair is not None
+            else None
+        )
+        self._reopened = provider_key(reopened_provider or "")
         self._rows: list[SwitcherRow] = []
         self._model_columns = _MODEL_COLUMNS
+        self._provider_columns = _PROVIDER_COLUMNS
         self._painted_index: int | None = None
         self._highlight_key: tuple[str, str, str | None] | None = None
         self._user_moved = False
@@ -547,6 +680,7 @@ class ConsoleModelPopover(
         self._readiness_pending: set[str] = set()
         self._first_readiness_done = False
         self._saved: dict[str, tuple[str, ...]] = {}
+        self._saved_defaults: dict[str, str | None] = {}
         self._catalogs: dict[str, tuple[str, ...]] = {}
         self._catalog_state: dict[str, str] = {}
         self._context_labels: dict[tuple[str, str], str] = {}
@@ -632,14 +766,21 @@ class ConsoleModelPopover(
         return f"Switch model · now: {now}"
 
     def _find_placeholder(self) -> str:
+        used = self._used_provider_keys()
         ready = [
-            key for key in self._provider_order if _is_ready(self._readiness.get(key))
+            key
+            for key in self._provider_order
+            if _is_ready(readiness := self._readiness.get(key))
+            # Round 2 finding 3: one listed under NOT RUNNING is not counted.
+            and not self._not_running(key, readiness, used)
         ]
         enter = "Enter picks" if self._pick_only else "Enter applies"
         if not ready:
             return f"type to search models · {enter}"
         count = sum(len(self._models_for(key)) for key in ready)
-        return f"type to search {count} models in {len(ready)} providers · {enter}"
+        models = "model" if count == 1 else "models"
+        providers = "provider" if len(ready) == 1 else "providers"
+        return f"type to search {count} {models} in {len(ready)} {providers} · {enter}"
 
     # -- compose --------------------------------------------------------
 
@@ -656,6 +797,9 @@ class ConsoleModelPopover(
                     placeholder=self._find_placeholder(),
                     id="console-popover-find",
                     compact=True,
+                    # A query the list opens with ("<provider> ") is typed
+                    # after: selected on focus, the first key replaced it.
+                    select_on_focus=not self._query,
                 )
             error = Static("", id="console-popover-error", markup=False)
             error.display = False
@@ -694,18 +838,23 @@ class ConsoleModelPopover(
             yield guard
             with Horizontal(id="console-popover-keys", classes="console-popover-strip"):
                 yield Button(
-                    "Enter apply to this chat",
+                    # No rows until the first rebuild (on_mount's is a no-op).
+                    self._enter_label(None),
                     id="console-popover-apply",
                     variant="primary",
                     compact=True,
                 )
                 yield Static("· Tab edit values ·", markup=False)
-                yield Button(
+                make_default = Button(
                     "Ctrl+N default for new chats",
                     id="console-popover-make-new-chat-default",
                     compact=True,
                 )
-                yield Static("·", markup=False)
+                after = Static("·", markup=False)
+                # Round 2 finding 5: Enter already sets the default here.
+                make_default.display = after.display = not self._enter_sets_default
+                yield make_default
+                yield after
                 yield Button(
                     "Ctrl+O chat settings",
                     id="console-popover-full-settings",
@@ -774,8 +923,8 @@ class ConsoleModelPopover(
             )
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Re-check whether the list must fill the box after a resize."""
-        self.call_after_refresh(self._sync_list_height)
+        """Repack NOT RUNNING for the new width; the rebuild re-checks the fill."""
+        self.call_after_refresh(self._rebuild_rows)
 
     def _sync_list_height(self) -> None:
         """Let the pair list fill the box only once its rows outgrow it.
@@ -804,6 +953,7 @@ class ConsoleModelPopover(
         if self._previous is not None:
             keys.add(provider_key(self._previous.provider))
         keys.update(provider_key(use.provider) for use in self._recent)
+        keys.update(self._served)  # a server listed its models: it is in use
         defaults = self._app_config.get("chat_defaults")
         if isinstance(defaults, Mapping):
             keys.add(provider_key(defaults.get("provider")))
@@ -816,7 +966,7 @@ class ConsoleModelPopover(
             dict.fromkeys(
                 key
                 for key in (*self._provider_order, *sorted(used))
-                if key and (key not in _LEGACY_ALIAS_KEYS or key in used)
+                if key and (key not in PROVIDER_LEGACY_ALIAS_KEYS or key in used)
             )
         )
 
@@ -867,9 +1017,23 @@ class ConsoleModelPopover(
         self._first_readiness_done |= not self._readiness_pending
         if not self.is_mounted:
             return
+        # Catalogs first: the returned provider is "loading" at the rebuild,
+        # so it neither highlights its NEEDS SETUP row nor clears the wait line.
+        self._load_ready_catalogs(tuple(resolved))
+        # NO-1 (TASK-35010): a server read with no model has listed models
+        # since (its probe settled): read it again with the first one, as
+        # _load_catalogs does for a catalog, so a running one is listed.
+        listed = tuple(
+            key
+            for key in resolved
+            if targets[key] is None
+            and _only_needs_a_model(self._readiness.get(key))
+            and self._representative_model(key)
+        )
+        if listed and self.is_attached:
+            self._request_readiness(listed, refresh=True)
         self._rebuild_rows()
         self._sync_find_placeholder()
-        self._load_ready_catalogs(tuple(resolved))
         self._offer_probes(resolved)
 
     def _offer_probes(self, resolved: Mapping[str, ConsoleSettingsReadiness]) -> None:
@@ -878,7 +1042,10 @@ class ConsoleModelPopover(
             key: self._representative_model(key)
             for key, readiness in resolved.items()
             if key not in self._probes_offered
-            and readiness.blocker in _PROBED_BLOCKERS
+            and (
+                readiness.blocker in _PROBED_BLOCKERS
+                or self._untouched_server_without_a_model(key, readiness)
+            )
         }
         if self._connection_prober is None or not targets or not self.is_attached:
             return
@@ -887,6 +1054,22 @@ class ConsoleModelPopover(
             self._connection_prober(targets, self.refresh_readiness),
             group="console-switcher-probes",
             exit_on_error=False,
+        )
+
+    def _untouched_server_without_a_model(
+        self, key: str, readiness: ConsoleSettingsReadiness
+    ) -> bool:
+        """A local server the user never set up, waiting only on a model.
+
+        TASK-35010 NO-1: vLLM's shipped list is empty and llama.cpp's,
+        koboldcpp's, Oobabooga's and llamafile's hold "None", so readiness
+        says model_missing before any endpoint result. The probe still finds
+        a running one (its listing supplies the model) or a refused one.
+        """
+        return (
+            readiness.blocker == "model_missing"
+            and key in URL_BASED_PROVIDER_KEYS
+            and provider_left_at_shipped_default(self._app_config, key)
         )
 
     def refresh_readiness(self, provider: str) -> None:
@@ -917,15 +1100,19 @@ class ConsoleModelPopover(
         targets = tuple(
             key
             for key in providers
-            if _is_ready(self._readiness.get(key))
+            # A key saved and no model: _load_catalogs asks again with the
+            # first model its catalog lists.
+            if (
+                _is_ready(self._readiness.get(key))
+                or _only_needs_a_model(self._readiness.get(key))
+            )
             and not key.startswith("custom-ep:")
             and key not in self._catalog_state
         )
         if not targets:
             return
         for key in targets:
-            self._catalog_state[key] = "loading"
-        self._rebuild_rows()
+            self._catalog_state[key] = "loading"  # the caller rebuilds
         self.run_worker(
             self._load_catalogs(targets),
             group="console-switcher-catalogs",
@@ -952,13 +1139,18 @@ class ConsoleModelPopover(
             self._catalog_state[key] = "ready" if models else "empty"
             if models:
                 self._catalogs[key] = models
+                # Asked again before the next provider's await, so it is
+                # pending, not "ready" and model_missing, while that loads.
+                # A popped screen stays "mounted".
+                if self.is_attached and _only_needs_a_model(self._readiness.get(key)):
+                    self._request_readiness((key,), refresh=True)
         if not self.is_mounted:
             return
         self._rebuild_rows()
         self._sync_find_placeholder()
 
     def _saved_models(self, key: str) -> tuple[str, ...]:
-        """The provider's saved model list (a registry entry's own list)."""
+        """The provider's saved models (a registry entry's own list)."""
         cached = self._saved.get(key)
         if cached is not None:
             return cached
@@ -982,8 +1174,49 @@ class ConsoleModelPopover(
         return cached
 
     def _models_for(self, key: str) -> tuple[str, ...]:
-        catalog = self._catalogs.get(key)
-        return catalog if catalog is not None else self._saved_models(key)
+        """What the server listed (``_listing``), else the catalog, else the
+        saved models, then the models a Chat settings listing found
+        (``served_models``).
+
+        Each of those was listed by the endpoint a pick of it lands on, which
+        may not be this readiness's own (TASK-33006.19), so a saved model no
+        server listed is still not offered (TASK-33005.12). At the listing's
+        bound they come before the known models, as they do under it.
+        """
+        catalog, saved = self._catalogs.get(key), self._saved_models(key)
+        served = tuple(filter(None, map(normalize_model_id, self._served.get(key, ()))))
+        listed = self._listing(key, served, catalog or (), saved)
+        if listed is None:
+            listed = catalog if catalog is not None else saved
+        return tuple(dict.fromkeys((*listed, *served)))
+
+    def _listing(self, key: str, *known: Sequence[str]) -> tuple[str, ...] | None:
+        """The last listing of the server a pick of ``key`` lands on, or None.
+
+        That is the readiness's connection (``_server_listing``), except on
+        this chat's own provider and where a pick keeps a draft's Endpoint,
+        by the rebaser's own rule (``pick_base_url``, TASK-35190): after a
+        pick of another provider in between too. There a Chat settings
+        listing (``served_models``, kept only where a pick lands,
+        TASK-33006.19) is the listing; without one, the readiness's listing
+        counts only while it listed that Endpoint, else there is none.
+        """
+        readiness = self._readiness.get(key)
+        endpoint = pick_base_url(self._draft, key, full_surface=self._pick_only)
+        if not endpoint and key != provider_key(self._current[0]):
+            return _server_listing(readiness, *known)
+        if key in self._served:
+            return _with_known(self._served[key], *known)
+        connection = readiness.connection if readiness is not None else None
+        if (
+            connection is not None
+            and connection.custom_endpoint_id is None
+            and endpoint
+            and canonical_connection_identity(connection.provider_key, endpoint)
+            != connection.connection_identity
+        ):
+            return None
+        return _server_listing(readiness, *known)
 
     # -- rows -----------------------------------------------------------
 
@@ -992,10 +1225,14 @@ class ConsoleModelPopover(
     ) -> int | None:
         """Match rank, lower is better; None when a token is missing.
 
-        Every token must appear in the model id or the provider's name.
+        Every token must appear in the model id or the provider's name. Find
+        that is exactly the provider's name or id ranks all its rows first
+        (-1), before an aggregator's ids that start with it (TASK-33641.9).
         """
         if not tokens:
             return 99
+        if self._names(query, provider):
+            return -1
         folded = model.casefold()
         text = f"{folded} {self._display(provider).casefold()}"
         if not all(token in text for token in tokens):
@@ -1005,6 +1242,76 @@ class ConsoleModelPopover(
         if folded.startswith(query):
             return 1
         return 2 if query in folded else 3
+
+    def _names(self, query: str, provider: str) -> bool:
+        """Whether the casefolded ``query`` is exactly ``provider``'s name or id."""
+        key = provider_key(provider)
+        return query in (self._display(key).casefold(), key.casefold())
+
+    def _leads(self, row: SwitcherRow) -> bool:
+        """Whether ``row`` is the highlight pair's, while Find is as it opened."""
+        pair = self._highlight_pair
+        return (
+            # Per row on every typed search: the row's key is built last.
+            pair is not None
+            and self._query == self._opened_query
+            and (provider_key(row.provider), row.model) == pair
+        )
+
+    def _returned_to(self, key: str) -> bool:
+        """Whether a return from Settings reopened the list on provider
+        ``key``, while Find is as it opened."""
+        # ``_reopened`` is "" for every other opener: no key is that.
+        return bool(key) and key == self._reopened and self._query == self._opened_query
+
+    def _saved_default(self, key: str) -> str | None:
+        """The model new chats on provider ``key`` start with (P8's resolver),
+        once per open; None for a shipped sample id (TASK-35012)."""
+        if key not in self._saved_defaults:
+            config = resolve_effective_chat_configuration(
+                self._app_config, provider=key
+            )
+            model = normalize_model_id(config.model)
+            self._saved_defaults[key] = (
+                None if model in SHIPPED_SAMPLE_MODEL_IDS else model
+            )
+        return self._saved_defaults[key]
+
+    def _returned_saved_model(self, key: str) -> str | None:
+        """The model saved for provider ``key`` when a return from Settings
+        reopened the list on it, while Find is as it opened; else None."""
+        if not self._returned_to(key):
+            return None
+        config = resolve_effective_chat_configuration(self._app_config, provider=key)
+        return config.model
+
+    def _capped(self, rows: list[SwitcherRow], cap: int) -> list[SwitcherRow]:
+        """The first ``cap`` rows; the highlight pair's row is never cut.
+
+        The list opened on that pair, so past the cut its row takes the last
+        place: left out, Enter acted on Find's best match instead, which can
+        be another provider's model.
+
+        A list reopened from Settings with no row for the pair (the row named
+        no model, or the catalog dropped it) keeps that provider's first row
+        the same way when the cut leaves none of its rows: the highlight is
+        that row or nothing, and the list said nothing about the provider.
+        A reopen's Find is the provider's name, which lists its rows first
+        (TASK-33641.9), so the cut leaves them all out only behind another
+        provider of that name, such as a named endpoint called "OpenAI".
+        """
+        late = next((row for row in rows[cap:] if self._leads(row)), None)
+        if late is None and self._returned_to(self._reopened):
+            first = next(
+                (
+                    index
+                    for index, row in enumerate(rows)
+                    if provider_key(row.provider) == self._reopened
+                ),
+                0,
+            )
+            late = rows[first] if first >= cap else None
+        return rows[:cap] if late is None else [*rows[: cap - 1], late]
 
     def _is_current(self, provider: str, model: str | None) -> bool:
         current_provider, current_model = self._current
@@ -1023,20 +1330,19 @@ class ConsoleModelPopover(
     ) -> SwitcherRow:
         if self._is_current(provider, model):
             note = CURRENT_MARK
-        if provider_key(provider) in _LEGACY_ALIAS_KEYS:
+        if provider_key(provider) in PROVIDER_LEGACY_ALIAS_KEYS:
             note = f"legacy alias · {note}" if note else "legacy alias"
         return SwitcherRow(kind, provider=provider, model=model, note=note, score=score)
 
     def _visible_providers(self) -> list[str]:
         """Current provider first, then failed tests, then listing order.
 
-        Legacy aliases never get readiness unless used (``_readiness_targets``),
-        so they drop out below with every other unresolved provider.
+        A legacy alias no chat uses is left out, as from readiness
+        (``_readiness_targets``): Find never takes its id for a name.
         """
         current = provider_key(self._current[0])
         order = [current] if current else []
-        order += [key for key in self._provider_order if key != current]
-        order += sorted(self._used_provider_keys() - set(order))
+        order += [key for key in self._readiness_targets() if key != current]
         blockers = {key: getattr(self._readiness.get(key), "blocker", None) for key in order}
         return sorted(
             (
@@ -1108,12 +1414,25 @@ class ConsoleModelPopover(
             members = []
             if not current_shown:
                 members.append(self._pair_row("pair", current_key, current_model))
+            preferred = self._highlight_pair
+            if (
+                preferred is not None
+                and preferred[0] in self._served
+                and preferred not in shown
+                and preferred != (current_key, current_model)
+            ):
+                # A server that just answered lists it; a fast Enter applies
+                # it (the commit still checks readiness) instead of an error.
+                # A pair no server listed (a NEEDS SETUP row's, reopened after
+                # its fix) waits for readiness: its key may not be saved.
+                members.append(self._pair_row("pair", *preferred))
             members.append(SwitcherRow("info", "  checking providers…"))
             group("READY PROVIDERS", members)
             rows.extend(self._typed_rows(tokens))
             return rows
 
         ready_rows: list[SwitcherRow] = []
+        returned: list[SwitcherRow] = []
         matches: list[tuple[int, int, int, SwitcherRow]] = []
         setup_rows: list[SwitcherRow] = []
         setup_extra = 0
@@ -1123,31 +1442,41 @@ class ConsoleModelPopover(
             readiness = self._readiness.get(key)
             if readiness is None:
                 continue
-            if (
-                # TASK-33005.6 AC#3 (owner ruling): a shipped localhost default
-                # the user never set up or used is still probed, so a running
-                # one is found, but its refusal is no setup task.
-                readiness.endpoint_category == "connection_refused"
-                and _retries_in_place(readiness)
-                and key not in used
-                and provider_left_at_shipped_default(self._app_config, key)
-            ):
+            if self._not_running(key, readiness, used):
                 if self._pair_score(query, tokens, key, "") is not None:
-                    not_running.append(self._display(key))
+                    unchecked = " (not checked)" if key in _UNPROBED_SERVERS else ""
+                    not_running.append(self._display(key) + unchecked)
                 continue
             models = list(self._models_for(key))
             if key == current_key and current_model:
                 # ADR-020: the active model stays listed, first.
                 models = [current_model, *(m for m in models if m != current_model)]
             if _is_ready(readiness):
+                saved = self._returned_saved_model(key)
+                if saved and saved not in models:
+                    # Saved in Settings' Model field: in no list yet.
+                    models.append(saved)
                 if tokens:
                     for index, model in enumerate(models):
                         score = self._pair_score(query, tokens, key, model)
                         if score is not None and (key, model) not in shown:
                             row = self._pair_row("pair", key, model, score=score)
                             matches.append((score, rank, index, row))
+                    if not models and (
+                        self._returned_to(key) or self._names(query, key)
+                    ):
+                        # Its key is saved and it lists nothing: no row to
+                        # highlight, so its own line says what to type.
+                        returned = self._catalog_status_rows(key, False)
                     continue
                 visible = [model for model in models if (key, model) not in shown]
+                default = self._saved_default(key)
+                if default in visible:
+                    # TASK-35012: the saved default leads, behind a current
+                    # model that leads; typed Find keeps the list's order.
+                    visible.remove(default)
+                    lead = bool(visible) and self._is_current(key, visible[0])
+                    visible.insert(int(lead), default)
                 ready_rows.extend(
                     self._pair_row("pair", key, model)
                     for model in visible[:TOP_MODELS_PER_PROVIDER]
@@ -1157,38 +1486,62 @@ class ConsoleModelPopover(
                     ready_rows.append(
                         SwitcherRow(
                             "more",
-                            f"    … {more} more {self._display(key)} models",
+                            f"    … {more} more {self._display(key)} "
+                            + ("model" if more == 1 else "models"),
                             provider=key,
                         )
                     )
                 ready_rows.extend(self._catalog_status_rows(key, bool(models)))
                 continue
+            if (
+                readiness.blocker == "model_missing"
+                and not models
+                and self._returned_to(key)
+            ):
+                # Its key is saved and no model is chosen or listed: its row's
+                # Enter opens Settings again, so the same line says what to
+                # type here.
+                returned = self._catalog_status_rows(key, False)
             setup = self._setup_rows(key, readiness, query, tokens, current_shown)
-            if setup and len(setup_rows) >= _SETUP_ROWS:
+            if (
+                setup
+                and len(setup_rows) >= _SETUP_ROWS
+                and not any(map(self._leads, setup))
+                # A return that names no model has no pair to lead with.
+                and not self._returned_to(key)
+                and not self._names(query, key)
+            ):
                 setup_extra += 1
                 continue
             setup_rows.extend(setup)
         if tokens:
+            setup_rows.sort(key=lambda row: row.score >= 0)  # named by Find first
             matches.sort(key=lambda match: match[:3])
-            ready_rows = [match[3] for match in matches[:_MATCH_ROWS]]
+            # The returned (or named) provider's line leads: 30 matches would
+            # hide it.
+            ready_rows = returned + self._capped(
+                [match[3] for match in matches], _MATCH_ROWS
+            )
             if len(matches) > _MATCH_ROWS:
+                more = len(matches) - _MATCH_ROWS
+                word = "match" if more == 1 else "matches"
                 ready_rows.append(
-                    SwitcherRow(
-                        "info",
-                        f"    … {len(matches) - _MATCH_ROWS} more matches · keep typing",
-                    )
+                    SwitcherRow("info", f"    … {more} more {word} · keep typing")
                 )
             ready_rows.extend(
                 row
                 for key in self._catalog_state
                 if self._catalog_state[key] == "loading"
                 for row in self._catalog_status_rows(key, False)
+                if row not in returned
             )
         if setup_extra:
+            # Capture fix 3 finding 2: one more is counted in the singular.
+            need = "provider needs" if setup_extra == 1 else "providers need"
             setup_rows.append(
                 SwitcherRow(
                     "info",
-                    f"    … {setup_extra} more providers need setup · type a name to find one",
+                    f"    … {setup_extra} more {need} setup · type a name to find one",
                 )
             )
         group(
@@ -1206,13 +1559,66 @@ class ConsoleModelPopover(
         )
         group(
             "NOT RUNNING · local servers never set up · rechecked on open",
-            [SwitcherRow("info", "  " + " · ".join(not_running))] if not_running else [],
+            [SwitcherRow("info", line) for line in self._packed(not_running)],
         )
         rows.extend(self._typed_rows(tokens))
         return rows
 
+    def _not_running(
+        self, key: str, readiness: ConsoleSettingsReadiness, used: set[str]
+    ) -> bool:
+        """Whether a server is listed once under NOT RUNNING, not as a row."""
+        return (
+            # TASK-33005.6 AC#3 (owner ruling): a shipped localhost default
+            # the user never set up or used is still probed, so a running
+            # one is found, but its refusal is no setup task.
+            (
+                (
+                    readiness.endpoint_category == "connection_refused"
+                    and (
+                        _retries_in_place(readiness)
+                        # NO-1: its missing model outranks the refusal.
+                        or self._untouched_server_without_a_model(key, readiness)
+                    )
+                )
+                # Capture finding 11: one no probe can check is Ready from
+                # the template alone; listing nothing, it is as unset.
+                or (
+                    key in _UNPROBED_SERVERS
+                    and _is_ready(readiness)
+                    and not self._models_for(key)
+                )
+            )
+            and key not in used
+            and provider_left_at_shipped_default(self._app_config, key)
+        )
+
+    def _packed(self, names: list[str]) -> list[str]:
+        """NOT RUNNING's names in as many rows as the list's width needs.
+
+        Round 2 finding 2: one row was cut at the dialog's edge. The width is
+        read when the rows are built (``on_resize`` rebuilds them), less the
+        scrollbar's cells in case the list starts to scroll.
+        """
+        width = self._list_width()
+        lines: list[str] = []
+        for name in names:
+            if lines and (width <= 0 or cell_len(f"{lines[-1]} · {name}") <= width):
+                lines[-1] = f"{lines[-1]} · {name}"
+            else:
+                lines.append(f"  {name}")
+        return lines
+
+    def _list_width(self) -> int:
+        """The pair list's text width, less the scrollbar's cells in case the
+        list starts to scroll; at most 0 before the first layout."""
+        pairs = self.query_one("#console-popover-pairs", OptionList)
+        return pairs.content_region.width - pairs.styles.scrollbar_size_vertical
+
     def _catalog_status_rows(self, key: str, has_rows: bool) -> list[SwitcherRow]:
         """AC#9: a loading, empty or unavailable catalog says so in a row."""
+        if has_rows and self._listing(key) is not None:
+            return []  # the server's own listing fills them, not a catalog
         state = self._catalog_state.get(key)
         name = self._display(key)
         if state == "loading" and not has_rows:
@@ -1246,16 +1652,22 @@ class ConsoleModelPopover(
         if not tokens:
             model = current_model if is_current_provider and not current_shown else None
             return [self._pair_row("setup", key, model, hint, 99)]
+        models = self._models_for(key)
+        pair = self._highlight_pair
+        if pair is not None and pair[0] == key and self._query == self._opened_query:
+            # The row the list opened on, whatever lists its model: with
+            # nothing in Find a chat's own row names a model no list may hold.
+            models = tuple(dict.fromkeys((*models, pair[1])))
         rows = [
             self._pair_row("setup", key, model, hint, score)
-            for model in self._models_for(key)
+            for model in models
             if (score := self._pair_score(query, tokens, key, model)) is not None
         ]
         if not rows:
             score = self._pair_score(query, tokens, key, "")
             if score is not None:
                 rows.append(self._pair_row("setup", key, None, hint, score))
-        return rows[:3]
+        return self._capped(rows, 3)
 
     def _typed_rows(self, tokens: Sequence[str]) -> list[SwitcherRow]:
         """The escape hatch: a model id no catalog lists (TASK-14812 AC#5).
@@ -1267,9 +1679,13 @@ class ConsoleModelPopover(
         if not tokens:
             return []
         folded = query.casefold()
+        # Every provider's name, but no unused legacy alias's id: only an id
+        # ("mistral") is a search word; an alias's name ends "(legacy alias)".
         providers = (*self._provider_order, *sorted(self._used_provider_keys()))
-        if any(self._display(key).casefold() == folded for key in providers):
-            return []  # a provider's name is a search, not a model id
+        if folded in {self._display(key).casefold() for key in providers} | {
+            key.casefold() for key in self._readiness_targets()
+        }:
+            return []  # a provider's name or id is a search, not a model id
         named = [
             key
             for key in providers
@@ -1314,7 +1730,7 @@ class ConsoleModelPopover(
 
             try:
                 window = resolve_context_window(provider, model)
-                label = _context_copy(window.tokens, window.verified)
+                label = context_copy(window.tokens, window.verified)
             except Exception:  # noqa: BLE001 - an unknown size is shown, not raised
                 label = "?"
             self._context_labels[cache_key] = label
@@ -1337,9 +1753,9 @@ class ConsoleModelPopover(
             style = Style(color=muted.color, bold=False)
         return Text(
             f"{glyph} {model:<{self._model_columns}} "
-            f"{_fit(self._display(row.provider), _PROVIDER_COLUMNS):<{_PROVIDER_COLUMNS}} "
+            f"{_fit(self._display(row.provider), self._provider_columns):<{self._provider_columns}} "
             f"{context:>{_CONTEXT_COLUMNS}}  "
-            f"{_fit(switcher_readiness_words(readiness), _READINESS_COLUMNS):<{_READINESS_COLUMNS}} "
+            f"{_fit(switcher_readiness_words(readiness, row.model), _READINESS_COLUMNS):<{_READINESS_COLUMNS}} "
             f"{row.note}",
             style=style,
         )
@@ -1351,6 +1767,11 @@ class ConsoleModelPopover(
         pairs = self.query_one("#console-popover-pairs", OptionList)
         self._rows = self._build_rows()
         self._model_columns = _model_column_width(self._rows)
+        columns = [row for row in self._rows if row.kind in {"pair", "setup", "typed"}]
+        longest = max((len(self._display(row.provider)) for row in columns), default=0)
+        note = max((len(row.note) for row in columns), default=0)
+        room = self._list_width() - self._model_columns - _OTHER_COLUMNS - note
+        self._provider_columns = max(_PROVIDER_COLUMNS, min(longest, room))
         self._painted_index = None
         with pairs.prevent(OptionList.OptionHighlighted):
             pairs.clear_options()
@@ -1358,7 +1779,19 @@ class ConsoleModelPopover(
                 Option(self._prompt(row, False), disabled=not self._selectable(row))
                 for row in self._rows
             )
+        # Capture findings 5 (1): add_options' refresh(layout=True) bumps the
+        # list's box-model cache key only when no layout is pending on it. A
+        # sibling's layout that reached the screen first measured the list at
+        # the previous rebuild's length, and that box was reused: a blank row
+        # under the last one until a resize. Every rebuild bumps it.
+        pairs._layout_updates += 1
         self._set_highlight(self._highlight_target())
+        if (
+            self._error == _CHECKING_ERROR
+            and self._first_readiness_done
+            and not self._returned_models_arriving()
+        ):
+            self._set_error("")  # the wait is over; any other error still holds
         self._sync_list_height()
         self.call_after_refresh(self._sync_list_height)
 
@@ -1366,6 +1799,20 @@ class ConsoleModelPopover(
         """Headers and info rows never; NEEDS SETUP rows not while picking."""
         return row.kind not in {"header", "info"} and not (
             self._pick_only and row.kind == "setup"
+        )
+
+    def _returned_models_arriving(self) -> bool:
+        """Whether the returned provider's only blocker is its model while its
+        catalog, then its readiness with the catalog's first model, are on the
+        way: the settled list's Enter applies a READY row, not a NEEDS SETUP
+        row's trip to Settings, so nothing is highlighted until then."""
+        reopened = self._reopened
+        return bool(reopened) and (
+            _only_needs_a_model(self._readiness.get(reopened))
+            and (
+                self._catalog_state.get(reopened) == "loading"
+                or reopened in self._readiness_pending
+            )
         )
 
     def _highlight_target(self) -> int | None:
@@ -1380,12 +1827,51 @@ class ConsoleModelPopover(
             for index in selectable:
                 if self._rows[index].key == self._highlight_key:
                     return index
-        if self._query.strip():
+        pair, reopened = self._highlight_pair, self._reopened
+        if (pair is not None or reopened) and self._query == self._opened_query:
+            if not self._first_readiness_done and (
+                reopened or pair[0] not in self._served
+            ):
+                # Nothing says yet that it can send, and PREVIOUS and RECENT
+                # list a pair whatever its readiness: no row, so a fast Enter
+                # applies neither their copy nor Find's best match.
+                return None
+            if self._returned_models_arriving():
+                return None
+            own = [index for index in selectable if self._leads(self._rows[index])]
+            if reopened and not own:
+                # Back from Settings with no row for the pair (the row named
+                # no model, or the catalog dropped it): that provider's first
+                # row, never Find's best match, which can be an aggregator's
+                # id that starts with the provider's name.
+                own = [
+                    index
+                    for index in selectable
+                    if provider_key(self._rows[index].provider) == reopened
+                ]
+            if own:
+                # Its NEEDS SETUP row, not a copy above it that would apply
+                # the pair: Enter reopens the fix the user came back from.
+                return min(own, key=lambda index: self._rows[index].kind != "setup")
+            if reopened:
+                return None
+        if query := self._query.strip().casefold():
+            named = {
+                key for key in self._visible_providers() if self._names(query, key)
+            }
+            if named and not any(
+                provider_key(self._rows[index].provider) in named
+                for index in selectable
+            ):
+                # Find is exactly a provider's name and it has no row to
+                # choose: nothing, as on a reopen, never another provider's
+                # match that starts with the name (TASK-33641.9).
+                return None
             ranked = [index for index in selectable if self._rows[index].kind != "more"]
             if ranked:
                 return min(ranked, key=lambda index: (self._rows[index].score, index))
         previous = self._previous
-        if previous is not None and not self._query.strip():
+        if previous is not None and not query:
             for index in selectable:
                 row = self._rows[index]
                 if (provider_key(row.provider), row.model) == (
@@ -1433,6 +1919,35 @@ class ConsoleModelPopover(
         )
         if model and not self._pick_only:
             self._rebase_to(provider, model)
+        if not self._pick_only:
+            apply = self.query_one("#console-popover-apply", Button)
+            label = self._enter_label(row)
+            if str(apply.label) != label:
+                apply.label = label
+                # Button.label is no layout reactive: size the button anew.
+                apply.refresh(layout=True)
+
+    def _enter_action(self, row: SwitcherRow | None) -> str:
+        """What Enter does on this row: ``_activate`` acts on it, the key row
+        names it (one mapping, so the label never promises another action)."""
+        if row is None:
+            return "choose"
+        if row.kind == "more":
+            return "more"
+        if row.kind == "setup":
+            readiness = self._readiness.get(provider_key(row.provider))
+            if readiness is not None and _retries_in_place(readiness):
+                return "explain"
+            return "setup"
+        return "apply"
+
+    def _enter_label(self, row: SwitcherRow | None) -> str:
+        return {
+            "choose": CHOOSE_FIRST_LABEL,
+            "more": SHOW_MORE_LABEL,
+            "explain": EXPLAIN_LABEL,
+            "setup": SET_UP_LABEL,
+        }.get(self._enter_action(row), self._apply_label)
 
     def highlighted_row(self) -> SwitcherRow | None:
         """The row Enter acts on, or None when nothing is selectable."""
@@ -1504,17 +2019,17 @@ class ConsoleModelPopover(
         action: ConsoleSettingsAction = ConsoleSettingsAction.APPLY_TO_CHAT,
     ) -> None:
         """Enter: apply the highlighted pair, open its fix, or expand a provider."""
-        if row is None:
-            # Spec rule 1: with no row highlighted there is no pair to act on.
-            self._set_error(
-                "Choose a model: type to search, then Enter.",
-                focus=self.query_one("#console-popover-find", Input),
-            )
+        enter = self._enter_action(row)
+        if row is None:  # "choose"
+            self._refuse_no_pair()
             return
-        if row.kind == "more":
+        if enter == "more":
             find = self.query_one("#console-popover-find", Input)
             find.value = f"{self._display(row.provider)} "
             find.cursor_position = len(find.value)
+            # Typed after, as a query the list opens with: reached from the
+            # values or by a click, this focus would select the name.
+            find.select_on_focus = False
             find.focus()
             return
         if self._pick_only:
@@ -1524,10 +2039,12 @@ class ConsoleModelPopover(
                 self._release_mouse_capture()
                 self.dismiss_safe_once((provider_key(row.provider), row.model))
             return
-        if row.kind == "setup" and action is ConsoleSettingsAction.APPLY_TO_CHAT:
+        if (
+            enter in {"explain", "setup"}
+            and action is ConsoleSettingsAction.APPLY_TO_CHAT
+        ):
             key = provider_key(row.provider)
-            readiness = self._readiness.get(key)
-            if readiness is not None and _retries_in_place(readiness):
+            if enter == "explain":
                 self._set_error(
                     f"{self._display(key)} did not answer: start it; rechecked on open."
                 )
@@ -1554,7 +2071,17 @@ class ConsoleModelPopover(
 
     # -- draft editing --------------------------------------------------
 
+    def _refuse_no_pair(self) -> None:
+        """Spec rule 1, worded in one place: with no pair, nothing applies or opens."""
+        self._set_error(
+            "Choose a model: type to search, then Enter."
+            if self._first_readiness_done and not self._returned_models_arriving()
+            else _CHECKING_ERROR,
+            focus=self.query_one("#console-popover-find", Input),
+        )
+
     def _set_error(self, message: str, *, focus: Widget | None = None) -> None:
+        self._error = message
         try:
             error = self.query_one("#console-popover-error", Static)
         except NoMatches:
@@ -1564,8 +2091,11 @@ class ConsoleModelPopover(
         if focus is not None:
             focus.focus()
 
-    @staticmethod
-    def _parse_value(name: str, raw: str) -> object:
+    def _temperature_range(self) -> tuple[float, float]:
+        """The draft's provider's Temperature range, the one Ctrl+O holds."""
+        return temperature_range(provider_config_key(self._draft.settings.provider))
+
+    def _parse_value(self, name: str, raw: str) -> object:
         """One value control's text as its value; blank is None (no value)."""
         text = raw.strip()
         if not text:
@@ -1577,7 +2107,9 @@ class ConsoleModelPopover(
         except ValueError:
             return _INVALID
         if name == "temperature":
-            return value if _temperature_in_range(value) else _INVALID
+            low, high = self._temperature_range()
+            # NaN and infinities compare False, so they are refused too.
+            return value if isfinite(value) and low <= value <= high else _INVALID
         return value if value >= MIN_MAX_TOKENS else _INVALID
 
     def _value_input(self, name: str) -> Input:
@@ -1768,18 +2300,17 @@ class ConsoleModelPopover(
     def _validated_draft(self) -> ConsoleSettingsDraftState | None:
         settings = self._draft.settings
         if not str(settings.provider or "").strip() or not settings.model:
-            # Spec rule 1: nothing applies a provider without a model.
-            self._set_error(
-                "Choose a model: type to search, then Enter.",
-                focus=self.query_one("#console-popover-find", Input),
-            )
+            self._refuse_no_pair()  # Ctrl+O and Chat settings… arrive here
             return None
         values: dict[str, object] = {}
         for name in ("temperature", "max_tokens"):
             control = self._value_input(name)
             value = self._parse_value(name, control.value)
             if value is _INVALID:
-                self._set_error(_VALUE_ERRORS[name], focus=control)
+                low, high = self._temperature_range()
+                self._set_error(
+                    _VALUE_ERRORS[name].format(low=low, high=high), focus=control
+                )
                 return None
             values[name] = value
         for name, value in values.items():
@@ -1853,12 +2384,24 @@ class ConsoleModelPopover(
         draft = self._validated_draft()
         if draft is None:
             return
-        if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT:
-            readiness = self._default_readiness_resolver(
-                draft.settings.provider, draft.settings.model
+        # Ctrl+N, or any action while Enter also sets the new-chat default.
+        if action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT or (
+            self._enter_sets_default and action != _FULL_SETTINGS_ACTION
+        ):
+            provider, model = draft.settings.provider, draft.settings.model
+            resolver = (
+                self._new_chat_readiness_resolver or self._default_readiness_resolver
             )
+            readiness = resolver(provider, model)
             if not readiness.native_send_supported:
-                self._set_error(f"Unavailable: {readiness.detail}")
+                # Named where the rows read another connection (TASK-35190).
+                tested = readiness.connection
+                rows = self._readiness.get(provider_key(provider))
+                where = ""
+                if tested is not None and getattr(rows, "connection", None) != tested:
+                    endpoint = safe_endpoint_display(tested.connection_identity[1])
+                    where = f" for new chats ({endpoint})"
+                self._set_error(f"Unavailable{where}: {readiness.detail}")
                 return
 
         self._release_mouse_capture()
@@ -1937,6 +2480,24 @@ class ConsoleModelPopover(
         # Focus leaves Find, so Enter and d reach the guard, not the query.
         guard.focus()
         self.call_after_refresh(self._sync_list_height)
+
+    async def confirm_quit(self) -> bool:
+        """Ask before Ctrl+Q drops edits that Esc would ask about (TASK-33622.15).
+
+        Returns:
+            True to let the quit proceed; False to keep editing.
+        """
+        labels = () if self._pick_only else self._edited_labels()
+        if not labels:
+            return True
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            confirm_quit_discarding_edits,
+        )
+        from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
+            unsaved_summary_copy,
+        )
+
+        return await confirm_quit_discarding_edits(self, unsaved_summary_copy(labels))
 
     def _hide_guard(self) -> None:
         self.query_one("#console-popover-guard", UnsavedEditsGuard).display = False

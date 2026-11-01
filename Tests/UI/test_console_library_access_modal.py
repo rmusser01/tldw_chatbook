@@ -76,7 +76,9 @@ def _saved(
 
 
 @pytest.mark.asyncio
-async def test_access_modal_separates_the_two_text_valued_axes_and_disclosures() -> None:
+async def test_access_modal_separates_the_two_text_valued_axes_and_disclosures() -> (
+    None
+):
     snapshot = _snapshot()
     modal = ConsoleLibraryAccessModal(
         snapshot=snapshot,
@@ -148,9 +150,7 @@ async def test_dirty_escape_requires_explicit_discard_and_preserves_the_edit() -
         await pilot.click("#library-auto-never")
         await pilot.pause()
         assert modal.query_one("#library-access-discard", Button).display is False
-        assert (
-            str(modal.query_one("#library-access-cancel", Button).label) == "Cancel"
-        )
+        assert str(modal.query_one("#library-access-cancel", Button).label) == "Cancel"
 
 
 @pytest.mark.asyncio

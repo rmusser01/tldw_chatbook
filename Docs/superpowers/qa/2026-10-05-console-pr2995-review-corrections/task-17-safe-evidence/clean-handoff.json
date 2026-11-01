@@ -1,0 +1,57 @@
+{
+  "head": "54a18180211ed2ecbf450db78202d28d97a7b995",
+  "git_status_porcelain": "",
+  "source_hashes_unchanged_after_all_tests": true,
+  "owned_pytest_process_groups": [
+    {
+      "run": "command_origin_and_exact_wiring-collection",
+      "pid_and_pgid": 45782,
+      "process_group_absent": true,
+      "recorded_exit": 0
+    },
+    {
+      "run": "command_origin_and_exact_wiring-execution",
+      "pid_and_pgid": 48713,
+      "process_group_absent": true,
+      "recorded_exit": 0
+    },
+    {
+      "run": "command_timing_cancellation_and_draft-collection",
+      "pid_and_pgid": 45997,
+      "process_group_absent": true,
+      "recorded_exit": 0
+    },
+    {
+      "run": "command_timing_cancellation_and_draft-execution",
+      "pid_and_pgid": 50670,
+      "process_group_absent": true,
+      "recorded_exit": 0
+    },
+    {
+      "run": "changed_visible_send_plain_answer_control-collection",
+      "pid_and_pgid": 46150,
+      "process_group_absent": true,
+      "recorded_exit": 0
+    },
+    {
+      "run": "changed_visible_send_plain_answer_control-execution",
+      "pid_and_pgid": 53099,
+      "process_group_absent": true,
+      "recorded_exit": 0
+    },
+    {
+      "run": "composed_static_owners-collection",
+      "pid_and_pgid": 46289,
+      "process_group_absent": true,
+      "recorded_exit": 0
+    },
+    {
+      "run": "composed_static_owners-execution",
+      "pid_and_pgid": 53208,
+      "process_group_absent": true,
+      "recorded_exit": 1
+    }
+  ],
+  "all_owned_launcher_sessions_closed": "tool sessions22749,88698,67298,17679,64033,3945 returned terminal exit",
+  "no_external_actions": true
+}

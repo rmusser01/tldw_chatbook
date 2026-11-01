@@ -1,0 +1,31 @@
+{
+  "audited_dev": "79da83a8dca98eab6ca854a7505b8abd264eb959",
+  "utc": "2026-10-25T19:37:18.362570+00:00",
+  "book": {
+    "pages": 455,
+    "sha256": "798aafc3ac58704c5053249ed228f5a45629355c3627e9611a3e78da815e9ab6",
+    "reference_only": true
+  },
+  "new_tasks": [
+    36899,
+    36900
+  ],
+  "existing_owner_updated": "33283",
+  "report_sha256": "a8aacdc902dd024b6cbd581fc6161ec7bd7316c9bc33dbdbd7f4f908abba0348",
+  "artifacts": {
+    "ci-qualification.json": "73d0d26a7d87b4d992b5253505ebef999727a670de5703a08c72331b5c54c43a",
+    "commands.json": "6b498a9073336d3d208b750622a307802ed7b4ab7941ebc2c165e162574bbdfc",
+    "conftest.py": "48feef1db5a90e4493a361da6b39e9888ee62b9fa110b4e03bc81b6f36f6f0a8",
+    "merge.json": "d33dd9e222feec064253f209ab1249133e003eff9a73a346d077f8be32b25bca",
+    "observations.json": "dbd08159ccf8825fe9411f167bba97d60972e03c3373d136e99f7b38137b3803",
+    "ownership.json": "067d834caa20b4d5d9a63bfbd5ea8ed05f4f5744adce40fda914db2765ee9023",
+    "publication-checks.json": "e0d585f6b61bea61ab2a4574c55fbf896bf3dc6083afa415d626f7d63058c050",
+    "run-probes.py": "2728bd7f5dd54a4fa9b662c88f5509b421f6866edfe56932f9bf0e758bfd54dd",
+    "source-pins.json": "c14befddc94287c1be0e084d8b3934edcee93c8b5edf308875b1f9a3f522321a",
+    "test_sources.py": "dd436094f03887131456597272f7512ca61893c238c3b1fbfbb7797cb893a9b0",
+    "test_study.py": "5d0d7e85276ff4e7eebc8a4f2bb4154504a3be0b5a02ce72fdf8582a3387c564",
+    "test_watchlists.py": "88040b79e7cb3b012b8647795e69ab4ecec477f9ebdacec1a4689e0aa5b4971e",
+    "verification.json": "4a30d0eee421d6bf70f3d4c8a26c6dac27ee0503865ecfc524e36450d87de5d8"
+  },
+  "artifact_hash_scope": "UTF-8 file bytes with CRLF normalized to LF, as committed Git blobs"
+}

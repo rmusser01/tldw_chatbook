@@ -21,6 +21,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.events import DescendantFocus, Resize
 from textual.message import Message
+from textual.timer import Timer
 from textual.widgets import Button, DataTable, Input, Select, Static
 
 from tldw_chatbook.MCP.execution_log import (
@@ -446,6 +447,12 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._entries: list[dict[str, Any]] = []
+        # TASK-34394: debounce timer for the free-text filter Input, and a
+        # per-entry row-cell cache so re-filtering never re-formats the
+        # same records per keystroke. Cleared on every `update_entries()`
+        # (the cache's invalidation point).
+        self._filter_text_timer: Timer | None = None
+        self._row_cell_cache: dict[int, tuple[str, str, str, str, str, str, str]] = {}
         self._entry_keys: list[str] = []
         self._next_entry_key = 0
         self._visible_entries: dict[str, tuple[int, dict[str, Any]]] = {}
@@ -562,6 +569,9 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
                 never re-sorts (the log is already newest-first).
         """
         self._entries = list(entries)
+        # TASK-34394: the cached row cells describe THIS record list --
+        # a fresh list invalidates them.
+        self._row_cell_cache.clear()
         self._renew_entry_keys()
         self._apply_filter()
 
@@ -663,17 +673,33 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
                 # (error) both fall back to `_outcome_text()`'s own "Downgraded"/
                 # "Blocked" copy, which needs the identical color to stay
                 # visually consistent between the two columns for the same row.
-                decision_raw = str(entry.get("decision") or "—")
-                decision_value = _DECISION_LABELS.get(decision_raw, decision_raw)
-                outcome_value = _outcome_text(entry)
+                # TASK-34394: the row's formatted cells are pure functions of
+                # the record, which cannot change while the record list is
+                # cached -- memoize the string forms so re-filtering never
+                # re-formats per keystroke.
+                cells = self._row_cell_cache.get(id(entry))
+                if cells is None:
+                    decision_raw = str(entry.get("decision") or "—")
+                    decision_value = _DECISION_LABELS.get(decision_raw, decision_raw)
+                    outcome_value = _outcome_text(entry)
+                    cells = (
+                        _format_when(entry.get("ts")),
+                        f"{entry.get('server_key', '')}::{entry.get('tool_name', '')}",
+                        str(entry.get("initiator") or "—"),
+                        decision_value,
+                        format_duration_ms(int(entry.get("duration_ms") or 0)),
+                        outcome_value,
+                        decision_raw,
+                    )
+                    self._row_cell_cache[id(entry)] = cells
+                (when_cell, server_tool_cell, initiator_cell, decision_value,
+                 duration_cell, outcome_value, decision_raw) = cells
                 table.add_row(
-                    Text(_format_when(entry.get("ts"))),
-                    Text(
-                        f"{entry.get('server_key', '')}::{entry.get('tool_name', '')}"
-                    ),
-                    Text(str(entry.get("initiator") or "—")),
+                    Text(when_cell),
+                    Text(server_tool_cell),
+                    Text(initiator_cell),
                     state_text(decision_value, _decision_kind(decision_raw)),
-                    Text(format_duration_ms(int(entry.get("duration_ms") or 0))),
+                    Text(duration_cell),
                     state_text(outcome_value, _outcome_kind(outcome_value)),
                     key=key,
                 )
@@ -829,7 +855,22 @@ class MCPAuditMode(DataTableClickSelectMixin, Vertical):
             return
         event.stop()
         self._filter_text = event.value
+        # TASK-34394: debounce keystrokes instead of re-running the full
+        # table rebuild per character.
+        if self._filter_text_timer is not None:
+            self._filter_text_timer.stop()
+        self._filter_text_timer = self.set_timer(
+            0.2, self._run_debounced_filter, name="mcp-audit-filter-debounce"
+        )
+
+    def _run_debounced_filter(self) -> None:
+        self._filter_text_timer = None
         self._apply_filter()
+
+    def on_unmount(self) -> None:
+        if self._filter_text_timer is not None:
+            self._filter_text_timer.stop()
+            self._filter_text_timer = None
 
     def on_select_changed(self, event: Select.Changed) -> None:
         # No mount-echo guard needed here (unlike mcp_tools_mode.py's

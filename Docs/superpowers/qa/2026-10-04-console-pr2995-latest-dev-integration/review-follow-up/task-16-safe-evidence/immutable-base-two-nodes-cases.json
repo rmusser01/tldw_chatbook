@@ -1,0 +1,20 @@
+{
+  "actual_cases": 2,
+  "cases": [
+    {
+      "classname": "Tests.UI.test_console_ask_user_typed_answers",
+      "failure_message": "textual.css.query.NoMatches: No nodes match '#chat-question-card' on ChatTaskCards(id='chat-task-cards')",
+      "name": "test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer",
+      "outcome": "failure"
+    },
+    {
+      "classname": "Tests.UI.test_personas_workbench.TestPreviewIntegration",
+      "failure_message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+      "name": "test_open_in_console_stages_preview_transcript",
+      "outcome": "failure"
+    }
+  ],
+  "outcomes": {
+    "failure": 2
+  }
+}

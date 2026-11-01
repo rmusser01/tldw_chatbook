@@ -302,9 +302,7 @@ def test_legacy_notice_still_fires_once_routed_through_path_validation(
     assert legacy_db in validated_paths, validated_paths
 
 
-def test_legacy_notice_does_not_raise_when_path_validation_fails(
-    monkeypatch, tmp_path
-):
+def test_legacy_notice_does_not_raise_when_path_validation_fails(monkeypatch, tmp_path):
     """validate_path_simple() can over-reject legitimate paths (TASK-838:
     its raw-string scan for parent-directory patterns runs before
     normalization and can misfire on legitimate Windows-style paths).

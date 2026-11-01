@@ -36,9 +36,7 @@ async def test_rail_header_names_the_rail_readably() -> None:
         label = str(collapse.label)
 
         assert "Context" in label
-        assert "<---------" not in label, (
-            "the header is still hard-coded ASCII art"
-        )
+        assert "<---------" not in label, "the header is still hard-coded ASCII art"
         assert collapse.region.height == 1
         assert collapse.region.width > 0, "the rail header is not painted"
 

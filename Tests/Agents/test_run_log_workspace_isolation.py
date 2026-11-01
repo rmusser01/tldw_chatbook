@@ -474,7 +474,9 @@ def test_legacy_and_dotted_log_directories_both_merge_without_clobbering(
     dotted_root = workspace / ".agent-runs"
     secret = "LEGACY_SECRET_API_KEY=sk-live-legacy222"
     _plant_legacy_record(legacy_root / "legacy-run-2", "legacy-run-2", secret)
-    _plant_legacy_record(dotted_root / "existing-run", "existing-run", "EXISTING_DOTTED_CONTENT")
+    _plant_legacy_record(
+        dotted_root / "existing-run", "existing-run", "EXISTING_DOTTED_CONTENT"
+    )
 
     writer = RunLogWriter()
     writer.bind("run-new")

@@ -1,0 +1,24 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                     │
+│  Ready                                                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 1
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────┐
+│╭──────────────╮╭──────────────────────────────────────╮┌────────────────────┐│
+││  Library  <  ││      ▸ Try a test chat (nothing      ││  Inspector     >   ││
+││  Isolde      ││ Character                            ││ Selected: Captain  ││
+││     New      ││  Name: Captain Isolde Varga          ││ Isolde Varga       ││
+││     New      ││                                      ││ Type: character    ││
+││    Import    ││  Description: Captain Isolde         ││ Validation: OK     ││
+││    Import    ││  Varga commands the deep-survey      ││ Conversations (2)  ││
+││    Duplic    ││  frigate *Meridian's Wake*, a        ││   Search this      ││
+││    Sort:     ││  patched-together vessel that has  ▂ ││  Shore leave on…   ││
+││     Tag:     ││  outlived three refits and two       ││  Debris field s…   ││
+││  Captain I…  ││  mutinies. Raised on the orbital     ││  All               ││
+│╰──────────────╯╰──────────────────────────────────────╯└────────────────────┘│
+└──────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | F1 · F6 · Ctrl+P · Ctrl+Q

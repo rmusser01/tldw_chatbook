@@ -28,23 +28,29 @@ def _streaming_response(lines):
     response = Mock()
     response.status_code = 200
     response.raise_for_status = Mock()
-    response.iter_lines.return_value = iter(lines)
+    response.iter_lines.side_effect = lambda decode_unicode=False: iter(
+        lines if decode_unicode else [line.encode("utf-8") for line in lines]
+    )
+    response.iter_content.return_value = iter(
+        (line + "\n\n").encode("utf-8") for line in lines
+    )
     response.close = Mock()
     return response
 
 
-# A minimal two-chunk stream in each provider's SSE shape. The passthrough
-# providers (anthropic/deepseek/groq/mistral/openrouter) yield any non-empty
-# line, but the cohere and google TRANSLATORS parse their native schema and
-# yield nothing for an OpenAI-style chunk -- so a shared OpenAI fixture made
-# next(generator) exhaust (StopIteration) before generator.close() ran, and
-# their cancellation cleanup was never exercised (Qodo #1). Give those two a
-# fixture in their own schema so the first next() suspends at a real yield.
+# A minimal two-chunk stream in each provider's SSE shape. Hosted engines
+# consume byte records; legacy handlers request raw or decoded lines.
+# Translating handlers need native payloads so Stop follows actual content,
+# never a synthetic error or an exhausted stream (Qodo #1).
 _OPENAI_STYLE = [
-    'data: {"choices": [{"delta": {"content": "first"}}]}',
-    'data: {"choices": [{"delta": {"content": "second"}}]}',
+    'data: {"choices": [{"index": 0, "delta": {"content": "first"}}]}',
+    'data: {"choices": [{"index": 0, "delta": {"content": "second"}}]}',
 ]
 _CHUNKS_BY_PROVIDER = {
+    "anthropic": [
+        'data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "first"}}',
+        'data: {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "second"}}',
+    ],
     "cohere": [
         'data: {"type": "content-delta", "delta": {"message": {"content": {"text": "first"}}}}',
         'data: {"type": "content-delta", "delta": {"message": {"content": {"text": "second"}}}}',
@@ -64,6 +70,7 @@ def _chunks_for(provider):
     "provider",
     ["anthropic", "cohere", "deepseek", "google", "groq", "mistral", "openrouter"],
 )
+@pytest.mark.bootstrap_profile
 def test_stopping_a_hosted_stream_closes_its_response(provider):
     response = _streaming_response(_chunks_for(provider))
     with patch("requests.Session.post", return_value=response), patch(
@@ -77,8 +84,10 @@ def test_stopping_a_hosted_stream_closes_its_response(provider):
             streaming=True,
         )
         # Pull one chunk so the generator is suspended at a yield, then stop.
-        next(generator)
-        generator.close()  # must not raise "generator ignored GeneratorExit"
+        try:
+            assert "first" in next(generator)
+        finally:
+            generator.close()  # must not raise "generator ignored GeneratorExit"
 
     response.close.assert_called_once_with()
 
@@ -86,10 +95,9 @@ def test_stopping_a_hosted_stream_closes_its_response(provider):
 def test_no_streaming_handler_yields_inside_a_finally():
     """AC#2, gate-free: no `yield` inside any `finally` in the LLM call files.
 
-    The runtime tests above drive `chat_api_call`, which touches config/DB
-    that this worktree's storage-admission gate blocks (the shipped OpenAI
-    stop test is gated the same way and runs only in CI). This AST pin
-    encodes the same invariant and runs anywhere: a `yield` reached while a
+    The runtime tests above retain the collection-bound private profile
+    because `chat_api_call` reads guarded config. This AST pin also covers
+    provider paths outside their wire fixtures: a `yield` reached while a
     generator is handling `GeneratorExit` raises `generator ignored
     GeneratorExit`, so the sentinel must live after the `finally`, never in
     it.

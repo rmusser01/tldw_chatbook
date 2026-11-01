@@ -38,7 +38,7 @@ Where this page's controls live:
   panel](#the-environment-panel-environment-tasks-agents) below), the
   "Sources — next send" tray, the Library search controls, the
   retrieval-scope row, the "Prefill" rows when one is armed, the
-  run/readiness groups, the "Selected turn" block, "Session Settings", the
+  run/readiness groups, the "Selected turn" block, "Chat settings", the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom. Press **Alt+I**
   to open the rail and put the caret on the send summary; press it again to
@@ -71,6 +71,27 @@ Where this page's controls live:
 
 ## Features & controls
 
+### Questions about an attached project
+
+Bind the project folder in a named Workspace, then ask a normal question such
+as "Summarize this project". When file-reading tools are available, Console
+guides the model to inspect relevant README files, manifests and source. With
+multiple folders, name the project you mean. Folder bindings provide file access;
+they do not automatically read, ingest or index the folder, and need no embeddings.
+Tool permissions, read-only bindings and excluded paths still apply. A model may
+need a more specific question if it does not choose the relevant files.
+
+Your saved **Never/Automatic** retrieval and **Blocked/Allowed** assistant Library
+access choices stay as you set them. Automatic or manually staged Library
+excerpts can accompany file results; unrelated excerpts do not mean project files
+are unavailable. Answers should identify file evidence by path and use `[S#]`
+only for the supplied Library references. An answer based entirely on project
+files can have no Library citation. Switching to another chat while a send is
+preparing does not transfer that chat's folders or Library scope into the send.
+
+Optional folder indexing is a separate planned capability, with explicit opt-in;
+this guidance change does not enable it or retain project files as Library items.
+
 ### Model context capacity
 
 The model controls use the selected server's reported context size when it is
@@ -87,6 +108,89 @@ budget is retained and limited to the available capacity for each request.
 Applying settings preserves the values shown for the conversation, including
 previous edits. Making a new default also saves that profile for subsequent
 chats; changing only Streaming does not reset other fields.
+
+### When a chat reaches its context limit
+
+What happens depends on **When limit nears** in Chat settings ▸ Context
+and memory:
+
+- **Ask** (the default). When a message you send would take the chat past its
+  compaction threshold, the message is held before anything is sent or saved.
+  A card above the transcript shows how many tokens the chat uses out of its
+  budget and where compaction starts (the trigger, for example "compaction
+  trigger 1,200 tokens (80%)"), and offers four choices:
+  - **Compact and send** summarizes older turns, then sends your message. The
+    summary is one extra model call and may be billed. If it fails, the card
+    stays, says why, and your message is still held.
+  - **Send without compacting** sends this one message as it is. Older turns
+    that do not fit the model's context window are left out of the request.
+  - **Change policy** opens Chat settings at Context and memory, where you can
+    set **When limit nears** to Automatic or Off, or raise the budget. Your
+    message stays held until you pick one of the other choices.
+  - **Cancel send** sends nothing and compacts nothing; your message goes back
+    to the composer.
+
+  To see which turns would be summarized before choosing, use `/rewind` ▸
+  **Summarize up to here**: it shows a preview before anything changes, and
+  it works while the message is held (the held message is not offered as a
+  rewind target, because it is not part of the chat yet).
+- **Automatic** compacts and sends without asking.
+- **Off** never compacts.
+
+For plain-provider requests with measured inputs, you can see an estimated pause coming. Once the chat's history is over its trigger
+under **Ask**, the header badge reads **Next send pauses to compact** (on
+narrow terminals the badge has no room for it), Inspect's "What happens if I
+send now?" Run line and the run chip at the start of the status strip read
+**Pauses for compaction**, and the Context chip starts with **Next send
+pauses to compact** (its tooltip gives the numbers). While a message is held,
+the badge reads **Blocked** and the Run line and run chip **Blocked —
+compaction ask**. F1 help lists the same in its **Context limit** group.
+
+The estimate includes current prompt/draft overhead and model input/output limits.
+Agent/tool-enabled chats show **Forecast unavailable**, including light chats with
+tools: tool availability can change between sends. Above the displayed estimated
+trigger, the Context chip retains a **High context · forecast unavailable**
+advisory. It does not promise that the next send will pause for compaction; the
+real next-send check still decides. Media, response prefills, unknown limits and
+unsupported memory shapes can also lack a forecast.
+
+To compact without sending, type `/compact` or choose **Console: Compact
+context now** from the command palette (Ctrl+P). Both run the same summary as
+**Compact now** in Chat settings ▸ Context and memory (one model call) and
+report the result in the chat.
+
+**Continue**, **Regenerate**, **Retry** and **Edit & resend** cannot show
+the card. Over the trigger they stop before a reply is started (an edited
+message is not added as a new branch), so nothing is marked Failed, and a note
+gives the numbers and the way on: run `/compact`, then try again, or change
+**When limit nears**.
+A message that starts with `$` (a skill) or `/` while Capture is off cannot
+show the card either. Over the trigger it is not sent: the note starts "Not
+sent", your text stays in the composer, and the shelf above the composer lists
+the message with **Restore** and **Discard**. To go on, clear the composer and
+run `/compact`, then choose **Restore** to put the message back and send it.
+Queued prompts and Buddy replies cannot show it either. A queued prompt that
+reaches the trigger is not sent: it goes back to the front of the queue, the
+queue pauses on **Start refused**, and the note starts "Not sent from the
+queue". Run `/compact`, then **Try again** (compacting changes the context, so
+the queue first asks you to review it), or change **When limit nears**. A
+Buddy reply over the trigger is not sent either; Buddy keeps your text and
+shows the same note, and the Console composer is left as it was.
+
+When compacting cannot make enough room, the message is not sent and the note
+says what fills the window and what to change:
+
+- **Max tokens** (Chat settings ▸ Model and generation, Ctrl+O) plus the
+  safety margin already use the whole window: lower Max tokens.
+- The system prompt, tools and attached context need more than the window
+  leaves: remove attached sources or tools, or lower Max tokens.
+- The message does not fit and there are no older complete turns to compact:
+  shorten it or its attachments, lower Max tokens, or start a new chat.
+
+If no catalog knows the model's context window, the app assumes a size (the
+**Model window** row in Chat settings ▸ Context and memory reads "unknown,
+32,000 assumed"), and the card and the note say so. Set the real value in
+**Settings ▸ Providers & Models (F4)**, under Advanced ▸ Context window.
 
 ### Per-turn micro-compaction
 
@@ -117,7 +221,7 @@ yet" instead.
 
 A note that held your message, or that reports a failed **Compact now**, also
 gives a next step. "Nothing to compact yet" is not a failure and gives none.
-In **Conversation settings > Context and memory** you can raise
+In **Chat settings > Context and memory** you can raise
 **Conversation max tokens**, set **If compaction fails** to **Omit older
 context** (the message is then sent without compacting), or set **When limit
 nears** to **Off**. You can also start a new chat. In a saved chat, the
@@ -205,7 +309,8 @@ that built the payload, never a separate estimate — so they always sum to
 the request total. Categories big enough to act on name their lever (e.g.
 Conversation → summarize older turns via `/rewind`; Attachments →
 `[agents] retire_stale_images`). Viewing the breakdown never triggers a
-model call, and an unverified model window keeps its "estimated" label.
+model call, and a model window no catalog knows still reads "unknown" with
+the size it assumes.
 
 
 ### Reading long Context and Inspector sections
@@ -508,6 +613,16 @@ Click the cost chip for **Usage & cost**, or press **Ctrl+Shift+P** / choose
 being inspected. The modal stays bound to that chat and profile. **Close** and
 `Escape` return to your previous control.
 
+Hovering the cost chip shows a summary: context fullness, conversation budget,
+compaction, current spend and the next-send estimate. When no catalog knows
+the model's window, the fullness line ends "(assumed; window unknown)". When
+the session's provider sends rate-limit headers (OpenAI and Anthropic do, as
+do many compatible APIs), the last line shows how much its most recent reply
+said was left. For example: `Rate limit at 14:32:05: 4,999/5,000 requests left (resets
+14:32:53) · 39,200/40,000 tokens left (resets 14:32:06)`. The times are clock
+times from that reply. A provider that sends no rate-limit headers adds no
+line.
+
 The section list and reader sit side by side in a wide terminal. At narrower
 widths, select an item and press `Enter` to open its reader; **Back to sections**
 returns to the same selection. Resizing preserves the selected item and reader
@@ -545,8 +660,16 @@ Captured call summaries load only for the selected message. These costs are
 supporting detail, not additional spend to add to the transcript total.
 **Inspect calls in Exchange history** keeps the same message identity. Missing
 or ambiguous identity disables drill-in rather than guessing another turn.
-A capture load failure leaves usage figures available and can be retried by
-selecting the turn again.
+A capture load failure leaves usage figures available and says why it failed.
+Only a busy store offers **Select this turn again to retry**; a stored capture
+that cannot be decoded says a retry will not help, and any other failure is
+reported as an unexpected error. The app log records the reason and error type.
+
+Each turn is one row, with its basis (**Estimated** or **Reported**) and cost
+before the token counts; a list too narrow for the whole row clips the token
+counts, never the basis. A focused list tints its background and paints the
+highlighted row in the focus colours instead of drawing an outline, so its
+first and last rows stay readable.
 
 #### Exchange history
 
@@ -556,9 +679,10 @@ labels. The reader shows the captured request, response, reported usage, omitted
 fields, and provenance. Locally synthesized fallback text is labeled as such.
 
 Capture records the request at the provider-adapter boundary, generally before
-provider-internal framing and prompt-cache markers. The llama.cpp capture is the
-literal wire payload. Missing captures can reflect capture being off, a failed
-capture, or purged history; the modal does not reconstruct missing requests.
+provider-internal framing and prompt-cache markers. A llama.cpp call is the
+exception: its capture is the literal payload sent, and its call detail says so.
+Missing captures can reflect capture being off, a failed capture, or purged
+history; the modal does not reconstruct missing requests.
 
 **View: Safe/Full** (or **v**) controls local disclosure in both historical
 views. Changing it clears both readers and their cached bodies; switching to
@@ -570,7 +694,7 @@ cannot return through a delayed load or export.
 
 ### Thinking history replay
 
-Open the current conversation's Console settings and find **Thinking history
+Open the current conversation's Chat settings and find **Thinking history
 replay**. Its saved policy belongs to the conversation and affects future
 provider requests, not whether Thinking rows are visible:
 
@@ -661,12 +785,16 @@ whole transcript on every send. Provider-only instructions, RAG, tools, and
 responses are filtered and stored once as reusable artifacts. Capture is on by
 default; Capture Off stops future trace writes without erasing prior history.
 Durable captures stay local to the device's conversation database and are never
-synced. Temporary in-process captures are not written to disk until **Save &
-Send** makes the conversation durable.
+synced. A temporary chat records no traces. Saving it (**Save chat** in the
+composer **Menu**, or the **Temporary · not saved** segment of the status
+strip) hands its later sends to its own Capture choice, else the global
+default (a one-time **Next send** choice still decides the next send); the
+Menu row reads **Save chat (enables capture)** only when that is Capture On.
 
-A temporary chat must use **Save & Send** before a durable Capture On call, or
-explicitly send once with Capture Off. In-process temporary trace state remains
-coherent while switching chats but is not restart-durable until saved. A stopped
+If you turn Capture On in a chat that is still temporary, a Capture On call
+needs **Save & Send** first, or you send that message once with Capture Off.
+In-process temporary trace state remains coherent while switching chats but is
+not restart-durable until saved. A stopped
 send keeps its partial trace, marked `[stopped]`; an abandoned regenerate keeps
 its own call, marked `[abandoned regeneration]`.
 
@@ -711,7 +839,8 @@ user text (exact match, then unique prefix). Bare `/prompt`, or an
 ambiguous/unknown name, opens the **Insert prompt** picker ("Search
 prompts…"; empty state "No saved prompts yet — create them in Library ▸
 Prompts."). A large prompt body arrives in the composer as a collapsed
-paste token — click it (or press Enter on it) to unfurl.
+paste token. Enter sends it as it is; to expand it, press Ctrl+E or click
+it.
 
 Saved Prompt System and User lanes may contain insertion-time variables such
 as `{customer}`. Names are case-sensitive and must match
@@ -823,8 +952,11 @@ chip opens two independent, text-valued controls for the active conversation:
 
 New conversations ship as **Never** and **Blocked**. The choices are stored
 only on this device and are not synced or exported. A recovered remote or
-imported conversation whose local policy cannot be resolved therefore remains
-inert until you explicitly save a local policy.
+imported conversation (or one saved before these controls existed) has no
+local policy, so it runs under the same safe **Never** and **Blocked**. Its
+first send saves that default as its local policy rather than being refused;
+nothing broader is ever saved on your behalf, and you can change it from the
+chip at any time.
 
 When Assistant is Allowed, **Direct / RAG is a selector**, not a third
 permission. Direct advertises the bounded direct Library tools; RAG advertises
@@ -898,19 +1030,83 @@ Escape does not silently commit a dirty choice. If your resolved RAG scope comes
 back **empty**, auto-retrieve short-circuits with the same shared notice
 the manual path shows, rather than searching everything.
 
-While a send is retrieving, the staged-evidence strip briefly shows a
-"Retrieving…" state and the search is capped at a **5-second timeout**.
+While a send is retrieving, the run chip reads **Run: Searching Library…** and
+**Stop** is offered. The search itself is capped at a **5-second timeout**.
+The first automatic send after launch also has to start the Library's search
+service (it loads the embedding model: a few seconds, or about 20 seconds the
+very first time, while the model downloads). That start-up has its own,
+longer 60-second limit and does not count against the 5 seconds, so the first
+send after launch no longer times out just because the service was cold.
 Successful evidence is staged and then consumed by that send. **Zero results**
-is a completed retrieval, so the send continues without evidence and keeps a
-visible zero-results disclosure on the turn.
+is a completed retrieval, so the send continues without evidence.
 
-Failure, timeout, or a RAG service that is still starting pauses the prepared
-send before provider dispatch. The recovery card keeps the exact draft and
-frozen conversation authority visible and offers **Retry**, **Send once**, and
-**Cancel**. Retry makes one fresh retrieval attempt; Send once bypasses
-automatic retrieval for only this prepared send; Cancel restores the draft and
-does not contact the model provider. Nothing is silently downgraded to an
-ungrounded send.
+Each turn sent this way says what its search did, in one quiet line under
+your message:
+
+- **Library: 3 sources sent**: the search found evidence and the send
+  carried it. The count is the number of references it sent.
+- **Library: 0 matches · sent without Library evidence**: the search
+  finished and found nothing.
+- **Library: sent once without Library · search timed out** (or *search
+  stopped* / *search failed*): you chose **Send once without Library** on the
+  recovery card described below.
+
+The line is read from a small record saved with your message, so it is still
+there after you reopen the chat, switch branches or restart the app.
+
+A turn has no line when no automatic search ran for it, or when nothing
+recorded one:
+
+- Auto was set to **Never**.
+- Evidence was already staged (a manual **Search Library** run or a Library
+  **Use in Console** handoff), so the send used that instead of searching.
+- The message was an **Edit & resend**, or started with `/` or `@`.
+- The chat was temporary when you sent it, or the turn was sent before this
+  record existed.
+
+A timeout, a failed search, or **Stop** pauses the prepared send before
+provider dispatch. The model provider is not contacted. A recovery card in
+the transcript says why ("Library search timed out; your message was not
+sent"), the run chip reads **Run: Blocked — Library timeout** (or *error* /
+*stopped*), and the card offers three actions:
+
+- **Retry Library search** makes one fresh retrieval attempt and, if it
+  finishes, sends the message with what it found.
+- **Send once without Library** skips automatic retrieval for only this
+  message and sends it; the Auto setting is unchanged.
+- **Cancel send** sends nothing and puts the message back in the composer,
+  attachments included (when the composer is empty or still shows that
+  message), and takes it off the unsent-turn list.
+
+If Retry or Send once without Library then finds the provider not ready (a
+local server that is down, or a model you switched to meanwhile), the send
+pauses again and the card says so ("Provider not ready or changed; your
+message was not sent", chip **Blocked — check provider**). It then offers
+**Retry send** and **Cancel send**. If the message cannot be saved to the
+conversation on its way out, the send pauses the same way ("Send could not be
+saved; your message was not sent", chip **Blocked — send not saved**) with
+the same two actions; either one ends it, so your next send goes through.
+
+The paused message is also listed as an **unsent turn** above the composer.
+Its **Restore** and **Discard** release the paused send too, so the next
+message you send in that conversation goes through. Once you act on the card,
+the message leaves that list while the card handles it, so it is never sent
+twice. On a busy machine the list can take a moment to catch up; Restore or
+Discard pressed meanwhile only says the unsent turn is no longer available.
+If Cancel finds other text in the composer, that text stays and the message
+goes back on the list for **Restore** later. If you switch to another
+conversation while Cancel runs, the message goes back to its own
+conversation's draft, not to the one on screen; if you had typed something
+new in that draft, your text stays and the message is listed for **Restore**
+instead. If the card is closed while
+**Retry Library search** is still searching (for example you open the
+Console terminal), the search stops, the send pauses as **Library search
+stopped**, and the message is listed again with Restore and Discard; the
+card shows it again when you return. Once a Retry or **Send once without
+Library** has sent the message and its reply is arriving, closing the card
+ends that reply as failed: your message stays in the conversation, it is not
+listed again, and your next send goes through. Nothing is silently
+downgraded to an ungrounded send.
 
 The Inspector tray is not the only place staged evidence shows up: a
 **staged-evidence strip** sits on the main surface itself, at the top of
@@ -935,7 +1131,7 @@ visit. Whatever is currently staged, the strip's count, the tray's
 "Sources N" count, and the Inspector's Source Readiness line ("Evidence:
 N/N available") always agree on the same number.
 
-Staged evidence also counts toward the Console Settings context estimate
+Staged evidence also counts toward the Chat settings context estimate
 and the running-session cost chip — it used to report zero for anything
 staged but not yet sent. The estimate counts the staged snippets as
 they'll actually be sent (each capped at 4,000 characters, the same cap
@@ -948,10 +1144,45 @@ nothing has actually been sent yet.
 
 ### Citations
 
-When a reply is grounded in sources, a **Sources (N)** button appears
-under it, opening the **Sources** window: `[S1]`-numbered rows, a detail
-pane with the matched snippet, an **Open in Library** button (shown when
-the source can be opened), and **Close**.
+When a reply cites Library evidence, staged by hand or found by
+**Automatic** retrieval, a **Cited sources (N)** button appears under it.
+N is the number of sources the reply cites. The button opens the **Cited
+sources** window: `[S1]`-numbered rows, a detail pane with the exact
+snippet the model saw, an **Open in Library** button (shown when the source
+can be opened), and **Close**. The labels are numbered per reply, so `[S1]`
+in one reply and `[S1]` in the next can be different documents. The window
+is the map from a label to its document.
+
+Chatbook saves which sources each reply cited, so the button and the
+window still work after you restart the app or reopen the chat. These
+citation records are protected by a key that Chatbook creates in your
+system keyring (Keychain, Secret Service or KWallet) the first time it
+needs one, when you send a reply with Library evidence. Until then
+Chatbook doesn't touch the keyring. Once records exist, it reads the key
+in the background just after startup to maintain them.
+
+When citation records can't be saved, Chatbook sends the evidence without
+`[S1]` labels and asks the model to refer to each source by its title.
+The model may still produce labels; these have no saved source map.
+This happens when no secure system keyring is
+available, or when records are turned off (`canonical_writes_enabled =
+false` under `[rag_citations]` in `config.toml`). A reply whose saved
+record can no longer be checked, for example because the keyring was
+reset, shows **Cited sources unavailable**. Its window says why and what to
+do next, such as unlocking or restoring the keyring and restarting
+Chatbook. Chatbook never creates a new key for records that already
+exist.
+
+Two cases work differently for now:
+
+- **Temporary chats** aren't saved, so their replies have no citation
+  records. A reply in a Temporary chat can still show `[S1]` labels, but no
+  **Cited sources** button.
+- **Older installs** may keep citation records off. Chatbook writes its
+  default settings into `config.toml` when a profile is first set up, so a
+  profile set up before records were on by default can have
+  `canonical_writes_enabled = false` there. To turn records on, change it
+  to `true` under `[rag_citations]` and restart Chatbook.
 
 Dim notices under the reply track verification: "Checking citations…",
 then "Citations repaired" or "Citations repaired · View original attempt"
@@ -993,8 +1224,8 @@ Inspector shows what's in play:
 5. **Narrow RAG to two documents** — expand the Inspector, press
    **Narrow…** on the scope row, pick the **Media** tab, filter by title,
    click the two items, press **Save**. The strip shows **Scope: 2**.
-6. **Open a citation's source in Library** — click **Sources (N)** under
-   the reply, select an `[S1]` row, press **Open in Library**.
+6. **Open a citation's source in Library** — click **Cited sources (N)**
+   under the reply, select an `[S1]` row, press **Open in Library**.
 7. **Have ordinary sends ground themselves automatically** — click the
    **Library** chip, choose **Automatic** under Auto, and press **Save**.
    This changes only the active conversation; new conversations default to
@@ -1275,3 +1506,41 @@ availability refusals in `Tests/test_ssh_feature_availability.py`,
 degradation/status vocabulary in `Tools/remote_binding_status.py` and the
 wire/transport/executor suites) — a code-level pass; live walkthrough
 against a real server is recorded separately on the task.*
+
+## Assistant archive recovery and Library scope
+
+**Assistant Library access** must be **Allowed** for assistant archive recovery.
+This dedicated local archive search is available with Direct tools off in
+**RAG-only** mode and needs no embedding index. It does not change the selected
+RAG sources or general Library tool mode. Blocked access still permits your
+manual Library actions; the app does not enable assistant access automatically.
+
+The result header shows **All local workspaces** unless a specific workspace
+filter was requested. Search includes Default, active and archived workspaces,
+and saved non-deleted chats whose chat or workspace is archived. It is separate
+from this Chat's selected retrieval items. A closed active chat, a remote-only
+chat or a deleted chat is outside this archive search; “not found” does not
+prove deletion. Use [manual Library search](sessions-tabs-workspaces.md#archive-find-review-and-resume-a-saved-chat)
+to inspect other saved history.
+
+Archive dates are actual recorded chat and workspace archive events, not
+creation or modification dates. Date searches use a displayed timezone-aware
+interval, including its start and excluding its end. Either applicable event
+can match: a chat archived Monday in a workspace archived Friday appears in a
+Monday search with a **chat** date match. Restoration clears that resource's
+current archive date; this is not an event-history ledger. Device clocks can
+affect dates.
+
+Older archives can have **unknown** times. Without a date filter they remain
+searchable. With a date filter, **Include unknown archive times** adds possible
+matches explicitly labeled as unknown; it does not assign a date to them. A
+known date for one resource does not prove the other's date. Search results
+include bounded title/keyword/user/visible-assistant evidence, excluding system
+prompts, hidden reasoning and tool payloads. **Preview** opens the existing
+read-only Library reader without restoring or staging context.
+
+Local storage search can return snippets to the selected model. Normal model
+destination disclosure and tool-history retention still apply; returned
+excerpts are not promised to remain on the device. See
+[agent recovery controls](agent-runs-and-tools.md#find-and-restore-an-archived-chat-with-the-assistant)
+and [ADR-166](../../../backlog/decisions/166-agent-assisted-archive-recovery.md).

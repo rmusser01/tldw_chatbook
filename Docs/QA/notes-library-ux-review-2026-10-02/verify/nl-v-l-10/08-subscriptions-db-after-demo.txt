@@ -1,0 +1,15 @@
+-- before click: watchlists=0 briefings=0 briefing_presets=0
+id|name|is_active|briefing_selection_mode|default_briefing_preset_id|briefing_cadence_seconds
+1|Daily Brief|1|auto_featured|1|86400
+id|name|type|source|check_frequency|is_active
+1|Hacker News (front page)|rss|https://hnrss.org/frontpage|3600|1
+2|BBC World News|rss|https://feeds.bbci.co.uk/news/world/rss.xml|3600|1
+3|Ars Technica|rss|https://feeds.arstechnica.com/arstechnica/index|3600|1
+id|watchlist_id|status|created_at
+1|1|complete|2026-10-03T04:49:03.122572+00:00
+id|source_id|status|stats_json
+1|1|completed|{"items_found": 20, "items_ingested": 20, "new_items_found": 20, "response_time_ms": 518}
+2|2|completed|{"items_found": 37, "items_ingested": 37, "new_items_found": 37, "response_time_ms": 137}
+3|3|completed|{"items_found": 20, "items_ingested": 20, "new_items_found": 20, "response_time_ms": 155}
+items
+77

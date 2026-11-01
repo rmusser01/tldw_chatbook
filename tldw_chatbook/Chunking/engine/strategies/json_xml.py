@@ -20,39 +20,50 @@ def _get_chunking_bool(key: str, default: bool) -> bool:
     try:
         import os
         from tldw_chatbook.Chunking._shims.testing import is_truthy
+
         v = os.getenv(key.upper())
         if v is None:
             from tldw_chatbook.Chunking._shims.config import load_comprehensive_config
+
             cp = load_comprehensive_config()
-            if hasattr(cp, 'has_section') and cp.has_section('Chunking'):
-                v = cp.get('Chunking', key, fallback=str(default))
+            if hasattr(cp, "has_section") and cp.has_section("Chunking"):
+                v = cp.get("Chunking", key, fallback=str(default))
         s = str(v).strip().lower() if v is not None else str(default).lower()
         return is_truthy(s)
     except (ImportError, AttributeError, KeyError, ValueError) as e:
-        logger.debug(f"_get_chunking_bool: config lookup failed for '{key}', using default={default}: {e}")
+        logger.debug(
+            f"_get_chunking_bool: config lookup failed for '{key}', using default={default}: {e}"
+        )
         return default
+
 
 def _get_chunking_str(key: str, default: str) -> str:
     try:
         import os
+
         v = os.getenv(key.upper())
         if v is None:
             from tldw_chatbook.Chunking._shims.config import load_comprehensive_config
+
             cp = load_comprehensive_config()
-            if hasattr(cp, 'has_section') and cp.has_section('Chunking'):
-                v = cp.get('Chunking', key, fallback=default)
+            if hasattr(cp, "has_section") and cp.has_section("Chunking"):
+                v = cp.get("Chunking", key, fallback=default)
         return str(v) if v is not None else default
     except (ImportError, AttributeError, KeyError, ValueError) as e:
-        logger.debug(f"_get_chunking_str: config lookup failed for '{key}', using default='{default}': {e}")
+        logger.debug(
+            f"_get_chunking_str: config lookup failed for '{key}', using default='{default}': {e}"
+        )
         return default
+
+
 import contextlib
 
 from ..exceptions import InvalidInputError
 from ..security_logger import get_security_logger
 
 # Precompiled XML security patterns (ASCII-only)
-_DOCTYPE_SYSTEM_RE = re.compile(r'<!DOCTYPE\s+[^>]*\bSYSTEM\b', re.IGNORECASE)
-_ENTITY_DECL_RE = re.compile(r'<!ENTITY\b', re.IGNORECASE)
+_DOCTYPE_SYSTEM_RE = re.compile(r"<!DOCTYPE\s+[^>]*\bSYSTEM\b", re.IGNORECASE)
+_ENTITY_DECL_RE = re.compile(r"<!ENTITY\b", re.IGNORECASE)
 
 
 def _contains_unsafe_xml_decls(text: str) -> bool:
@@ -70,7 +81,7 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
 
     MAX_JSON_SIZE = 50_000_000  # 50MB limit for security
 
-    def __init__(self, language: str = 'en'):
+    def __init__(self, language: str = "en"):
         """
         Initialize JSON chunking strategy.
 
@@ -80,11 +91,7 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
         super().__init__(language)
         logger.debug("JSONChunkingStrategy initialized")
 
-    def chunk(self,
-              text: str,
-              max_size: int,
-              overlap: int = 0,
-              **options) -> list[str]:
+    def chunk(self, text: str, max_size: int, overlap: int = 0, **options) -> list[str]:
         """
         Chunk JSON data.
 
@@ -120,18 +127,20 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                 if in_str:
                     if esc:
                         esc = False
-                    elif ch == '\\':
+                    elif ch == "\\":
                         esc = True
                     elif ch == '"':
                         in_str = False
                 else:
                     if ch == '"':
                         in_str = True
-                    elif ch in '{[':
+                    elif ch in "{[":
                         depth += 1
                         if depth > limit:
-                            raise InvalidInputError(f"JSON nesting depth exceeds safe limit ({limit})")
-                    elif ch in '}]' and depth > 0:
+                            raise InvalidInputError(
+                                f"JSON nesting depth exceeds safe limit ({limit})"
+                            )
+                    elif ch in "}]" and depth > 0:
                         depth -= 1
 
         try:
@@ -141,7 +150,9 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
             raise
         except (MemoryError, RecursionError) as e:
             # If our estimator runs out of memory or stack, the JSON is likely too deep
-            logger.warning(f"JSON nesting depth check failed with {type(e).__name__}, continuing to parser")
+            logger.warning(
+                f"JSON nesting depth check failed with {type(e).__name__}, continuing to parser"
+            )
         except (TypeError, ValueError) as e:
             # If our estimator fails for other reasons, continue to json.loads which will raise appropriately
             logger.debug(f"JSON nesting depth estimation failed: {e}")
@@ -152,10 +163,12 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
         except (json.JSONDecodeError, RecursionError) as e:
             # RecursionError can occur with extremely deep nesting; surface as InvalidInputError
             logger.error(f"Invalid or excessively nested JSON data: {e}")
-            raise InvalidInputError(f"Invalid or excessively nested JSON data: {e}") from e
+            raise InvalidInputError(
+                f"Invalid or excessively nested JSON data: {e}"
+            ) from e
 
         # Get options
-        output_format = options.get('output_format', 'json')
+        output_format = options.get("output_format", "json")
 
         # Chunk based on JSON type
         if isinstance(json_data, list):
@@ -169,16 +182,14 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
             )
 
         # Convert to requested format
-        if output_format == 'json':
+        if output_format == "json":
             return [json.dumps(chunk, indent=2) for chunk in chunks]
         else:
             return [self._json_to_text(chunk) for chunk in chunks]
 
-    def chunk_with_metadata(self,
-                            text: str,
-                            max_size: int,
-                            overlap: int = 0,
-                            **options) -> list[ChunkResult]:
+    def chunk_with_metadata(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ) -> list[ChunkResult]:
         """Chunk JSON and return metadata with source offsets aligned to the original text.
 
         Note: `output_format` affects metadata only. Chunk text is always sourced
@@ -201,18 +212,20 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                 if in_str:
                     if esc:
                         esc = False
-                    elif ch == '\\':
+                    elif ch == "\\":
                         esc = True
                     elif ch == '"':
                         in_str = False
                 else:
                     if ch == '"':
                         in_str = True
-                    elif ch in '{[':
+                    elif ch in "{[":
                         depth += 1
                         if depth > limit:
-                            raise InvalidInputError(f"JSON nesting depth exceeds safe limit ({limit})")
-                    elif ch in '}]' and depth > 0:
+                            raise InvalidInputError(
+                                f"JSON nesting depth exceeds safe limit ({limit})"
+                            )
+                    elif ch in "}]" and depth > 0:
                         depth -= 1
 
         _estimate_nesting_depth(text, limit=2000)
@@ -221,9 +234,11 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
             json_data = json.loads(text)
         except (json.JSONDecodeError, RecursionError) as e:
             logger.error(f"Invalid or excessively nested JSON data: {e}")
-            raise InvalidInputError(f"Invalid or excessively nested JSON data: {e}") from e
+            raise InvalidInputError(
+                f"Invalid or excessively nested JSON data: {e}"
+            ) from e
 
-        output_format = options.get('output_format', 'json')
+        output_format = options.get("output_format", "json")
         if max_size <= 0:
             raise ValueError("max_size must be positive")
         if overlap >= max_size:
@@ -232,17 +247,21 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
 
         results: list[ChunkResult] = []
 
-        def _emit_chunks(spans: list[tuple[int, int]], method_opts: dict[str, Any]) -> None:
+        def _emit_chunks(
+            spans: list[tuple[int, int]], method_opts: dict[str, Any]
+        ) -> None:
             step = max(1, max_size - overlap)
             idx = 0
             for i in range(0, len(spans), step):
-                window = spans[i:i + max_size]
+                window = spans[i : i + max_size]
                 if not window:
                     continue
                 start_char = window[0][0]
                 end_char = window[-1][1]
                 with contextlib.suppress(Exception):
-                    end_char = self._expand_end_to_grapheme_boundary(text, end_char, options=options)
+                    end_char = self._expand_end_to_grapheme_boundary(
+                        text, end_char, options=options
+                    )
                 chunk_text = text[start_char:end_char]
                 md = ChunkMetadata(
                     index=idx,
@@ -252,7 +271,7 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                     language=self.language,
                     overlap_with_previous=overlap if i > 0 else 0,
                     overlap_with_next=overlap if (i + step) < len(spans) else 0,
-                    method='json',
+                    method="json",
                     options=method_opts,
                 )
                 results.append(ChunkResult(text=chunk_text, metadata=md))
@@ -261,7 +280,9 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
         if isinstance(json_data, list):
             spans = self._scan_top_level_array_spans(text)
             if not spans or len(spans) != len(json_data):
-                logger.debug("Array span scan mismatch; falling back to serialized element search")
+                logger.debug(
+                    "Array span scan mismatch; falling back to serialized element search"
+                )
                 spans = []
                 cursor = 0
                 for item in json_data:
@@ -275,48 +296,82 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                     end = min(len(text), idx + len(item_str))
                     spans.append((idx, end))
                     cursor = end
-            _emit_chunks(spans, {'output_format': output_format})
+            _emit_chunks(spans, {"output_format": output_format})
             return results
 
         if isinstance(json_data, dict):
-            chunkable_key = options.get('chunkable_key', 'data')
-            preserve_metadata = options.get('preserve_metadata', True)
+            chunkable_key = options.get("chunkable_key", "data")
+            preserve_metadata = options.get("preserve_metadata", True)
             pairs = self._scan_top_level_object_pairs(text)
-            key_map = {p.get('key'): p for p in pairs if p.get('key') is not None}
+            key_map = {p.get("key"): p for p in pairs if p.get("key") is not None}
 
-            def _emit_pair_chunks(pair_spans: list[tuple[int, int]], note: dict[str, Any]) -> None:
-                _emit_chunks(pair_spans, {**note, 'chunkable_key': chunkable_key, 'preserve_metadata': preserve_metadata})
+            def _emit_pair_chunks(
+                pair_spans: list[tuple[int, int]], note: dict[str, Any]
+            ) -> None:
+                _emit_chunks(
+                    pair_spans,
+                    {
+                        **note,
+                        "chunkable_key": chunkable_key,
+                        "preserve_metadata": preserve_metadata,
+                    },
+                )
 
             if chunkable_key in json_data:
                 target = json_data[chunkable_key]
                 pair = key_map.get(chunkable_key)
                 if pair and isinstance(target, list):
-                    vstart, vend = pair.get('value_span') or (None, None)
-                    if isinstance(vstart, int) and isinstance(vend, int) and vstart < vend:
+                    vstart, vend = pair.get("value_span") or (None, None)
+                    if (
+                        isinstance(vstart, int)
+                        and isinstance(vend, int)
+                        and vstart < vend
+                    ):
                         sub = text[vstart:vend]
                         sub_spans = self._scan_top_level_array_spans(sub)
                         if sub_spans:
                             spans = [(vstart + s, vstart + e) for (s, e) in sub_spans]
-                            _emit_chunks(spans, {'output_format': output_format, 'chunkable_key': chunkable_key})
+                            _emit_chunks(
+                                spans,
+                                {
+                                    "output_format": output_format,
+                                    "chunkable_key": chunkable_key,
+                                },
+                            )
                             return results
                 elif pair and isinstance(target, dict):
-                    vstart, vend = pair.get('value_span') or (None, None)
-                    if isinstance(vstart, int) and isinstance(vend, int) and vstart < vend:
+                    vstart, vend = pair.get("value_span") or (None, None)
+                    if (
+                        isinstance(vstart, int)
+                        and isinstance(vend, int)
+                        and vstart < vend
+                    ):
                         sub = text[vstart:vend]
                         sub_pairs = self._scan_top_level_object_pairs(sub)
                         if sub_pairs:
-                            spans = [(vstart + p['pair_span'][0], vstart + p['pair_span'][1]) for p in sub_pairs]
-                            _emit_chunks(spans, {'output_format': output_format, 'chunkable_key': chunkable_key})
+                            spans = [
+                                (vstart + p["pair_span"][0], vstart + p["pair_span"][1])
+                                for p in sub_pairs
+                            ]
+                            _emit_chunks(
+                                spans,
+                                {
+                                    "output_format": output_format,
+                                    "chunkable_key": chunkable_key,
+                                },
+                            )
                             return results
 
             # Default: chunk by top-level keys
-            pair_spans = [p['pair_span'] for p in pairs]
-            _emit_pair_chunks(pair_spans, {'output_format': output_format, 'chunkable_key': chunkable_key})
+            pair_spans = [p["pair_span"] for p in pairs]
+            _emit_pair_chunks(
+                pair_spans,
+                {"output_format": output_format, "chunkable_key": chunkable_key},
+            )
             return results
 
         raise InvalidInputError(
-            "JSON must be a top-level array or object. "
-            f"Got: {type(json_data).__name__}"
+            f"JSON must be a top-level array or object. Got: {type(json_data).__name__}"
         )
 
     def _scan_top_level_array_spans(self, text: str) -> list[tuple[int, int]]:
@@ -326,7 +381,7 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
         i = 0
         while i < n and text[i].isspace():
             i += 1
-        if i >= n or text[i] != '[':
+        if i >= n or text[i] != "[":
             return spans
         i += 1
         depth = 1
@@ -339,7 +394,7 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
             if in_str:
                 if esc:
                     esc = False
-                elif ch == '\\':
+                elif ch == "\\":
                     esc = True
                 elif ch == '"':
                     in_str = False
@@ -352,14 +407,14 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                     last_non_ws = i
                 i += 1
                 continue
-            if ch in '[{':
+            if ch in "[{":
                 if depth == 1 and elem_start is None:
                     elem_start = i
                     last_non_ws = i
                 depth += 1
                 i += 1
                 continue
-            if ch in ']}':
+            if ch in "]}":
                 if depth == 1:
                     if elem_start is not None:
                         end = (last_non_ws + 1) if last_non_ws is not None else i
@@ -375,7 +430,7 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                 i += 1
                 continue
             if depth == 1:
-                if ch == ',':
+                if ch == ",":
                     if elem_start is not None:
                         end = (last_non_ws + 1) if last_non_ws is not None else i
                         spans.append((elem_start, end))
@@ -395,7 +450,7 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
         i = 0
         while i < n and text[i].isspace():
             i += 1
-        if i >= n or text[i] != '{':
+        if i >= n or text[i] != "{":
             return pairs
         i += 1
         depth = 1
@@ -414,16 +469,16 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
             if in_str:
                 if esc:
                     esc = False
-                elif ch == '\\':
+                elif ch == "\\":
                     esc = True
                 elif ch == '"':
                     in_str = False
                     if reading_key and key_buf is not None:
-                        key_raw = '"' + ''.join(key_buf) + '"'
+                        key_raw = '"' + "".join(key_buf) + '"'
                         try:
                             current_key = json.loads(key_raw)
                         except Exception:
-                            current_key = ''.join(key_buf)
+                            current_key = "".join(key_buf)
                         reading_key = False
                         expecting_key = False
                     if pair_start is not None:
@@ -447,7 +502,7 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                     last_non_ws = i
                 i += 1
                 continue
-            if ch in '[{':
+            if ch in "[{":
                 if depth == 1 and expecting_value and value_start is None:
                     value_start = i
                     expecting_value = False
@@ -456,15 +511,22 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                 depth += 1
                 i += 1
                 continue
-            if ch in ']}':
+            if ch in "]}":
                 if depth == 1:
                     if pair_start is not None:
                         end = (last_non_ws + 1) if last_non_ws is not None else i
-                        pairs.append({
-                            'key': current_key,
-                            'pair_span': (pair_start, end),
-                            'value_span': (value_start if value_start is not None else pair_start, end),
-                        })
+                        pairs.append(
+                            {
+                                "key": current_key,
+                                "pair_span": (pair_start, end),
+                                "value_span": (
+                                    value_start
+                                    if value_start is not None
+                                    else pair_start,
+                                    end,
+                                ),
+                            }
+                        )
                         pair_start = None
                         last_non_ws = None
                         current_key = None
@@ -480,18 +542,25 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                 i += 1
                 continue
             if depth == 1:
-                if ch == ':':
+                if ch == ":":
                     expecting_value = True
                     i += 1
                     continue
-                if ch == ',':
+                if ch == ",":
                     if pair_start is not None:
                         end = (last_non_ws + 1) if last_non_ws is not None else i
-                        pairs.append({
-                            'key': current_key,
-                            'pair_span': (pair_start, end),
-                            'value_span': (value_start if value_start is not None else pair_start, end),
-                        })
+                        pairs.append(
+                            {
+                                "key": current_key,
+                                "pair_span": (pair_start, end),
+                                "value_span": (
+                                    value_start
+                                    if value_start is not None
+                                    else pair_start,
+                                    end,
+                                ),
+                            }
+                        )
                     pair_start = None
                     last_non_ws = None
                     current_key = None
@@ -513,11 +582,9 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
             i += 1
         return pairs
 
-    def _chunk_json_list(self,
-                        json_list: list[Any],
-                        max_size: int,
-                        overlap: int,
-                        **options) -> list[list[Any]]:
+    def _chunk_json_list(
+        self, json_list: list[Any], max_size: int, overlap: int, **options
+    ) -> list[list[Any]]:
         """
         Chunk a JSON array.
 
@@ -541,16 +608,14 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
         step = max(1, max_size - overlap)
 
         for i in range(0, len(json_list), step):
-            chunk = json_list[i:i + max_size]
+            chunk = json_list[i : i + max_size]
             chunks.append(chunk)
 
         return chunks
 
-    def _chunk_json_dict(self,
-                        json_dict: dict[str, Any],
-                        max_size: int,
-                        overlap: int,
-                        **options) -> list[dict[str, Any]]:
+    def _chunk_json_dict(
+        self, json_dict: dict[str, Any], max_size: int, overlap: int, **options
+    ) -> list[dict[str, Any]]:
         """
         Chunk a JSON object.
 
@@ -563,11 +628,21 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
         Returns:
             List of chunked dictionaries
         """
-        chunkable_key = options.get('chunkable_key', 'data')
-        preserve_metadata = options.get('preserve_metadata', True)
+        chunkable_key = options.get("chunkable_key", "data")
+        preserve_metadata = options.get("preserve_metadata", True)
         # Global toggle to emit a single metadata reference instead of repeating
-        single_ref = bool(options.get('single_metadata_reference', _get_chunking_bool('json_single_metadata_reference', False)))
-        ref_key = str(options.get('metadata_reference_key', _get_chunking_str('json_metadata_reference_key', '__meta_ref__')))
+        single_ref = bool(
+            options.get(
+                "single_metadata_reference",
+                _get_chunking_bool("json_single_metadata_reference", False),
+            )
+        )
+        ref_key = str(
+            options.get(
+                "metadata_reference_key",
+                _get_chunking_str("json_metadata_reference_key", "__meta_ref__"),
+            )
+        )
 
         # Check if chunkable key exists and is dict or list
         if chunkable_key not in json_dict:
@@ -587,15 +662,16 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                 # Stable reference id based on metadata payload
                 try:
                     import hashlib as _hash
+
                     meta_ref_id = _hash.sha1(
-                        json.dumps(meta_payload, sort_keys=True).encode('utf-8'),
+                        json.dumps(meta_payload, sort_keys=True).encode("utf-8"),
                         usedforsecurity=False,
                     ).hexdigest()[:12]
                 except (TypeError, ValueError, json.JSONDecodeError) as e:
                     logger.debug(f"Failed to generate metadata reference hash: {e}")
-                    meta_ref_id = 'meta'
+                    meta_ref_id = "meta"
                 # Emit a leading metadata chunk
-                chunks.append({ref_key: meta_ref_id, 'metadata': meta_payload})
+                chunks.append({ref_key: meta_ref_id, "metadata": meta_payload})
             for chunk_list in chunked_lists:
                 if preserve_metadata:
                     if single_ref and meta_ref_id is not None:
@@ -620,14 +696,15 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
             if preserve_metadata and single_ref and meta_payload:
                 try:
                     import hashlib as _hash
+
                     meta_ref_id = _hash.sha1(
-                        json.dumps(meta_payload, sort_keys=True).encode('utf-8'),
+                        json.dumps(meta_payload, sort_keys=True).encode("utf-8"),
                         usedforsecurity=False,
                     ).hexdigest()[:12]
                 except (TypeError, ValueError, json.JSONDecodeError) as e:
                     logger.debug(f"Failed to generate metadata reference hash: {e}")
-                    meta_ref_id = 'meta'
-                chunks.append({ref_key: meta_ref_id, 'metadata': meta_payload})
+                    meta_ref_id = "meta"
+                chunks.append({ref_key: meta_ref_id, "metadata": meta_payload})
             for chunk_dict in chunked_dicts:
                 if preserve_metadata:
                     if single_ref and meta_ref_id is not None:
@@ -645,11 +722,9 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
             logger.warning(f"Chunkable key '{chunkable_key}' is not a list or dict")
             return [json_dict]
 
-
-    def _chunk_dict_by_keys(self,
-                           data_dict: dict[str, Any],
-                           max_size: int,
-                           overlap: int) -> list[dict[str, Any]]:
+    def _chunk_dict_by_keys(
+        self, data_dict: dict[str, Any], max_size: int, overlap: int
+    ) -> list[dict[str, Any]]:
         """
         Chunk a dictionary by its keys.
 
@@ -673,7 +748,7 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
         step = max(1, max_size - overlap)
 
         for i in range(0, len(all_keys), step):
-            chunk_keys = all_keys[i:i + max_size]
+            chunk_keys = all_keys[i : i + max_size]
             chunk_dict = {k: data_dict[k] for k in chunk_keys}
             chunks.append(chunk_dict)
 
@@ -696,9 +771,9 @@ class JSONChunkingStrategy(BaseChunkingStrategy):
                     lines.append(f"{key}: {json.dumps(value, indent=2)}")
                 else:
                     lines.append(f"{key}: {value}")
-            return '\n'.join(lines)
+            return "\n".join(lines)
         elif isinstance(json_obj, list):
-            return '\n'.join([str(item) for item in json_obj])
+            return "\n".join([str(item) for item in json_obj])
         else:
             return str(json_obj)
 
@@ -710,7 +785,7 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
 
     MAX_XML_SIZE = 50_000_000  # 50MB limit for security
 
-    def __init__(self, language: str = 'en'):
+    def __init__(self, language: str = "en"):
         """
         Initialize XML chunking strategy.
 
@@ -721,11 +796,7 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
         self._security_logger = get_security_logger()
         logger.debug("XMLChunkingStrategy initialized")
 
-    def chunk(self,
-              text: str,
-              max_size: int,
-              overlap: int = 0,
-              **options) -> list[str]:
+    def chunk(self, text: str, max_size: int, overlap: int = 0, **options) -> list[str]:
         """
         Chunk XML data.
 
@@ -762,19 +833,29 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
 
                 # Additional pre-check for unsafe DOCTYPE SYSTEM / ENTITY declarations
                 if _contains_unsafe_xml_decls(text):
-                    logger.error("XML contains unsafe DOCTYPE SYSTEM or ENTITY declaration")
-                    self._security_logger.log_xxe_attempt(text[:500], source="xml_chunk")
-                    raise InvalidInputError("XML contains unsafe DOCTYPE SYSTEM or ENTITY declaration which is not allowed for security reasons")
+                    logger.error(
+                        "XML contains unsafe DOCTYPE SYSTEM or ENTITY declaration"
+                    )
+                    self._security_logger.log_xxe_attempt(
+                        text[:500], source="xml_chunk"
+                    )
+                    raise InvalidInputError(
+                        "XML contains unsafe DOCTYPE SYSTEM or ENTITY declaration which is not allowed for security reasons"
+                    )
 
                 try:
                     root = DefusedET.fromstring(text)
                     logger.debug("Using defusedxml for secure XML parsing")
-                except (defused_common.EntitiesForbidden,
-                        defused_common.ExternalReferenceForbidden,
-                        defused_common.DTDForbidden,
-                        defused_common.NotSupportedError) as e:
+                except (
+                    defused_common.EntitiesForbidden,
+                    defused_common.ExternalReferenceForbidden,
+                    defused_common.DTDForbidden,
+                    defused_common.NotSupportedError,
+                ) as e:
                     logger.error(f"Blocked potential XXE attack: {e}")
-                    raise InvalidInputError(f"XML contains forbidden constructs (potential XXE attack): {e}") from None
+                    raise InvalidInputError(
+                        f"XML contains forbidden constructs (potential XXE attack): {e}"
+                    ) from None
             except ImportError:
                 raise InvalidInputError(
                     "Secure XML parsing requires the 'defusedxml' package."
@@ -784,8 +865,8 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
             raise InvalidInputError(f"Invalid XML data: {e}") from e
 
         # Get options
-        output_format = options.get('output_format', 'text')
-        include_paths = options.get('include_paths', True)
+        output_format = options.get("output_format", "text")
+        include_paths = options.get("include_paths", True)
 
         # Extract XML structure
         elements = self._extract_xml_elements(root)
@@ -799,7 +880,7 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
         # Convert to requested format
         result = []
         for chunk in chunks:
-            if output_format == 'xml':
+            if output_format == "xml":
                 # Reconstruct XML from elements
                 result.append(self._elements_to_xml(chunk, root.tag, root.attrib))
             else:
@@ -808,11 +889,9 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
 
         return result
 
-    def chunk_with_metadata(self,
-                            text: str,
-                            max_size: int,
-                            overlap: int = 0,
-                            **options) -> list[ChunkResult]:
+    def chunk_with_metadata(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ) -> list[ChunkResult]:
         """Chunk XML data and return results with source offsets."""
         if not self.validate_parameters(text, max_size, overlap):
             return []
@@ -829,19 +908,29 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
                 from defusedxml import common as defused_common
 
                 if _contains_unsafe_xml_decls(text):
-                    logger.error("XML contains unsafe DOCTYPE SYSTEM or ENTITY declaration")
-                    self._security_logger.log_xxe_attempt(text[:500], source="xml_chunk")
-                    raise InvalidInputError("XML contains unsafe DOCTYPE SYSTEM or ENTITY declaration which is not allowed for security reasons")
+                    logger.error(
+                        "XML contains unsafe DOCTYPE SYSTEM or ENTITY declaration"
+                    )
+                    self._security_logger.log_xxe_attempt(
+                        text[:500], source="xml_chunk"
+                    )
+                    raise InvalidInputError(
+                        "XML contains unsafe DOCTYPE SYSTEM or ENTITY declaration which is not allowed for security reasons"
+                    )
 
                 try:
                     root = DefusedET.fromstring(text)
                     logger.debug("Using defusedxml for secure XML parsing")
-                except (defused_common.EntitiesForbidden,
-                        defused_common.ExternalReferenceForbidden,
-                        defused_common.DTDForbidden,
-                        defused_common.NotSupportedError) as e:
+                except (
+                    defused_common.EntitiesForbidden,
+                    defused_common.ExternalReferenceForbidden,
+                    defused_common.DTDForbidden,
+                    defused_common.NotSupportedError,
+                ) as e:
                     logger.error(f"Blocked potential XXE attack: {e}")
-                    raise InvalidInputError(f"XML contains forbidden constructs (potential XXE attack): {e}") from None
+                    raise InvalidInputError(
+                        f"XML contains forbidden constructs (potential XXE attack): {e}"
+                    ) from None
             except ImportError:
                 raise InvalidInputError(
                     "Secure XML parsing requires the 'defusedxml' package."
@@ -850,8 +939,8 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
             logger.error(f"Invalid XML data: {e}")
             raise InvalidInputError(f"Invalid XML data: {e}") from e
 
-        output_format = options.get('output_format', 'text')
-        include_paths = options.get('include_paths', True)
+        output_format = options.get("output_format", "text")
+        include_paths = options.get("include_paths", True)
 
         elements_raw = self._extract_xml_elements_with_raw(root)
         if not elements_raw:
@@ -899,7 +988,9 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
                 chunks.append(current_chunk)
                 if overlap > 0 and len(current_chunk) > overlap:
                     current_chunk = current_chunk[-overlap:]
-                    current_word_count = sum(len(e[1].strip().split()) for e in current_chunk)
+                    current_word_count = sum(
+                        len(e[1].strip().split()) for e in current_chunk
+                    )
                 else:
                     current_chunk = []
                     current_word_count = 0
@@ -915,11 +1006,15 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
             start_char = min(e[3] for e in chunk)
             end_char = max(e[4] for e in chunk)
             with contextlib.suppress(Exception):
-                end_char = self._expand_end_to_grapheme_boundary(text, end_char, options=options)
+                end_char = self._expand_end_to_grapheme_boundary(
+                    text, end_char, options=options
+                )
             # Build chunk text in requested output format (offsets still refer to source).
-            if output_format == 'xml':
+            if output_format == "xml":
                 chunk_elements = [(p, t.strip(), el) for (p, t, el, _s, _e) in chunk]
-                chunk_text = self._elements_to_xml(chunk_elements, root.tag, root.attrib)
+                chunk_text = self._elements_to_xml(
+                    chunk_elements, root.tag, root.attrib
+                )
             else:
                 chunk_elements = [(p, t.strip(), el) for (p, t, el, _s, _e) in chunk]
                 chunk_text = self._elements_to_text(chunk_elements, include_paths)
@@ -929,16 +1024,19 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
                 end_char=end_char,
                 word_count=len(chunk_text.split()) if chunk_text else 0,
                 language=self.language,
-                method='xml',
-                options={'output_format': output_format, 'include_paths': include_paths},
+                method="xml",
+                options={
+                    "output_format": output_format,
+                    "include_paths": include_paths,
+                },
             )
             results.append(ChunkResult(text=chunk_text, metadata=md))
 
         return results
 
-    def _extract_xml_elements(self,
-                             element: ET.Element,
-                             path: str = "") -> list[tuple[str, str, ET.Element]]:
+    def _extract_xml_elements(
+        self, element: ET.Element, path: str = ""
+    ) -> list[tuple[str, str, ET.Element]]:
         """
         Recursively extract XML elements with paths.
 
@@ -970,13 +1068,15 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
             if child.tail:
                 tail_text = child.tail.strip()
                 if tail_text:
-                    results.append((f"{current_path}/{child.tag}[tail]", tail_text, child))
+                    results.append(
+                        (f"{current_path}/{child.tag}[tail]", tail_text, child)
+                    )
 
         return results
 
-    def _extract_xml_elements_with_raw(self,
-                                       element: ET.Element,
-                                       path: str = "") -> list[tuple[str, str, ET.Element]]:
+    def _extract_xml_elements_with_raw(
+        self, element: ET.Element, path: str = ""
+    ) -> list[tuple[str, str, ET.Element]]:
         """Extract XML elements preserving raw text for offset mapping."""
         results = []
         current_path = f"{path}/{element.tag}" if path else element.tag
@@ -990,15 +1090,19 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
             if child.tail:
                 tail_text = child.tail
                 if tail_text and tail_text.strip():
-                    results.append((f"{current_path}/{child.tag}[tail]", tail_text, child))
+                    results.append(
+                        (f"{current_path}/{child.tag}[tail]", tail_text, child)
+                    )
 
         return results
 
-    def _chunk_xml_elements(self,
-                           elements: list[tuple[str, str, ET.Element]],
-                           max_size: int,
-                           overlap: int,
-                           **options) -> list[list[tuple[str, str, ET.Element]]]:
+    def _chunk_xml_elements(
+        self,
+        elements: list[tuple[str, str, ET.Element]],
+        max_size: int,
+        overlap: int,
+        **options,
+    ) -> list[list[tuple[str, str, ET.Element]]]:
         """
         Chunk XML elements by content size.
 
@@ -1034,7 +1138,9 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
                 if overlap > 0 and len(current_chunk) > overlap:
                     # Keep last 'overlap' elements
                     current_chunk = current_chunk[-overlap:]
-                    current_word_count = sum(len(c.split()) for _, c, _ in current_chunk)
+                    current_word_count = sum(
+                        len(c.split()) for _, c, _ in current_chunk
+                    )
                 else:
                     current_chunk = []
                     current_word_count = 0
@@ -1049,9 +1155,9 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
 
         return chunks
 
-    def _elements_to_text(self,
-                         elements: list[tuple[str, str, ET.Element]],
-                         include_paths: bool) -> str:
+    def _elements_to_text(
+        self, elements: list[tuple[str, str, ET.Element]], include_paths: bool
+    ) -> str:
         """
         Convert XML elements to text representation.
 
@@ -1070,12 +1176,14 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
             else:
                 lines.append(content)
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
-    def _elements_to_xml(self,
-                        elements: list[tuple[str, str, ET.Element]],
-                        root_tag: str,
-                        root_attrib: dict[str, str]) -> str:
+    def _elements_to_xml(
+        self,
+        elements: list[tuple[str, str, ET.Element]],
+        root_tag: str,
+        root_attrib: dict[str, str],
+    ) -> str:
         """
         Reconstruct XML from elements, preserving hierarchy based on path.
 
@@ -1100,7 +1208,7 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
 
             # Parse path to reconstruct hierarchy
             # Path format: "root/parent/child" or "root/parent[0]/child[1]"
-            path_parts = base_path.split('/')
+            path_parts = base_path.split("/")
 
             # Build parent path and ensure all ancestors exist
             current_parent = new_root
@@ -1108,7 +1216,7 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
 
             for _i, part in enumerate(path_parts[1:-1] if len(path_parts) > 1 else []):
                 # Strip array index if present (e.g., "item[0]" -> "item")
-                tag_name = part.split('[')[0] if '[' in part else part
+                tag_name = part.split("[")[0] if "[" in part else part
                 current_path = f"{current_path}/{part}"
 
                 if current_path not in path_to_element:
@@ -1131,4 +1239,4 @@ class XMLChunkingStrategy(BaseChunkingStrategy):
             else:
                 new_elem.text = content
 
-        return ET.tostring(new_root, encoding='unicode')
+        return ET.tostring(new_root, encoding="unicode")

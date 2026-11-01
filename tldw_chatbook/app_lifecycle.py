@@ -34,14 +34,17 @@ from loguru import logger
 from loguru import logger as loguru_logger
 from textual import work
 from textual.message_pump import active_message_pump
-from textual.worker import Worker, WorkerCancelled, WorkerState
+from textual.worker import (
+    Worker,
+    WorkerState,
+)
+from textual.worker import (
+    WorkerCancelled as WorkerCancelled,  # noqa: PLC0414 -- retained late shutdown patch point.
+)
 
 from tldw_chatbook.app_keep_alive import keep_alive_notice, retire_dead_pump
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
 from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
-from tldw_chatbook.Chat.console_settings_durability import (
-    ConsoleSettingsDurabilityOwner,
-)
 from tldw_chatbook.config import (
     get_cli_config_path,
     get_cli_setting,
@@ -51,7 +54,11 @@ from tldw_chatbook.Constants import TAB_ARTIFACTS
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
-from tldw_chatbook.Utils.app_shutdown import arm_exit_watchdog, unregister_running_app
+from tldw_chatbook.Utils.app_shutdown import (
+    _drain_app_unmount_services,
+    arm_exit_watchdog,
+    unregister_running_app,
+)
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Widgets.confirmation_dialog import (
     ConfirmationDialog,
@@ -136,14 +143,14 @@ class LifecycleMixin:
             service = self._recovery_service = RecoveryService(default_control_root())
         return service
 
-    def action_backup_restore(self) -> None:
-        """Open recovery with all known local profiles selected for backup."""
+    def action_backup_restore(self, mode: str = "home") -> None:
+        """Open recovery (setup's Restore entry passes ``mode="inspect"``) for all profiles."""
         from .UI.Screens.backup_restore_screen import BackupRestoreScreen
 
         self.push_screen(
             BackupRestoreScreen(
                 self.recovery_service, config_paths=(get_cli_config_path(),),
-                include_known_profiles=True,
+                include_known_profiles=True, initial_mode=mode,
             )
         )
 
@@ -542,12 +549,44 @@ class LifecycleMixin:
         """
         task = self._console_runtime_shutdown_task
         if task is None:
+            runtime = getattr(self, "console_runtime", None)
+            view = getattr(runtime, "view", None)
+            image = getattr(view, "_image", None)
+            if view is not None:
+                view._console_chat_tearing_down = True
+            if image is not None:
+                image._recovered_images_close_admission()
+
+            async def settle_view_and_dispose() -> None:
+                from .UI.Console_Modules.view_workers import (
+                    capture_console_view_workers,
+                    drain_console_view_workers,
+                )
+
+                # Preserve the original App manager-wide selected group scope;
+                # Runtime.detach_view can precede a retired view's awaited cleanup.
+                captured = capture_console_view_workers(self)
+                try:
+                    await drain_console_view_workers(captured)
+                finally:
+                    if image is not None:
+                        await image._recovered_images_close()
+                await dispose_console_runtime(self)
+
             task = asyncio.create_task(
-                dispose_console_runtime(self),
+                settle_view_and_dispose(),
                 name="shutdown_console_runtime",
             )
             self._console_runtime_shutdown_task = task
-        await asyncio.shield(task)
+        cancellation = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+        task.result()
+        if cancellation is not None:
+            raise cancellation
         plugin_service = getattr(self, "_plugin_service", None)
         if plugin_service is not None:
             await plugin_service.aclose()
@@ -586,19 +625,10 @@ class LifecycleMixin:
         await asyncio.shield(task)
 
     async def _shutdown_console_settings_durability(self) -> None:
-        """Drain admitted settings writes without cancelling thread work.
+        """Drain admitted settings writes without cancelling thread work."""
+        from .Chat.console_settings_durability import shutdown_console_settings_durability
 
-        The coordinator tasks can be awaiting ``asyncio.to_thread`` writes,
-        which cannot be recalled once admitted. Shielding preserves those
-        writes if application shutdown is cancelled; ``_shutdown`` retries
-        this lifecycle pass and does not dispose the Console runtime until the
-        registry is empty.
-        """
-
-        owner = getattr(self, "console_settings_durability_owner", None)
-        if not isinstance(owner, ConsoleSettingsDurabilityOwner):
-            return
-        await owner.close_and_drain()
+        await shutdown_console_settings_durability(self)
 
     @property
     def meeting_session_owner(self):
@@ -676,6 +706,10 @@ class LifecycleMixin:
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        from .Workspaces.project_index.runtime import close_project_index_service
+
+        await close_project_index_service(self)
+        actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
         await self._shutdown_workflow_session()
         self._mcp_local_config_saves_closed = True
         self._tool_profile_operations_closed = True
@@ -691,7 +725,9 @@ class LifecycleMixin:
             await tool_profiles.close_and_drain()
         recovery_cancellation = await TldwCli._shutdown_recovery_service(self)
         monitor_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
-        recovery_cancellation = recovery_cancellation or monitor_cancellation
+        recovery_cancellation = (
+            actor_recovery_cancellation or recovery_cancellation or monitor_cancellation
+        )
         workflow_error = None
         workflow_authoring = getattr(self, "_workflow_authoring", None)
         if workflow_authoring is not None:
@@ -739,15 +775,24 @@ class LifecycleMixin:
             await asyncio.to_thread(meeting_session_owner.shutdown)
         await self._shutdown_console_image_edits()
         await self._shutdown_file_notes_session_owner()
-        if recovery_cancellation is not None:
-            raise recovery_cancellation
-        if lab_error is not None:
-            raise lab_error
-        if workflow_error is not None:
-            raise workflow_error
+        # Live owners may use shared sessions until their drains finish.
+        from .Utils.egress import close_pooled_default_sessions
+
+        pool_error = None
+        try:
+            close_pooled_default_sessions()
+        except Exception as exc:  # noqa: BLE001 - preserve retained owner failures.
+            pool_error = exc
+        for error in (recovery_cancellation, lab_error, workflow_error, pool_error):
+            if error is not None:
+                raise error
 
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""
+        # App.exit normally closes mount admission first. Direct shutdown
+        # (including run_test teardown) must use that same Textual fence so
+        # queued rebuilds cannot register children after message pumps stop.
+        self._exit = True
         # Ordinary Quit reaches these drains before on_unmount. Use the same
         # process-owned, idempotent watchdog here so the drains are bounded too.
         arm_exit_watchdog(reason="app shutdown")
@@ -977,6 +1022,8 @@ class LifecycleMixin:
     async def on_unmount(self) -> None:
         """Clean up logging resources on application exit."""
 
+        # Settle boot-owned native work before any other owner can advance.
+        actor_recovery_cancellation = await self._shutdown_actor_pack_recovery()
         # Do not close Notes or arm forced-exit cleanup while its worker is live.
         await self._shutdown_workflow_session()
         recovery_cleanup_cancellation = await TldwCli._shutdown_recovery_service(self)
@@ -984,7 +1031,8 @@ class LifecycleMixin:
         self._speech_initialization_closed = True
         speech_cleanup_cancellation = await self._settle_speech_initialization()
         speech_cleanup_cancellation = (
-            recovery_cleanup_cancellation
+            actor_recovery_cancellation
+            or recovery_cleanup_cancellation
             or monitor_cleanup_cancellation
             or speech_cleanup_cancellation
         )
@@ -1032,7 +1080,21 @@ class LifecycleMixin:
         # would skip all of it. Diagnostics must never break the thing they
         # observe.
         try:
-            persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_stopping")
+            # Session totals ride the app_stopping event (issue #365
+            # deferred idea): post-hoc visibility even when the summary is
+            # disabled. Aggregate counters only -- no user content. The
+            # import is quit-time only (boot census, ADR-097).
+            from tldw_chatbook.Chat.session_usage import session_usage
+
+            snap = session_usage().snapshot()
+            persist_event(
+                _DIAGNOSTICS_COMPONENT_APP,
+                "app_stopping",
+                session_exact_tokens=snap.exact_tokens,
+                session_estimated_tokens=snap.estimated_tokens,
+                session_embedding_tokens=snap.embeddings_tokens,
+                session_llm_calls=snap.calls,
+            )
         except Exception:
             pass
         try:
@@ -1081,190 +1143,7 @@ class LifecycleMixin:
             )
 
         # Stop all background services and threads
-        service_cleanup_primary: BaseException | None = speech_cleanup_cancellation
-        try:
-            deferred_tasks = [
-                task
-                for task in getattr(self, "_deferred_startup_tasks", set())
-                if not task.done()
-            ]
-            for task in deferred_tasks:
-                task.cancel()
-            if deferred_tasks:
-                await asyncio.gather(*deferred_tasks, return_exceptions=True)
-
-            # Stop audio player if it exists
-            if hasattr(self, "audio_player"):
-                try:
-                    await self.audio_player.cleanup()
-                    self.loguru_logger.info("Audio player cleaned up")
-                except Exception as e:
-                    self.loguru_logger.error(f"Error cleaning up audio player: {e}")
-
-            # Clean up handler-owned TTS tasks and files if initialized.
-            if hasattr(self, "_tts_handler") and self._tts_handler:
-                try:
-                    await self._tts_handler.cleanup_tts_resources()
-                except Exception as e:
-                    self.loguru_logger.error(f"Error cleaning up TTS handler: {e}")
-
-            # Clean up handler-owned S/TT/S tasks and files if initialized.
-            if hasattr(self, "_stts_handler") and self._stts_handler:
-                try:
-                    if hasattr(self._stts_handler, "cleanup_tts_resources"):
-                        await self._stts_handler.cleanup_tts_resources()
-                except Exception as e:
-                    self.loguru_logger.error(f"Error cleaning up STTS handler: {e}")
-
-            # Stop the background scheduler loop cleanly.
-            scheduler_loop = getattr(self, "scheduler_loop", None)
-            scheduler_worker = getattr(self, "scheduler_worker", None)
-            if scheduler_loop is not None:
-                scheduler_loop.stop()
-            if scheduler_worker is not None:
-                try:
-                    if not scheduler_worker.is_finished:
-                        # Textual's public cancellation contract cancels the
-                        # underlying asyncio task. Worker.wait() has no timeout
-                        # parameter, so request cancellation before observing it.
-                        scheduler_worker.cancel()
-                    await scheduler_worker.wait()
-                except WorkerCancelled:
-                    # Cancellation is the expected public Textual shutdown
-                    # contract for a loop that may be sleeping between polls.
-                    pass
-                except Exception as e:
-                    self.loguru_logger.error(f"Error stopping scheduler worker: {e}")
-
-            # task-19561: stopping the scheduler worker does NOT stop the
-            # generations it dispatched. `BriefingJobHandler.handle` spawns
-            # each one as a bare `asyncio.Task` (Locked Decision 3 -- a
-            # multi-minute LLM call must not stall the tick), so they are
-            # absent from `App.workers` and survived every cancellation
-            # above, only to be destroyed mid-flight when the loop closed.
-            # Cancel them here, while the loop is still alive to deliver it.
-            briefing_handler = getattr(self, "_briefing_job_handler", None)
-            if briefing_handler is not None:
-                try:
-                    cancelled = await briefing_handler.shutdown()
-                    if cancelled:
-                        self.loguru_logger.info(
-                            f"Cancelled {cancelled} in-flight scheduled briefing "
-                            "generation(s)"
-                        )
-                except Exception as e:
-                    self.loguru_logger.error(
-                        f"Error stopping scheduled briefing generations: {e}"
-                    )
-
-            # dreams phase 1: the same seam for scheduled Dreams cycles --
-            # `DreamsCycleHandler` spawns them as bare `asyncio.Task`s too,
-            # held in the handler module's own set.
-            try:
-                from .Scheduling.scheduler.handlers.dreams_handler import (
-                    shutdown as dreams_shutdown,
-                )
-
-                cancelled = await dreams_shutdown()
-                if cancelled:
-                    self.loguru_logger.info(
-                        f"Cancelled {cancelled} in-flight Dreams cycle(s)"
-                    )
-            except Exception as e:
-                self.loguru_logger.error(
-                    f"Error stopping scheduled Dreams cycles: {e}"
-                )
-
-            # Disconnect local MCP client sessions (P5-T6), if any were ever
-            # established this run.
-            try:
-                await self._disconnect_local_mcp_client()
-                self.loguru_logger.info("Local MCP client sessions disconnected")
-            except Exception as e:
-                self.loguru_logger.error(
-                    f"Error disconnecting local MCP client sessions: {e}"
-                )
-
-            # Stop any running artifact share (child web server) before the
-            # process goes away; idempotent and failure-tolerant.
-            try:
-                self._shutdown_artifact_share()
-                self.loguru_logger.info("Artifact share stopped (if running)")
-            except Exception as e:
-                self.loguru_logger.error(f"Error stopping artifact share: {e}")
-
-            # Cancel any pending workers and wait for them, bounded.
-            await self._cancel_and_settle_workers("unmount")
-
-            # SSH ControlMaster cleanup (Phase 2a): `ssh -O exit` for every
-            # master this process started, only after in-flight calls have
-            # settled above so closing a master cannot cut a live call.
-            # Best-effort and bounded (5s per host, off the loop);
-            # ControlPersist remains the crash backstop, so a failure here
-            # degrades to an eventually-expiring master and must never
-            # block the quit.
-            # Session workers close first: closing their stdin lets the
-            # remote parents exit before the masters go away.
-            try:
-                from tldw_chatbook.Tools.remote_session_registry import (
-                    close_all_remote_sessions,
-                )
-                from tldw_chatbook.Tools.remote_workspace_transport import (
-                    get_master_manager,
-                )
-
-                await asyncio.to_thread(close_all_remote_sessions)
-                await asyncio.to_thread(get_master_manager().close_all)
-            except Exception as error:
-                self.loguru_logger.warning(
-                    "Closing SSH control masters on shutdown failed type={}",
-                    type(error).__name__,
-                )
-
-            # Stop media cleanup timer
-            if hasattr(self, "_media_cleanup_timer") and self._media_cleanup_timer:
-                self._media_cleanup_timer.stop()
-                self.loguru_logger.info("Media cleanup timer stopped")
-
-            try:
-                await self._close_server_context_provider_cached_client()
-                self.loguru_logger.info("Server context provider cached client closed")
-            except Exception as e:
-                self.loguru_logger.error(
-                    f"Error closing server context provider cached client: {e}"
-                )
-
-        except asyncio.CancelledError as error:
-            service_cleanup_primary = error
-        except Exception as e:
-            self.loguru_logger.error(f"Error during service cleanup: {e}")
-        except BaseException as error:
-            service_cleanup_primary = error
-        finally:
-            try:
-                await self._close_owned_tts_resources()
-                self.loguru_logger.info("TTS resources cleaned up properly")
-            except BaseException as cleanup_error:
-                if service_cleanup_primary is not None:
-                    service_cleanup_primary.add_note(
-                        "TTS cleanup also failed while preserving the primary "
-                        "shutdown error"
-                    )
-                    self.loguru_logger.warning(
-                        "TTS owner cleanup failed while preserving shutdown "
-                        f"type={type(cleanup_error).__name__} "
-                        "code=operation_failed"
-                    )
-                elif isinstance(cleanup_error, Exception):
-                    self.loguru_logger.warning(
-                        "TTS owner cleanup phase=unmount failed "
-                        f"type={type(cleanup_error).__name__} "
-                        "code=operation_failed"
-                    )
-                else:
-                    raise
-        if service_cleanup_primary is not None:
-            raise service_cleanup_primary
+        await _drain_app_unmount_services(self, speech_cleanup_cancellation)
 
         # Original cleanup code
         if self._rich_log_handler:  # Ensure it's removed if it exists
@@ -1360,7 +1239,7 @@ class LifecycleMixin:
 
             # Clean up any lingering subprocess
             for proc in (
-                subprocess._active.copy()
+                (subprocess._active or []).copy()
             ):  # Make a copy to avoid modification during iteration
                 try:
                     if proc.poll() is None:  # Process is still running
@@ -1546,6 +1425,22 @@ class LifecycleMixin:
             self.loguru_logger.opt(exception=True).warning(
                 "Could not schedule change-review retention"
             )
+        # TASK-34389: sync-journal retention rides the same maintenance path
+        # but has its OWN knob ([sync] sync_log_retention_days; <=0 disables
+        # inside the pass) -- disabling the other passes must not silently
+        # disable sync-log retention.
+        try:
+            self._sync_log_retention_startup_timer = self.set_timer(
+                DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS + 60,
+                self._perform_sync_log_retention,
+            )
+            self._sync_log_retention_timer = self.set_interval(
+                24 * 3600, self._perform_sync_log_retention
+            )
+        except Exception:  # noqa: BLE001 -- maintenance must never block boot
+            self.loguru_logger.opt(exception=True).warning(
+                "Could not schedule sync-log retention"
+            )
         try:
             if not execution_allowed(("db.media.primary",)):
                 return
@@ -1610,6 +1505,52 @@ class LifecycleMixin:
         except Exception:  # noqa: BLE001 -- retention must never surface to the UI
             self.loguru_logger.opt(exception=True).warning(
                 "Change-review retention pass failed"
+            )
+
+    async def _perform_sync_log_retention(self) -> None:
+        """Run one sync-journal retention pass off the UI thread (TASK-34389).
+
+        Deletes ``sync_log`` rows older than ``[sync]
+        sync_log_retention_days`` from both stores that keep a sync journal
+        (ChaChaNotes and media). ``<=0`` disables the pass entirely. Rides
+        the same post-startup maintenance path as change-review retention
+        and media cleanup; all DB work happens in a thread so it can never
+        block the UI.
+        """
+        try:
+            raw_days = get_cli_setting("sync", "sync_log_retention_days", 90)
+            try:
+                retention_days = int(raw_days)
+            except (TypeError, ValueError):
+                self.loguru_logger.warning(
+                    f"Invalid [sync] sync_log_retention_days value "
+                    f"{raw_days!r}; skipping sync-log retention pass"
+                )
+                return
+            if retention_days <= 0:
+                return  # Documented off-switch (ADR-229).
+            from datetime import timedelta
+
+            from .Utils.timestamps import to_utc_iso, utc_now
+
+            # Shared UTC helper (ADR-173 ratchet): same canonical
+            # millisecond-Z shape the hand-rolled strftime produced.
+            cutoff = to_utc_iso(utc_now() - timedelta(days=retention_days))
+            for attr in ("chachanotes_db", "media_db"):
+                db = getattr(self, attr, None)
+                if db is None:
+                    continue
+                pruned = await asyncio.to_thread(
+                    db.delete_sync_log_entries_older_than, cutoff
+                )
+                if pruned:
+                    self.loguru_logger.info(
+                        f"Sync-log retention pruned {pruned} rows older than "
+                        f"{retention_days} days from {attr}"
+                    )
+        except Exception:  # noqa: BLE001 -- retention must never surface to the UI
+            self.loguru_logger.opt(exception=True).warning(
+                "Sync-log retention pass failed"
             )
 
     async def perform_media_cleanup(self) -> None:
@@ -1705,6 +1646,10 @@ class LifecycleMixin:
     def action_library_artifacts(self) -> None:
         """Preserve Ctrl+6 as a Library route outside permanent shell destinations."""
         self.post_message(NavigateToScreen(TAB_ARTIFACTS))
+
+    def action_settings_tools_hub(self) -> None:
+        """Preserve Ctrl+9 as a Tools & MCP route outside the shell strip."""
+        self.post_message(NavigateToScreen("mcp"))
 
     def action_shell_destination(self, destination_id: str) -> None:
         """Navigate to the shell destination identified by a stable ID.
@@ -1988,9 +1933,17 @@ class LifecycleMixin:
                         pass
                     return
             self._shutting_down = True
-            # TASK-22215: the user has approved the quit -- nothing further from
-            # the staggered boot fleet may start (idempotent with the same call in
-            # `on_shutdown_request`, which the quit path reaches later).
+            from .UI.Console_Modules import view_workers
+
+            # Cancel before cleanup yields; the original manager retains Tasks
+            # through native retirement for the later runtime shutdown drain.
+            view_workers.cancel_console_view_workers(
+                view_workers.capture_console_view_workers(
+                    self, groups=view_workers.CONSOLE_BROWSER_WORKER_GROUPS
+                )
+            )
+            # Approved Quit also closes staggered boot admission before cleanup
+            # (idempotent with the later on_shutdown_request).
             self._close_boot_worker_gate("quit")
             await self._run_approved_quit_cleanup()
         finally:
@@ -2029,41 +1982,84 @@ class LifecycleMixin:
         return bool(await await_quit_prompt(self, dialog, no_answer=False))
 
     async def _confirm_console_runtime_quit(self) -> bool:
-        """Revision-pin Console loss even when a non-Console screen is mounted."""
+        """Revision-pin Console loss even when a non-Console screen is mounted.
 
+        TASK-33628.1: the loss is every open tab's close impact, summed, so an
+        unsent draft, a Temporary chat, a staged attachment or a parked turn
+        asks too, not only live runs and queued prompts.
+        """
         self._console_quit_approved_revision = None
         runtime = getattr(self, "console_runtime", None)
-        controller = getattr(runtime, "chat_controller", None)
-        if controller is None:
+        if getattr(runtime, "chat_controller", None) is None:
             return True
+        from .UI.Console_Modules import loss_inventory
 
         while True:
-            impact = controller.lifecycle_impact()
+            impact = loss_inventory.console_quit_impact(runtime)
             if not impact.has_loss_risk:
                 self._console_quit_approved_revision = impact.revision
                 return True
             dialog = ConfirmationDialog(
                 title="Quit Chatbook?",
-                message=(
-                    "Quitting Chatbook will cancel or discard:\n\n"
-                    f"Live agent runs: {impact.live_run_count}\n"
-                    f"Delegated agents: {impact.delegated_child_count}\n"
-                    f"Sessions with queued prompts: {impact.queued_session_count}\n"
-                    f"Unsent queued prompts: {impact.unsent_prompt_count}\n\n"
-                    "Quit Chatbook?"
-                ),
+                message=loss_inventory.quit_dialog_message(impact),
                 confirm_label="Quit",
                 cancel_label="Stay",
             )
             if not await self._await_console_quit_confirmation(dialog):
                 return False
-            if controller.lifecycle_impact() == impact:
+            if loss_inventory.console_quit_impact(runtime) == impact:
                 self._console_quit_approved_revision = impact.revision
                 return True
             self.notify(
                 "Console activity changed; review the updated impact.",
                 severity="warning",
             )
+
+    def _session_summary_duration_seconds(self) -> int:
+        """Configured quit-summary duration, clamped to 1..30 (default 3)."""
+        raw = get_cli_setting("session_summary", "duration_seconds", 3)
+        try:
+            value = int(round(float(raw)))
+        except (TypeError, ValueError, OverflowError):
+            return 3
+        return max(1, min(30, value))
+
+    async def _show_session_summary_before_exit(self) -> None:
+        """Show the optional quit-time usage summary, hard-capped so exit
+        always proceeds (issue #365; spec "Quit-Flow Integration")."""
+        # Quit-only imports, deferred off the boot path: the UI-ready
+        # module census ratchets down and never rises
+        # (Tests/Performance/test_ui_ready_module_census.py).
+        from tldw_chatbook.Chat.session_usage import session_usage
+        from tldw_chatbook.Widgets.session_summary_dialog import SessionSummaryDialog
+
+        try:
+            duration = self._session_summary_duration_seconds()
+            dialog = SessionSummaryDialog(
+                session_usage().snapshot(),
+                started_at=self._startup_start_time,
+                duration_seconds=duration,
+            )
+            # The quit flow's prompt choke point (TASK-33622.10, ADR-031):
+            # direct push_screen_wait can hang when a covered modal's
+            # dismiss() pops the top screen. No vanish toast -- the summary
+            # vanishing still means "exit now". The wait_for stays as a
+            # belt-and-braces cap.
+            await asyncio.wait_for(
+                await_quit_prompt(
+                    self, dialog, no_answer=None, vanished_notice=None
+                ),
+                timeout=duration + 2.0,
+            )
+        except asyncio.TimeoutError:
+            loguru_logger.warning(
+                "Session summary dialog did not dismiss in time; exiting anyway."
+            )
+        except Exception:
+            # Deliberately narrow beyond TimeoutError for robustness, but
+            # CancelledError is BaseException on 3.12 -- it propagates and
+            # must never be swallowed on the quit path (lessons-textual).
+            loguru_logger.warning("Session summary display failed; exiting anyway.")
 
     async def _run_approved_quit_cleanup(self) -> None:
         """Preserve quit ordering without blocking the Textual event loop."""
@@ -2078,10 +2074,26 @@ class LifecycleMixin:
                     loguru_logger.warning(
                         "Media cleanup timer could not stop during quit"
                     )
+            persistence_ok = True
             try:
                 await asyncio.to_thread(self._run_blocking_quit_persistence)
             except Exception:
+                persistence_ok = False
                 loguru_logger.warning("Blocking quit persistence failed")
+            # Fail closed: a config-read failure on the quit path must
+            # degrade to "no summary", never to a failed quit (issue #365);
+            # a failed persistence also skips the summary (spec: exit
+            # reliability wins over the farewell screen).
+            summary_enabled = False
+            if persistence_ok:
+                try:
+                    summary_enabled = bool(
+                        get_cli_setting("session_summary", "enabled", False)
+                    )
+                except Exception:
+                    summary_enabled = False
+            if summary_enabled:
+                await self._show_session_summary_before_exit()
         finally:
             self.exit()
 

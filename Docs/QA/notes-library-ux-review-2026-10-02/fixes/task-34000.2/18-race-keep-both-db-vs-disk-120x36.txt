@@ -1,0 +1,34 @@
+# 18 fixed build (live, w1-t2-2), race A resolved at 120x36: Manage sync folders -> Review -> Keep both -> Apply reviewed
+-- operations (kind|state|reason):
+  10 create_note|completed|
+   1 resolve_keep_both|second_authority_applied|
+   3 update_file|completed|
+   1 update_note|completed|
+-- roots (state|last_status_code):
+active|needs_attention
+-- notes titled quotes in DB (bound + preserved copy):
+version=7
+version=1
+length=143 last16hex=696C65792D6469736B207C2032207C0A
+length=146 last16hex=792D617070207C2031207C2061707032
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more tail two
+from the vault
+| riley-disk | 2 |
+
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more tail two
+from the vault
+| riley-app | 1 | app2
+-- file on disk (md5):
+461ae965a27a987ccd14c8a4f379c89b
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more tail two
+from the vault
+| riley-disk | 2 |

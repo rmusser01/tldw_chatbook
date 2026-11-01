@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import datetime, timezone
 
 from tldw_chatbook.Chat.console_prepared_request import PreparedProviderRequest
 from tldw_chatbook.Chat.console_project_instructions import EPHEMERAL_ORIGIN_KEY
+from tldw_chatbook.Chat.console_trace_continuation import LiveNativeContinuationCustody
+from tldw_chatbook.Chat.console_trace_errors import (
+    TraceReservationRefused,
+    TraceSurfaceChangeRefused,
+)
 from tldw_chatbook.Chat.console_trace_final_values import (
     CompletedToolTurnWitness,
     _checkpoint_semantic_value,
@@ -25,9 +32,10 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceProvenance,
     TraceProvenanceSource,
     TraceTransformKind,
+    completed_replay_source_revision_id,
     current_turn_source_revision_id,
     frozen_policy_from_provenance,
-    request_route_provenance,
+    stream_fallback_route_provenance,
     saved_response_source_revision_id,
 )
 from tldw_chatbook.Chat.console_trace_repository import (
@@ -39,6 +47,12 @@ from tldw_chatbook.Chat.console_trace_service import (
     ConsoleTraceService,
     TraceCallIdentity,
     TraceCallPersistenceError,
+    _is_rendered_system_row,
+)
+from tldw_chatbook.Chat.provider_continuation import (
+    ContinuationRestoreTarget,
+    parse_provider_continuation_json,
+    validate_continuation_restore,
 )
 from tldw_chatbook.DB.base_db import operation_owned_connection
 
@@ -47,6 +61,27 @@ REVISION_OWNER_LOOKUP_BATCH_SIZE = 256
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+@contextmanager
+def _rolled_back_refusal() -> Iterator[None]:
+    """Type a refusal raised inside the reservation transaction (TASK-33621.6).
+
+    Enter it OUTSIDE ``database.transaction()``: a ``ValueError`` reaches it
+    only after that transaction rolled back successfully (a failed rollback
+    or commit raises the database's own error, which passes through as an
+    unknown outcome), so nothing was reserved. Before this, a refused retry
+    (``trace_tool_chain_unavailable``, ``trace_revision_unavailable``) read
+    as reservation status "unknown": Cancel refused, and Retry capture
+    opened a false unknown-delivery panel.
+    """
+    try:
+        yield
+    except (TraceReservationRefused, TraceSurfaceChangeRefused):
+        raise
+    except ValueError as exc:
+        code = exc.args[0] if len(exc.args) == 1 and type(exc.args[0]) is str else ""  # noqa: E721 - refuse string subclasses at the diagnostic boundary
+        raise TraceReservationRefused(code or "trace_reservation_refused") from exc
 
 
 def _saved_revision_ids(descriptor: TraceProvenance) -> Iterator[str]:
@@ -173,6 +208,22 @@ class ConsoleTraceBoundaryFactory:
         route: object,
     ) -> ConsoleTraceCallBoundary:
         """Reverify the exact live owner's reservation without allocating a call."""
+        provenance = request.provenance
+        route_identity = getattr(route, "value", None)
+        if route is ConsoleRequestRoute.LLAMA_FALLBACK and provenance is not None:
+            original = next((item for item in provenance.metadata
+                             if type(item) is RequestRouteTraceProvenance), None)
+            if original is not None:
+                projected = stream_fallback_route_provenance(
+                    original, provider=resolution.provider,
+                    execution_key=getattr(resolution, "execution_key", ""),
+                    has_tools=bool(request.tools),
+                )
+                route_identity = projected.route.value
+                provenance = replace(provenance, metadata=tuple(
+                    projected if type(item) is RequestRouteTraceProvenance else item
+                    for item in provenance.metadata
+                ))
         try:
             if (
                 type(boundary) is not ConsoleTraceCallBoundary
@@ -181,7 +232,7 @@ class ConsoleTraceBoundaryFactory:
                 or accepted_preparation is None
                 or boundary._request != request
                 or boundary._resolution != resolution
-                or boundary.admission.route_identity != getattr(route, "value", None)
+                or boundary.admission.route_identity != route_identity
                 or boundary.dispatch_started
                 or boundary._recovery_transferred
                 or boundary.dispatch_outcome == "unknown"
@@ -190,7 +241,13 @@ class ConsoleTraceBoundaryFactory:
                 or request.semantic.provenance is None
             ):
                 raise ValueError("trace_recovery_owner")
-            with self._lock, operation_owned_connection(self.database):
+            with (
+                nullcontext()
+                if request.live_native_custody is None
+                else request.live_native_custody.scope(),
+                self._lock,
+                operation_owned_connection(self.database),
+            ):
                 with self.database.transaction(immediate=True) as cursor:
                     reserved = self._verify_owned_reservation(
                         cursor, boundary, accepted_preparation,
@@ -204,13 +261,20 @@ class ConsoleTraceBoundaryFactory:
                         segment_id=reserved.segment_id,
                         route_identity=boundary.admission.route_identity,
                         preparation_identity=new_opaque_id(),
-                        provenance=request.provenance,
+                        provenance=provenance,
                         values=tuple(request.messages_payload)
                         + tuple(
                             _checkpoint_semantic_value(group.checkpoint)
                             for group in request.continuation_groups
                         ),
                         completed_tool_turn=boundary.admission.completed_tool_turn,
+                        live_native_custody=boundary.admission.live_native_custody,
+                        live_native_ordinal=boundary.admission.live_native_ordinal,
+                        live_native_previous_call_id=(
+                            None
+                            if boundary.admission.live_native is None
+                            else boundary.admission.live_native.previous_call_id
+                        ),
                         current_turn_id=reserved.turn_id,
                         current_policy_id=reserved.policy_id,
                         reserved_call=reserved,
@@ -274,7 +338,11 @@ class ConsoleTraceBoundaryFactory:
         if requested_route is not None and requested_route != route_identity:
             if route is not ConsoleRequestRoute.LLAMA_FALLBACK:
                 raise ValueError("trace_route_mismatch")
-            fallback_route = request_route_provenance(route)
+            fallback_route = stream_fallback_route_provenance(
+                route_record, provider=_resolution.provider,
+                execution_key=getattr(_resolution, "execution_key", ""),
+                has_tools=bool(request.tools),
+            )
             provenance = replace(
                 provenance,
                 metadata=tuple(
@@ -378,8 +446,18 @@ class ConsoleTraceBoundaryFactory:
         idempotency_key = new_opaque_id()
         call_sequence = 0
         reserved = None
-        with self._lock, operation_owned_connection(self.database):
-            with self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
+        failed_call_retry = False
+        with (
+            nullcontext()
+            if request.live_native_custody is None
+            else request.live_native_custody.scope(),
+            self._lock,
+            operation_owned_connection(self.database),
+        ):
+            with (
+                _rolled_back_refusal(),
+                self.database.transaction(immediate=True) as cursor,  # type: ignore[attr-defined]
+            ):
                 unique_revision_ids = tuple(dict.fromkeys(revision_ids))
                 rows = []
                 for offset in range(
@@ -401,7 +479,20 @@ class ConsoleTraceBoundaryFactory:
                         ).fetchall()
                     )
                 by_revision = {str(row[0]): (str(row[1]), str(row[2])) for row in rows}
-                if any(revision_id not in by_revision for revision_id in revision_ids):
+                missing = [r for r in unique_revision_ids if r not in by_revision]
+                if missing:
+                    # TASK-34100.5 AC#7: name the opaque ids (no content) so
+                    # the intermittent first-send failure can be traced.
+                    from loguru import logger
+
+                    logger.warning(
+                        "Console trace reservation found no saved revision row "
+                        "(missing={}, active_missing={}, present={}/{})",
+                        missing,
+                        [r for r in active_revision_ids if r in missing],
+                        len(by_revision),
+                        len(unique_revision_ids),
+                    )
                     raise ValueError("trace_revision_unavailable")
                 current_revision_id = active_revision_ids[0]
                 conversation_id, turn_id = by_revision[current_revision_id]
@@ -489,10 +580,17 @@ class ConsoleTraceBoundaryFactory:
                         not in {
                             TraceCallState.RESPONSE_STARTED,
                             TraceCallState.COMPLETE,
+                            TraceCallState.ERROR,
                         }
                         or previous.policy_id != policy.policy_id
                         or tail is None
                         or previous.surface_node_id != tail.node_id
+                    ):
+                        raise ValueError("trace_tool_chain_unavailable")
+                    failed_call_retry = previous.state is TraceCallState.ERROR
+                    if failed_call_retry and (
+                        previous.outcome != TraceCallState.ERROR.value
+                        or previous.settled_at is None
                     ):
                         raise ValueError("trace_tool_chain_unavailable")
                 if owner is None:
@@ -507,6 +605,39 @@ class ConsoleTraceBoundaryFactory:
                     _checkpoint_semantic_value(group.checkpoint)
                     for group in request.continuation_groups
                 )
+                custody = request.live_native_custody
+                live_ordinal = None
+                if custody is not None:
+                    if (
+                        type(custody) is not LiveNativeContinuationCustody
+                        or not tool_loop
+                    ):
+                        raise ValueError("live_native_custody")
+                    custody.validate(cursor, custody)
+                    matching_groups = [
+                        index
+                        for index, group in enumerate(request.continuation_groups)
+                        if group.owner_message_id == custody.owner_message_id
+                        and group.checkpoint == custody.checkpoint
+                    ]
+                    if len(matching_groups) != 1:
+                        raise ValueError("live_native_owner")
+                    live_ordinal = matching_groups[0]
+                    parse_provider_continuation_json(continuation_values[live_ordinal])
+                    validate_continuation_restore(
+                        custody.checkpoint,
+                        ContinuationRestoreTarget(
+                            provider=getattr(_resolution, "execution_key", None)
+                            or _resolution.provider,
+                            protocol=_resolution.continuation_protocol,
+                            model=_resolution.model,
+                            api_base_url=_resolution.base_url,
+                            selected_provider=getattr(
+                                _resolution, "selected_provider", None
+                            )
+                            or _resolution.provider,
+                        ),
+                    )
                 completed_tool_turn = None
                 if (
                     route_record.route
@@ -559,6 +690,17 @@ class ConsoleTraceBoundaryFactory:
                             and preceding_revision.normalized_role == "assistant"
                             else None
                         )
+                        replay_row_count = 0
+                        for descriptor in reversed(
+                            provenance.messages_payload[: active_descriptor_index - 1]
+                        ):
+                            if (
+                                assistant_revision_id is None
+                                or completed_replay_source_revision_id(descriptor)
+                                != assistant_revision_id
+                            ):
+                                break
+                            replay_row_count += 1
                         discarded_assistant_id, discarded_followups = (
                             self.service.discarded_turn_chain(
                                 cursor,
@@ -600,6 +742,7 @@ class ConsoleTraceBoundaryFactory:
                                 terminal.call_id,
                                 assistant_revision_id,
                                 current_revision_id,
+                                replay_row_count=replay_row_count,
                                 source_revision_id=source_revision_id,
                                 discarded_assistant_message_id=discarded_assistant_id,
                                 discarded_followups=discarded_followups,
@@ -618,23 +761,89 @@ class ConsoleTraceBoundaryFactory:
                                     else None
                                 ),
                             )
-                admission, surface_boundary = (
-                    self.service.prepare_current_surface_delta(
+                try:
+                    admission, surface_boundary = (
+                        self.service.prepare_current_surface_delta(
+                            cursor,
+                            owner_id=owner.owner_id,
+                            segment_id=owner.root_segment_id,
+                            route_identity=route_identity,
+                            preparation_identity=preparation_identity,
+                            provenance=provenance,
+                            values=tuple(request.messages_payload)
+                            + continuation_values,
+                            completed_tool_turn=completed_tool_turn,
+                            live_native_custody=custody,
+                            live_native_ordinal=live_ordinal,
+                            live_native_previous_call_id=(
+                                previous.call_id if tool_loop else None
+                            ),
+                            current_turn_id=turn_id,
+                            current_policy_id=policy.policy_id,
+                            known_credentials=(
+                                getattr(_resolution, "api_key", None) or "",
+                            ),
+                        )
+                    )
+                except ValueError as exc:
+                    if exc.args != ("unsupported_surface_change",):
+                        raise
+                    # This refusal precedes reserve_call in this transaction.
+                    # A successful rollback proves no reservation was created;
+                    # an error while unwinding remains an unknown failure.
+                    raise TraceSurfaceChangeRefused() from exc
+                if failed_call_retry and (
+                    admission.descriptors or admission.replacement_range is not None
+                ):
+                    # ERROR proves a finished attempt, never authority to add
+                    # unobserved tool results or replace its request surface.
+                    raise ValueError("trace_tool_chain_unavailable")
+                if (
+                    failed_call_retry
+                    and provenance.messages_payload
+                    and _is_rendered_system_row(
+                        provenance.messages_payload[0], request.messages_payload[0]
+                    )
+                ):
+                    # Rendered system changes deliberately bypass the history
+                    # delta for normal tool calls. A failed-attempt retry must
+                    # instead match the immediately preceding call's header.
+                    header = self.repository.get_request_header(
+                        cursor, previous.request_header_id
+                    )
+                    if header is None:
+                        raise ValueError("trace_tool_chain_unavailable")
+                    rows = [
+                        item
+                        for item in header.components
+                        if item.component_kind == "rendered_system_row"
+                    ]
+                    if len(rows) > 1:
+                        raise ValueError("trace_tool_chain_unavailable")
+                    if rows:
+                        key = ("rendered_system", "artifact", rows[0].artifact_id)
+                    else:
+                        projection = self.service._surface_projection(
+                            cursor, owner.root_segment_id, tail
+                        )
+                        key = projection.entries[0][1]
+                    artifact = (
+                        self.repository.get_artifact(cursor, key[2])
+                        if key[:2] == ("rendered_system", "artifact")
+                        else None
+                    )
+                    if artifact is None or not self.service._durable_reference_matches(
                         cursor,
+                        provenance.messages_payload[0],
+                        request.messages_payload[0],
+                        key,
+                        {key: json.loads(artifact.sanitized_bytes)},
                         owner_id=owner.owner_id,
-                        segment_id=owner.root_segment_id,
-                        route_identity=route_identity,
-                        preparation_identity=preparation_identity,
-                        provenance=provenance,
-                        values=tuple(request.messages_payload) + continuation_values,
-                        completed_tool_turn=completed_tool_turn,
-                        current_turn_id=turn_id,
-                        current_policy_id=policy.policy_id,
                         known_credentials=(
                             getattr(_resolution, "api_key", None) or "",
                         ),
-                    )
-                )
+                    ):
+                        raise ValueError("trace_tool_chain_unavailable")
                 reserved = self.repository.reserve_call(
                     cursor,
                     owner_id=owner.owner_id,

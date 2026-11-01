@@ -9,9 +9,9 @@ streams, and other live authority stay behind their existing runtime seams.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 from loguru import logger
 
@@ -37,20 +37,121 @@ from tldw_chatbook.Character_Chat.emote_directives import CharacterEmoteRunSnaps
 
 def capture_change_review_admission(
     app: Any, workspace_id: str | None
-) -> tuple[tuple[Any, ...], tuple[str, ...], tuple[SkippedReviewRoot, ...]]:
-    """Read only consent-admitted roots for the owning workspace."""
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[SkippedReviewRoot, ...]]:
+    """Read only consent-admitted roots for the owning workspace.
+
+    Roots come back as ``str``, as the turn snapshot stores them, so every
+    reader compares like with like (TASK-33620.15.1.5).
+    """
     service = getattr(app, "change_review_consent_service", None)
     if service is not None:
         try:
             admission = service.admit_turn(workspace_id)
             return (
-                tuple(admission.ready_roots),
+                tuple(str(root) for root in admission.ready_roots),
                 tuple(getattr(admission, "ready_aliases", ())),
                 tuple(admission.skipped_roots),
             )
         except Exception:  # noqa: BLE001 -- review never blocks a send
             pass
     return (), (), ()
+
+
+def read_session_change_review_admission(
+    app: Any, store: Any, session_id: str
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[SkippedReviewRoot, ...]]:
+    """The one read of a session's consent-admitted Change Review roots.
+
+    The turn configuration builder, hook authority and the Environment panel /
+    Change Review accessor all ask this, so they cannot describe different
+    trees: the session's OWN workspace, its consent admission, ``str`` roots
+    (TASK-33620.15.1.5). It reads the store (one session lookup) and then the
+    consent service. The store belongs to the UI loop: a worker caller sees
+    the session's workspace as of its read, which suits the Environment
+    panel, whose stale-scope guard drops an answer the scope has since moved
+    past (TASK-33620.15.1.6). A caller that must freeze the UI loop's view --
+    turn admission's precapture -- takes the workspace id on the UI loop and
+    calls ``capture_change_review_admission``, the workspace-level read this
+    composes, on its worker instead.
+
+    Args:
+        app: Owning application services (the consent service).
+        store: The Console session store owning ``session_id``.
+        session_id: The session whose roots to read.
+
+    Returns:
+        ``(roots, aliases, skipped)``; empty when consent is off, nothing is
+        bound, or the consent service is absent or raised.
+
+    Raises:
+        KeyError: ``session_id`` is not one of the store's sessions.
+    """
+    return capture_change_review_admission(app, store.session_workspace_id(session_id))
+
+
+def session_change_review_admission_stamp(
+    app: Any, store: Any, session_id: str
+) -> tuple[Any, ...]:
+    """Name what ``read_session_change_review_admission`` reads, without reading it.
+
+    In memory only -- no registry or consent read -- so the UI loop can ask
+    where the admission read itself is too slow: the Console Environment
+    panel's stale-scope guard compares the stamp its gather worker took with
+    the current one (TASK-33620.15.1.6). Every in-app change that can alter
+    the session's admitted roots moves it: the session's workspace, a folder
+    bound or unbound (the registry's ``mutation_generation``), consent
+    toggled or a root finishing preparation (the consent service's
+    ``admission_revision``), or another consent service answering. Changes
+    made outside the app (another process, a folder removed on disk) do not.
+
+    Args:
+        app: Owning application services (registry and consent service).
+        store: The Console session store owning ``session_id``.
+        session_id: The session whose admission inputs to name.
+
+    Returns:
+        A hashable stamp; equal stamps mean no in-app change between them. An
+        unknown session stamps with no workspace rather than raising.
+    """
+    try:
+        workspace_id = store.session_workspace_id(session_id)
+    except KeyError:
+        workspace_id = None
+    registry = getattr(app, "workspace_registry_service", None)
+    service = getattr(app, "change_review_consent_service", None)
+    return (
+        workspace_id,
+        getattr(registry, "mutation_generation", None),
+        id(service),
+        getattr(service, "admission_revision", None),
+    )
+
+
+def resolve_session_workspace_roots(
+    controller: Any, session_id: str
+) -> tuple[str, ...]:
+    """Read one session's consent-admitted workspace roots, and nothing else.
+
+    The Console Environment panel and the Change Review opener ask this. It
+    used to build a whole turn configuration and keep its ``workspace_roots``,
+    which held the UI loop 0.2-1.4 s per ask (TASK-33620.15.1.3); no snapshot
+    is built for it now, with or without a turn-context provider
+    (TASK-33620.15.1.5).
+
+    Args:
+        controller: The Console chat controller owning ``session_id``.
+        session_id: The session whose workspace roots to read.
+
+    Returns:
+        The consent-admitted roots as strings.
+
+    Raises:
+        KeyError: ``session_id`` is not one of the controller's sessions.
+    """
+    roots, _aliases, _skipped = read_session_change_review_admission(
+        controller.app, controller.store, session_id
+    )
+    return roots
 
 
 def resolve_turn_tool_policy_profile_id(app: Any, workspace_id: str | None) -> str:
@@ -282,9 +383,17 @@ class ConsoleTurnConfigurationSnapshot:
     #: The workspace's named permission profile this turn resolves tool
     #: gates under; ``"default"`` keeps the single-profile behavior.
     tool_policy_profile_id: str = "default"
+    mcp_definition_capture: Literal["captured", "composition"] = "captured"
+    recovery_user_origin: object | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Detach constructor inputs even when callers bypass ``capture``."""
+        if self.mcp_definition_capture not in ("captured", "composition"):
+            raise ValueError("invalid MCP definition capture mode")
+        if self.mcp_definition_capture == "composition" and (
+            self.mcp_tool_maximum is not None or self.mcp_definition_maximum
+        ):
+            raise ValueError("composition mode requires an unresolved MCP maximum")
         object.__setattr__(self, "session_id", str(self.session_id))
         object.__setattr__(
             self,
@@ -394,6 +503,7 @@ class ConsoleTurnConfigurationSnapshot:
         provider_payload_settings: Mapping[str, Any] | None = None,
         persona_policy_rules: Sequence[Mapping[str, Any]] | None = None,
         tool_policy_profile_id: str = "default",
+        mcp_definition_capture: Literal["captured", "composition"] = "captured",
     ) -> "ConsoleTurnConfigurationSnapshot":
         """Capture detached values from mutable application-owned sources."""
         return cls(
@@ -423,6 +533,7 @@ class ConsoleTurnConfigurationSnapshot:
             provider_payload_settings=provider_payload_settings or {},
             persona_policy_rules=tuple(persona_policy_rules or ()),
             tool_policy_profile_id=tool_policy_profile_id,
+            mcp_definition_capture=mcp_definition_capture,
         )
 
     @property
@@ -449,6 +560,11 @@ class ConsoleTurnCustodyRequest:
         default=None,
         repr=False,
     )
+    # Optional exact UI capture witness; detached/custom callers retain None.
+    draft_revision: int | None = field(default=None, repr=False)
+    _pressed_inputs: Any | None = field(default=None, repr=False)
+    _pressed_stash: Any | None = field(default=None, repr=False)
+    _pressed_attachment_generation: int | None = field(default=None, repr=False)
 
 
 def _detached_configuration(
@@ -457,6 +573,7 @@ def _detached_configuration(
     """Copy an already-frozen configuration at the final-context boundary."""
     return ConsoleTurnConfigurationSnapshot(
         session_id=configuration.session_id,
+        recovery_user_origin=configuration.recovery_user_origin,
         provider_selection=configuration.provider_selection,
         scratch_space=configuration.scratch_space,
         session_settings=configuration.session_settings,
@@ -478,6 +595,7 @@ def _detached_configuration(
         provider_payload_settings=configuration.provider_payload_settings,
         persona_policy_rules=configuration.persona_policy_rules,
         tool_policy_profile_id=configuration.tool_policy_profile_id,
+        mcp_definition_capture=configuration.mcp_definition_capture,
     )
 
 
@@ -529,6 +647,9 @@ def _detached_destination(
         endpoint_identity=str(destination.endpoint_identity),
         egress_class=destination.egress_class,
         endpoint_provenance=destination.endpoint_provenance,
+        continuation_provider=destination.continuation_provider,
+        continuation_protocol=destination.continuation_protocol,
+        continuation_base_url=destination.continuation_base_url,
     )
 
 
@@ -641,13 +762,18 @@ class ConsoleTurnExecutionContext:
 
     @property
     def mcp_tool_maximum(self) -> frozenset[str] | None:
-        """Return exact MCP tool identities eligible at handoff."""
+        """Return captured MCP identities, or None for composition/legacy capture."""
         return self.configuration.mcp_tool_maximum
 
     @property
     def mcp_definition_maximum(self) -> Mapping[str, str]:
         """Exact admitted MCP definition hashes keyed by raw tool ID."""
         return self.configuration.mcp_definition_maximum
+
+    @property
+    def mcp_definition_capture(self) -> Literal["captured", "composition"]:
+        """Return whether this consumer establishes its ceiling at composition."""
+        return self.configuration.mcp_definition_capture
 
     @property
     def capabilities(self) -> Mapping[str, object]:
@@ -678,3 +804,22 @@ class ConsoleTurnExecutionContext:
     def tool_policy_profile_id(self) -> str:
         """Return the workspace's named permission profile for this turn."""
         return self.configuration.tool_policy_profile_id
+
+
+def commit_fence_configuration(
+    configuration: ConsoleTurnConfigurationSnapshot,
+) -> ConsoleTurnConfigurationSnapshot:
+    """The configuration a manual commit fence compares (TASK-33621.4).
+
+    ``capture_skill_context_maximum`` mints a fresh ``pending:`` plugin run id
+    on every capture, so comparing whole snapshots made every /rewind
+    Summarize stale whenever a plugin skill was installed. A pending id names
+    a capture, not a configuration fact; a bound run id and everything else
+    still fence.
+    """
+
+    maximum = configuration.skill_context_maximum
+    if not str(maximum.get("plugin_run_id", "")).startswith("pending:"):
+        return configuration
+    stable = {key: value for key, value in maximum.items() if key != "plugin_run_id"}
+    return replace(configuration, skill_context_maximum=MappingProxyType(stable))

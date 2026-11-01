@@ -27,7 +27,9 @@ _DEFAULT_REFERENCE_IMAGE_SUPPORT: dict[str, set[str]] = {
 #: this set and does not grant capability through the functions below for
 #: any backend outside it. Extending reference-image support to another
 #: backend means adding its id here, not repurposing the per-model map.
-REFERENCE_IMAGE_CAPABLE_BACKENDS: frozenset[str] = frozenset({"comfyui", "fal", "gemini"})
+REFERENCE_IMAGE_CAPABLE_BACKENDS: frozenset[str] = frozenset(
+    {"comfyui", "fal", "gemini"}
+)
 
 
 @dataclass(frozen=True)
@@ -47,7 +49,9 @@ class ResolvedReferenceImage:
         has_content = self.content is not None
         has_temp_path = self.temp_path is not None
         if has_content == has_temp_path:
-            raise ValueError("ResolvedReferenceImage requires exactly one of content or temp_path")
+            raise ValueError(
+                "ResolvedReferenceImage requires exactly one of content or temp_path"
+            )
 
 
 @dataclass(frozen=True)
@@ -86,7 +90,11 @@ def _normalize_model_map(value: dict[str, list[str]] | None) -> dict[str, set[st
         backend_key = _normalize_key(backend)
         if not backend_key:
             continue
-        normalized[backend_key] = {_normalize_model_family(model) for model in models if _normalize_model_family(model)}
+        normalized[backend_key] = {
+            _normalize_model_family(model)
+            for model in models
+            if _normalize_model_family(model)
+        }
     return normalized
 
 
@@ -100,7 +108,9 @@ def _resolve_supported_models(
         return set()
 
     configured_support = _normalize_model_map(
-        getattr(config, "reference_image_supported_models", None) if config is not None else None
+        getattr(config, "reference_image_supported_models", None)
+        if config is not None
+        else None
     )
     configured_models = configured_support.get(backend_key)
     if configured_models is None:
@@ -108,7 +118,10 @@ def _resolve_supported_models(
     return {
         model
         for model in configured_models
-        if any(_matches_model_family(builtin_model, model) for builtin_model in builtin_support)
+        if any(
+            _matches_model_family(builtin_model, model)
+            for builtin_model in builtin_support
+        )
     }
 
 
@@ -157,7 +170,9 @@ def resolve_reference_image_capability(
     if not backend_key:
         return ReferenceImageCapability(supported=False, reason="unsupported_model")
     if backend_key in REFERENCE_IMAGE_CAPABLE_BACKENDS:
-        return ReferenceImageCapability(supported=True, required=backend_key == "comfyui")
+        return ReferenceImageCapability(
+            supported=True, required=backend_key == "comfyui"
+        )
 
     model_key = _normalize_key(model)
     if not model_key:
@@ -167,6 +182,9 @@ def resolve_reference_image_capability(
     if not supported_models:
         return ReferenceImageCapability(supported=False, reason="unsupported_model")
 
-    if any(_matches_model_family(supported_model, model_key) for supported_model in supported_models):
+    if any(
+        _matches_model_family(supported_model, model_key)
+        for supported_model in supported_models
+    ):
         return ReferenceImageCapability(supported=True)
     return ReferenceImageCapability(supported=False, reason="unsupported_model")

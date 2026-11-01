@@ -3,6 +3,19 @@
 Mechanical traps in the task board and the plumbing around it. Cheap to avoid once
 known, expensive to rediscover. Every entry states the incident that produced it.
 
+## PowerShell validation errors need terminating semantics (TASK-35644, 2026-10-19)
+
+**Incident.** Cleanup of 20 exact completed diagnostic roots used the unsupported
+`Split-Path -LiteralPath ... -Parent` combination. Its parameter errors were
+nonterminating, so the intended parent-validation expression did not stop the
+script. All removed targets were the intended disposable roots; a corrected
+post-check verified every parent, prefix and absence. The receipt retains the
+error rather than claiming that initial validation succeeded.
+
+**What to do.** Use `$ErrorActionPreference = 'Stop'` before filesystem validation
+and `[IO.Path]::GetDirectoryName()` for an absolute path's parent. Check every exact
+target before starting a separate removal loop in the same shell.
+
 ---
 
 ## A removed worktree path can make Git operate on a parent checkout (TASK-31985, 2026-09-07)
@@ -18,6 +31,31 @@ changes, which were resumed in a self-contained local clone.
 compare its exact output with the intended checkout. Preserve active changes by
 immutable stash/patch identity outside disposable worktrees before cleanup or
 recovery. A directory path alone does not prove which repository Git will mutate.
+
+---
+
+## A stale premise can be fixed by a predecessor while its enumerated tests re-break for newer reasons (TASK-22280, 2026-10-02)
+
+**Incident.** TASK-22280 was filed 2026-08-24 against dev `983aa5878` for 12
+red migration tests caused by `add_message` writing v48's
+`assistant_generation_state` into pre-v48 historical-bootstrap fixtures. The
+next day TASK-21441 (PR #2082) landed the per-schema
+`_messages_insert_statement` fix and measured those files red-to-green. Five
+weeks later, verifying the task at dev `e92b01515f` found 8 of them red again
+— every failure traced to LATER drift, none to the filed mechanism: seeding
+now died in `soft_delete_message`/`update_message` on the v56
+`console_trace_graph_epoch` table, and the hot-writer interleave/static-guard
+tests went blind after `add_message` became a thin wrapper. Both successor
+defects were already filed (TASK-33371, TASK-33621.36). Fixing either under
+TASK-22280 would have put three tasks' hands on the same reds.
+
+**What to do.** When a task's named cause no longer reproduces at your base,
+attribute EACH enumerated red to a mechanism before designing anything: a red
+test is not evidence the filed bug is alive. Sweep the board for the defects
+you do find — if later drift already has an owner, close your task with the
+attribution and the measured timeline instead of re-fixing under a dead
+premise; the AC's "tests pass" clause gets annotated with when it was true and
+who owns the re-breakage, not silently re-ticked or left as a zombie.
 
 ---
 
@@ -254,6 +292,13 @@ the same markers, after the CLI's short summary.
 **What to do.** Run the CLI `--notes` command first (or use only the CLI's text), then
 hand-edit to elaborate — never the other order. Diff the task file after any `--notes`
 call to confirm what survived.
+
+**Another instance, 2026-10-04 (TASK-31966).** A status/plan edit discarded the
+free-form `## Evidence and scope` section, including the original frozen source
+IDs and failed latency measurements. The task diff caught it before commit. The
+historical evidence was recovered from the committed file into the CLI-owned
+plan markers. Essential evidence must live in an owned section, and every CLI
+task edit needs a diff check, not only `--notes` edits.
 
 **Second instance, 2026-09-11 (critique-10 fix wave, task-32057).** Nearly four
 years of this file saying so did not stop it. Closing out the pagers branch,
@@ -825,6 +870,27 @@ ancestor and review the exact commit count and branch-range diff.
 
 ---
 
+## A restacked commit can keep its task-file hunks and drop its code (P9 restack, 2026-10-16)
+
+**Incident.** The model-config Phase 9 branch was restacked onto Phase 8's
+final head on 2026-10-16. TASK-33001.14's four commits came through with
+their subjects intact, and the rider stayed Done with every AC ticked. Each
+one kept only its task-file (and lessons) hunks: the code, tests, ADR-012
+amendment and guide text were gone. Nothing failed, because no test of the
+dropped code was left to fail. A prep agent found it on 2026-10-17 by
+re-checking the rider against HEAD.
+
+**The check that found the extent.** For each restacked commit, compare its
+`git show --numstat` file set with the same-subject commit on the
+pre-restack backup branch. Of 78 commits compared, only this rider's had
+lost files.
+
+**What to do.** After a restack that resolved conflicts, run that comparison
+before trusting any Done rider: a matching subject and a ticked task file
+prove nothing about the code.
+
+---
+
 ## A background merge loop must hold a lock — `pkill -f` will not find its sibling
 
 **Incident.** PR #2260, 2026-08-31. I started a background merge loop
@@ -990,7 +1056,17 @@ update-branches in 70 minutes — dev moved every 20-40 minutes that evening, ag
 15-minute Fast Lane + Derived cycle — and one of those moves was my own docs-only PR
 #2401 landing first.
 
+**Queue-on recurrence (PR #3306 / TASK-37600, 2026-10-29).** Two reviewed heads
+passed every hosted check, but later dev merges introduced shared lesson/census
+conflicts. Repeated manual rebases during status checks required fresh CI and
+reset the PR's queue position when auto-merge was re-enabled. The queue sorts by
+`autoMergeRequest.enabledAt`, then PR number (`scripts/merge_queue.py`), not by
+the age of the PR or its first green run. Read the queue position before changing
+an armed PR; let the queue manage ordinary updates, and repair a conflict when
+it evicts the PR. A status check alone is not a reason to disarm and restart it.
+
 **What to do.**
+- Superseded when the merge queue is on (`gh variable get MERGE_QUEUE` = on): arm and let the queue sync; see CLAUDE.md 'Merging into dev'.
 - A BEHIND PR has exactly one path: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`
   the moment dev moves, then merge within the minute Derived reports success. The old
   "never update-branch every round" note means *do not update while checks or Qodo are
@@ -1177,3 +1253,249 @@ been copied into the repo.
 `${var:?}` (for example `rm -rf "${S:?}/${dir:?}"`) so an empty value aborts instead of
 widening the target. Do not rely on word splitting in the Bash tool, which is zsh:
 split explicitly with `${=pair}` or `read -r a b <<< "$pair"`, or use a literal list.
+
+**Recurrence (Roleplay frame B0, 2026-10-02): the empty value was a filter, not a
+path.** A CI cleanup loop had the same shape:
+`for pair in "<PR> <branch>" …; do set -- $pair; gh run list --branch "$2" … | … gh run cancel`.
+It ran in the Bash tool (zsh), so `$2` was empty again. `gh run list --branch ""` does not
+fail; it applies no branch filter and lists the repository's recent runs. The loop
+cancelled 8 in-flight CI runs on the branches of 5 other sessions. All 8 were re-run,
+but each lost its place in the queue. The `rm -rf` rule above did not help, because
+nothing here was a path. An empty argument to a *filter* widens the selection just as
+an empty path segment widens a delete.
+
+**What to do (any loop whose action is destructive or shared: cancel, delete, close,
+merge, force-push):**
+- Write it as an explicit `bash` script (`bash <<'EOF' … EOF`, or a file run with
+  `bash`) with `set -u` at the top.
+- Refuse empty arguments: `[ -n "$branch" ] || { echo "empty branch"; exit 1; }`, or
+  `${branch:?}`.
+- Cross-check the pairing at the source: the PR's `headRefName`
+  (`gh pr view <n> --json headRefName -q .headRefName`) must equal the branch you are
+  about to act on.
+- Filter twice: once in the API call (`--branch "$branch"`) and once on the result
+  (`--json databaseId,headBranch` piped to `jq 'select(.headBranch == $b)'`). Then an
+  ignored or empty server-side filter still selects nothing.
+- Dry-run first: print the run ids and their `headBranch` values, read them, and only
+  then cancel.
+## Verify QA artifacts in Git before removing scratch
+
+**TASK-33805, Console chat starts, 2026-10-02.** The QA closure commit 31bdd52356 included exact compressed verification logs and their hash manifest. The repository log ignore rule excluded all 45 readable `.log` copies, although filesystem hash and link checks passed. The reports would therefore have broken links in a fresh checkout. Explicitly staging only the manifest-listed readable copies corrected the record; all 141 manifest artifact paths were then compared with their staged Git blobs.
+
+**What to do.** Before deleting plan scratch, verify every preserved or linked artifact against the Git index or HEAD. A filesystem check alone cannot establish that an ignored artifact will survive checkout. Use an explicit file list when force-adding QA logs so unrelated ignored files stay outside the commit.
+
+## `backlog task edit --notes` replaces the notes; `--append-notes` adds (TASK-33640, 2026-10-04)
+
+**Incident.** Adding a one-paragraph update to TASK-33640 with `--notes` silently
+deleted its existing Implementation Notes: the harness write-up, the six no-key probe
+findings and the nine-item Qodo round (12 lines). Only `git diff --stat` on the task file
+showed it (`2 insertions(+), 12 deletions(-)`); the CLI printed nothing unusual.
+
+**What to do.** Use `--notes` only on a task with no notes yet. To add to a task that
+has history, use `--append-notes`. After any task edit, check `git diff --stat` on the
+file: deletions you did not intend mean the edit replaced something.
+
+## Never `git stash` inside a linked worktree
+
+Incident: during the non-console efficiency remediation branch (2026-10-06/07, 21 tasks via dispatched implementers), two separate implementers ran `git stash` inside the `/tmp/tldw-dev-review` worktree — the first popped the user's `stash@{0}` (restored correctly, verified against the 45-entry stack), the second pushed-and-popped `--keep-index` (verified intact). Both near-misses were caught only because the controller independently re-counted the stash stack afterward. `git stash` operates on the REPO-GLOBAL stash stack, shared across every worktree and the main checkout — a pop in a worktree can silently consume (or reorder) the user's own stashes from an unrelated branch.
+
+Rule: in any linked worktree, never `git stash`. To set work aside, commit to a scratch branch or leave files dirty. Controllers dispatching implementers into worktrees should carry this rule as a hard constraint in every dispatch prompt.
+## A /tmp baseline-swap backup is a snapshot — restoring it silently reverts every edit made after the backup (TASK-407, 2026-10-06)
+
+**Incident.** To A/B a test failure without touching the shared stash, the
+prescribed file-swap was used: `cp` the two modified files to
+`/tmp/wave5-g2-backup/`, `git checkout HEAD --` them, run the baseline, then
+`cp` them back. The backup was taken BEFORE a second edit (the dedup-key
+half of the fix) landed in the same files. Three later A/B rounds each
+restored the stale backup over the newer edit; nothing warned, `git status`
+was clean once the clobbered tree was committed, and the commit MESSAGE
+still described the lost change. Only the final pre-push rerun of the pin
+suite caught it (the cross-source dedup pin went red against the committed
+tree); the fix needed a follow-up commit (`f079f808d9`) and the interim
+"verified green" runs had all predated the first swap.
+
+**What to do.** Re-copy the files to the backup immediately before EACH
+`git checkout HEAD --` round (a backup is only valid for the swap it was
+taken for), or — better — once the change is validated, COMMIT it and do
+baseline A/Bs against the parent commit (`git worktree add --detach
+<dir> <base-sha>`), so the working tree is never the restore source. And
+after any restore-from-backup, `git diff` the restored files against what
+the tests last validated, not just against HEAD. A commit message is
+evidence of intent, never evidence of content: before pushing, rerun the
+task's own pin suite against the COMMITTED tree (`git stash`-free:
+`git checkout <sha> -- <files>` in a scratch worktree, or just rerun on the
+pushed candidate).
+---
+
+## A grep-verified premise can still be wrong — read the pinning tests before deleting
+
+**What happened.** 2026-09-27, simplification-cascade filings TASK-33128/33084/33082. The audit (run
+against a branch 1,872 commits behind dev) called `pipeline_loader.py` dead weight and the video
+registry's `stable_diffusion_cpp` entry phantom drift. Both claims had been **grep-verified against
+dev** — the reference counts matched. Execution still refuted them: dev's registry docstring plus two
+pinning tests document the "phantom" entry as a deliberate ADR-176 skeleton, and TASK-32628's fresh
+backup tests had adopted `PipelineLoader` as their storage-admission subject, alongside a middleware
+guard whose own docstring calls it "the deliverable, more than any single deletion". The counts were
+right; the *intent* behind them was invisible to grep. Two tasks closed refuted and one rescoped
+before any production code was touched — cheap, but only because closing happened before implementing.
+
+**What to do.** For any deletion/consolidation filing, before writing code: (1) `git log --oneline -5
+-- <module>` against dev for recent adoption; (2) read the module/class docstring; (3) read the tests
+that reference the target — a test that *pins* a structure is design intent, not dead weight.
+Reference counts verify reachability, not purpose.
+
+---
+
+## A rebase auto-merge can keep BOTH method bodies — last-def-wins runs the stale one, with no conflict markers (PR #3089, 2026-10-13)
+
+**What happened.** Rebasing TASK-22504's speech-diagnostics extraction (authored
+`fac0a2d74c`, against a pre-#3084 base whose `on_mount` started notes-sync
+ungated) onto current dev auto-merged `tldw_chatbook/app.py` **without
+conflict**: the commit's diff had closed dev's `on_mount` early and re-added a
+fully reassembled one, so the merge kept dev's gated head truncated and appended
+the commit's ungated body as a SECOND `def on_mount` in the `TldwCli` class. A
+Python class body keeps the last definition, so boot ran the ungated one — it
+read the lazy `notes_sync_runtime_owner` property on the mount leg, importing
+all five `Notes.notes_sync_*` modules before `_ui_ready`. No conflict markers,
+no runtime error, and nothing in the diff read as wrong; an orphaned `except`
+from the same mangled merge was only the first visible symptom. The ONLY signal
+was `Tests/Performance/test_ui_ready_module_census.py` going red while pure dev
+stayed green — the pinned census caught a shadowed method that nothing else
+could see.
+
+**What to do.** After any rebase over a commit that rewrote a large method body
+inside a class, count the definitions: `grep -c "def on_mount"
+tldw_chatbook/app.py` (any method that grew or moved). A count above 1 means
+the LAST body wins regardless of how plausible the merged diff looks — collapse
+to one and re-verify against the intended base version. Treat a clean
+auto-merge of a heavily edited class-body file as *unverified*, not verified,
+and trust the pinned census/ratchet tests over the shape of the diff: they are
+the one instrument that can see a silently shadowed method.
+
+**Second instance (TASK-34918, 2026-10-14).** PR #2643's merge (2026-09-12)
+left an older 204-line `ChatScreen.on_button_pressed` above the live one. This
+time the stale copy came first, so nothing misbehaved and no census caught it.
+But `test_screen_size_ratchet.py` counted it for a month, in both the line
+budget and the method budget, and that cost was part of why the ratchet went
+red. To catch the other half of this failure, run
+`ruff check --isolated --select F811 <file>` on a heavily merged class-body
+file. It flags the shadowed copy whichever copy wins, but by default only for
+names that do not start with `_`: ruff's default `dummy-variable-rgx` exempts
+every `_`-prefixed name from F811, so most of ChatScreen (mostly private
+methods) is invisible to it. The same review found a second, byte-identical copy
+of `ChatScreen._restore_collapsible_states` that the plain command did not
+report; `ruff check --isolated --select F811 --config 'lint.dummy-variable-rgx = "^_$"' <file>`
+does (identical bodies are flagged too, probed on ruff 0.16.6). An AST pass over
+the class body that lists duplicate method names (skipping property
+getter/setter pairs) is the other way to see them.
+
+## A successful append-plan can reformat the task outside its plan (PR3023, 2026-10-14)
+
+`backlog-py task edit34563.28 --append-plan` returned0 and appended the approved
+plan exactly once, but also normalized YAML indentation/date quoting and removed
+one blank separator. A postcheck that allowed only updated_date drift refused
+that output after the successful write. The preserved raw file, parsed metadata
+and exact PLAN comparison showed no other semantic changes. Root retained the
+CLI-owned date, restored the original representation/separator and completed
+the checks without another CLI call.
+
+Archive the actual output before postchecking. Treat a successful or uncertain
+mutation as already attempted: inspect the task before retrying, compare the
+exact plan append and metadata values, and preserve any formatting recovery as
+a separate snapshot. A failed postcheck is not authorization to append twice.
+
+## "Next free task id" races dev's minting — allocate with a lead buffer (PRs #3083/#3119, 2026-10-14/15)
+
+**Incident.** Four consecutive merge-queue evictions on the UI-perf PRs, all
+from the same move: file tasks at "next free id", then get evicted by the
+`Backlog task IDs are unique` required check because dev minted the same ids
+before the PR landed. The chain: 34948-34952 renumbered to next-free
+34953-34967 -> 34949-34951 collided (dev's round-5 filings) -> renumbered to
+34968-34983 -> 34991/34992 collided -> renumbered to 35026/35027 -> collided
+again 94 minutes after that push. dev mints ids continuously across active
+sessions (~2/hour over that window), so a queue-bound branch races the minting
+from the moment it files a task. The allocation that finally survived used a
++30 lead (35058/35059) — roughly 15 hours of headroom at the observed rate.
+
+**What to do.** Never eyeball `ls backlog/tasks/` for a free id on a branch
+that will ride the merge queue. Allocate with a lead buffer:
+`python scripts/next_backlog_task_ids.py N [--buffer B]` (TASK-35131) scans
+all three id-resolving directories (`tasks/`, `completed/`,
+`archive/tasks/` — archiving does not free an id) and prints N ids starting
+at max+30. If allocating by hand, the same lead applies: max across ALL three
+directories, plus 30.
+
+## A flaky gated test gets fixed inside every PR it blocks — search dev by the code, not the task id (PR #3064 vs #3057, 2026-10-19)
+
+**Incident.** `test_real_service_create_deck_select_deck_and_add_card_in_local_mode`
+(UI PR lane) flaked on loaded runners and blocked unrelated PRs in the merge
+queue. Two sessions fixed it independently. PR #3057 — a *Settings* model-config
+PR, TASK-33007 — carried `fix(study): one #card-list rebuild at a time, and the
+gated test waits for the settled list` (2026-10-09 21:54 PDT), then more Study
+literal-text commits, and merged 2026-10-16. PR #3064 (TASK-34751) was opened
+the next day with its own single-writer rule for the same list. Neither task id
+names the other, so the "search for in-flight work by task id" check above found
+nothing. The overlap surfaced only on 2026-10-19: rebased onto dev, #3064 kept
+only its backlog commit (its three fix commits did not survive the replay), and
+the review fixes queued for that branch referred to code that no longer existed.
+
+**What to do.** When the test you are fixing is a gate that blocks other
+people's PRs, assume they are fixing it too. Before designing, and again before
+resuming an interrupted branch, search dev by the code: `git log origin/dev
+-S'<symbol you change>' -- <file>` and `git log origin/dev --oneline --
+<test file>`. After a rebase, compare `git log --oneline origin/dev..HEAD`
+with the pre-rebase list; a commit missing from it was dropped against what dev
+already carries, and the PR's scope has changed.
+
+---
+
+## An AC restated to fit your own trade-off is not met until the owner says so (TASK-33620.15.4, 2026-10-24)
+
+**Incident.** TASK-33620.15.4's AC#2 asked for no database reads on the UI loop
+during the Console's poll ticks and explicit syncs. The owner's 2026-10-23 rework
+decision said to keep the off-loop reads and to make sure sends were never slower.
+Live rounds showed that the off-loop reads slowed first sends: each one opened its
+own SQLite connection, and first sends reached the provider 23 ms later, paired.
+The rework therefore kept three reads on the loop during a send's start, rewrote
+AC#2 to include that exception, ticked it, and set the task Done. The implementer's
+own report said the exception "needs the owner's OK". The task file did not say
+so, and read as settled. The pre-merge review blocked on it: the original AC was
+unmet, and it was being claimed met under a rewrite nobody had approved. The
+trade itself looked justified, at about 5 ms of loop reads for about 66 ms of
+first-send latency.
+
+**What to do.** A restatement that you chose because of a trade-off you measured
+is a proposal, not a result. Write the restated text under an "Awaiting the owner"
+marker, leave the box unchecked, and keep the task In Progress. Put the options
+and their measured costs where the owner reads them, so one line answers it. Do
+the same for any AC that a sibling AC quietly loosens: here AC#8's two-interval
+hold had also loosened AC#5's "one poll interval" freshness, and nothing said so.
+
+
+
+## Fetch the live target before diagnosing stale PR mergeability
+
+PR #3251 (2026-10-26): its REST/GraphQL base snapshot still showed `7a5e2513c5` after dev had merged PR #3234 as `e554f25812`. Comparing the feature branch against that old snapshot correctly said zero behind, but did not establish that it was current with live dev. A documentation push did not fix the reported conflict; reopening refreshed the base snapshot, and fetching the actual dev ref exposed shared census conflicts. Rebase preserved every reviewed product/test blob while retaining both census tails. Before treating a dirty PR as a GitHub calculation bug, fetch the live target and compare against that ref (or read `git/ref/heads/dev` directly); the PR base snapshot is not proof of the current target.
+
+## A successful CLI edit can have a truncated piped task display
+
+**TASK-32695, managed plugins closeout, 2026-10-17.** The Backlog edit
+exited zero and correctly wrote Done, all14 acceptance checks, final notes and
+plan step62. The subsequent `task 32695 --plain` also exited zero, but Python
+`capture_output=True` retained exactly65,536 stdout bytes, stopping partway
+through the long plan before the new step or implementation notes. An exact
+readback assertion failed. Repeating only that read with stdout directed to a
+regular file produced all80,287 bytes and verified both exact sections; the
+original edit was not repeated. Both outputs and the failed assertion remain
+in this plan's evidence workspace. This establishes the observed pipe/display
+limit; it does not establish its underlying runtime cause.
+
+**What to do.** After a large task edit, verify the saved Markdown as well as
+the CLI exit. If a captured display ends mid-section, preserve it and direct
+a read-only CLI invocation's stdout to a regular file before comparing the
+full notes and plan. Do not repeat a successful edit to repair its display: an
+append-plan operation could duplicate steps.
+
+## Bound catalog output by fields, not lines (PR3290 CI repair, 2026-10-29)
+
+A root investigation used Get-Content -TotalCount4 on its single-line52MB task-catalog JSON. The line limit emitted the entire corpus and the tool truncated it, producing noisy unusable output. Load the JSON in Python and print only selected IDs/titles/counts or bounded excerpts; keep the corpus private. A line count is not a size bound for machine-generated single-line data.

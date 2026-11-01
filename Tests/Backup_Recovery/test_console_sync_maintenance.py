@@ -19,6 +19,8 @@ async def main():
     )
     for name in (
         '_record_ui_worker_started', '_record_ui_worker_finished',
+        '_sync_console_rail_and_controls', '_sync_console_settings_recovery_surfaces',
+        '_sync_console_live_work_readiness_rows',
         '_sync_console_chat_core_state', '_sync_console_changed_files_if_scope_changed',
         '_current_console_rail_state', '_sync_console_control_bar',
         '_sync_console_settings_summary', '_sync_console_mode_bar',
@@ -27,7 +29,10 @@ async def main():
     ):
         setattr(screen, name, Mock())
     screen._message = SimpleNamespace(reconcile_console_speech_context=Mock())
-    screen._session = SimpleNamespace(_sync_console_session_draft=Mock())
+    screen._session = SimpleNamespace(_sync_console_session_draft=Mock(), schedule_manual_read_acknowledgement=Mock())
+    screen._character_context = SimpleNamespace(refresh_if_scope_changed=AsyncMock())
+    from contextlib import nullcontext
+    screen._workspace = SimpleNamespace(tick_workspace_build_scope=nullcontext)
     screen._retrieval = SimpleNamespace(
         _warm_console_effective_scope_cache_if_stale=AsyncMock(),
         _refresh_active_dictionaries_summary_if_scope_changed=AsyncMock(),

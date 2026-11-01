@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -63,6 +64,7 @@ class ExecutionRecord:
     unknown_argument_count: int
     result_type: str
     result_size: int
+    definition_hash: str | None = None
 
 
 def _result_metadata(result: Any) -> tuple[str, int]:
@@ -114,6 +116,7 @@ def build_record(
     registered_argument_names: set[str] | tuple[str, ...] | list[str] | None = None,
     result: Any = None,
     decision: str = "allowed",
+    definition_hash: str | None = None,
 ) -> ExecutionRecord:
     """Build a timestamped record containing operational metadata only.
 
@@ -132,6 +135,7 @@ def build_record(
         result: Result used only for its type and top-level size.
         decision: Permission decision (for example, "allowed", "approved",
             or "approved-session").
+        definition_hash: Optional SHA-256 fingerprint of the reviewed tool definition.
 
     Returns:
         A frozen metadata-only ExecutionRecord safe to persist.
@@ -150,22 +154,31 @@ def build_record(
         status=safe_metadata_token(status or ("success" if ok else "error")),
         duration_ms=max(0, int(duration_ms)),
         error_category=(
-            safe_metadata_token(error_category)
-            if error_category is not None
-            else None
+            safe_metadata_token(error_category) if error_category is not None else None
         ),
         exception_type=(
-            safe_metadata_token(exception_type)
-            if exception_type is not None
-            else None
+            safe_metadata_token(exception_type) if exception_type is not None else None
         ),
-        status_code=(
-            max(0, int(status_code)) if status_code is not None else None
-        ),
+        status_code=(max(0, int(status_code)) if status_code is not None else None),
         argument_names=argument_names,
         unknown_argument_count=unknown_argument_count,
         result_type=result_type,
         result_size=result_size,
+        definition_hash=_definition_fingerprint(definition_hash, server_key, tool_name),
+    )
+
+
+def _definition_fingerprint(value: Any, server_key: Any, tool_name: Any) -> str | None:
+    """Keep canonical fingerprints only when audit identities remain exact."""
+    if any(
+        identity == "invalid" or safe_metadata_token(identity) != identity
+        for identity in (server_key, tool_name)
+    ):
+        return None
+    return (
+        value
+        if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)
+        else None
     )
 
 
@@ -228,9 +241,7 @@ class MCPExecutionLog:
                 application_owned_directory=self.path.parent,
             ) as handle:
                 handle.write(encoded_line.decode("utf-8"))
-            self._remember_migration(
-                self.path, (active_payload or b"") + encoded_line
-            )
+            self._remember_migration(self.path, (active_payload or b"") + encoded_line)
 
     @mcp_sources.guarded
     def read_recent(self, limit: int = 200) -> list[dict[str, Any]]:
@@ -326,16 +337,12 @@ class MCPExecutionLog:
                 }
             )
 
-        unknown_argument_count = cls._nonnegative_int(
-            raw.get("unknown_argument_count")
-        )
+        unknown_argument_count = cls._nonnegative_int(raw.get("unknown_argument_count"))
         legacy_arguments = raw.get("arguments")
         if isinstance(legacy_arguments, dict):
             # Legacy rows lack the schema required to distinguish registered
             # names. Count every supplied key and discard every key/value.
-            unknown_argument_count = max(
-                unknown_argument_count, len(legacy_arguments)
-            )
+            unknown_argument_count = max(unknown_argument_count, len(legacy_arguments))
             argument_names = []
 
         error_category = raw.get("error_category")
@@ -381,6 +388,17 @@ class MCPExecutionLog:
             "unknown_argument_count": unknown_argument_count,
             "result_type": safe_metadata_token(result_type or "none"),
             "result_size": result_size,
+            **(
+                {"definition_hash": fingerprint}
+                if (
+                    fingerprint := _definition_fingerprint(
+                        raw.get("definition_hash"),
+                        raw.get("server_key"),
+                        raw.get("tool_name"),
+                    )
+                )
+                else {}
+            ),
         }
 
     @staticmethod
@@ -450,9 +468,7 @@ class MCPExecutionLog:
                 continue
             if isinstance(decoded, dict):
                 rows.append(self._metadata_only_payload(decoded))
-        sanitized = b"".join(
-            (json.dumps(row) + "\n").encode("utf-8") for row in rows
-        )
+        sanitized = b"".join((json.dumps(row) + "\n").encode("utf-8") for row in rows)
         if sanitized != raw:
             atomic_private_write_bytes(
                 path,
@@ -461,3 +477,8 @@ class MCPExecutionLog:
             )
         self._remember_migration(path, sanitized)
         return sanitized
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("append", MCPExecutionLog.append),
+)

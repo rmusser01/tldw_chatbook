@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                       *
+                                                                                        ·                   ·
+           ·                                        •    ·                                                                     •
+                                        *                                     •      *
+                                                            •                                 •                                     •       ·         ·
+        *                  ·             ·                ·  •
+                                                                                                                        ·
+                 ·                             ┌────────────────────────────────────────────────────────────────┐          *
+                                               │                                                                │                  •
+                                               │  Get started                                                   │
+                            *                  │                                                                │
+                                  •            │  A provider is the AI service that answers your messages —     │                      ·
+                                           ·   │  for example OpenAI, Anthropic, or a server running on this    │                          •                  •
+                                               │  computer.                                                     │                       •
+                                               │                                                                │                •      ·      •
+                     ·                         │  1. ● Connect a provider (API key or local server)             │   •*                          •
+                     ·  *                      │       Not ready · no key                                       │                           ·      *
+            *             •                    │  2. ○ Pick a model                                             │    •
+                                               │  3. ○ Send your first message  Composer unlocks after setup    │
+              *  ·                      *      │                                                                │
+     •       •                                 │  ┃───────────────────┃                                         │     *
+                            ·                  │  ┃  Set up provider  ┃                                         │·      ·                          *•
+                                 ·  ·        * │  ┃───────────────────┃                                         │        •           •·
+                                               │                                                                │                       •          ·
+          •                                    │  ╭───────────────────────────╮                                 │             ·                       •
+     •                                         │  │  Write a note in Library  │                                 │*              *
+             *                                 │  ╰───────────────────────────╯                                 │
+                  •                     •      │                                                                │          *                                 ·
+                          ·              ·     │  ╭───────────────────────────────────────────╮                 │              •             ·
+                                               │  │  Use detected llama.cpp (127.0.0.1:9099)  │                 │                                            •
+         •       •                             │  ╰───────────────────────────────────────────╯                 │                                             •
+            *                                  │                                                                │                                   •
+      *                                        └────────────────────────────────────────────────────────────────┘       *        *                  *         •
+         •                                                   · •                 •                                          ·                                ·
+                       ·        *           *                    *                                      •                    ·
+                                                                     ·
+                •
+     ·                              •                                              ·        ·
+                                                *                      •                                   •   ·                             ·            *   *
+    ·  *           ·                                      ·                         ·     ·              •                    •   •
+
+  Ctrl+Shift+F focus | Enter continue setup | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+P · Ctrl+Q

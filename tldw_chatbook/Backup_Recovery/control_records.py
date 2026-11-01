@@ -26,9 +26,9 @@ from .bootstrap import (
     _records,
     _registry,
     _strings,
+    _validate_ancestry_record,
 )
 from .native_files import (
-    create_private_directory,
     flush_directory,
     pinned_directory,
     publish_new,
@@ -37,6 +37,8 @@ from .profile_paths import lexical_path
 from .qualification import qualified_for
 
 UNBOUND_NAMESPACE = "bootstrap.unbound"
+_DIRECTORY_CREATION_INTENT = ".tldw-bootstrap-directory-create.pending"
+_ANCESTRY_RECORD = "ancestry-settled.json"
 
 
 class _Pending(BaseModel):
@@ -87,14 +89,41 @@ def _enrollment(authority: Admission, *, session=None, names=()):
         raise RecoveryRequired("close_unenrolled_clients_and_restart") from None
 
 
+def _require_settled_ancestry(root: Path) -> None:
+    """Refuse surviving creation intents without writing unchanged ancestors."""
+    if root == Path(root.anchor):
+        return
+
+    def require_settled(parent: int) -> None:
+        try:
+            os.stat(_DIRECTORY_CREATION_INTENT, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        raise RecoveryRequired("bootstrap_creation_unsettled")
+
+    try:
+        # Check every existing ancestor in one nofollow walk, rather than
+        # repeatedly reopening the entire chain for each successive parent.
+        with pinned_directory(root.parent, _visit=require_settled):
+            pass
+    except FileNotFoundError:
+        pass  # Existing ancestors were checked before a missing descendant.
+
+
 def _ensure(root: Path) -> None:
     """Registration only: create missing private ancestors, never fix existing ones."""
+    _require_settled_ancestry(root)
     if not root.exists():
         _ensure(root.parent)
-        try:
-            create_private_directory(root)
-        except FileExistsError:
-            pass
+        with pinned_directory(root.parent) as parent:
+            Admission._write_new_record(
+                parent, _DIRECTORY_CREATION_INTENT, b"bootstrap directory creation\n"
+            )
+            flush_directory(parent)
+            os.mkdir(root.name, mode=0o700, dir_fd=parent)
+            flush_directory(parent)
+            os.unlink(_DIRECTORY_CREATION_INTENT, dir_fd=parent)
+            flush_directory(parent)
     with pinned_directory(root) as parent:
         if os.fstat(parent).st_uid != os.geteuid() or os.fstat(parent).st_mode & 0o077:
             # Ancestors may be normal trusted home/config dirs; only final bootstrap
@@ -111,6 +140,35 @@ def _write(root: Path, name: str, data: bytes) -> None:
         flush_directory(parent)
 
 
+def _establish_ancestry(root: Path) -> None:
+    """Certify settled registration, never adopting an unresolved legacy fence."""
+    pending, _ = _records(root)
+    with pinned_directory(root) as parent:
+        try:
+            receipt = _read(parent, _ANCESTRY_RECORD)
+        except FileNotFoundError:
+            pass
+        else:
+            _validate_ancestry_record(root, parent, receipt)
+            return
+        if pending or any(name.startswith("pending-") for name in os.listdir(parent)):
+            raise RecoveryRequired("bootstrap_ancestry_unverified")
+        info = os.fstat(parent)
+        Admission._write_new_record(
+            parent,
+            _ANCESTRY_RECORD,
+            json.dumps(
+                {
+                    "version": 1,
+                    "root_inode": info.st_ino,
+                    "root_device": info.st_dev if os.name == "nt" else None,
+                    "root_path": os.path.normcase(str(root.resolve(strict=True))),
+                }
+            ).encode(),
+        )
+        flush_directory(parent)
+
+
 def admission_authority(bootstrap_root: Path) -> Admission:
     """Initialize only qualified fixed authority, outside every replacement target."""
     existing = bootstrap_root.parent
@@ -120,7 +178,7 @@ def admission_authority(bootstrap_root: Path) -> Admission:
     if not allowed:
         raise RecoveryRequired(reason)
     _ensure(bootstrap_root)
-    _records(bootstrap_root)
+    _establish_ancestry(bootstrap_root)
     marker = bootstrap_root / "unbound-owner"
     created_marker = False
     if not marker.exists():
@@ -155,7 +213,8 @@ def _existing_admission_authority(bootstrap_root):
                     or entry.roots != [str(marker)]
                     or entry.pending is not None
                     or entry.proposed
-                    or not authority._tokens((marker,)) <= set(entry.historical)
+                    or not authority._tokens((marker,))
+                    <= bootstrap.identity_view(entry.historical)
                 ):
                     raise RecoveryRequired("recovery_scope_uncertain")
         return authority
@@ -235,7 +294,7 @@ def register_pending(
     if not allowed:
         raise RecoveryRequired(reason)
     _ensure(bootstrap_root)
-    _records(bootstrap_root)
+    _establish_ancestry(bootstrap_root)
     _write(
         bootstrap_root,
         "pending-" + _key(operation_id) + ".json",
@@ -942,6 +1001,8 @@ def _config_recovery_profiles(journal, prepared, plan, records):
                     raise ValueError("invalid_profile")
                 if name not in updates:
                     profiles.append(value)
+            elif name == _ANCESTRY_RECORD:
+                _validate_ancestry_record(root, parent, record)
             elif name.startswith("pending-"):
                 value = _Pending.model_validate(record)
                 if (

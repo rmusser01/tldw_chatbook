@@ -314,6 +314,63 @@ def console_messages_from_conversation_tree(
     return messages
 
 
+def _refresh_console_message_parents(
+    nodes: Sequence[ConsoleChatMessage], rows: Sequence[Mapping[str, Any]]
+) -> None:
+    """Mutate current durable parents, keeping absent truly-empty rows transparent.
+
+    Unresolved or malformed ancestry leaves the supplied structural link intact.
+    Only successfully resolved skipped chains are cached, within this one refresh.
+    """
+    raw_by_id = {str(row["id"]): row for row in rows if row.get("id") is not None}
+    retained = {
+        str(node.persisted_message_id)
+        for node in nodes
+        if node.persisted_message_id is not None
+    }
+    resolved: dict[str, str | None] = {}
+    for node in nodes:
+        if node.persisted_message_id is None:
+            continue
+        node_id = str(node.persisted_message_id)
+        row = raw_by_id.get(node_id)
+        if row is None:
+            continue
+        parent = (
+            str(row["parent_message_id"])
+            if row.get("parent_message_id") is not None
+            else None
+        )
+        visited = {node_id}
+        skipped: list[str] = []
+        while True:
+            if parent in visited:
+                break
+            if parent is None or parent in retained:
+                node.parent_message_id = parent
+                for ancestor in skipped:
+                    resolved[ancestor] = parent
+                break
+            if parent in resolved:
+                parent = resolved[parent]
+                continue
+            ancestor = raw_by_id.get(parent)
+            if ancestor is None or (
+                bool(str(ancestor.get("content") or ""))
+                or isinstance(ancestor.get("image_data"), (bytes, bytearray))
+                or ancestor.get("assistant_generation_state") is not None
+                or ancestor.get("provider_continuation_json") is not None
+            ):
+                break
+            visited.add(parent)
+            skipped.append(parent)
+            parent = (
+                str(ancestor["parent_message_id"])
+                if ancestor.get("parent_message_id") is not None
+                else None
+            )
+
+
 async def load_console_conversation_tree(
     app: Any, conversation_id: str
 ) -> Mapping[str, Any] | None:
@@ -554,6 +611,7 @@ async def hydrate_console_session(
     target_scope_type: str | None = None,
     target_workspace_id: str | None = None,
     activate: bool = True,
+    session_id: str | None = None,
     prepared_data: ConsoleConversationHydrationData | None = None,
 ) -> Any:
     """Create a Console session from a persisted tree.
@@ -682,6 +740,7 @@ async def hydrate_console_session(
         settings = replace(settings, character_label=character_name or "")
     prior_active_session_id = store.active_session_id
     session = store.restore_persisted_session(
+        session_id=session_id,
         title=title,
         workspace_id=workspace_id,
         persisted_conversation_id=target,
@@ -702,6 +761,7 @@ async def hydrate_console_session(
         character_system_template=roleplay_context.character_system_template,
         **({"prepared_data": prepared_data} if prepared_data is not None else {}),
         activate=False,
+        prepare_progress=False,
     )
     session.persona_system_template = roleplay_context.persona_system_template
     # Opening a saved chat is not a use of it. Keep the row's last change as
@@ -711,6 +771,12 @@ async def hydrate_console_session(
     if stored_updated_at is not None:
         session.updated_at = stored_updated_at.isoformat()
     try:
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        try:
+            await store.prepare_progress_inbox_owned(session.id)
+        except MessageError:
+            pass  # Saved report refusal does not invalidate the native chat.
         await store.hydrate_session_library_policy(session.id)
         await store.reconcile_pending_workspace_projection(session.id)
         if activate:
@@ -723,3 +789,26 @@ async def hydrate_console_session(
         )
         raise
     return session
+
+
+def restored_project_instruction_state(
+    persistence, persisted_conversation_id, initial_project_instruction_state
+):
+    """Decode existing durable controls without publishing a restored session."""
+    from .console_project_instructions import (
+        ProjectInstructionControlState,
+        decode_project_context_json,
+    )
+
+    project_instruction_state = ProjectInstructionControlState.legacy_disabled()
+    getter = getattr(persistence, "get_conversation_console_project_context", None)
+    if callable(getter):
+        try:
+            raw_project_context = getter(conversation_id=str(persisted_conversation_id))
+        except Exception:  # noqa: BLE001 - preserve existing durable-control fallback
+            logger.warning("project_instruction_state_read_failed")
+        else:
+            project_instruction_state = decode_project_context_json(raw_project_context)
+    if initial_project_instruction_state is not None:
+        project_instruction_state = initial_project_instruction_state
+    return project_instruction_state

@@ -67,6 +67,7 @@ import errno
 import hashlib
 import fnmatch
 import json
+import sys
 import os
 import re
 import tempfile
@@ -75,7 +76,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from types import MappingProxyType
+from types import FunctionType, MappingProxyType
 from typing import Any, Callable, Iterator, Literal, Mapping
 
 from loguru import logger
@@ -87,6 +88,11 @@ from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 SCHEMA_VERSION = 1
 STORE_STATES: tuple[str, ...] = ("allow", "ask", "deny")
 DEFAULT_GLOBAL = "ask"
+#: TASK-18928: optional top-level map of suggestion dismissals, keyed by
+#: ``"<server_key>::<tool_name>"`` -> dismissed-at ISO timestamp. Pure
+#: bookkeeping for the "Always allow" suggestion surface; never consulted
+#: by permission resolution. Omitted from the payload while empty.
+SUGGESTION_DISMISSALS_KEY = "suggestion_dismissals"
 #: Sentinel key set only by _fail_closed_payload() to mark a store whose
 #: policy file could not be READ; raw getters deny on it (TASK-32806.3).
 _UNREADABLE_MARKER = "__unreadable__"
@@ -187,6 +193,16 @@ def profile_policy_digest(profile: Mapping[str, Any]) -> str:
         allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+def profile_policy_chain_digest(payload: Mapping[str, Any], profile_id: str) -> str:
+    """Bind the selected policy and the same fallback chain resolution uses."""
+    profiles = _as_mapping(payload.get("profiles"))
+    chain = [
+        (chain_id, profile_policy_digest(_as_mapping(profiles.get(chain_id))))
+        for chain_id in _profile_chain_ids(payload, profile_id)
+    ]
+    return hashlib.sha256(json.dumps(chain, separators=(",", ":")).encode()).hexdigest()
 
 
 def _resolved_path_lock(path: Path) -> threading.RLock:
@@ -526,7 +542,11 @@ def _validate_strict_profile(profile: Mapping[str, Any], *, is_default: bool) ->
 
 def _validate_strict_payload(payload: Any) -> bool:
     if not isinstance(payload, Mapping) or set(payload) - {
-        "schema_version", "kill_switch", "profiles", "updated_at"
+        "schema_version",
+        "kill_switch",
+        "profiles",
+        "updated_at",
+        SUGGESTION_DISMISSALS_KEY,
     }:
         return False
     if type(payload.get("schema_version")) is not int or payload.get(
@@ -536,6 +556,10 @@ def _validate_strict_payload(payload: Any) -> bool:
     if not isinstance(payload.get("kill_switch"), bool) or not isinstance(payload.get("profiles"), Mapping):
         return False
     if "updated_at" in payload and not isinstance(payload["updated_at"], str):
+        return False
+    if SUGGESTION_DISMISSALS_KEY in payload and not _is_dismissal_map(
+        payload[SUGGESTION_DISMISSALS_KEY]
+    ):
         return False
     profiles = payload["profiles"]
     if _DEFAULT_PROFILE_ID not in profiles:
@@ -556,6 +580,7 @@ def _validate_profile_inventory_payload(payload: Any) -> bool:
         "kill_switch",
         "profiles",
         "updated_at",
+        SUGGESTION_DISMISSALS_KEY,
     }:
         return False
     if (
@@ -568,6 +593,10 @@ def _validate_profile_inventory_payload(payload: Any) -> bool:
     ):
         return False
     if "updated_at" in payload and not isinstance(payload["updated_at"], str):
+        return False
+    if SUGGESTION_DISMISSALS_KEY in payload and not _is_dismissal_map(
+        payload[SUGGESTION_DISMISSALS_KEY]
+    ):
         return False
 
     profiles = payload["profiles"]
@@ -665,7 +694,21 @@ def _normalize_payload_shape(payload: dict[str, Any]) -> dict[str, Any]:
     for named in profiles.values():
         if isinstance(named, Mapping):
             named["servers"] = _as_mapping(named.get("servers"))
+    # TASK-18928: a hand-corrupted suggestion-dismissal map is nuisance
+    # data, not policy -- drop it in place rather than treating the file
+    # as corrupt (same rationale as the ``servers`` coercion above).
+    dismissals = payload.get(SUGGESTION_DISMISSALS_KEY)
+    if dismissals is not None and not _is_dismissal_map(dismissals):
+        del payload[SUGGESTION_DISMISSALS_KEY]
     return payload
+
+
+def _is_dismissal_map(value: Any) -> bool:
+    """Return whether ``value`` is a valid ``suggestion_dismissals`` map."""
+    return isinstance(value, Mapping) and all(
+        isinstance(key, str) and bool(key) and isinstance(when, str)
+        for key, when in value.items()
+    )
 
 
 def _profile_chain_ids(payload: dict[str, Any], profile_id: str) -> list[str]:
@@ -1142,10 +1185,17 @@ class MCPPermissionStore:
         *,
         expected_profile_digest: str | None,
         expected_revision: int | None,
+        expected_policy_chain_digest: str | None = None,
     ) -> bool:
         """Apply one field edit with profile-scoped CAS and lifecycle upkeep."""
         with self.mutation_fence():
             payload = self.load()
+            if (
+                expected_policy_chain_digest is not None
+                and profile_policy_chain_digest(payload, profile_id)
+                != expected_policy_chain_digest
+            ):
+                raise ProfileMutationError("stale_policy_chain")
             profiles = payload.setdefault("profiles", {})
             existing = profiles.get(profile_id)
             if isinstance(existing, Mapping):
@@ -1403,6 +1453,32 @@ class MCPPermissionStore:
         """
         return sorted(_as_mapping(self.load().get("profiles")).keys())
 
+    @mcp_sources.guarded
+    def catalog_fingerprint(self) -> tuple:
+        """Identify exactly what :meth:`load` would return now, without parsing.
+
+        TASK-33620.15.1: the Console reuses a run's composed MCP catalog while
+        nothing it read has changed. This passes the same admission scope,
+        path fence and recovery readability check as ``load()`` (a refusal
+        raises as ``load()`` would) and hashes the bytes ``load()`` would parse.
+
+        Returns:
+            ``("fresh",)`` when ``load()`` returns the default payload without
+            reading (an inactive store or no file); otherwise ``("file",
+            sha256, stamp)``, ``stamp`` being the read file's ``(st_dev,
+            st_ino, st_size, st_mtime_ns, st_ctime_ns)``.
+        """
+        from .recovery_activation import readable
+
+        with self.mutation_fence():
+            if not readable(self, "mcp.permissions") or not self.path.exists():
+                return ("fresh",)
+            with mcp_sources.reader(self) as handle:
+                raw = handle.buffer.read()
+                info = os.fstat(handle.fileno())
+        stamp = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        return ("file", hashlib.sha256(raw).hexdigest(), stamp)
+
     # -- kill switch -----------------------------------------------------
 
     @mcp_sources.guarded
@@ -1430,6 +1506,70 @@ class MCPPermissionStore:
             if payload.get("kill_switch") is normalized:
                 return False
             payload["kill_switch"] = normalized
+            return True
+
+        self._mutate_locked(change)
+
+    # -- suggestion dismissals (TASK-18928) ----------------------------------
+
+    def list_suggestion_dismissals(self) -> dict[str, str]:
+        """Return a copy of the dismissed-suggestion map (tool id -> ISO ts).
+
+        Pure bookkeeping for the approval-history suggestion surface; never
+        consulted by permission resolution.
+        """
+        dismissals = self.load().get(SUGGESTION_DISMISSALS_KEY)
+        if not _is_dismissal_map(dismissals):
+            return {}
+        return dict(dismissals)
+
+    @mcp_sources.guarded
+    def dismiss_suggestion(self, server_key: str, tool_name: str) -> None:
+        """Remember that the user dismissed this tool's allow suggestion.
+
+        Args:
+            server_key: The suggestion's server key.
+            tool_name: The suggestion's tool name.
+        """
+        tool_id = f"{server_key}::{tool_name}"
+
+        def change(payload: dict[str, Any]) -> bool:
+            dismissals = payload.setdefault(SUGGESTION_DISMISSALS_KEY, {})
+            if not _is_dismissal_map(dismissals):
+                dismissals = {}
+                payload[SUGGESTION_DISMISSALS_KEY] = dismissals
+            stamp = _iso_utc_now()
+            if dismissals.get(tool_id) == stamp:
+                return False
+            dismissals[tool_id] = stamp
+            return True
+
+        self._mutate_locked(change)
+
+    @mcp_sources.guarded
+    def restore_suggestion(self, server_key: str, tool_name: str) -> None:
+        """Forget one dismissal so the suggestion may be proposed again."""
+        tool_id = f"{server_key}::{tool_name}"
+
+        def change(payload: dict[str, Any]) -> bool:
+            dismissals = payload.get(SUGGESTION_DISMISSALS_KEY)
+            if not _is_dismissal_map(dismissals) or tool_id not in dismissals:
+                return False
+            del dismissals[tool_id]
+            if not dismissals:
+                del payload[SUGGESTION_DISMISSALS_KEY]
+            return True
+
+        self._mutate_locked(change)
+
+    @mcp_sources.guarded
+    def clear_suggestion_dismissals(self) -> None:
+        """Forget every dismissal (the surface's "clear" review action)."""
+
+        def change(payload: dict[str, Any]) -> bool:
+            if SUGGESTION_DISMISSALS_KEY not in payload:
+                return False
+            del payload[SUGGESTION_DISMISSALS_KEY]
             return True
 
         self._mutate_locked(change)
@@ -1604,6 +1744,7 @@ class MCPPermissionStore:
         profile_id: str = _DEFAULT_PROFILE_ID,
         expected_profile_digest: str | None = None,
         expected_revision: int | None = None,
+        expected_policy_chain_digest: str | None = None,
     ) -> None:
         """Set or clear a tool-level permission override.
 
@@ -1622,6 +1763,8 @@ class MCPPermissionStore:
                 ``HASH_FREE_SERVER_KEYS``.
             profile_id: Profile to write; defaults to the ``default``
                 profile (byte-identical to the pre-profiles behavior).
+            expected_policy_chain_digest: Optional reviewed selected/fallback
+                policy identity, compared under the final mutation fence.
 
         Raises:
             ValueError: If ``state`` is not None and not one of
@@ -1675,6 +1818,7 @@ class MCPPermissionStore:
             change,
             expected_profile_digest=expected_profile_digest,
             expected_revision=expected_revision,
+            expected_policy_chain_digest=expected_policy_chain_digest,
         )
 
 
@@ -2639,3 +2783,300 @@ def cycle_global(current: str) -> str:
         The next state in the cycle: Allow -> Ask -> Off -> Allow.
     """
     return _CYCLE_GLOBAL_STATES[current]
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("load", MCPPermissionStore.load),
+    ("get_kill_switch", MCPPermissionStore.get_kill_switch),
+    ("mark_config_changed", MCPPermissionStore.mark_config_changed),
+)
+
+
+# TASK-34561: only the two original guarded members used by the omitted getter.
+# The known decorator's function cell is captured here, never lazily unwrapped.
+_CONSOLE_CONTROLLER_PERMISSION_MODULE = sys.modules[__name__]
+_CONSOLE_CONTROLLER_PERMISSION_CLASS = MCPPermissionStore
+
+
+def _capture_controller_inputs(function):
+    keyword_defaults = function.__kwdefaults__
+    closure = function.__closure__
+    return (
+        function.__defaults__,
+        keyword_defaults,
+        tuple(dict.items(keyword_defaults)) if keyword_defaults is not None else (),
+        closure,
+        tuple((cell, cell.cell_contents) for cell in closure or ()),
+    )
+
+
+def _capture_controller_permission_member(name):
+    wrapper = vars(MCPPermissionStore)[name]
+    guard = mcp_sources.guarded
+    if type(wrapper) is not FunctionType or type(guard) is not FunctionType:
+        return name, wrapper, ()
+    wrapper_codes = tuple(
+        code
+        for code in guard.__code__.co_consts
+        if type(code) is type(guard.__code__) and code.co_name == "wrapped"  # exact original code
+    )
+    if (
+        len(wrapper_codes) != 1
+        or wrapper.__code__ is not wrapper_codes[0]
+        or wrapper.__globals__ is not vars(mcp_sources)
+        or wrapper.__closure__ is None
+        or "function" not in wrapper.__code__.co_freevars
+    ):
+        return name, wrapper, ()
+    try:
+        body = wrapper.__closure__[
+            wrapper.__code__.co_freevars.index("function")
+        ].cell_contents
+    except ValueError:
+        return name, wrapper, ()
+    if type(body) is not FunctionType or body.__globals__ is not globals():
+        return name, wrapper, ()
+    return (
+        name,
+        wrapper,
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                sys.modules[function.__globals__["__name__"]],
+                _capture_controller_inputs(function),
+            )
+            for function in (wrapper, body)
+        ),
+    )
+
+
+_CONSOLE_CONTROLLER_PERMISSION_METHODS = tuple(
+    _capture_controller_permission_member(name) for name in ("get_kill_switch", "load")
+)
+
+
+# The named Console read skips only these original forwarding/fence members.
+_CONSOLE_OWNED_LOAD_MEMBERS = tuple(
+    _capture_controller_permission_member(name) for name in ("load", "_load_locked")
+) + (
+    (
+        "mutation_fence",
+        MCPPermissionStore.mutation_fence,
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                sys.modules[function.__globals__["__name__"]],
+                _capture_controller_inputs(function),
+            )
+            for function in (
+                MCPPermissionStore.mutation_fence,
+                MCPPermissionStore.mutation_fence.__wrapped__,
+            )
+        ),
+    ),
+    _capture_controller_permission_member("_backup_corrupt_file"),
+)
+
+
+def _console_owned_load_current(source, captured) -> bool:
+    """Check captured stock inputs without filesystem or permission reads."""
+    from types import MethodType
+
+    def inputs_current(function, inputs):
+        defaults, keywords, items, closure, cells = inputs
+        try:
+            cells_current = all(cell.cell_contents is value for cell, value in cells)
+        except ValueError:
+            return False
+        return (
+            function.__defaults__ is defaults
+            and function.__kwdefaults__ is keywords
+            and function.__closure__ is closure
+            and cells_current
+            and (
+                keywords is None
+                or len(keywords) == len(items)
+                and all(
+                    key in keywords and keywords[key] is value for key, value in items
+                )
+            )
+        )
+
+    if (
+        type(captured) is not tuple  # exact internal metadata tuple.
+        or len(captured) != 4
+        or captured[0] is not source
+        or type(source) is not _CONSOLE_CONTROLLER_PERMISSION_CLASS
+        or MCPPermissionStore is not _CONSOLE_CONTROLLER_PERMISSION_CLASS
+        or sys.modules.get(__name__) is not _CONSOLE_CONTROLLER_PERMISSION_MODULE
+        or vars(_CONSOLE_CONTROLLER_PERMISSION_MODULE) is not globals()
+    ):
+        return False
+    for name, function, code, namespace, inputs in _CONSOLE_OWNED_LOAD_HELPERS:
+        if (
+            globals().get(name) is not function
+            or function.__code__ is not code
+            or function.__globals__ is not namespace
+            or not inputs_current(function, inputs)
+        ):
+            return False
+    for name, wrapper, bodies in _CONSOLE_OWNED_LOAD_MEMBERS:
+        if (
+            len(bodies) != 2
+            or vars(MCPPermissionStore).get(name) is not wrapper
+            or getattr(wrapper, "__wrapped__", None) is not bodies[1][0]
+        ):
+            return False
+        callback = getattr(source, name, None)
+        if (
+            type(callback) is not MethodType  # exact bound method.
+            or callback.__func__ is not wrapper
+            or callback.__self__ is not source
+        ):
+            return False
+        for function, code, namespace, module, inputs in bodies:
+            if (
+                function.__code__ is not code
+                or function.__globals__ is not namespace
+                or sys.modules.get(namespace["__name__"]) is not module
+                or vars(module) is not namespace
+                or not inputs_current(function, inputs)
+            ):
+                return False
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+    package = sys.modules.get("tldw_chatbook.Backup_Recovery")
+    if (
+        raw is None
+        or package is None
+        or vars(package).get("raw_participants") is not raw
+    ):
+        return False
+    guards = getattr(raw, "_CONSOLE_PERMISSION_LOAD_GUARDS", None)
+    if guards is None:
+        return False
+    for name, callback, bodies in guards:
+        if (
+            vars(raw).get(name) is not callback
+            or name == "_scope"
+            and getattr(callback, "__wrapped__", None) is not bodies[1][0]
+        ):
+            return False
+        for function, code, namespace, module, inputs in bodies:
+            if (
+                function.__code__ is not code
+                or function.__globals__ is not namespace
+                or sys.modules.get(namespace["__name__"]) is not module
+                or vars(module) is not namespace
+                or not inputs_current(function, inputs)
+            ):
+                return False
+    _, binding, selected, lock = captured
+    if (
+        binding is None
+        or mcp_sources._BINDINGS.get(source) is not binding
+        or binding.source_type is not type(source)
+        or type(selected) is not type(binding.selected)  # native immutable Path metadata.
+        or binding.selected != selected
+        or source.path is not selected
+        or source._path_lock is not lock
+        or source._mutation_lock is not lock
+        or source._mcp_source_lock is not lock
+    ):
+        return False
+    with _PATH_LOCKS_GUARD:
+        return _PATH_LOCKS.get(selected) is lock
+
+
+def _capture_console_owned_load(source) -> tuple[Any, ...] | None:
+    """Capture original Console load metadata before its source scope is issued."""
+    checker = _CONSOLE_OWNED_LOAD_HELPERS[1]
+    if (
+        globals().get(checker[0]) is not checker[1]
+        or checker[1].__code__ is not checker[2]
+    ):
+        return None
+    try:
+        binding = mcp_sources._BINDINGS.get(source)
+        if binding is None or type(source.path) is not type(binding.selected):  # custom path protocols retain ordinary calls.
+            return None
+        captured = (source, binding, source.path, source._path_lock)
+        return captured if _console_owned_load_current(source, captured) else None
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _load_in_owned_scope(source, operation, captured) -> dict[str, Any]:
+    """Read the original payload inside the named caller's checked source scope.
+
+    The caller must retain its existing final native check and source receipt.
+    This private helper grants no admission and never creates an operation.
+    """
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    state = None
+
+    def checked_state():
+        checker = _CONSOLE_OWNED_LOAD_HELPERS[1]
+        if (
+            globals().get(checker[0]) is not checker[1]
+            or checker[1].__code__ is not checker[2]
+            or not _console_owned_load_current(source, captured)
+        ):
+            raise mcp_sources.bootstrap.RecoveryRequired("mcp_source_selection_changed")
+        with storage._lock:
+            if getattr(raw._local, "operation", None) is not operation:
+                raise mcp_sources.bootstrap.RecoveryRequired(
+                    "raw_operation_provenance_invalid"
+                )
+            current = raw._live_state(operation, None, True)
+            if (
+                current.source is not source
+                or current.route != mcp_sources.ROUTE
+                or current.participant is None
+                or current.selected != captured[2]
+                or raw._participant_identity(current.participant).source() is not source
+            ):
+                raise mcp_sources.bootstrap.RecoveryRequired("mcp_source_not_installed")
+            return current
+
+    try:
+        state = checked_state()
+        fence = _CONSOLE_OWNED_LOAD_MEMBERS[2][1]
+        body = _CONSOLE_OWNED_LOAD_MEMBERS[1][2][1][0]
+        with fence(source):
+            if checked_state() is not state:
+                raise mcp_sources.bootstrap.RecoveryRequired(
+                    "raw_operation_provenance_invalid"
+                )
+            result = body(source)
+            if checked_state() is not state:
+                raise mcp_sources.bootstrap.RecoveryRequired(
+                    "raw_operation_provenance_invalid"
+                )
+            return result
+    except BaseException:
+        if state is not None and (state.mcp_effects or state.uncertain):
+            source._mcp_persistence_error = "mcp_persistence_incomplete"
+        raise
+
+
+_CONSOLE_OWNED_LOAD_HELPERS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__globals__,
+        _capture_controller_inputs(function),
+    )
+    for name in (
+        "_capture_console_owned_load",
+        "_console_owned_load_current",
+        "_load_in_owned_scope",
+    )
+    for function in (globals()[name],)
+)

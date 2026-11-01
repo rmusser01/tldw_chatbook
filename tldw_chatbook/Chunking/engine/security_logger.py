@@ -21,6 +21,7 @@ from loguru import logger
 
 class SecurityEventType(Enum):
     """Types of security events."""
+
     XXE_ATTEMPT = "xxe_attempt"
     REDOS_ATTEMPT = "redos_attempt"
     OVERSIZED_INPUT = "oversized_input"
@@ -55,14 +56,16 @@ class SecurityLogger:
                 filter=lambda record: "security" in record["extra"],
                 format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {extra[event_type]} | {message}",
                 rotation="100 MB",
-                retention="30 days"
+                retention="30 days",
             )
 
-    def log_event(self,
-                  event_type: SecurityEventType,
-                  message: str,
-                  details: Optional[dict[str, Any]] = None,
-                  severity: str = "WARNING") -> None:
+    def log_event(
+        self,
+        event_type: SecurityEventType,
+        message: str,
+        details: Optional[dict[str, Any]] = None,
+        severity: str = "WARNING",
+    ) -> None:
         """
         Log a security event.
 
@@ -77,7 +80,7 @@ class SecurityLogger:
             "type": event_type.value,
             "message": message,
             "severity": severity,
-            "details": details or {}
+            "details": details or {},
         }
 
         # Store event
@@ -117,9 +120,9 @@ class SecurityLogger:
             {
                 "xml_length": len(xml_content) if xml_content else 0,
                 "source": source,
-                "blocked_patterns": ["DOCTYPE", "ENTITY", "SYSTEM"]
+                "blocked_patterns": ["DOCTYPE", "ENTITY", "SYSTEM"],
             },
-            severity="ERROR"
+            severity="ERROR",
         )
 
     def log_redos_attempt(self, pattern: str, source: Optional[str] = None) -> None:
@@ -136,12 +139,14 @@ class SecurityLogger:
             {
                 "pattern": pattern[:200] if pattern else "",
                 "source": source,
-                "reason": "Pattern complexity or timeout"
+                "reason": "Pattern complexity or timeout",
             },
-            severity="ERROR"
+            severity="ERROR",
         )
 
-    def log_oversized_input(self, size: int, limit: int, source: Optional[str] = None) -> None:
+    def log_oversized_input(
+        self, size: int, limit: int, source: Optional[str] = None
+    ) -> None:
         """
         Log an oversized input attempt.
 
@@ -153,15 +158,13 @@ class SecurityLogger:
         self.log_event(
             SecurityEventType.OVERSIZED_INPUT,
             f"Oversized input rejected: {size} bytes (limit: {limit})",
-            {
-                "input_size": size,
-                "size_limit": limit,
-                "source": source
-            },
-            severity="WARNING"
+            {"input_size": size, "size_limit": limit, "source": source},
+            severity="WARNING",
         )
 
-    def log_suspicious_content(self, content_type: str, details: str, source: Optional[str] = None) -> None:
+    def log_suspicious_content(
+        self, content_type: str, details: str, source: Optional[str] = None
+    ) -> None:
         """
         Log suspicious content detection.
 
@@ -173,18 +176,16 @@ class SecurityLogger:
         self.log_event(
             SecurityEventType.SUSPICIOUS_CONTENT,
             f"Suspicious content detected: {content_type}",
-            {
-                "content_type": content_type,
-                "details": details,
-                "source": source
-            },
-            severity="WARNING"
+            {"content_type": content_type, "details": details, "source": source},
+            severity="WARNING",
         )
 
-    def get_events(self,
-                   event_type: Optional[SecurityEventType] = None,
-                   severity: Optional[str] = None,
-                   limit: int = 100) -> list:
+    def get_events(
+        self,
+        event_type: Optional[SecurityEventType] = None,
+        severity: Optional[str] = None,
+        limit: int = 100,
+    ) -> list:
         """
         Retrieve logged security events.
 
@@ -235,7 +236,9 @@ def get_security_logger() -> SecurityLogger:
     return _security_logger
 
 
-def configure_security_logging(log_file: Optional[Path] = None, enable_console: bool = True) -> None:
+def configure_security_logging(
+    log_file: Optional[Path] = None, enable_console: bool = True
+) -> None:
     """
     Configure security logging.
 

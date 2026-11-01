@@ -20,7 +20,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
     BACKEND_IDS,
@@ -29,6 +29,7 @@ from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
     FIELD_SCHEMA,
     RETENTION_CHOICES,
     RETENTION_SELECT_ID,
+    VideoGenDraftValues,
     build_backend_rows,
     effective_placeholder,
     load_user_video_generation_table,
@@ -39,6 +40,7 @@ from tldw_chatbook.Video_Generation.video_templates import (
     get_all_video_templates,
 )
 from tldw_chatbook.Widgets.settings_image_gen_panel import switch_word, toggle_label
+from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 
 _GENERATION_DEFAULT_FIELDS: tuple[tuple[str, str], ...] = (
     ("retention_ttl_hours", "Retention TTL (hours)"),
@@ -146,7 +148,10 @@ class VideoGenSettingsPanel(Vertical):
         with Horizontal(classes="settings-input-row settings-select-row"):
             yield Static("Default backend", classes="settings-input-label")
             yield Select(
-                [(BACKEND_LABELS[backend_id], backend_id) for backend_id in BACKEND_IDS],
+                [
+                    (BACKEND_LABELS[backend_id], backend_id)
+                    for backend_id in BACKEND_IDS
+                ],
                 value=(
                     effective_default_backend
                     if effective_default_backend in BACKEND_IDS
@@ -167,13 +172,16 @@ class VideoGenSettingsPanel(Vertical):
                 id=f"settings-videogen-backend-{row.backend_id}",
                 classes="settings-imagegen-backend-row",
             ):
-                yield Static(row.label, classes="settings-input-label")
+                yield Static(
+                    row.label,
+                    classes="settings-input-label settings-imagegen-backend-label",
+                )
                 yield Static(
                     "Configured" if row.configured else "Not configured",
                     id=f"settings-videogen-status-{row.backend_id}",
                     classes="settings-imagegen-badge",
                 )
-                yield Checkbox(
+                yield StateCheckbox(
                     switch_word(is_enabled),
                     value=is_enabled,
                     id=f"settings-videogen-enabled-{row.backend_id}",
@@ -206,7 +214,7 @@ class VideoGenSettingsPanel(Vertical):
                             )
                         if spec.kind == "bool":
                             with Horizontal(classes="settings-input-row"):
-                                yield Checkbox(
+                                yield StateCheckbox(
                                     toggle_label(
                                         spec.label,
                                         bool(
@@ -255,9 +263,13 @@ class VideoGenSettingsPanel(Vertical):
                                 )
                             else:
                                 raw_value = raw_backend.get(spec.toml_key)
-                                default_value = "" if raw_value is None else str(raw_value)
+                                default_value = (
+                                    "" if raw_value is None else str(raw_value)
+                                )
                                 yield Input(
-                                    value=str(overlay.get(field_overlay_key, default_value)),
+                                    value=str(
+                                        overlay.get(field_overlay_key, default_value)
+                                    ),
                                     id=f"settings-videogen-field-{backend_id}-{spec.toml_key}",
                                     classes="settings-compact-input",
                                     placeholder=effective_placeholder(
@@ -281,7 +293,10 @@ class VideoGenSettingsPanel(Vertical):
             yield Static("Retention", classes="settings-input-label")
             retention_value = str(overlay.get("retention", cfg.retention))
             yield Select(
-                [("session (wipe on app start)", "session"), ("ttl (keep N hours)", "ttl")],
+                [
+                    ("session (wipe on app start)", "session"),
+                    ("ttl (keep N hours)", "ttl"),
+                ],
                 value=(
                     retention_value
                     if retention_value in RETENTION_CHOICES
@@ -292,12 +307,18 @@ class VideoGenSettingsPanel(Vertical):
                 allow_blank=False,
                 compact=True,
             )
-        yield Checkbox(
+        yield StateCheckbox(
             toggle_label(
                 "Confirm cost before paid generation",
-                bool(overlay.get("confirm_cost_estimate", bool(cfg.confirm_cost_estimate))),
+                bool(
+                    overlay.get(
+                        "confirm_cost_estimate", bool(cfg.confirm_cost_estimate)
+                    )
+                ),
             ),
-            value=bool(overlay.get("confirm_cost_estimate", bool(cfg.confirm_cost_estimate))),
+            value=bool(
+                overlay.get("confirm_cost_estimate", bool(cfg.confirm_cost_estimate))
+            ),
             id="settings-videogen-confirm_cost_estimate",
             tooltip="Ask before spending on a paid (cloud) video generation.",
         )
@@ -356,3 +377,74 @@ class VideoGenSettingsPanel(Vertical):
             id="settings-videogen-save-result",
             classes="settings-imagegen-hint",
         )
+
+
+def _draft_values_for_save(panel, values) -> VideoGenDraftValues:
+    from tldw_chatbook.UI.Screens import settings_screen as _owner
+
+    backend_fields: dict = {}
+    cleared_fields: dict[str, list[str]] = {}
+    for key, value in values.items():
+        if key.startswith("field::"):
+            _prefix, backend_id, toml_key = key.split("::", 2)
+            backend_fields.setdefault(backend_id, {})[toml_key] = value
+        elif key.startswith("cleared::"):
+            _prefix, backend_id, toml_key = key.split("::", 2)
+            cleared_fields.setdefault(backend_id, []).append(toml_key)
+
+    # Checkbox/Select values are ALWAYS read live (no blank ambiguity --
+    # the image block's rule), so an untouched toggle still lands.
+    enabled_backends = [
+        backend_id
+        for backend_id in _owner.VIDEO_GEN_BACKEND_IDS
+        if panel.query_one(
+            f"#settings-videogen-enabled-{backend_id}", _owner.Checkbox
+        ).value
+    ]
+    default_backend_widget_value = panel.query_one(
+        "#settings-videogen-default_backend", _owner.Select
+    ).value
+    default_backend = (
+        default_backend_widget_value
+        if isinstance(default_backend_widget_value, str)
+        else None
+    )
+    retention_widget_value = panel.query_one(
+        "#settings-videogen-retention", _owner.Select
+    ).value
+    retention = (
+        retention_widget_value if isinstance(retention_widget_value, str) else None
+    )
+    confirm_cost_estimate = bool(
+        panel.query_one(
+            "#settings-videogen-confirm_cost_estimate", _owner.Checkbox
+        ).value
+    )
+    # bool-kind backend fields (e.g. minimax allow_uploads) read live too.
+    from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
+        FIELD_SCHEMA as VIDEO_GEN_FIELD_SCHEMA,
+    )
+
+    for backend_id in _owner.VIDEO_GEN_BACKEND_IDS:
+        for spec in VIDEO_GEN_FIELD_SCHEMA.get(backend_id, ()):
+            if spec.kind != "bool":
+                continue
+            try:
+                value = panel.query_one(
+                    f"#settings-videogen-field-{backend_id}-{spec.toml_key}",
+                    _owner.Checkbox,
+                ).value
+            except _owner.QueryError:
+                continue
+            backend_fields.setdefault(backend_id, {})[spec.toml_key] = bool(value)
+
+    return _owner.VideoGenDraftValues(
+        default_backend=default_backend,
+        enabled_backends=enabled_backends,
+        retention=retention,
+        retention_ttl_hours=values.get("retention_ttl_hours"),
+        max_store_mb=values.get("max_store_mb"),
+        confirm_cost_estimate=confirm_cost_estimate,
+        backend_fields=backend_fields,
+        cleared_fields=cleared_fields,
+    )

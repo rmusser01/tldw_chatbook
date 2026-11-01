@@ -1,0 +1,25 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_archive_recovery_followup.py",
+    "-k",
+    "test_captured_native_turn_restores_original_second_row and fenced-structured",
+    "-q",
+    "-p",
+    "no:cacheprovider"
+  ],
+  "env": {
+    "PYTHONPATH": ".",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "interpreter": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "exit": 1,
+  "source_sha256": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "128f9efc12e430ea085b08cc82475e85226da6e7a6eb491fd282f28f0c218b13",
+    "Tests/Chat/test_console_archive_recovery_followup.py": "2c88428db63f531055e58f2c6fa54b5ee9c47c7db3c70a681acd5e8b5af140c1"
+  },
+  "log_sha256": "f0fd083375e0cb0c03df27b3cddafdc231d40a352e3834b8f61090c98d3856f3"
+}

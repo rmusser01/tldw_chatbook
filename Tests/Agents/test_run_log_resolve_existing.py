@@ -48,7 +48,9 @@ def test_finds_the_dotted_sandbox_fallback_directory_name(root):
     # only cares about directory-name resolution, not root-fallback logic.
     run_dir = root / ".agent-runs" / "run-dotted"
     run_dir.mkdir(parents=True)
-    (run_dir / "logs.0001.txt").write_bytes(b"#@# 000001 run=run-dotted kind=primary type=model ts=- bytes=1\nx")
+    (run_dir / "logs.0001.txt").write_bytes(
+        b"#@# 000001 run=run-dotted kind=primary type=model ts=- bytes=1\nx"
+    )
 
     found = resolve_existing_log_dir("run-dotted")
 

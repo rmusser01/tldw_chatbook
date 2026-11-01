@@ -563,9 +563,25 @@ class _CaptureStore(ConsoleChatStore):
         super().__init__(**kwargs)
         self.continuation_errors: list[str] = []
 
-    def persist_provider_continuation_event(self, event: Any) -> None:
+    def persist_provider_continuation_event(
+        self,
+        event: Any,
+        *,
+        continuation_target: Any = None,
+        checkpoint_finalizer: Any = None,
+    ) -> None:
+        # TASK-19642.7: the bridge's persist callback grew the
+        # ``checkpoint_finalizer`` kwarg with the managed-plugin continuation
+        # work (a7edb381d2, "Drain managed plugin revisions and constrain
+        # retained continuation authority"); forward it instead of
+        # TypeError-ing the run into "Provider continuation could not be
+        # persisted".
         try:
-            super().persist_provider_continuation_event(event)
+            super().persist_provider_continuation_event(
+                event,
+                continuation_target=continuation_target,
+                checkpoint_finalizer=checkpoint_finalizer,
+            )
         except Exception as exc:
             self.continuation_errors.append(f"{type(exc).__name__}: {exc}")
             raise
@@ -677,6 +693,9 @@ def test_console_runs_two_native_calls_with_private_continuation(
                     protocol="chat_completions",
                     model="kimi-k3",
                     api_base_url=_resolution(server, provider).base_url,
+                    # The first run bound its checkpoint to this selection,
+                    # as production restore targets always are.
+                    selected_provider="moonshot",
                 ),
                 continuation_owner_key="_owner",
             )
@@ -795,6 +814,96 @@ def test_hosted_tool_error_continues_structurally(
 
 
 @pytest.mark.allow_network
+@pytest.mark.parametrize(
+    "cause", ["session_only_endpoint", "untupled_dispatch", "foreign_dispatch"]
+)
+def test_nondurable_native_loop_runs_without_durable_continuation(
+    tmp_path: Any, cause: str
+) -> None:
+    """A loop whose continuation cannot be durable still runs; it is not resumable.
+
+    A session-only endpoint must never be written down; a dispatch checkpoint
+    without a continuation tuple (pre-upgrade, or one the destination could not
+    record) cannot bind one. A dispatch owned by another assistant message
+    (regenerate/retry/edit do not consult the recovery gate) is irrelevant to
+    this run: its continuation stays durable, as on dev.
+    """
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_endpoint_provenance import (
+        ConsoleEndpointProvenance,
+    )
+
+    provider = "zai"
+    with _scripted_server(
+        [_tool_turn(provider), _final_turn(provider)],
+        [_initial_validator(provider), _continuation_validator(provider)],
+    ) as server:
+        db = AgentRunsDB(tmp_path / "ephemeral-endpoint.db", client_id="hosted")
+        chat_db = CharactersRAGDB(tmp_path / "ephemeral-endpoint-chat.db", "hosted")
+        store = _CaptureStore(persistence=ChatPersistenceService(chat_db))
+        session = store.create_session(title="Session-only endpoint")
+        store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Calculate two expressions.",
+            persist=True,
+        )
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content="", persist=True
+        )
+        resolution = _resolution(server, provider)
+        if cause == "session_only_endpoint":
+            resolution = replace(
+                resolution,
+                endpoint_provenance=ConsoleEndpointProvenance.EPHEMERAL_SESSION,
+            )
+        else:
+            recovery = SimpleNamespace(
+                assistant_message_id=(
+                    assistant.id if cause == "untupled_dispatch" else "other-owner"
+                ),
+                checkpoint=SimpleNamespace(
+                    resolved_destination=SimpleNamespace(
+                        continuation_provider=(
+                            None if cause == "untupled_dispatch" else provider
+                        )
+                    )
+                ),
+            )
+            store.dispatch_recovery_for_session = lambda _session_id: recovery
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=db, store=store, provider_gateway=_CaptureGateway()
+        )
+        _run_id, outcome = bridge.run_reply(
+            conversation_id="ephemeral-endpoint-conversation",
+            session_id=session.id,
+            resolution=resolution,
+            assistant_message_id=assistant.id,
+            model="glm-5.2",
+            session_system_prompt="",
+            agent_messages=[{"role": "user", "content": "Calculate two expressions."}],
+            should_cancel=lambda: False,
+            native_tools_enabled=True,
+        )
+        owner = store.get_message(assistant.id)
+        chat_db.close_connection()
+
+    assert outcome.status == "done", [step.summary for step in outcome.steps]
+    assert outcome.final_text == _FINAL
+    assert store.continuation_errors == []
+    assert server.validation_errors == []
+    if cause == "foreign_dispatch":
+        # The run's own target binds it; another owner's dispatch does not.
+        assert owner.provider_continuation is not None
+        assert owner.provider_continuation.state == "complete"
+    else:
+        # Nothing non-durable was written to durable continuation state.
+        assert owner.provider_continuation is None
+
+
+@pytest.mark.allow_network
 @pytest.mark.parametrize("provider", ["moonshot", "zai"])
 @pytest.mark.parametrize("malformed", ["duplicate_ids", "out_of_order"])
 def test_hosted_invalid_tool_history_fails_before_server_advancement(
@@ -871,12 +980,11 @@ def test_hosted_partial_call_cancellation_never_executes(
 
     def recording_stream_chunk(
         store: ConsoleChatStore, message_id: str, chunk: str
-    ) -> Any:
-        message = real_append_stream_chunk(store, message_id, chunk)
+    ) -> None:
+        real_append_stream_chunk(store, message_id, chunk)
         if _CANCEL_MARKER in chunk:
             marker_observed.set()
             cancelled.set()
-        return message
 
     monkeypatch.setattr(ConsoleChatStore, "append_stream_chunk", recording_stream_chunk)
 
@@ -933,8 +1041,21 @@ def test_hosted_partial_call_cancellation_never_executes(
     assert outcome.status == "cancelled"
     assert marker_observed.is_set()
     assert server.stall_started.is_set()
-    assert not server.stall_timed_out.is_set()
+    # Not `not stall_timed_out`: the deferred close lands only once the
+    # worker's read settles, and here only the server's 2 s give-up settles
+    # it (aborting that read is TASK-30015). That assert passed by reading
+    # the flag 0.5 s in; run_reply now holds its model loop until the worker
+    # returns (ADR-134, TASK-33666), so it returns after the window.
     assert len(server.requests) == 1
+    # TASK-19642.7: the cancelled stream's response is closed OFF the turn's
+    # critical path (a shielded async close task on the bridge loop, landed
+    # with the duplex-voice integration b7dd8e53f2), so the close can land
+    # just after run_reply returns. Wait for it deterministically instead of
+    # asserting it happened synchronously; the exactly-once count below is
+    # unchanged.
+    assert client_close_started.wait(timeout=10), (
+        "cancelled stream response was never closed"
+    )
     assert len(close_calls) == 1
     assert executions == []
     assert owner.provider_continuation is None

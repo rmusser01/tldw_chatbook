@@ -29,6 +29,7 @@ instance (mirroring ``LibraryLocalRagSearchService``'s own
 ``getattr(self._app, "...", None)`` seam-lookup convention) so they can be
 constructed once per modal-open call.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -235,7 +236,11 @@ class _MediaSourceLister:
             return ScopeListPage(items=(), total_matching=0)
         items = payload.get("items", []) if isinstance(payload, Mapping) else []
         rows = [row for row in items if isinstance(row, Mapping)]
-        total_raw = payload.get("total", len(rows)) if isinstance(payload, Mapping) else len(rows)
+        total_raw = (
+            payload.get("total", len(rows))
+            if isinstance(payload, Mapping)
+            else len(rows)
+        )
         try:
             total_matching = int(total_raw or 0)
         except (TypeError, ValueError):
@@ -358,7 +363,9 @@ class _NotesSourceLister:
                 return []
             return [dict(row) for row in rows or () if isinstance(row, Mapping)]
         try:
-            rows = await asyncio.to_thread(db.list_notes, limit=_NOTES_FETCH_CAP, offset=0)
+            rows = await asyncio.to_thread(
+                db.list_notes, limit=_NOTES_FETCH_CAP, offset=0
+            )
         except Exception:
             return []
         return [dict(row) for row in rows or ()]
@@ -527,9 +534,7 @@ def build_keyword_tag_lister(app: Any) -> TagLister:
         chachanotes_db = getattr(app, "chachanotes_db", None)
         if chachanotes_db is not None:
             try:
-                notes_counts = await asyncio.to_thread(
-                    _notes_tag_usage, chachanotes_db
-                )
+                notes_counts = await asyncio.to_thread(_notes_tag_usage, chachanotes_db)
             except Exception:
                 notes_counts = {}
             for text, usage in notes_counts.items():

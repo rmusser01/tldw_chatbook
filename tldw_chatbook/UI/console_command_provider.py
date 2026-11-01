@@ -45,6 +45,11 @@ class ConsoleCommandProvider(Provider):
 
         return (
             (
+                "Console: Goal runs…",
+                lambda: screen._goals.open_history(),
+                "Start, inspect, pause or review a finite goal",
+            ),
+            (
                 "Console: Recover agent work…",
                 screen.action_recover_agent_work,
                 "Review recorded agent work in this conversation and selected repository",
@@ -131,6 +136,11 @@ class ConsoleCommandProvider(Provider):
                 "Console: Insert image style…",
                 screen.action_open_console_style_insert,
                 "Browse image styles and insert an @style token (/generate-image)",
+            ),
+            (
+                "Console: Compact context now",
+                screen.action_compact_console_context,
+                "Summarize older turns to free context (one model call); same as /compact",
             ),
             (
                 "Console: View chat context",

@@ -1,10 +1,13 @@
 """Base screen class for all application screens."""
 
-from typing import TYPE_CHECKING, Optional, Dict, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
 from loguru import logger
 
+from textual.binding import Binding
 from textual.message import Message
 from textual.app import ComposeResult
+from textual.css.match import match
+from textual.css.parse import parse_selectors
 from textual.css.query import QueryError
 from textual.geometry import Region
 from textual.screen import Screen
@@ -63,6 +66,36 @@ class BaseAppScreen(Screen):
     VERTICAL_BREAKPOINTS = [
         (0, "shell-header-compact"),
         (_DESTINATION_HEADER_COMPACT_FLOOR_HEIGHT + 1, "shell-header-normal"),
+    ]
+
+    #: Roleplay frame B0 (the shared adaptive-pane-shell ADR): the opt-in Tab region. ``None`` -- every
+    #: route in B0 -- keeps Textual's stock app-wide Tab walk exactly. A
+    #: selector string (Roleplay sets ``"#screen-content, #screen-content *"``
+    #: in B3) confines Tab/Shift+Tab to it while focus is inside; from chrome
+    #: (nav bar, footer) the walk stays app-wide so the bar remains
+    #: traversable -- the Library task-32052 / Console TASK-2154.11 rule as one
+    #: shared seam.
+    TAB_REGION: ClassVar[str | None] = None
+
+    BINDINGS = [
+        # Replaces Screen's ("tab", "app.focus_next") and ("shift+tab",
+        # "app.focus_previous") through DOMNode._merge_bindings (a later class
+        # wins per key). Non-priority like Screen's: a priority Tab here would
+        # preempt every screen's own on_key Tab trap (lessons-textual).
+        # ChatScreen and LibraryScreen re-declare tab and keep theirs. Never
+        # gate region_focus_* off in check_action: once this replaces
+        # Screen's binding there is no fall-through, so False kills Tab.
+        Binding("tab", "region_focus_next", "Focus Next", show=False),
+        Binding("shift+tab", "region_focus_previous", "Focus Previous", show=False),
+        # Re-spread the rest of Screen.BINDINGS: App._show_generic_screen_help
+        # renders F1 from getattr(screen, "BINDINGS") on ten screens, and
+        # PersonasScreen and ChatScreen spread this list; without it the
+        # "Copy selected text" row would vanish from their help.
+        *(
+            binding
+            for binding in Screen.BINDINGS
+            if binding.key not in ("tab", "shift+tab")
+        ),
     ]
 
     def __init__(self, app_instance: "TldwCli", screen_name: str, **kwargs):
@@ -140,6 +173,44 @@ class BaseAppScreen(Screen):
         return super().refresh(
             *regions, repaint=repaint, layout=layout, recompose=recompose
         )
+
+    def set_focus(
+        self,
+        widget: "Widget | None",
+        scroll_visible: bool = True,
+        from_app_focus: bool = False,
+    ) -> None:
+        """Focus ``widget`` unless it is detached or being removed (TASK-34000.26).
+
+        Textual 8.2.8 accepts a focus write onto a widget that ``App._prune``
+        has already marked ``_pruning`` (``Screen.set_focus`` checks only
+        ``focusable``, which reads ``visible`` and never ``_pruning``) and
+        leaves ``screen.focused`` on it after the detach; every non-priority
+        key then dispatches into a dead message pump and the keyboard is gone
+        until a click (review finding S-10; mechanism in
+        ``verify/nl-v-s-10/textual-dead-focus-mechanism.out``).
+
+        A refused write leaves focus where it was, so a caller that checks
+        ``self.focused is widget`` sees "not landed" and retries against the
+        live tree (the Library's list-entry arm does exactly that). A ``None``
+        write is always honoured. ``_pruning`` is private Textual state:
+        listed in ``lessons-textual.md`` (TASK-23025 entry) with the other
+        readers.
+
+        Args:
+            widget: The widget to focus, or ``None`` to clear focus.
+            scroll_visible: Forwarded to ``Screen.set_focus``.
+            from_app_focus: Forwarded to ``Screen.set_focus``.
+        """
+        if widget is not None and (
+            getattr(widget, "_pruning", False) or not widget.is_attached
+        ):
+            logger.debug(
+                "Refused a focus write onto a widget being removed: {}",
+                getattr(widget, "id", None) or type(widget).__name__,
+            )
+            return
+        super().set_focus(widget, scroll_visible, from_app_focus)
 
     def _queue_focus_restore_after_recompose(self, previous: Optional[str]) -> None:
         """Re-post the restore behind everything else this refresh queued."""
@@ -231,6 +302,72 @@ class BaseAppScreen(Screen):
                 return inside
         return next(iter(chain), None)
 
+    def arrival_focus_target(self) -> "Widget | None":
+        """Where Tab lands when this opted-in screen has nothing focused.
+
+        Consulted only by ``_move_region_focus`` while ``TAB_REGION`` is set
+        and nothing holds focus -- never at first paint in B0, where
+        ``App.AUTO_FOCUS`` still decides (the nav bar's mount settling
+        depends on it). Roleplay (B3) overrides it to return its items list.
+        An override returns a focusable widget inside ``TAB_REGION``, or
+        ``None`` to fall back to the region walk. A target outside the region
+        is ignored the same way: the default can return the nav bar when the
+        content holds nothing focusable yet.
+
+        Returns:
+            ``_first_focusable_in_content()`` by default.
+        """
+        return self._first_focusable_in_content()
+
+    def action_region_focus_next(self) -> None:
+        """Tab: confined to ``TAB_REGION`` when set, else Textual's own walk."""
+        self._move_region_focus(1)
+
+    def action_region_focus_previous(self) -> None:
+        """Shift+Tab: the reverse of ``action_region_focus_next``."""
+        self._move_region_focus(-1)
+
+    def _move_region_focus(self, direction: int) -> "Widget | None":
+        """Move focus one step, inside ``TAB_REGION`` while focus is in it.
+
+        Args:
+            direction: ``1`` for Tab, ``-1`` for Shift+Tab.
+
+        Returns:
+            The newly focused widget, or ``None``.
+        """
+        region = self.TAB_REGION
+        if region is None:
+            # Exactly what Screen's binding ran: App.action_focus_next is
+            # ``self.screen.focus_next()``, and this binding only fires while
+            # this screen is ``app.screen``. Kept as the App call so a future
+            # TldwCli override still applies on every non-opted route.
+            if direction > 0:
+                self.app.action_focus_next()
+            else:
+                self.app.action_focus_previous()
+            return self.focused
+        focused = self.focused
+        selector_set = parse_selectors(region)
+        if focused is None:
+            target = self.arrival_focus_target()
+            # Only a target inside the region: the default hook falls back to
+            # the screen's first focusable widget (often the nav bar) when the
+            # content holds nothing focusable yet.
+            if target is not None and target.focusable and match(selector_set, target):
+                self.set_focus(target)
+                return self.focused
+            selector = region
+        elif match(selector_set, focused):
+            # The same predicate Screen._move_focus filters with, so "inside"
+            # and "walk" can never disagree.
+            selector = region
+        else:
+            selector = "*"
+        if direction > 0:
+            return self.focus_next(selector)
+        return self.focus_previous(selector)
+
     async def recompose(self) -> None:
         """Release any mouse capture again immediately before the actual
         teardown -- task-627.
@@ -299,7 +436,31 @@ class BaseAppScreen(Screen):
         doors by construction -- and it reads focus at teardown time rather
         than at ``refresh()``-call time, which is strictly more accurate.
         The two-hop queue order below is unchanged and still load-bearing.
+
+        **Refused, before anything is torn down, when it could never
+        finish (TASK-34000.4).** Awaited on the message pump of a widget
+        this recompose removes, the teardown waits for that pump and that
+        pump waits for the teardown: the Library's Media "Export…" froze
+        the whole app that way, Ctrl+Q included. See
+        ``surface_swap_guard`` for the exact predicate.
+
+        Raises:
+            SurfaceSwapSelfAwaitError: If awaited from a handler, or a
+                ``call_later`` callback, on a widget below one of this
+                screen's children.
         """
+        if self.is_attached and not self._pruning:
+            # Imported here, not at module top: this module is resident at
+            # ``_ui_ready`` and the ADR-097 ui-ready module census has no
+            # headroom; the guard is only needed once a screen recomposes.
+            from .surface_swap_guard import ensure_surface_swap_not_self_awaited
+
+            # The same set ``Widget.recompose`` removes; an unattached or
+            # pruning screen removes nothing and returns at once.
+            ensure_surface_swap_not_self_awaited(
+                self.query_children("*").exclude(".-textual-system"),
+                seam=f"{type(self).__name__}.recompose",
+            )
         try:
             monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
             if monitor is not None:
@@ -331,6 +492,32 @@ class BaseAppScreen(Screen):
                 self._queue_focus_restore_after_recompose, focus_identity
             )
         self.post_message(self.ContentsRebuilt(self))
+
+    def children_safe_to_await_removing(self, parent: "Widget") -> "tuple[Widget, ...]":
+        """Return ``parent``'s children for a removal this coroutine will await.
+
+        The region-scoped twin of ``recompose``'s own refusal (TASK-34000.4):
+        a screen that swaps one host's children instead of rebuilding itself
+        asks here first, so the swap cannot be awaited from the pump of a
+        widget inside the children it removes.
+
+        Args:
+            parent: The host whose children are about to be removed.
+
+        Returns:
+            ``parent``'s current children, in order.
+
+        Raises:
+            SurfaceSwapSelfAwaitError: If awaited on the message pump of a
+                widget below one of those children.
+        """
+        from .surface_swap_guard import ensure_surface_swap_not_self_awaited
+
+        outgoing = tuple(parent.children)
+        ensure_surface_swap_not_self_awaited(
+            outgoing, seam=f"{type(self).__name__} child swap of {parent!r}"
+        )
+        return outgoing
 
     def release_mouse_capture_for_teardown(self) -> None:
         """Release any mouse capture before removing widgets.
@@ -474,7 +661,8 @@ class BaseAppScreen(Screen):
 
         Args:
             source: Context owner tag (e.g. "console"); scopes clears.
-            shortcuts: ``((key, label), ...)`` pairs to render.
+            shortcuts: ``((key, label), ...)`` pairs to render; a third
+                ``False`` marks a key that does nothing here (no hint at all).
         """
         registration = (source, tuple(shortcuts))
         self._footer_shortcut_registration = registration

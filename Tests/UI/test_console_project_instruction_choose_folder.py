@@ -31,6 +31,7 @@ from Tests.UI.app_factory import _build_test_app, persist_seeded_config
 from tldw_chatbook.Chat.console_chat_controller import (
     list_project_instruction_bindings,
 )
+from tldw_chatbook.Chat.console_display_state import ConsoleProjectInstructionState
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
@@ -40,6 +41,7 @@ from tldw_chatbook.Widgets.Console.console_conversation_inspector import (
 )
 from tldw_chatbook.Widgets.Console.console_project_instructions import (
     ConsoleProjectInstructionContextPanel,
+    ConsoleProjectInstructionStatusRow,
     ProjectInstructionSetupModal,
 )
 from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
@@ -360,3 +362,17 @@ async def test_inspector_names_a_saved_folder_before_its_preview_is_ready(
         await _until(pilot, lambda: inspector._snapshot_ready, "the preview")
         assert named in _panel_text(inspector)
         assert inspector.is_running
+
+
+def test_status_row_synced_before_its_compose_runs_paints_that_state():
+    """TASK-35413: a sync landing before the row's compose had built its
+    button raised NoMatches in a Console worker; compose now paints it."""
+
+    def state(status: str) -> ConsoleProjectInstructionState:
+        return ConsoleProjectInstructionState(status, True, "", "match")
+
+    row = ConsoleProjectInstructionStatusRow(state("Off"))
+    row.sync_state(state("Active"))
+
+    (button,) = row.compose()
+    assert str(button.label) == "Active · Project"

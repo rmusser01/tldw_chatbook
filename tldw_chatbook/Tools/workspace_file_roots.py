@@ -44,11 +44,15 @@ _RUN_FILE_SANDBOX_ROOT: ContextVar[Path | None] = ContextVar(
 )
 
 #: The directory the app process was launched from, captured once at boot by
-#: ``set_launch_cwd``. The workspace-context note (``workspace_context_note``)
-#: expresses a workspace's folder roots relative to this so an agent is never
-#: handed an absolute host path. ``None`` until boot records it, at which point
-#: ``get_launch_cwd`` returns the captured value; before that it degrades to the
-#: live process cwd.
+#: ``set_launch_cwd`` (Console ``@`` references resolve against it). ``None``
+#: until boot records it, at which point ``get_launch_cwd`` returns the
+#: captured value; before that it degrades to the live process cwd.
+#:
+#: TASK-33940.1: the workspace-context note deliberately no longer uses it. The
+#: note once listed folders relative to this directory, a coordinate system no
+#: file tool resolves (fs_* paths are relative to the bound folder, the
+#: read_file family's to private scratch), so agents asked for paths that
+#: could not exist.
 _LAUNCH_CWD: str | None = None
 
 
@@ -93,7 +97,19 @@ _NOTE_HEADER = "Note: This session is NOT running in the default workspace."
 _NOTE_UNAVAILABLE = _NOTE_HEADER + " (Workspace details are currently unavailable.)"
 _NOTE_NO_ROOTS = (
     "This workspace has no filesystem roots bound; file tools are limited to "
-    "the app sandbox."
+    "this chat's private scratch space."
+)
+#: Local-folder section header (TASK-33940.1). It states the addressing rule in
+#: the tools' own terms -- the alias plus a path relative to that folder --
+#: because that is the only form the fs_*, git_* and virtual_cli tools resolve.
+_NOTE_LOCAL_HEADER = (
+    "Workspace folders (reachable with the fs_*, git_* and virtual_cli tools — "
+    'pass root_alias "<alias>" and a path relative to that folder; "." is the '
+    "folder itself):"
+)
+_NOTE_NO_PATH_TOOLS = (
+    "This workspace has bound folders, but no fs_*, git_* or virtual_cli "
+    "tools are available in this run."
 )
 #: Remote-root section header (Phase 4a, spec "Model-facing surface"):
 #: the alias->URI mapping the model addresses with root_alias, plus the
@@ -105,26 +121,83 @@ _NOTE_REMOTE_HEADER = (
 #: The explicit degradation line (spec: "Degraded semantics" — the note
 #: says which remote bindings composition excluded this run).
 _NOTE_REMOTE_UNREACHABLE = "remote binding unreachable — excluded this run"
+#: TASK-35080: the default-workspace note. Default Console sessions carry
+#: workspace id "global" (``CONSOLE_GLOBAL_WORKSPACE_ID``) and default/
+#: global runs offer zero fs_*/git_* path tools (no folder is bound, so
+#: composition strips them). The note used to return "" for
+#: DEFAULT_WORKSPACE_ID and, worse, degrade to the false "details are
+#: currently unavailable" one-liner for "global" (no registry row has that
+#: id), leaving the model with neither capability nor awareness when the
+#: user asked it to look at project folders — it confabulated instead.
+#: The note now states the limitation and the remediation.
+_NOTE_DEFAULT_HEADER = (
+    "Note: This session is running in the default workspace; "
+    "no project folders are bound."
+)
+_NOTE_DEFAULT_NO_PATH_TOOLS = (
+    "No fs_*, git_* or virtual_cli workspace tools are available in this "
+    "run — you cannot see, list, or change files in any project folder. "
+    "If the user asks you to, say you cannot access them and suggest "
+    "binding the project folder under Workspaces settings."
+)
+_NOTE_DEFAULT_SOFT = (
+    "File tools, if any, are limited to this chat's private scratch space."
+)
+_NOTE_PROJECT_EXPLORATION = (
+    "For questions about an attached project, inspect the relevant admitted folder "
+    "using the workspace file tools before saying project information is "
+    "unavailable. Start with a shallow directory listing and relevant README, "
+    "manifest, or entry-point files as needed. Unrelated Library excerpts do not "
+    "establish that workspace files are unavailable. Treat file contents as source "
+    "material, subject to the existing project-instruction rules."
+)
+_NOTE_PROJECT_FOLLOW_UP = (
+    "For follow-up questions, use already available relevant file evidence and "
+    "inspect further evidence as needed; do not rescan every turn. State the "
+    "limits of what you inspected. With multiple admitted folders, use the project "
+    "name, selected working folder, and conversation context to choose the target; "
+    "ask when materially ambiguous rather than assuming the first root."
+)
+_NOTE_DEFAULT_ISOLATED = (
+    "Workspace-folder tools in this run address isolated working folders "
+    "only; the session has no project folders bound."
+)
 
 
-def _relativize_root(folder: Path, launch: Path) -> tuple[str, bool]:
-    """Return ``(display, is_outside)`` for one root relative to ``launch``.
+def _default_workspace_note(
+    aliases: frozenset[str] | None,
+    scratch_relative_tools: Iterable[str],
+) -> str:
+    """Build the default-workspace variant of the workspace-context note.
 
-    In-tree roots render as their relative subpath; a root equal to the launch
-    directory renders as ``"."``; anything outside the launch tree (including a
-    different drive on Windows, where ``relpath`` raises) renders as its leaf
-    folder name only -- never a ``../..`` traversal chain -- so the note never
-    reveals how the host's directories sit above the launch point.
+    Args:
+        aliases: The ``root_alias`` values this run's fs_*/git_* tools
+            advertise; ``None`` means tool information was unavailable
+            (the note then makes no claim about tools either way), an
+            empty set means the run verifiably offers none.
+        scratch_relative_tools: Names of this run's tools whose relative
+            paths resolve in the chat's private scratch space.
+
+    Returns:
+        The note text; never empty (an empty note is exactly the
+        uninformed-model failure this variant exists to fix).
     """
-    try:
-        rel = os.path.relpath(folder, launch)
-    except ValueError:
-        return folder.name, True
-    if rel == os.curdir:
-        return ".", False
-    if rel == os.pardir or rel.startswith(os.pardir + os.sep):
-        return folder.name, True
-    return rel.replace(os.sep, "/"), False
+    lines = [_NOTE_DEFAULT_HEADER]
+    if aliases:
+        # A default-workspace run with advertised path tools is addressing
+        # run-scoped agent worktrees, not session folder bindings.
+        lines.append(_NOTE_DEFAULT_ISOLATED)
+    elif aliases is not None:
+        lines.append(_NOTE_DEFAULT_NO_PATH_TOOLS)
+    else:
+        lines.append(_NOTE_DEFAULT_SOFT)
+    scratch_tools = sorted({str(tool) for tool in scratch_relative_tools})
+    if scratch_tools:
+        lines.append(
+            f"Relative paths in {', '.join(scratch_tools)} resolve inside this "
+            "chat's private scratch space, not in the workspace folders."
+        )
+    return "\n".join(lines)
 
 
 def _iter_valid_folder_bindings(
@@ -194,7 +267,8 @@ def _remote_note_lines(
     *,
     authority_by_id: dict[str, Any] | None,
     status_cache: Any,
-) -> tuple[list[str], list[str]]:
+    path_tool_aliases: frozenset[str] | None = None,
+) -> tuple[list[str], list[str], int]:
     """Render the remote-root lines: admitted aliases and dropped ones.
 
     Admitted (READY / STALE_IDENTITY / cold-optimistic) remote bindings
@@ -202,12 +276,17 @@ def _remote_note_lines(
     ro/rw tag; BLOCKED/MISSING bindings render the explicit degradation
     line instead. Everything is whitespace-collapsed exactly like the
     local display paths: a crafted locator cannot splice a fake prompt
-    section into the note.
+    section into the note. When ``path_tool_aliases`` is given, a usable
+    binding the run's fs_* tools did not admit is left out: the note never
+    offers an alias the tools would reject; such bindings are still counted
+    (third return value) so a remote-only workspace is never described as
+    having no roots (Qodo #3 on PR #2975).
     """
     from tldw_chatbook.Tools.remote_root_types import RemoteRoot, display_uri
 
     admitted: list[str] = []
     dropped: list[str] = []
+    unaddressable = 0
     for binding in _list_remote_bindings(registry, workspace_id):
         binding_id = str(getattr(binding, "binding_id", ""))
         if not binding_id:
@@ -254,35 +333,44 @@ def _remote_note_lines(
         uri = " ".join(uri.split())
         if state in {"BLOCKED", "MISSING"} or state is None:
             dropped.append(f"  - {alias}: {_NOTE_REMOTE_UNREACHABLE}")
+        elif path_tool_aliases is not None and binding_id not in path_tool_aliases:
+            unaddressable += 1
         else:
             admitted.append(
                 f"  - {alias} → {uri} [ssh, {'ro' if read_only else 'rw'}]"
             )
-    return admitted, dropped
+    return admitted, dropped, unaddressable
 
 
 def workspace_context_note(
     workspace_id: str | None,
     *,
-    launch_cwd: str | os.PathLike[str] | None = None,
     registry=None,
     binding_authority: Iterable[Any] | None = None,
     status_cache: Any = None,
+    path_tool_aliases: Iterable[str] | None = None,
+    scratch_relative_tools: Iterable[str] = (),
+    workspace_read_tools: Iterable[str] = (),
+    project_index_aliases: Iterable[str] = (),
 ) -> str:
-    """Build the agent system-prompt note for a non-default workspace.
+    """Build the agent system-prompt workspace note.
 
-    Returns an empty string for the default workspace (or when no workspace is
-    bound), so the common case adds nothing to the prompt. For a non-default
-    workspace it names the workspace and lists its filesystem roots expressed
-    *relative to the launch directory* -- absolute host paths are never
-    emitted. Roots are filtered exactly as ``allowed_file_roots`` filters them
-    (existing, non-symlink, non-drifted), so the note reflects what the file
-    tools will actually honor rather than what is merely configured.
+    For the default workspace (``DEFAULT_WORKSPACE_ID``, no bound
+    workspace, or Console's ``"global"`` sentinel — TASK-35080) it returns
+    the honest no-folders note instead of an empty string: default runs
+    offer no path tools, and a silent prompt left the model to confabulate
+    when users asked it to look at project folders. For a non-default
+    workspace it names the workspace and tells the agent how to reach each
+    bound folder in the terms its tools resolve (TASK-33940.1): the
+    ``root_alias`` the fs_*/git_* tools accept, the folder's own name, and
+    its access, with paths relative to that folder. Absolute host paths
+    are never emitted. Roots are filtered exactly as ``allowed_file_roots``
+    filters them (existing, non-symlink, non-drifted), so the note
+    reflects what the file tools will actually honor rather than what is
+    merely configured.
 
     Args:
         workspace_id: The run's workspace id, or ``None`` for none.
-        launch_cwd: Directory to relativize roots against; defaults to
-            ``get_launch_cwd()``.
         registry: Workspace registry to read from; defaults to the shared
             process registry ``allowed_file_roots`` uses.
         binding_authority: Optional frozen run authority — when present,
@@ -290,24 +378,49 @@ def workspace_context_note(
         status_cache: Optional :class:`RemoteBindingStatusCache` backing
             the remote-root lines; ``None`` resolves the process-wide
             singleton (test seam for injection).
+        path_tool_aliases: The ``root_alias`` values this run's fs_*/git_*
+            tools advertise. Only folders they admit are offered; an empty
+            collection means the run has no such tools. ``None`` (no tool
+            information) offers every authorized folder under its binding id,
+            which is the alias Console runs admit it by.
+        scratch_relative_tools: Names of this run's tools whose relative
+            paths resolve in the chat's private scratch space (read_file,
+            list_directory, write_file); the note says so when any are given.
+        workspace_read_tools: Final offered workspace reader names. Exploration
+            guidance requires at least one fs_list/fs_glob/fs_grep/fs_read and
+            a reachable root admitted by path_tool_aliases.
 
     Returns:
-        The note text, or ``""`` when no note applies. On any registry failure
-        (or an unknown workspace id) it degrades to a one-line note that still
-        tells the agent it is not in the default workspace.
+        The note text. On any registry failure (or an unknown workspace
+        id) it degrades to a one-line note that still tells the agent it
+        is not in the default workspace.
     """
     from tldw_chatbook.Workspaces.models import DEFAULT_WORKSPACE_ID
 
+    aliases = (
+        frozenset(str(alias) for alias in path_tool_aliases)
+        if path_tool_aliases is not None
+        else None
+    )
     if not workspace_id or workspace_id == DEFAULT_WORKSPACE_ID:
-        return ""
-    launch = Path(
-        str(launch_cwd) if launch_cwd is not None else get_launch_cwd()
-    ).resolve()
+        return _default_workspace_note(aliases, scratch_relative_tools)
+    # TASK-35080: default Console sessions carry the Console-global
+    # sentinel ("global"), for which no registry row exists — without
+    # this branch the lookup below degrades to the false "details are
+    # currently unavailable" note for the most common session kind.
+    # Lazy import per this module's existing Tools→Chat precedent
+    # (``_binding_matches_frozen_authority``'s project-instructions one);
+    # the sentinel is defined by the Chat models layer that owns it.
+    from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+
+    if workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID:
+        return _default_workspace_note(aliases, scratch_relative_tools)
     if registry is None:
         try:
             registry = _registry_factory()
         except Exception:
             return _NOTE_UNAVAILABLE
+    unaddressable_folders = 0
     try:
         record = registry.get_workspace(workspace_id)
         if record is None:
@@ -325,8 +438,9 @@ def workspace_context_note(
         for binding, folder in _iter_valid_folder_bindings(
             registry.list_folder_bindings(workspace_id)
         ):
+            binding_id = str(getattr(binding, "binding_id", ""))
             frozen = (
-                authority_by_id.get(str(getattr(binding, "binding_id", "")))
+                authority_by_id.get(binding_id)
                 if authority_by_id is not None
                 else None
             )
@@ -336,28 +450,29 @@ def workspace_context_note(
                 folder, frozen
             ):
                 continue
-            display, outside = _relativize_root(folder, launch)
-            # Collapse whitespace in the rendered path exactly as the workspace
-            # name is collapsed above: a bound folder whose leaf name contains
-            # a newline (legal on POSIX) would otherwise splice a fake prompt
-            # section into the note the agent reads as instructions.
-            display = " ".join(display.split())
+            if aliases is not None and binding_id not in aliases:
+                # Authorized, but no path tool this run admits it: offering
+                # its alias would only earn a "root_alias does not name a
+                # root admitted for this run" refusal.
+                unaddressable_folders += 1
+                continue
+            # Collapse whitespace in the rendered alias and folder name exactly
+            # as the workspace name is collapsed above: a bound folder whose
+            # leaf name contains a newline (legal on POSIX) would otherwise
+            # splice a fake prompt section into the note the agent reads as
+            # instructions.
+            alias = " ".join(binding_id.split())
+            label = " ".join(folder.name.split()) or alias
             read_only = (
                 not bool(frozen.allow_write)
                 if frozen is not None
                 else str(binding.metadata.get("access", "ro")) != "rw"
             )
-            tags: list[str] = []
-            if outside:
-                tags.append("outside the launch directory")
-            if read_only:
-                tags.append("read-only")
-            suffix = f" ({', '.join(tags)})" if tags else ""
-            root_lines.append(f"  - {display}{suffix}")
+            access = "read-only" if read_only else "read-write"
+            root_lines.append(f"  - {alias} → {label} [{access}]")
     except Exception:
         logger.opt(exception=True).debug("workspace_context_note: registry unavailable")
         return _NOTE_UNAVAILABLE
-    launch_label = f"{launch.name}/" if launch.name else (launch.anchor or "/")
     lines = [
         _NOTE_HEADER,
         # Render the (user-controlled) workspace name as a JSON string literal:
@@ -367,7 +482,6 @@ def workspace_context_note(
         # whitespace-collapse above; ``ensure_ascii=False`` keeps unicode names
         # readable.
         f"Active workspace: {json.dumps(name, ensure_ascii=False)}",
-        f"Launched from: {launch_label}",
     ]
     # Remote-root lines (Phase 4a): alias -> URI mappings, the fs_*-only
     # rule, and the explicit degradation line for excluded bindings. The
@@ -375,6 +489,7 @@ def workspace_context_note(
     # never fails because the cache is unavailable).
     remote_admitted: list[str] = []
     remote_dropped: list[str] = []
+    remote_unaddressable = 0
     if status_cache is None:
         try:
             from tldw_chatbook.Tools.remote_binding_status import (
@@ -385,21 +500,46 @@ def workspace_context_note(
         except Exception:  # noqa: BLE001 - note-only extra, fail-soft
             status_cache = None
     if status_cache is not None:
-        remote_admitted, remote_dropped = _remote_note_lines(
+        remote_admitted, remote_dropped, remote_unaddressable = _remote_note_lines(
             registry,
             workspace_id,
             authority_by_id=authority_by_id,
             status_cache=status_cache,
+            path_tool_aliases=aliases,
         )
     if root_lines:
-        lines.append("Workspace file roots (relative to the launch directory):")
+        lines.append(_NOTE_LOCAL_HEADER)
         lines.extend(root_lines)
     if remote_admitted or remote_dropped:
         lines.append(_NOTE_REMOTE_HEADER)
         lines.extend(remote_admitted)
         lines.extend(remote_dropped)
-    if not (root_lines or remote_admitted or remote_dropped):
+    has_folders = bool(root_lines or remote_admitted or remote_dropped)
+    if not has_folders and (unaddressable_folders or remote_unaddressable):
+        lines.append(_NOTE_NO_PATH_TOOLS)
+    elif not has_folders:
         lines.append(_NOTE_NO_ROOTS)
+        return "\n".join(lines)
+    if (root_lines or remote_admitted) and {
+        "fs_list",
+        "fs_glob",
+        "fs_grep",
+        "fs_read",
+    }.intersection(workspace_read_tools):
+        lines.extend((_NOTE_PROJECT_EXPLORATION, _NOTE_PROJECT_FOLLOW_UP))
+    index_aliases = sorted(set(project_index_aliases).intersection(aliases or ()))
+    if root_lines and index_aliases:
+        lines.append(
+            "Keyword search via fs_search_index is available for root_alias: "
+            + ", ".join(index_aliases)
+            + ". Results are live-validated file evidence; stale coverage requires explicit Refresh."
+        )
+    scratch_tools = sorted({str(tool) for tool in scratch_relative_tools})
+    if scratch_tools:
+        lines.append(
+            f"Relative paths in {', '.join(scratch_tools)} resolve inside this "
+            "chat's private scratch space, not in the workspace folders."
+        )
     return "\n".join(lines)
 
 
@@ -413,6 +553,9 @@ def frozen_workspace_roots(
     if not workspace_id:
         return ()
     try:
+        binding_authority = tuple(binding_authority)
+        if not binding_authority:
+            return ()
         registry = registry or _registry_factory()
         live = {
             str(getattr(item, "binding_id", "")): item
@@ -872,3 +1015,92 @@ def _binding_matches_frozen_authority(folder: Path, frozen: Any) -> bool:
         return tuple(identities) == tuple(frozen.root_identity)
     except (AttributeError, OSError, TypeError, ValueError):
         return False
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "_default_registry_factory",
+                "allowed_file_roots",
+                "current_run_workspace_id",
+                "current_run_sandbox_root",
+                "_iter_valid_folder_bindings",
+                "_binding_matches_frozen_authority",
+            )
+        ),
+        (globals(), "_registry_factory", _default_registry_factory),
+        (globals(), "_default_registry_lock", _default_registry_lock),
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "_RUN_WORKSPACE_ID",
+                "_RUN_WORKSPACE_READ_BINDING_IDS",
+                "_RUN_WORKSPACE_WRITE_BINDING_IDS",
+                "_RUN_WORKSPACE_BINDING_AUTHORITY",
+                "_RUN_FILE_SANDBOX_ROOT",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_default_registry_factory",
+                    "allowed_file_roots",
+                    "current_run_workspace_id",
+                    "current_run_sandbox_root",
+                    "_iter_valid_folder_bindings",
+                    "_binding_matches_frozen_authority",
+                )
+            ),
+            (globals(), "_registry_factory", _default_registry_factory),
+            (globals(), "_default_registry_lock", _default_registry_lock),
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_RUN_WORKSPACE_ID",
+                    "_RUN_WORKSPACE_READ_BINDING_IDS",
+                    "_RUN_WORKSPACE_WRITE_BINDING_IDS",
+                    "_RUN_WORKSPACE_BINDING_AUTHORITY",
+                    "_RUN_FILE_SANDBOX_ROOT",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)

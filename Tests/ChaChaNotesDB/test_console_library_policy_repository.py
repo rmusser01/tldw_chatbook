@@ -145,9 +145,7 @@ def test_compare_and_swap_commits_one_revision_and_reports_stale_conflict(
     committed = repository.compare_and_swap(
         conversation_id, 1, _candidate(allowed=True)
     )
-    stale = repository.compare_and_swap(
-        conversation_id, 1, _candidate(allowed=False)
-    )
+    stale = repository.compare_and_swap(conversation_id, 1, _candidate(allowed=False))
 
     assert committed.status is ConsoleLibraryPolicyWriteStatus.COMMITTED
     assert committed.snapshot.policy_revision == 2
@@ -226,17 +224,17 @@ def test_writes_reject_missing_or_soft_deleted_conversations(
         missing = repository.compare_and_swap(
             "does-not-exist", 1, _candidate(allowed=True)
         )
-        deleted = repository.compare_and_swap(
-            deleted_id, 1, _candidate(allowed=True)
-        )
+        deleted = repository.compare_and_swap(deleted_id, 1, _candidate(allowed=True))
 
     assert missing.status is ConsoleLibraryPolicyWriteStatus.MISSING_CONVERSATION
     assert deleted.status is ConsoleLibraryPolicyWriteStatus.MISSING_CONVERSATION
     assert missing.snapshot.source == "missing"
     assert deleted.snapshot.source == "missing"
-    row_count = db.get_connection().execute(
-        "SELECT COUNT(*) FROM console_conversation_library_policy"
-    ).fetchone()[0]
+    row_count = (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM console_conversation_library_policy")
+        .fetchone()[0]
+    )
     assert row_count == 0
 
 
@@ -256,11 +254,15 @@ def test_soft_delete_retains_policy_restore_reuses_it_and_hard_purge_cascades(
         deleted_read.snapshot.auto_retrieve,
         deleted_read.snapshot.assistant_access,
     ) == (ConsoleAutoRetrieve.NEVER, ConsoleAssistantLibraryAccess.BLOCKED)
-    retained = db.get_connection().execute(
-        "SELECT policy_revision FROM console_conversation_library_policy "
-        "WHERE conversation_id = ?",
-        (conversation_id,),
-    ).fetchone()
+    retained = (
+        db.get_connection()
+        .execute(
+            "SELECT policy_revision FROM console_conversation_library_policy "
+            "WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        .fetchone()
+    )
     assert tuple(retained) == (1,)
 
     assert db.restore_conversation(conversation_id, expected_version=2) is True
@@ -270,8 +272,13 @@ def test_soft_delete_retains_policy_restore_reuses_it_and_hard_purge_cascades(
     with db.transaction() as cursor:
         cursor.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
     assert repository.read(conversation_id).snapshot.source == "missing"
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM console_conversation_library_policy "
-        "WHERE conversation_id = ?",
-        (conversation_id,),
-    ).fetchone()[0] == 0
+    assert (
+        db.get_connection()
+        .execute(
+            "SELECT COUNT(*) FROM console_conversation_library_policy "
+            "WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        .fetchone()[0]
+        == 0
+    )

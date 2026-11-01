@@ -153,14 +153,18 @@ def test_paragraphs_become_readable_prose_with_blank_lines_between_them():
 def test_a_link_keeps_its_label_and_shows_its_destination_as_text():
     """The UAT's exact shape: `<a href>` must not vanish into a hidden
     hyperlink -- both halves must be visible, plain text."""
-    out = html_to_display_text('Article URL: <a href="https://example.test/x">read more</a>')
+    out = html_to_display_text(
+        'Article URL: <a href="https://example.test/x">read more</a>'
+    )
     assert "<a href" not in out
     assert "read more" in out
     assert "https://example.test/x" in out
 
 
 def test_a_link_whose_label_already_is_the_url_is_not_printed_twice():
-    out = html_to_display_text('<a href="https://example.test/x">https://example.test/x</a>')
+    out = html_to_display_text(
+        '<a href="https://example.test/x">https://example.test/x</a>'
+    )
     assert out.count("https://example.test/x") == 1
 
 
@@ -214,14 +218,18 @@ def test_script_and_style_content_is_dropped_not_shown_as_text():
 def test_nested_drop_content_is_not_reenabled_by_the_inner_close_tag():
     """`<svg><style>...</style>...</svg>`: the inner `</style>` must not
     turn dropping back off while still inside the outer `<svg>`."""
-    out = html_to_display_text("<p>Before</p><svg><style>.a{}</style>leaked?</svg><p>After</p>")
+    out = html_to_display_text(
+        "<p>Before</p><svg><style>.a{}</style>leaked?</svg><p>After</p>"
+    )
     assert "Before" in out and "After" in out
     assert "leaked?" not in out
 
 
 def test_malformed_nesting_does_not_raise():
     """`html.parser` tolerates bad markup; a stray close tag must not crash."""
-    out = html_to_display_text("<p>Unclosed paragraph <b>bold <i>italic</p> stray </a> tail")
+    out = html_to_display_text(
+        "<p>Unclosed paragraph <b>bold <i>italic</p> stray </a> tail"
+    )
     assert "Unclosed paragraph" in out
     assert "tail" in out
 
@@ -327,7 +335,7 @@ def test_none_becomes_empty_string():
 
 
 def test_readable_body_text_converts_an_html_body():
-    out = readable_body_text("<p>Article URL: <a href=\"https://x.test\">here</a></p>")
+    out = readable_body_text('<p>Article URL: <a href="https://x.test">here</a></p>')
     assert "<p>" not in out
     assert "here" in out and "https://x.test" in out
 
@@ -381,7 +389,9 @@ def test_self_closed_br_becomes_a_line_break():
 
 
 def test_self_closed_img_alt_text_is_kept_as_a_caption():
-    out = html_to_display_text('<p>Before</p><img alt="A chart of Q3 revenue"/><p>After</p>')
+    out = html_to_display_text(
+        '<p>Before</p><img alt="A chart of Q3 revenue"/><p>After</p>'
+    )
     assert "A chart of Q3 revenue" in out
     assert "<img" not in out
     assert "Before" in out and "After" in out
@@ -417,7 +427,10 @@ def test_a_self_closed_void_tag_is_bracket_shaped_text_that_still_survives_inert
 def test_body_snippet_collapses_whitespace():
     from tldw_chatbook.Subscriptions.html_text import body_snippet
 
-    assert body_snippet("line one\n\nline two\t with   gaps") == "line one line two with gaps"
+    assert (
+        body_snippet("line one\n\nline two\t with   gaps")
+        == "line one line two with gaps"
+    )
 
 
 def test_body_snippet_strips_tags():

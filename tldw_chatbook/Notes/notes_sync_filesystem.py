@@ -7,6 +7,7 @@ import os
 import stat
 import sys
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -33,6 +34,31 @@ from tldw_chatbook.Notes.sync_paths import (
 )
 
 _UTF8_BOM = b"\xef\xbb\xbf"
+
+#: TASK-34000.16: the reasons ``PosixNotesSyncFilesystem.observe`` raises that
+#: are about ONE file's own bytes, metadata or shape. A root walk records these
+#: per file and plans the rest of the folder. Not in the set, by decision (fix
+#: round 1): ``missing_target`` (the file vanished mid-walk; the runtime
+#: ignores it), and the ``read_bytes`` reasons that say the FOLDER moved under
+#: the walk -- ``cross_device``, ``target_identity_changed``,
+#: ``missing_parent``, ``parent_identity_changed``, ``non_directory_parent``
+#: (and ``root_identity_changed``) -- which stay root-level refusals: a plan
+#: built over a folder that is no longer the folder would read every unseen
+#: bound file as deleted.
+FILE_GATE_REASON_CODES: frozenset[str] = frozenset(
+    {
+        "unsupported_encoding",
+        "mixed_newlines",
+        "unsupported_newline",
+        "unsupported_metadata",
+        "max_file_bytes_exceeded",
+        "non_regular",
+        "multiple_links",
+        "link_or_reparse",
+        "target_changed_during_read",
+        "operation_failed",
+    }
+)
 
 
 def _windows_stable_identity_digest(identity: Any) -> str:
@@ -154,6 +180,127 @@ def _parse_supported_text(payload: bytes) -> tuple[str, bool, str, bool]:
     return logical, bom, newline, final_newline
 
 
+def represented_text(text: str, profile: NotesSyncSerializationProfile) -> str:
+    """Return the logical text a file holds once ``text`` is written under ``profile``.
+
+    TASK-34000.2: this is what ``observe(...).text`` reads back after
+    :meth:`PosixNotesSyncFilesystem.serialize` writes ``text``. A note and its
+    file are in step when this equals the file's text -- NOT when the raw note
+    equals it. The profile keeps the file's own final-newline convention, so a
+    note typed past its last newline (Ctrl+End, then a word) is written as
+    ``"...word\\n"`` while the note itself still reads ``"...word"``.
+    Comparing the raw note with the file therefore failed for every correctly
+    written file and fenced the whole sync folder at ``postcondition_failed``.
+
+    Args:
+        text: Note-side content, with any newline spelling.
+        profile: The file representation the write applies.
+
+    Returns:
+        The LF-normalized text with the profile's final-newline rule applied.
+
+    Raises:
+        TypeError: If ``text`` is not a string.
+    """
+
+    if type(text) is not str:
+        raise TypeError("text must be a string.")
+    logical = text.replace("\r\n", "\n").replace("\r", "\n")
+    if profile.final_newline and not logical.endswith("\n"):
+        logical += "\n"
+    elif not profile.final_newline:
+        logical = logical.rstrip("\n")
+    return logical
+
+
+def proven_profile(
+    observed: NotesSyncSerializationProfile,
+    text: str,
+    recorded: NotesSyncSerializationProfile | None,
+) -> NotesSyncSerializationProfile:
+    """Return the profile an observation proves: a text with no line ending keeps the recorded newline.
+
+    TASK-34000.48: ``_parse_supported_text`` has to report ``lf`` or ``crlf``
+    and a text that contains no line ending at all gives it nothing to go on,
+    so such a file reads as ``lf`` whatever convention it was written under.
+    A CRLF file whose note shrank to one newline-less line was therefore
+    re-observed as ``lf`` right after its own correct write and refused at
+    ``replacement_postcondition_failed``; committing that observation would
+    instead have flipped the file's recorded convention on its next
+    multi-line write. The one rule, applied at every comparison and commit:
+    an observation whose logical text contains no ``"\\n"`` proves nothing
+    about ``newline`` and inherits the recorded one. ``final_newline``,
+    ``utf8_bom`` and ``mode`` are always determinate from the bytes and the
+    metadata and are never carried, so a genuine BOM or mode difference on
+    such a file (FAT32/SMB volumes report one mode for everything) is still
+    a representation change.
+
+    Args:
+        observed: The profile the bytes on disk parse to.
+        text: The observation's logical (LF-normalized) text.
+        recorded: The convention recorded for the file -- the binding's, the
+            journal's, the reviewed snapshot's or a create's candidate --
+            or ``None`` when nothing is recorded (a discovered candidate).
+
+    Returns:
+        ``observed`` with ``newline`` taken from ``recorded`` when ``text``
+        has no line ending; ``observed`` unchanged otherwise.
+    """
+
+    if recorded is None or "\n" in text or observed.newline == recorded.newline:
+        return observed
+    return NotesSyncSerializationProfile(
+        utf8_bom=observed.utf8_bom,
+        newline=recorded.newline,
+        final_newline=observed.final_newline,
+        mode=observed.mode,
+    )
+
+
+def _requested_write_profile(
+    expected: NotesSyncFileSnapshot,
+    profile: NotesSyncSerializationProfile | None,
+) -> NotesSyncSerializationProfile:
+    """Return the profile a ``replace`` writes under.
+
+    With no profile asked for, the reviewed state's own parse -- the
+    pre-TASK-34000.48 behaviour, byte for byte. A requested profile must be
+    one the reviewed state proves: the same BOM, final-newline rule and mode,
+    and the same newline unless the reviewed text carries no line ending.
+
+    Raises:
+        TypeError: If ``profile`` is not a profile.
+        NotesSyncFilesystemError: ``replacement_profile_unproven`` otherwise;
+            nothing has been written.
+    """
+
+    if profile is None:
+        return expected.observation.serialization
+    if type(profile) is not NotesSyncSerializationProfile:
+        raise TypeError("profile must be a NotesSyncSerializationProfile.")
+    if proven_profile(expected.observation.serialization, expected.text, profile) != profile:
+        raise NotesSyncFilesystemError("replacement_profile_unproven")
+    return profile
+
+
+def represented_digest(text: str, profile: NotesSyncSerializationProfile) -> str:
+    """Return the content digest a file would carry after writing ``text``.
+
+    The binding keeps ONE content digest as the baseline for both sides
+    (``notes_sync_runtime.observe_root``); a note is compared against it in
+    this form, so a note and the file it was written to share one digest.
+
+    Args:
+        text: Note-side content.
+        profile: The file representation the binding records.
+
+    Returns:
+        The SHA-256 of :func:`represented_text`, as the file side computes it.
+    """
+
+    return hashlib.sha256(represented_text(text, profile).encode("utf-8")).hexdigest()
+
+
 class PosixNotesSyncFilesystem:
     """Writable POSIX adapter composed from one descriptor-pinned root."""
 
@@ -162,14 +309,30 @@ class PosixNotesSyncFilesystem:
         selected_root: Path | str,
         *,
         max_file_bytes: int = 10 * 1024 * 1024,
+        identity_claimed: Callable[[int, int], bool] | None = None,
     ):
+        """Compose the adapter over one pinned root.
+
+        Args:
+            selected_root: The sync root directory.
+            max_file_bytes: The largest file an observation reads.
+            identity_claimed: Whether ``(device, inode)`` is recorded by an
+                active binding (TASK-34789). A file this adapter writes or
+                creates avoids such an inode number; the check is advisory,
+                and ``PinnedSyncRoot._create_temporary`` lists what gets
+                through. ``None`` (a read-only use, a harness without a
+                store) asks nothing.
+        """
+
         if not self.supports_writes():
             raise NotesSyncFilesystemError("writable_adapter_unavailable")
         if type(max_file_bytes) is not int or max_file_bytes <= 0:
             raise ValueError("max_file_bytes must be a positive integer.")
         self.canonical_root = _canonical_directory(selected_root)
         self._max_file_bytes = max_file_bytes
-        self._root = PinnedSyncRoot(self.canonical_root)
+        self._root = PinnedSyncRoot(
+            self.canonical_root, identity_claimed=identity_claimed
+        )
 
     @staticmethod
     def supports_writes(*, platform: str | None = None) -> bool:
@@ -253,13 +416,7 @@ class PosixNotesSyncFilesystem:
     def serialize(text: str, profile: NotesSyncSerializationProfile) -> bytes:
         """Apply one captured profile after normalizing note-side newlines."""
 
-        if type(text) is not str:
-            raise TypeError("text must be a string.")
-        logical = text.replace("\r\n", "\n").replace("\r", "\n")
-        if profile.final_newline and not logical.endswith("\n"):
-            logical += "\n"
-        elif not profile.final_newline:
-            logical = logical.rstrip("\n")
+        logical = represented_text(text, profile)
         represented = (
             logical.replace("\n", "\r\n") if profile.newline == "crlf" else logical
         )
@@ -272,15 +429,35 @@ class PosixNotesSyncFilesystem:
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
-        """Replace only the exact state presented for review."""
+        """Replace only the exact state presented for review.
+
+        Args:
+            relative_path: The file, relative to the root.
+            text: The note text to write.
+            expected: The exact reviewed state the replacement is conditional on.
+            profile: The representation to write under; defaults to the one
+                ``expected`` parses to. TASK-34000.48: the executor passes the
+                RECORDED profile here because a reviewed file whose text has
+                no line ending parses to ``lf`` whatever its convention, and a
+                multi-line write under that parse would flip a CRLF file. Only
+                a profile the reviewed state proves is accepted: the same BOM,
+                final-newline rule and mode, and the same newline unless the
+                reviewed text carries no line ending.
+
+        Raises:
+            NotesSyncFilesystemError: ``replacement_profile_unproven`` when
+                ``profile`` is not one ``expected`` can carry; nothing is
+                written.
+        """
 
         if type(expected) is not NotesSyncFileSnapshot:
             raise TypeError("expected must be a NotesSyncFileSnapshot.")
         metadata_issue = self._metadata_issue(expected.reviewed_state)
         if metadata_issue is not None:
             raise NotesSyncFilesystemError(metadata_issue)
-        profile = expected.observation.serialization
+        profile = _requested_write_profile(expected, profile)
         payload = self.serialize(text, profile)
         try:
             self._root.replace_bytes(
@@ -310,9 +487,12 @@ class PosixNotesSyncFilesystem:
                     "replacement_postcondition_failed",
                 ),
             ) from None
+        # TASK-34000.48: the bytes ARE the comparison; a newline-free result
+        # proves nothing about ``newline`` and inherits the profile written.
         if (
             observed.raw_bytes != payload
-            or observed.observation.serialization != profile
+            or proven_profile(observed.observation.serialization, observed.text, profile)
+            != profile
         ):
             raise NotesSyncFilesystemPartialError(
                 "replacement_postcondition_failed",
@@ -372,7 +552,8 @@ class PosixNotesSyncFilesystem:
             ) from None
         if (
             observed.raw_bytes != payload
-            or observed.observation.serialization != profile
+            or proven_profile(observed.observation.serialization, observed.text, profile)
+            != profile
         ):
             raise NotesSyncFilesystemPartialError(
                 "replacement_postcondition_failed",
@@ -531,10 +712,12 @@ class PosixNotesSyncFilesystem:
                     "move_postcondition_failed",
                 ),
             ) from None
+        reviewed = expected.observation.serialization
         if (
             moved.raw_bytes != expected.raw_bytes
             or moved.observation.identity != expected.observation.identity
-            or moved.observation.serialization != expected.observation.serialization
+            or proven_profile(moved.observation.serialization, moved.text, reviewed)
+            != reviewed
         ):
             raise NotesSyncFilesystemPartialError(
                 "move_postcondition_failed",
@@ -649,5 +832,8 @@ __all__ = [
     "PosixNotesSyncFilesystem",
     "WindowsNotesSyncObservationFilesystem",
     "WindowsNotesSyncObservation",
+    "proven_profile",
+    "represented_digest",
+    "represented_text",
     "validate_sync_root_admission",
 ]

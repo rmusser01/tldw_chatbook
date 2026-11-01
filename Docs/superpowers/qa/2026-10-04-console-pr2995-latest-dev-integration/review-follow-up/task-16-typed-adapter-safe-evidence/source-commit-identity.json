@@ -1,0 +1,12 @@
+{
+  "HEAD": "81484b688a03c0f924a0ea6a6474b5e2d4b355e8",
+  "changed_paths": [
+    "Tests/UI/test_console_ask_user_typed_answers.py",
+    "Tests/UI/test_personas_workbench.py"
+  ],
+  "parent": "f817cbefabdb57896b40371bcdc9346f5bb0659b",
+  "source_index_clean": true,
+  "subject": "test(ui): restore canonical profiles and typed send adapter",
+  "test_execution_overlay_hashes_match_committed_bytes": true,
+  "two_markers_plus_five_namespace_keywords_only": true
+}

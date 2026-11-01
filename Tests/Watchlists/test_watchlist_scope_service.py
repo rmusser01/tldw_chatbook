@@ -3,7 +3,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import WatchlistBundleService
 from tldw_chatbook.Subscriptions.watchlist_opml_service import WatchlistOpmlService
-from tldw_chatbook.Subscriptions.watchlist_scope_service import WatchlistBackend, WatchlistScopeService
+from tldw_chatbook.Subscriptions.watchlist_scope_service import (
+    WatchlistBackend,
+    WatchlistScopeService,
+)
 from tldw_chatbook.Subscriptions.watchlist_item_page import (
     WatchlistItemCursor,
     WatchlistItemPage,
@@ -15,7 +18,13 @@ def make_scope_service():
     local_service.run_executor = AsyncMock(return_value={"items": []})
     local_service.execute_run = None
     server_service = AsyncMock()
-    return WatchlistScopeService(local_service=local_service, server_service=server_service), local_service, server_service
+    return (
+        WatchlistScopeService(
+            local_service=local_service, server_service=server_service
+        ),
+        local_service,
+        server_service,
+    )
 
 
 @pytest.mark.asyncio
@@ -34,15 +43,21 @@ async def test_preview_source_local_uses_preview_service():
             source_config={"source_type": "rss", "url": "http://example.com/feed"},
         )
 
-        MockPreviewService.assert_called_once_with(run_executor=local_service.run_executor)
-        instance.preview.assert_awaited_once_with({"source_type": "rss", "url": "http://example.com/feed"})
+        MockPreviewService.assert_called_once_with(
+            run_executor=local_service.run_executor
+        )
+        instance.preview.assert_awaited_once_with(
+            {"source_type": "rss", "url": "http://example.com/feed"}
+        )
         assert result == preview_result
 
 
 @pytest.mark.asyncio
 async def test_preview_source_rejects_server():
     scope_service, _, _ = make_scope_service()
-    with pytest.raises(ValueError, match="Preview is only supported for the local backend"):
+    with pytest.raises(
+        ValueError, match="Preview is only supported for the local backend"
+    ):
         await scope_service.preview_source(
             runtime_backend=WatchlistBackend.SERVER,
             source_config={"source_type": "rss", "url": "http://example.com/feed"},
@@ -54,7 +69,9 @@ async def test_check_now_delegates_to_launch_run():
     scope_service, local_service, _ = make_scope_service()
     local_service.launch_run = AsyncMock(return_value={"run_id": 7, "status": "queued"})
 
-    result = await scope_service.check_now(runtime_backend=WatchlistBackend.LOCAL, source_id=42)
+    result = await scope_service.check_now(
+        runtime_backend=WatchlistBackend.LOCAL, source_id=42
+    )
 
     local_service.launch_run.assert_awaited_once_with(job_id=None, source_id=42)
     assert result == {"run_id": 7, "status": "queued"}
@@ -67,7 +84,9 @@ async def test_import_opml_creates_local_sources():
     # auto-truthy this lookup and skip creation, so the fixture names the
     # "nothing exists yet" case explicitly.
     local_service.find_source_id_by_url = AsyncMock(return_value=None)
-    local_service.create_source = AsyncMock(side_effect=[{"id": 1, "name": "A"}, {"id": 2, "name": "B"}])
+    local_service.create_source = AsyncMock(
+        side_effect=[{"id": 1, "name": "A"}, {"id": 2, "name": "B"}]
+    )
     xml_text = """<?xml version="1.0"?>
     <opml version="2.0">
         <body>
@@ -77,7 +96,9 @@ async def test_import_opml_creates_local_sources():
     </opml>
     """
 
-    result = await scope_service.import_opml(runtime_backend=WatchlistBackend.LOCAL, xml_text=xml_text)
+    result = await scope_service.import_opml(
+        runtime_backend=WatchlistBackend.LOCAL, xml_text=xml_text
+    )
 
     assert local_service.create_source.await_count == 2
     assert result["created"] == 2
@@ -87,8 +108,12 @@ async def test_import_opml_creates_local_sources():
 @pytest.mark.asyncio
 async def test_import_opml_rejects_server():
     scope_service, _, _ = make_scope_service()
-    with pytest.raises(ValueError, match="OPML import is only supported for the local backend"):
-        await scope_service.import_opml(runtime_backend=WatchlistBackend.SERVER, xml_text="<opml/>")
+    with pytest.raises(
+        ValueError, match="OPML import is only supported for the local backend"
+    ):
+        await scope_service.import_opml(
+            runtime_backend=WatchlistBackend.SERVER, xml_text="<opml/>"
+        )
 
 
 @pytest.mark.asyncio
@@ -96,9 +121,7 @@ async def test_export_opml_nests_watchlist_structure_for_local():
     """TASK-3604 plan task 4: the local export assembles watchlists with
     member rows and unassigned rows, and the serializer nests them."""
     scope_service, local_service, _ = make_scope_service()
-    local_service.list_watchlists = AsyncMock(
-        return_value=[{"id": 9, "name": "Tech"}]
-    )
+    local_service.list_watchlists = AsyncMock(return_value=[{"id": 9, "name": "Tech"}])
     local_service.list_watchlist_source_rows = AsyncMock(
         return_value=[{"name": "AI", "url": "http://a.com", "source_type": "rss"}]
     )
@@ -121,16 +144,28 @@ async def test_export_opml_nests_watchlist_structure_for_local():
 @pytest.mark.asyncio
 async def test_list_items_delegates_to_local_service():
     scope_service, local_service, _ = make_scope_service()
-    local_service.list_items = AsyncMock(return_value=[{"id": "local:watchlist_item:1", "title": "Post"}])
+    local_service.list_items = AsyncMock(
+        return_value=[{"id": "local:watchlist_item:1", "title": "Post"}]
+    )
 
-    result = await scope_service.list_items(runtime_backend=WatchlistBackend.LOCAL, status="new")
+    result = await scope_service.list_items(
+        runtime_backend=WatchlistBackend.LOCAL, status="new"
+    )
 
     # `run_id` joined the delegation in TASK-2306: the Runs tab's Items
     # sub-region asks for one run's items through this same `items.list` route.
     local_service.list_items.assert_awaited_once_with(
-        source_id=None, status="new", limit=100, offset=0, run_id=None,
-        watchlist_id=None, unassigned_only=False, statuses=None,
-        is_flagged=None, search=None, since=None,
+        source_id=None,
+        status="new",
+        limit=100,
+        offset=0,
+        run_id=None,
+        watchlist_id=None,
+        unassigned_only=False,
+        statuses=None,
+        is_flagged=None,
+        search=None,
+        since=None,
     )
     assert len(result) == 1
 
@@ -147,17 +182,29 @@ async def test_list_items_forwards_watchlist_scope():
     )
 
     local_service.list_items.assert_awaited_once_with(
-        source_id=None, status=None, limit=100, offset=0, run_id=None,
-        watchlist_id=3, unassigned_only=False, statuses=["new", "reviewed"],
-        is_flagged=None, search=None, since=None,
+        source_id=None,
+        status=None,
+        limit=100,
+        offset=0,
+        run_id=None,
+        watchlist_id=3,
+        unassigned_only=False,
+        statuses=["new", "reviewed"],
+        is_flagged=None,
+        search=None,
+        since=None,
     )
 
 
 @pytest.mark.asyncio
 async def test_list_items_watchlist_scope_server_backend_rejected():
     scope_service, _, _ = make_scope_service()
-    with pytest.raises(ValueError, match="Item listing is only supported for the local backend"):
-        await scope_service.list_items(runtime_backend=WatchlistBackend.SERVER, watchlist_id=3)
+    with pytest.raises(
+        ValueError, match="Item listing is only supported for the local backend"
+    ):
+        await scope_service.list_items(
+            runtime_backend=WatchlistBackend.SERVER, watchlist_id=3
+        )
 
 
 def test_bundle_service_delegates_source_counts():
@@ -175,7 +222,9 @@ def test_bundle_service_delegates_source_counts():
 @pytest.mark.asyncio
 async def test_list_items_rejects_server():
     scope_service, _, _ = make_scope_service()
-    with pytest.raises(ValueError, match="Item listing is only supported for the local backend"):
+    with pytest.raises(
+        ValueError, match="Item listing is only supported for the local backend"
+    ):
         await scope_service.list_items(runtime_backend=WatchlistBackend.SERVER)
 
 
@@ -260,12 +309,18 @@ async def test_count_reader_item_arrivals_rejects_server_before_dispatch():
 @pytest.mark.asyncio
 async def test_save_alert_rule_create_path():
     scope_service, local_service, _ = make_scope_service()
-    local_service.create_alert_rule = AsyncMock(return_value={"id": 3, "name": "New Rule"})
+    local_service.create_alert_rule = AsyncMock(
+        return_value={"id": 3, "name": "New Rule"}
+    )
     payload = {"name": "New Rule", "condition": "always"}
 
-    result = await scope_service.save_alert_rule(runtime_backend=WatchlistBackend.LOCAL, payload=payload)
+    result = await scope_service.save_alert_rule(
+        runtime_backend=WatchlistBackend.LOCAL, payload=payload
+    )
 
-    local_service.create_alert_rule.assert_awaited_once_with(name="New Rule", condition="always")
+    local_service.create_alert_rule.assert_awaited_once_with(
+        name="New Rule", condition="always"
+    )
     local_service.update_alert_rule.assert_not_awaited()
     assert result == {"id": 3, "name": "New Rule"}
 
@@ -273,12 +328,18 @@ async def test_save_alert_rule_create_path():
 @pytest.mark.asyncio
 async def test_save_alert_rule_update_path():
     scope_service, local_service, _ = make_scope_service()
-    local_service.update_alert_rule = AsyncMock(return_value={"id": 7, "name": "Updated Rule"})
+    local_service.update_alert_rule = AsyncMock(
+        return_value={"id": 7, "name": "Updated Rule"}
+    )
     payload = {"id": 7, "name": "Updated Rule", "condition": "never"}
 
-    result = await scope_service.save_alert_rule(runtime_backend=WatchlistBackend.LOCAL, payload=payload)
+    result = await scope_service.save_alert_rule(
+        runtime_backend=WatchlistBackend.LOCAL, payload=payload
+    )
 
-    local_service.update_alert_rule.assert_awaited_once_with("7", name="Updated Rule", condition="never")
+    local_service.update_alert_rule.assert_awaited_once_with(
+        "7", name="Updated Rule", condition="never"
+    )
     local_service.create_alert_rule.assert_not_awaited()
     assert result == {"id": 7, "name": "Updated Rule"}
 
@@ -286,12 +347,18 @@ async def test_save_alert_rule_update_path():
 @pytest.mark.asyncio
 async def test_save_alert_rule_none_id_treated_as_create_and_stripped():
     scope_service, local_service, _ = make_scope_service()
-    local_service.create_alert_rule = AsyncMock(return_value={"id": 9, "name": "Rule from None"})
+    local_service.create_alert_rule = AsyncMock(
+        return_value={"id": 9, "name": "Rule from None"}
+    )
     payload = {"id": None, "name": "Rule from None", "condition": "sometimes"}
 
-    result = await scope_service.save_alert_rule(runtime_backend=WatchlistBackend.LOCAL, payload=payload)
+    result = await scope_service.save_alert_rule(
+        runtime_backend=WatchlistBackend.LOCAL, payload=payload
+    )
 
-    local_service.create_alert_rule.assert_awaited_once_with(name="Rule from None", condition="sometimes")
+    local_service.create_alert_rule.assert_awaited_once_with(
+        name="Rule from None", condition="sometimes"
+    )
     local_service.update_alert_rule.assert_not_awaited()
     assert result == {"id": 9, "name": "Rule from None"}
 
@@ -316,7 +383,9 @@ async def test_mark_all_read_forwards_scope_kwargs_to_local_service():
 @pytest.mark.asyncio
 async def test_mark_all_read_server_backend_rejected():
     scope_service, local_service, _ = make_scope_service()
-    with pytest.raises(ValueError, match="Item status updates are only supported for the local backend"):
+    with pytest.raises(
+        ValueError, match="Item status updates are only supported for the local backend"
+    ):
         await scope_service.mark_all_read(runtime_backend=WatchlistBackend.SERVER)
     local_service.mark_all_read.assert_not_awaited()
 
@@ -340,7 +409,9 @@ async def test_restore_items_new_forwards_denamespaced_ids_to_local_service():
 @pytest.mark.asyncio
 async def test_restore_items_new_server_backend_rejected():
     scope_service, local_service, _ = make_scope_service()
-    with pytest.raises(ValueError, match="Item status updates are only supported for the local backend"):
+    with pytest.raises(
+        ValueError, match="Item status updates are only supported for the local backend"
+    ):
         await scope_service.restore_items_new(
             runtime_backend=WatchlistBackend.SERVER, item_ids=[1]
         )
@@ -391,10 +462,17 @@ async def test_list_items_forwards_search_and_since():
     )
 
     local_service.list_items.assert_awaited_once_with(
-        source_id=None, status=None, limit=100, offset=0, run_id=None,
-        watchlist_id=None, unassigned_only=False, statuses=None,
+        source_id=None,
+        status=None,
+        limit=100,
+        offset=0,
+        run_id=None,
+        watchlist_id=None,
+        unassigned_only=False,
+        statuses=None,
         is_flagged=None,
-        search="retrieval rubric", since="2026-08-08T00:00:00+00:00",
+        search="retrieval rubric",
+        since="2026-08-08T00:00:00+00:00",
     )
 
 
@@ -406,7 +484,7 @@ _FOLDERED_OPML = (
     '<outline text="Tech">'
     '<outline text="AI" type="rss" xmlUrl="http://example.com/ai"/>'
     '<outline text="ML" type="rss" xmlUrl="http://example.com/ml"/>'
-    '</outline>'
+    "</outline>"
     '<outline text="Loose" type="rss" xmlUrl="http://example.com/loose"/>'
     "</body></opml>"
 )

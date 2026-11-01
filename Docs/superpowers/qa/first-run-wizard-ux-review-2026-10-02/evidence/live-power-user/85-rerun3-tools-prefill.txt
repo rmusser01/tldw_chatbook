@@ -1,0 +1,50 @@
+                                        ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                                        │                                                 Set up tldw chatbook                                                 │
+                                        │                                                                                                                      │
+                                        │▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│
+                                        │    ┌──┐      ┌──┐       ┌──┐      ┌──┐       ┌──┐      ┌──┐       ┌──┐      ┌──┐       ┌──┐      ┌──┐       ┌──┐     │
+                                        │    │✓ │      │! │       │! │      │✓ │       │✓ │      │✓ │       │7 │      │8 │       │9 │      │10│       │11│     │
+                                        │    └──┘      └──┘       └──┘      └──┘       └──┘      └──┘       └──┘      └──┘       └──┘      └──┘       └──┘     │
+                                        │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+                                        │                                                                                                                      │
+                                        │                                                   Built-in tools                                                     │
+                                        │                                                                                                                      │
+                                        │  Everything is off by default. Tools that read or change your files still show an approval card every time they      │
+                                        │  run.                                                                                                                │
+                                        │                                                                                                                      │
+                                        │  ┌────────┐  Read file                                                                                               │
+                                        │  │        │  Read a file you point the assistant at. Asks before running unless you approve a longer scope.          │
+                                        │  └────────┘                                                                                                          │
+                                        │                                                                                                                      │
+                                        │  ▊▔▔▔▔▔▔▔▔▎  List directory                                                                                          │
+                                        │  ▊        ▎  Browse the contents of a folder. Asks before running unless you approve a longer scope.                 │
+                                        │  ▊▁▁▁▁▁▁▁▁▎                                                                                                          │
+                                        │                                                                                                                      │
+                                        │  ▊▔▔▔▔▔▔▔▔▎  Write file                                                                                              │
+                                        │  ▊        ▎  ⚠ Creates or overwrites files on disk.                                                                  │
+                                        │  ▊▁▁▁▁▁▁▁▁▎                                                                                                          │
+                                        │                                                                                                                      │
+                                        │  ▊▔▔▔▔▔▔▔▔▎  Create note                                                                                             │
+                                        │  ▊        ▎  ⚠ Adds new notes to your notebook.                                                                      │
+                                        │  ▊▁▁▁▁▁▁▁▁▎                                                                                                          │
+                                        │                                                                                                                      │
+                                        │  ▊▔▔▔▔▔▔▔▔▎  Update note                                                                                             │
+                                        │  ▊        ▎  ⚠ Edits your existing notes.                                                                            │
+                                        │  ▊▁▁▁▁▁▁▁▁▎                                                                                                          │
+                                        │                                                                                                                      │
+                                        │  ▊▔▔▔▔▔▔▔▔▎  Find files                                                                                              │
+                                        │  ▊        ▎  Match file names by pattern (like *.md). Asks before running unless you approve a longer scope.         │
+                                        │  ▊▁▁▁▁▁▁▁▁▎                                                                                                          │
+                                        │                                                                                                                      │
+                                        │  ▊▔▔▔▔▔▔▔▔▎  Search in files                                                                                         │
+                                        │  ▊        ▎  Search inside files for text. Asks before running unless you approve a longer scope.                    │
+                                        │  ▊▁▁▁▁▁▁▁▁▎                                                                                                      ▆▆  │
+                                        │                                                                                                                      │
+                                        │  ▊▔▔▔▔▔▔▔▔▎  Expand document                                                                                         │
+                                        │                                                                                                                      │
+                                        │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
+                                        │                                                                                                                      │
+                                        │    Step 7 of 11                                                           ← Back          Next →       Exit setup    │
+                                        │                                                                                                                      │
+                                        └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                           Enter / Ctrl+N next · Ctrl+B back · Esc exit setup

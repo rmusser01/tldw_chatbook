@@ -124,7 +124,9 @@ def _seams_bound_from_a_controller(tree: ast.AST) -> set[str]:
         if not isinstance(node, ast.Assign):
             continue
         value = node.value
-        if not isinstance(value, ast.Attribute) or not isinstance(value.value, ast.Name):
+        if not isinstance(value, ast.Attribute) or not isinstance(
+            value.value, ast.Name
+        ):
             continue
         if value.value.id not in CONTROLLER_CLASS_NAMES:
             continue

@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.local_tool_provider import (
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LOCAL_USER_DENY_REFUSAL,
+    LOCAL_WORKER_FAILED_REFUSAL,
     TODO_UPDATE_DELETE_RULE,
     LocalApprovalEffect,
     LocalToolExposure,
@@ -51,6 +52,8 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 )
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+
+pytestmark = pytest.mark.bootstrap_profile
 
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 ASK = EffectiveToolState(state="ask", origin="global_default")
@@ -295,6 +298,116 @@ def test_mixed_access_roots_refuse_mutation_on_read_only_alias(tmp_path):
     assert write_executor.calls == [
         ("fs_write", {"path": "a.txt", "content": "x"}, "write")
     ]
+
+
+def test_fs_mkdir_creates_a_directory_through_an_admitted_rw_root(tmp_path):
+    """TASK-35081: the incident's "create a folder" ask, end to end."""
+    root = admitted_root(
+        alias="folder-rw",
+        root=tmp_path,
+        allow_write=True,
+        executor=InProcessWorkspaceExecutor(tmp_path),
+    )
+    provider = make_provider(root=tmp_path, admitted_roots=(root,))
+
+    created = provider.invoke("local:fs_mkdir", {"path": "reports/2026"})
+    retried = provider.invoke("local:fs_mkdir", {"path": "reports/2026"})
+
+    assert created.ok and "created directory" in created.content
+    assert retried.ok and "already exists" in retried.content
+    assert (tmp_path / "reports" / "2026").is_dir()
+
+
+def test_fs_mkdir_is_stripped_when_no_root_is_writable(tmp_path):
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-ro",
+                root=tmp_path,
+                allow_write=False,
+                executor=RecordingWorkspaceExecutor(),
+            ),
+        ),
+    )
+    names = {entry.name for entry in provider.list_catalog()}
+
+    assert "fs_mkdir" not in names
+    assert "fs_write" not in names
+    assert "fs_read" in names
+
+
+def test_fs_mkdir_refused_on_read_only_alias_mixed_roots(tmp_path):
+    read_executor = RecordingWorkspaceExecutor()
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-ro",
+                root=tmp_path / "ro",
+                allow_write=False,
+                executor=read_executor,
+            ),
+            admitted_root(
+                alias="folder-rw",
+                root=tmp_path / "rw",
+                allow_write=True,
+                executor=RecordingWorkspaceExecutor(),
+            ),
+        ),
+    )
+
+    refused = provider.invoke(
+        "local:fs_mkdir", {"root_alias": "folder-ro", "path": "new"}
+    )
+
+    assert not refused.ok and refused.outcome == "blocked"
+    assert read_executor.calls == []
+
+
+def test_fs_mkdir_preflight_maps_directory_target_and_consults_the_chain_guard(
+    tmp_path, monkeypatch
+):
+    """TASK-35081 review follow-up: the preflight never promises a target
+    the executor would refuse, and classifies the target as a directory.
+
+    The chain guard itself is denylist-driven and environment-dependent;
+    this test pins the preflight's WIRING — the guard is consulted and a
+    refusal surfaces as a model-actionable LocalToolError — by
+    monkeypatching the guard predicate (the provider imports it
+    function-locally, so patching the defining module takes effect).
+    """
+    import tldw_chatbook.Utils.sensitive_paths as sensitive_paths_module
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+
+    provider = make_provider(
+        root=tmp_path,
+        admitted_roots=(
+            admitted_root(
+                alias="folder-rw",
+                root=tmp_path,
+                allow_write=True,
+                executor=RecordingWorkspaceExecutor(),
+            ),
+        ),
+    )
+
+    targets = provider.path_targets("local:fs_mkdir", {"path": "a/b"})
+
+    assert [(target.path, target.kind) for target in targets] == [
+        (tmp_path.resolve() / "a" / "b", "directory")
+    ]
+
+    monkeypatch.setattr(
+        sensitive_paths_module, "refuses_new_directory_chain", lambda *a, **k: True
+    )
+    # The raw-arg form ("creating 'c/d'") is unique to the provider's
+    # branch; the resolve choke point's write-chain refusal echoes the
+    # ABSOLUTE path, so this match pins which raise fired (review Minor
+    # on #3154: a future function-local import in local_tool_impls must
+    # not silently shift the exercised path).
+    with pytest.raises(LocalToolError, match=r"creating 'c/d' would collide"):
+        provider.path_targets("local:fs_mkdir", {"path": "c/d"})
 
 
 def test_admitted_root_guard_revokes_before_executor(tmp_path):
@@ -591,17 +704,18 @@ def test_web_todo_and_watchlists_handlers_never_launch_workspace_executor(
     assert executor.calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
-    ("code", "expected"),
+    ("code", "expected", "outcome"),
     (
-        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL),
-        ("containment_unavailable", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-        ("protocol_failure", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-        ("spawn_failed", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL, "blocked"),
+        ("containment_unavailable", LOCAL_WORKER_FAILED_REFUSAL, None),
+        ("protocol_failure", LOCAL_WORKER_FAILED_REFUSAL, None),
+        ("spawn_failed", LOCAL_WORKER_FAILED_REFUSAL, None),
     ),
 )
 def test_local_executor_boundary_failures_map_to_pinned_refusals(
-    tmp_path, code, expected
+    tmp_path, code, expected, outcome
 ):
     executor = RecordingWorkspaceExecutor(error=code)
 
@@ -610,11 +724,12 @@ def test_local_executor_boundary_failures_map_to_pinned_refusals(
         workspace_executor=executor,
     ).invoke("local:fs_list", {"path": "."})
 
-    assert not result.ok and result.outcome == "blocked"
+    assert not result.ok and result.outcome == outcome
     assert result.error == expected
     assert executor.calls == [("fs_list", {"path": "."}, "read")]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("code", "expected_reason", "expected_error", "expected_outcome"),
     (
@@ -627,44 +742,44 @@ def test_local_executor_boundary_failures_map_to_pinned_refusals(
         (
             "containment_unavailable",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "spawn_failed",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "cleanup_unproven",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "worker_timed_out",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "worker_crashed",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "worker_failure",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "protocol_failure",
             local_tool_provider.LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
-            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
-            "blocked",
+            LOCAL_WORKER_FAILED_REFUSAL,
+            None,
         ),
         (
             "invalid_request",
@@ -774,6 +889,7 @@ def test_catalog_lists_default_specs_with_local_ids(tmp_path):
         "local:fs_list",
         "local:fs_read",
         "local:fs_write",
+        "local:fs_mkdir",
         "local:fs_edit",
         "local:fs_patch",
         "local:fs_glob",
@@ -965,6 +1081,7 @@ def test_hub_tools_lists_every_spec_under_the_local_server_key(tmp_path):
         "fs_list",
         "fs_read",
         "fs_write",
+        "fs_mkdir",
         "fs_edit",
         "fs_patch",
         "fs_glob",
@@ -3860,6 +3977,7 @@ def test_web_deep_search_pinned_catalog_list_unchanged_by_default(tmp_path):
         "fs_list",
         "fs_read",
         "fs_write",
+        "fs_mkdir",
         "fs_edit",
         "fs_patch",
         "fs_glob",
@@ -4340,7 +4458,7 @@ def test_cleanup_unproven_observer_failure_preserves_original_refusal(tmp_path, 
     captured = capsys.readouterr()
 
     assert not result.ok
-    assert result.error == "Private scratch space is unavailable; the tool was not run."
+    assert result.error == LOCAL_WORKER_FAILED_REFUSAL
     assert "private/path leaked" not in captured.err
 
 
@@ -4651,12 +4769,13 @@ def test_local_stamped_answer_scope_and_clear(tmp_path, unanswered, expected):
     assert provider.invoke("local:fs_list", {"path": "."}).approval_decision is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "failure,expected",
     [
         ("tool_failure", "approved"),
         ("root_pin_failed", None),
-        ("protocol_failure", None),
+        ("protocol_failure", "approved"),
     ],
 )
 def test_local_approved_execution_failure_preserves_only_valid_fact(

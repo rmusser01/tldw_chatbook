@@ -10,13 +10,13 @@ import sqlite3
 import stat
 import uuid
 from collections.abc import Iterator, Mapping
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import local
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cryptography.exceptions import InvalidTag
 from pydantic import BaseModel, ValidationError
@@ -48,6 +48,9 @@ from .key_protector import (
 )
 from .repository_models import QuarantineEntry
 from .runtime_policy import GLOBAL_POLICY_ID
+
+if TYPE_CHECKING:
+    from .native_compatibility import ProfileCompatibilityView
 
 
 SCHEMA_VERSION = 8
@@ -344,9 +347,7 @@ class PersonalContextRepository:
         recovery_integrity_key: bytes | None = None,
         expected_recovery_profile_id: str | None = None,
     ) -> None:
-        if (recovery_integrity_key is None) != (
-            expected_recovery_profile_id is None
-        ):
+        if (recovery_integrity_key is None) != (expected_recovery_profile_id is None):
             raise ValueError("link_recovery_binding_incomplete")
         if recovery_integrity_key is not None and (
             not isinstance(recovery_integrity_key, bytes)
@@ -408,10 +409,7 @@ class PersonalContextRepository:
         self._keys = keys
         if recovery_integrity_key is not None:
             manifest = self.get_manifest()
-            if (
-                manifest is None
-                or manifest.profile_id != expected_recovery_profile_id
-            ):
+            if manifest is None or manifest.profile_id != expected_recovery_profile_id:
                 self._keys = protected_keys
                 raise ProfileLockedError(
                     "Interrupted profile link binding could not be authenticated."
@@ -543,21 +541,33 @@ class PersonalContextRepository:
             raise ProfileIntegrityError("Personal Context storage identity changed.")
         yield state["connection"]
 
-    def _iter_head_rows(self, object_type: str) -> Iterator[sqlite3.Row]:
-        """Yield one complete head set through bounded, stable keyset pages."""
-
+    def _iter_head_rows(
+        self,
+        object_type: str,
+        *,
+        consumer_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> Iterator[sqlite3.Row]:
+        """Yield bounded pages from one guarded read snapshot."""
         if object_type not in {"record", "scope", "proposal"}:
             raise ValueError("Unsupported collection object type.")
+        if connection is None:
+            with self._read_connection(consumer_id=consumer_id) as owned:
+                yield from self._iter_head_rows(
+                    object_type, consumer_id=consumer_id, connection=owned
+                )
+            return
+        self._require_legacy_on_connection(
+            connection, consumer_id=consumer_id, allow_absent=True
+        )
         after_object_id = ""
         while True:
-            with self._connection() as connection:
-                rows = connection.execute(
-                    "SELECT encrypted_objects.* FROM object_heads "
-                    "JOIN encrypted_objects USING (object_type, object_id, version_id) "
-                    "WHERE object_type = ? AND object_id > ? "
-                    "ORDER BY object_id LIMIT ?",
-                    (object_type, after_object_id, _COLLECTION_PAGE_SIZE),
-                ).fetchall()
+            rows = connection.execute(
+                "SELECT encrypted_objects.* FROM object_heads "
+                "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+                "WHERE object_type = ? AND object_id > ? ORDER BY object_id LIMIT ?",
+                (object_type, after_object_id, _COLLECTION_PAGE_SIZE),
+            ).fetchall()
             if not rows:
                 return
             yield from rows
@@ -651,8 +661,7 @@ class PersonalContextRepository:
                     "ALTER TABLE encrypted_outbox ADD COLUMN sequence INTEGER"
                 )
             rows = connection.execute(
-                "SELECT outbox_id FROM encrypted_outbox "
-                "ORDER BY created_at, rowid"
+                "SELECT outbox_id FROM encrypted_outbox ORDER BY created_at, rowid"
             ).fetchall()
             for sequence, row in enumerate(rows, start=1):
                 connection.execute(
@@ -663,9 +672,12 @@ class PersonalContextRepository:
                 "CREATE UNIQUE INDEX IF NOT EXISTS encrypted_outbox_sequence_idx "
                 "ON encrypted_outbox(sequence)"
             )
-            if connection.execute(
-                "SELECT 1 FROM encrypted_outbox WHERE sequence IS NULL LIMIT 1"
-            ).fetchone() is not None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM encrypted_outbox WHERE sequence IS NULL LIMIT 1"
+                ).fetchone()
+                is not None
+            ):
                 raise RepositorySchemaError("Personal Context outbox order is invalid.")
             version = 4
         if version == 4:
@@ -750,10 +762,8 @@ class PersonalContextRepository:
             connection.commit()
             self._truncate_wal_if_possible(connection)
         except BaseException:
-            try:
+            with suppress(BaseException):
                 connection.rollback()
-            except BaseException:
-                pass
             raise
         finally:
             connection.close()
@@ -794,6 +804,7 @@ class PersonalContextRepository:
         *,
         profile_id: str | None = None,
         allow_empty: bool = False,
+        consumer_id: str,
     ) -> Iterator[sqlite3.Connection]:
         """Open a write transaction and reject absent or destroyed profile state."""
 
@@ -819,6 +830,9 @@ class PersonalContextRepository:
                 )
             elif profile_id is not None and meta["profile_id"] != profile_id:
                 raise ValueError("Object does not belong to the local profile.")
+            self._require_legacy_on_connection(
+                connection, consumer_id=consumer_id, allow_absent=allow_empty
+            )
             yield connection
 
     def acquire_first_link_freeze(
@@ -834,6 +848,9 @@ class PersonalContextRepository:
         from .reconciliation import _snapshot_token
 
         with self._transaction() as connection:
+            self._require_legacy_on_connection(
+                connection, consumer_id="repository.acquire_first_link_freeze"
+            )
             current = connection.execute(
                 "SELECT plan_id, snapshot_token FROM first_link_freeze "
                 "WHERE singleton = 1"
@@ -848,9 +865,7 @@ class PersonalContextRepository:
                     "personal_context_link_in_progress"
                 )
 
-            def current_values(
-                object_type: str, model: type[BaseModel]
-            ) -> list[Any]:
+            def current_values(object_type: str, model: type[BaseModel]) -> list[Any]:
                 rows = connection.execute(
                     "SELECT encrypted_objects.* FROM object_heads "
                     "JOIN encrypted_objects USING (object_type, object_id, version_id) "
@@ -858,7 +873,14 @@ class PersonalContextRepository:
                     (object_type,),
                 ).fetchall()
                 return [
-                    model.model_validate_json(self._decrypt_row(row)) for row in rows
+                    model.model_validate_json(
+                        self._decrypt_row(
+                            row,
+                            consumer_id="repository.acquire_first_link_freeze",
+                            connection=connection,
+                        )
+                    )
+                    for row in rows
                 ]
 
             manifests = current_values("manifest", ProfileManifest)
@@ -872,7 +894,13 @@ class PersonalContextRepository:
                 "local_scope_bindings.scope_id AND encrypted_objects.version_id = "
                 "local_scope_bindings.encrypted_binding_version"
             ).fetchall():
-                bindings[str(row["object_id"])] = json.loads(self._decrypt_row(row))
+                bindings[str(row["object_id"])] = json.loads(
+                    self._decrypt_row(
+                        row,
+                        consumer_id="repository.acquire_first_link_freeze",
+                        connection=connection,
+                    )
+                )
             current_token = _snapshot_token(
                 manifests[0],
                 current_values("scope", ProfileScope),
@@ -1017,8 +1045,7 @@ class PersonalContextRepository:
             and freeze["source_key_version"] is not None
             and meta is not None
             and meta["profile_id"] == freeze["source_profile_id"]
-            and int(meta["purge_generation"])
-            == int(freeze["source_purge_generation"])
+            and int(meta["purge_generation"]) == int(freeze["source_purge_generation"])
             and versions == {int(freeze["source_key_version"])}
         ):
             return ("uncommitted", None)
@@ -1163,6 +1190,20 @@ class PersonalContextRepository:
         return self._keys
 
     @staticmethod
+    def _fresh_native_v1(kind: str, value: Any) -> BaseModel:
+        from .native_codec import (
+            NativeProfileDecodeError,
+            decode_native_profile,
+            native_v1_bytes,
+        )
+        from .native_compatibility import ProfileCompatibilityError
+
+        try:
+            return decode_native_profile(kind, native_v1_bytes(kind, value)).value
+        except NativeProfileDecodeError:
+            raise ProfileCompatibilityError() from None
+
+    @staticmethod
     def _canonical_payload(value: BaseModel | Mapping[str, Any]) -> bytes:
         if isinstance(value, BaseModel):
             return canonical_bytes(value)
@@ -1197,7 +1238,42 @@ class PersonalContextRepository:
         is_tombstone: bool = False,
     ) -> None:
         keys = self._require_keys()
-        plaintext = self._canonical_payload(value)
+        if object_type in {"manifest", "scope", "record", "proposal"}:
+            from .native_codec import (
+                NativeProfileDecodeError,
+                decode_native_profile,
+                native_v1_bytes,
+            )
+            from .native_compatibility import ProfileCompatibilityError
+
+            try:
+                plaintext = native_v1_bytes(object_type, value)
+                canonical = decode_native_profile(object_type, plaintext).value
+            except NativeProfileDecodeError:
+                raise ProfileCompatibilityError() from None
+            expected_id = getattr(
+                canonical,
+                {
+                    "manifest": "profile_id",
+                    "scope": "scope_id",
+                    "record": "record_id",
+                    "proposal": "proposal_id",
+                }[object_type],
+            )
+            expected_version = getattr(
+                canonical,
+                "current_version_id" if object_type == "manifest" else "version_id",
+                None,
+            )
+            expected_scope = None if object_type == "manifest" else canonical.scope_id
+            if (
+                object_id != expected_id
+                or (object_type != "proposal" and version_id != expected_version)
+                or scope_id != expected_scope
+            ):
+                raise ProfileCompatibilityError()
+        else:
+            plaintext = self._canonical_payload(value)
         aad = self._aad(object_type, object_id, version_id)
         envelope = EnvelopeCipher(
             keys.encryption_key, key_version=keys.key_version
@@ -1226,7 +1302,7 @@ class PersonalContextRepository:
             ),
         )
 
-    def _decrypt_row(self, row: sqlite3.Row) -> bytes:
+    def _decrypt_row_authenticated(self, row: sqlite3.Row) -> bytes:
         keys = self._require_keys()
         for column in (
             "object_type",
@@ -1276,8 +1352,159 @@ class PersonalContextRepository:
             raise ProfileIntegrityError("Canonical object integrity failed.")
         return plaintext
 
-    def _head_row(self, object_type: str, object_id: str) -> sqlite3.Row | None:
+    @contextmanager
+    def _read_connection(self, *, consumer_id: str) -> Iterator[sqlite3.Connection]:
+        """Own a current-manifest check and all metadata reads in one snapshot."""
         with self._connection() as connection:
+            connection.execute("BEGIN")
+            try:
+                self._require_legacy_on_connection(
+                    connection, consumer_id=consumer_id, allow_absent=True
+                )
+                yield connection
+            finally:
+                connection.rollback()
+
+    def _require_supported_storage(
+        self, connection: sqlite3.Connection, *, consumer_id: str
+    ) -> None:
+        from .native_compatibility import (
+            ProfileCompatibilityError,
+            require_native_consumer,
+        )
+
+        require_native_consumer(consumer_id)
+        storage = connection.execute(
+            "SELECT version FROM personal_context_schema WHERE singleton=1"
+        ).fetchone()
+        if (
+            storage is None
+            or type(storage[0]) is not int
+            or storage[0] != SCHEMA_VERSION
+        ):
+            raise ProfileCompatibilityError()
+
+    def _manifest_on_connection(
+        self, connection: sqlite3.Connection, *, consumer_id: str
+    ):
+        from .native_codec import NativeProfileDecodeError, decode_native_profile
+
+        self._require_supported_storage(connection, consumer_id=consumer_id)
+        meta = connection.execute(
+            "SELECT profile_id,current_manifest_version,purge_generation,destroyed FROM profile_meta WHERE singleton=1"
+        ).fetchone()
+        if meta is None:
+            if (
+                connection.execute("SELECT 1 FROM encrypted_objects LIMIT 1").fetchone()
+                is not None
+            ):
+                raise ProfileLockedError("Personal Context is unavailable.")
+            return None
+        if meta["destroyed"]:
+            raise ProfileDestroyedError("Personal Context is unavailable.")
+        row = connection.execute(
+            "SELECT encrypted_objects.* FROM encrypted_objects JOIN object_heads USING(object_type,object_id,version_id) "
+            "WHERE object_type='manifest' AND object_id=? AND version_id=?",
+            (meta["profile_id"], meta["current_manifest_version"]),
+        ).fetchone()
+        if row is None:
+            raise ProfileLockedError("Personal Context is unavailable.")
+        try:
+            decoded = decode_native_profile(
+                "manifest", self._decrypt_row_authenticated(row)
+            )
+        except (NativeProfileDecodeError, ProfileIntegrityError):
+            raise ProfileLockedError("Personal Context is unavailable.") from None
+        manifest = decoded.value
+        if (
+            manifest.profile_id,
+            manifest.current_version_id,
+            manifest.purge_generation,
+        ) != (
+            meta["profile_id"],
+            meta["current_manifest_version"],
+            meta["purge_generation"],
+        ):
+            raise ProfileLockedError("Personal Context is unavailable.")
+        return decoded
+
+    def _compatibility_on_connection(
+        self, connection: sqlite3.Connection, *, consumer_id: str
+    ):
+        from .native_compatibility import profile_compatibility, require_native_consumer
+
+        require_native_consumer(consumer_id)
+        manifest = self._manifest_on_connection(connection, consumer_id=consumer_id)
+        return (
+            None
+            if manifest is None
+            else profile_compatibility(manifest, consumer_id=consumer_id)
+        )
+
+    def _require_legacy_on_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        consumer_id: str,
+        allow_absent: bool = False,
+    ):
+        from .native_compatibility import ProfileCompatibilityError
+
+        view = self._compatibility_on_connection(connection, consumer_id=consumer_id)
+        if view is None:
+            if allow_absent:
+                return None
+            raise ProfileDestroyedError("Personal Context is unavailable.")
+        if view.state != "legacy_v1" or view.schema_version != 1:
+            raise ProfileCompatibilityError()
+        return view
+
+    def read_compatibility(self) -> ProfileCompatibilityView | None:
+        """Return manifest-only current compatibility; None means actual absence."""
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            try:
+                return self._compatibility_on_connection(
+                    connection, consumer_id="repository.read_compatibility"
+                )
+            finally:
+                connection.rollback()
+
+    def _decrypt_row(
+        self,
+        row: sqlite3.Row,
+        *,
+        consumer_id: str,
+        connection: sqlite3.Connection | None = None,
+    ) -> bytes:
+        """Check current profile compatibility before authenticating any body."""
+        from .native_codec import (
+            NativeProfileDecodeError,
+            NativeV1ProfileCorruptionError,
+            decode_native_profile,
+        )
+        from .native_compatibility import ProfileCompatibilityError
+
+        if connection is None:
+            with self._read_connection(consumer_id=consumer_id) as owned:
+                return self._decrypt_row(row, consumer_id=consumer_id, connection=owned)
+        self._require_legacy_on_connection(connection, consumer_id=consumer_id)
+        plaintext = self._decrypt_row_authenticated(row)
+        if row["object_type"] in {"manifest", "scope", "record", "proposal"}:
+            try:
+                decoded = decode_native_profile(row["object_type"], plaintext)
+            except NativeV1ProfileCorruptionError:
+                raise ProfileIntegrityError("Canonical V1 object is invalid.") from None
+            except NativeProfileDecodeError:
+                raise ProfileCompatibilityError() from None
+            if decoded.schema_version != 1:
+                raise ProfileCompatibilityError()
+        return plaintext
+
+    def _head_row(
+        self, object_type: str, object_id: str, *, consumer_id: str
+    ) -> sqlite3.Row | None:
+        with self._read_connection(consumer_id=consumer_id) as connection:
             return connection.execute(
                 """
                 SELECT encrypted_objects.*
@@ -1336,7 +1563,9 @@ class PersonalContextRepository:
             updated_at=now,
             current_version_id=version_id,
         )
-        with self._mutation(allow_empty=True) as connection:
+        with self._mutation(
+            allow_empty=True, consumer_id="repository.create_provisional_profile"
+        ) as connection:
             if (
                 connection.execute(
                     "SELECT 1 FROM profile_meta WHERE singleton = 1"
@@ -1383,12 +1612,16 @@ class PersonalContextRepository:
     ) -> None:
         """Atomically persist one manifest and its required global scope."""
 
+        manifest = self._fresh_native_v1("manifest", manifest)
+        global_scope = self._fresh_native_v1("scope", global_scope)
         if (
             global_scope.profile_id != manifest.profile_id
             or global_scope.kind is not ScopeKind.GLOBAL
         ):
             raise ValueError("Global scope must belong to the new profile.")
-        with self._mutation(allow_empty=True) as connection:
+        with self._mutation(
+            allow_empty=True, consumer_id="repository.create_profile_with_global_scope"
+        ) as connection:
             if (
                 connection.execute(
                     "SELECT 1 FROM profile_meta WHERE singleton = 1"
@@ -1447,6 +1680,8 @@ class PersonalContextRepository:
     ) -> None:
         """Explicitly replace one destroyed local generation with a fresh profile."""
 
+        manifest = self._fresh_native_v1("manifest", manifest)
+        global_scope = self._fresh_native_v1("scope", global_scope)
         if (
             global_scope.profile_id != manifest.profile_id
             or global_scope.kind is not ScopeKind.GLOBAL
@@ -1455,6 +1690,9 @@ class PersonalContextRepository:
         prepared_keys = False
         try:
             with self._transaction() as connection:
+                self._require_supported_storage(
+                    connection, consumer_id="repository.reinitialize_destroyed_profile"
+                )
                 meta = connection.execute(
                     "SELECT destroyed FROM profile_meta WHERE singleton = 1"
                 ).fetchone()
@@ -1512,37 +1750,17 @@ class PersonalContextRepository:
         except BaseException:
             self._keys = None
             if prepared_keys:
-                try:
+                with suppress(Exception):
                     self._protector.delete(self._profile_ref)
-                except Exception:
-                    pass
             raise
 
     def get_manifest(self) -> ProfileManifest | None:
-        """Return the current authenticated manifest, if one exists."""
-
-        self._require_keys()
-        with self._connection() as connection:
-            meta = connection.execute(
-                "SELECT profile_id, current_manifest_version FROM profile_meta WHERE singleton = 1"
-            ).fetchone()
-            if meta is None:
-                return None
-            row = connection.execute(
-                """
-                SELECT * FROM encrypted_objects
-                WHERE object_type = 'manifest' AND object_id = ? AND version_id = ?
-                """,
-                (meta["profile_id"], meta["current_manifest_version"]),
-            ).fetchone()
-        if row is None:
-            raise ProfileLockedError("The profile manifest is unavailable.")
-        try:
-            return ProfileManifest.model_validate_json(self._decrypt_row(row))
-        except (ProfileIntegrityError, ValidationError) as exc:
-            raise ProfileLockedError(
-                "The profile manifest could not be authenticated."
-            ) from exc
+        """Return only a supported current V1 manifest through its owner guard."""
+        with self._read_connection(consumer_id="repository.get_manifest") as connection:
+            decoded = self._manifest_on_connection(
+                connection, consumer_id="repository.get_manifest"
+            )
+            return None if decoded is None else decoded.value
 
     @staticmethod
     def _transform_link_body(
@@ -1594,14 +1812,12 @@ class PersonalContextRepository:
         if object_type == "proposal" and isinstance(
             body.get("proposed_record"), Mapping
         ):
-            body["proposed_record"] = (
-                PersonalContextRepository._transform_link_body(
-                    "record",
-                    body["proposed_record"],
-                    old_profile_id=old_profile_id,
-                    new_profile_id=new_profile_id,
-                    scope_mapping=scope_mapping,
-                )
+            body["proposed_record"] = PersonalContextRepository._transform_link_body(
+                "record",
+                body["proposed_record"],
+                old_profile_id=old_profile_id,
+                new_profile_id=new_profile_id,
+                scope_mapping=scope_mapping,
             )
         return body
 
@@ -1622,12 +1838,23 @@ class PersonalContextRepository:
 
         from .reconciliation import build_reconciliation_plan
 
+        self._fresh_native_v1("manifest", remote.manifest)
+        for kind, values in (
+            ("scope", remote.scopes),
+            ("record", remote.records),
+            ("proposal", remote.proposals),
+        ):
+            for value in values:
+                self._fresh_native_v1(kind, value)
         old_keys = self._require_keys()
         if not isinstance(integrity_key, bytes) or len(integrity_key) != 32:
             raise ValueError("integrity_key_invalid")
         if integrity_key == old_keys.encryption_key:
             raise ValueError("integrity_key_invalid")
-        if plan.dataset_id != remote.dataset_id or plan.bootstrap_cursor != remote.cursor:
+        if (
+            plan.dataset_id != remote.dataset_id
+            or plan.bootstrap_cursor != remote.cursor
+        ):
             raise ValueError("link_binding_stale")
 
         current_manifest = self.get_manifest()
@@ -1706,7 +1933,9 @@ class PersonalContextRepository:
             )
             for record in current_records
         }
-        selected_remote_records = {record.record_id: record for record in remote.records}
+        selected_remote_records = {
+            record.record_id: record for record in remote.records
+        }
         selected_local_proposals = {
             proposal.proposal_id: ProfileProposal.model_validate(
                 self._transform_link_body(
@@ -1731,20 +1960,22 @@ class PersonalContextRepository:
                 server = selected_remote_records[conflict.record_id]
                 if local.kind is not server.kind or local.scope_id != server.scope_id:
                     raise ValueError("record_merge_identity_incompatible")
-                selected_local_records[conflict.record_id] = ProfileRecord.model_validate(
-                    {
-                        **server.model_dump(mode="python"),
-                        "payload": local.payload,
-                        "semantic_key": local.semantic_key,
-                        "state": local.state,
-                        "controls": local.controls,
-                        "provenance": local.provenance,
-                        "updated_at": max(local.updated_at, server.updated_at),
-                        "expires_at": local.expires_at,
-                        "no_expiry": local.no_expiry,
-                        "version_id": _uuid("record-merge-version"),
-                        "parent_version_id": server.version_id,
-                    }
+                selected_local_records[conflict.record_id] = (
+                    ProfileRecord.model_validate(
+                        {
+                            **server.model_dump(mode="python"),
+                            "payload": local.payload,
+                            "semantic_key": local.semantic_key,
+                            "state": local.state,
+                            "controls": local.controls,
+                            "provenance": local.provenance,
+                            "updated_at": max(local.updated_at, server.updated_at),
+                            "expires_at": local.expires_at,
+                            "no_expiry": local.no_expiry,
+                            "version_id": _uuid("record-merge-version"),
+                            "parent_version_id": server.version_id,
+                        }
+                    )
                 )
                 losing_remote_ids.add(conflict.record_id)
             elif choice == "server":
@@ -1849,6 +2080,9 @@ class PersonalContextRepository:
         }
         try:
             with self._transaction() as connection:
+                self._require_legacy_on_connection(
+                    connection, consumer_id="repository.apply_reviewed_link"
+                )
                 freeze = connection.execute(
                     "SELECT plan_id, snapshot_token FROM first_link_freeze "
                     "WHERE singleton = 1"
@@ -1862,7 +2096,9 @@ class PersonalContextRepository:
                 ):
                     raise ValueError("personal_context_link_freeze_mismatch")
 
-                def current_values(object_type: str, model: type[BaseModel]) -> list[Any]:
+                def current_values(
+                    object_type: str, model: type[BaseModel]
+                ) -> list[Any]:
                     current_rows = connection.execute(
                         "SELECT encrypted_objects.* FROM object_heads "
                         "JOIN encrypted_objects USING (object_type, object_id, version_id) "
@@ -1870,7 +2106,13 @@ class PersonalContextRepository:
                         (object_type,),
                     ).fetchall()
                     return [
-                        model.model_validate_json(self._decrypt_row(row))
+                        model.model_validate_json(
+                            self._decrypt_row(
+                                row,
+                                consumer_id="repository.apply_reviewed_link",
+                                connection=connection,
+                            )
+                        )
                         for row in current_rows
                     ]
 
@@ -1884,7 +2126,11 @@ class PersonalContextRepository:
                     "local_scope_bindings.encrypted_binding_version"
                 ).fetchall():
                     transactional_bindings[str(binding_row["object_id"])] = json.loads(
-                        self._decrypt_row(binding_row)
+                        self._decrypt_row(
+                            binding_row,
+                            consumer_id="repository.apply_reviewed_link",
+                            connection=connection,
+                        )
                     )
                 if len(transactional_manifests) != 1:
                     raise ValueError("link_plan_stale")
@@ -1918,7 +2164,10 @@ class PersonalContextRepository:
                             "SELECT object_id FROM encrypted_outbox WHERE outbox_id = ?",
                             (object_id,),
                         ).fetchone()
-                        if outbox is not None and outbox["object_id"] in losing_local_ids:
+                        if (
+                            outbox is not None
+                            and outbox["object_id"] in losing_local_ids
+                        ):
                             continue
                     if object_type == "manifest" and object_id == old_profile_id:
                         object_id = remote.manifest.profile_id
@@ -1941,16 +2190,28 @@ class PersonalContextRepository:
                         and row["object_id"] in unlinked_scope_ids
                     ):
                         continue
-                    if row["object_type"] == "record" and row["object_id"] in losing_local_ids:
+                    if (
+                        row["object_type"] == "record"
+                        and row["object_id"] in losing_local_ids
+                    ):
                         continue
                     if row["object_type"] == "outbox":
                         outbox = connection.execute(
                             "SELECT object_id FROM encrypted_outbox WHERE outbox_id = ?",
                             (row["object_id"],),
                         ).fetchone()
-                        if outbox is not None and outbox["object_id"] in losing_local_ids:
+                        if (
+                            outbox is not None
+                            and outbox["object_id"] in losing_local_ids
+                        ):
                             continue
-                    body = json.loads(self._decrypt_row(row))
+                    body = json.loads(
+                        self._decrypt_row(
+                            row,
+                            consumer_id="repository.apply_reviewed_link",
+                            connection=connection,
+                        )
+                    )
                     object_id = row["object_id"]
                     if row["object_type"] == "manifest" and object_id == old_profile_id:
                         object_id = remote.manifest.profile_id
@@ -1966,7 +2227,9 @@ class PersonalContextRepository:
                                 "object_type": row["object_type"],
                                 "object_id": object_id,
                                 "version_id": row["version_id"],
-                                "scope_id": scope_mapping.get(row["scope_id"], row["scope_id"]),
+                                "scope_id": scope_mapping.get(
+                                    row["scope_id"], row["scope_id"]
+                                ),
                                 "is_tombstone": bool(row["is_tombstone"]),
                             },
                             self._transform_link_body(
@@ -1981,14 +2244,49 @@ class PersonalContextRepository:
 
                 if losing_local_ids:
                     connection.execute(
-                        "DELETE FROM encrypted_outbox WHERE object_id IN (%s)"
-                        % ",".join("?" for _ in losing_local_ids),
+                        f"DELETE FROM encrypted_outbox WHERE object_id IN ({','.join('?' for _ in losing_local_ids)})",
                         tuple(losing_local_ids),
                     )
                 connection.execute("DELETE FROM encrypted_objects")
                 connection.execute("DELETE FROM object_heads")
                 self._keys = new_keys
+                # Keep a valid current root throughout the private rebaseline.
+                # Later comparisons remain guarded; no temporary permit is needed.
+                self._insert_encrypted(
+                    connection,
+                    object_type="manifest",
+                    object_id=remote.manifest.profile_id,
+                    version_id=remote.manifest.current_version_id,
+                    value=remote.manifest,
+                )
+                connection.execute(
+                    "INSERT INTO object_heads VALUES (?, ?, ?)",
+                    (
+                        "manifest",
+                        remote.manifest.profile_id,
+                        remote.manifest.current_version_id,
+                    ),
+                )
+                connection.execute(
+                    "UPDATE profile_meta SET profile_id = ?, purge_generation = ?, "
+                    "current_manifest_version = ? WHERE singleton = 1",
+                    (
+                        remote.manifest.profile_id,
+                        remote.purge_generation,
+                        remote.manifest.current_version_id,
+                    ),
+                )
                 for metadata, body in transformed:
+                    if (
+                        metadata["object_type"],
+                        metadata["object_id"],
+                        metadata["version_id"],
+                    ) == (
+                        "manifest",
+                        remote.manifest.profile_id,
+                        remote.manifest.current_version_id,
+                    ):
+                        continue
                     self._insert_encrypted(connection, value=body, **metadata)
                 for object_type, object_id, version_id in transformed_heads:
                     if object_type in {"manifest", "scope", "record", "proposal"}:
@@ -2017,7 +2315,11 @@ class PersonalContextRepository:
                         (object_type, object_id, version_id),
                     ).fetchone()
                     if existing is not None:
-                        if self._decrypt_row(existing) != self._canonical_payload(value):
+                        if self._decrypt_row(
+                            existing,
+                            consumer_id="repository.apply_reviewed_link",
+                            connection=connection,
+                        ) != self._canonical_payload(value):
                             connection.execute(
                                 "DELETE FROM encrypted_objects WHERE object_type = ? "
                                 "AND object_id = ? AND version_id = ?",
@@ -2038,20 +2340,6 @@ class PersonalContextRepository:
                         value=value,
                     )
 
-                ensure_object(
-                    "manifest",
-                    remote.manifest.profile_id,
-                    remote.manifest.current_version_id,
-                    remote.manifest,
-                )
-                connection.execute(
-                    "INSERT INTO object_heads VALUES (?, ?, ?)",
-                    (
-                        "manifest",
-                        remote.manifest.profile_id,
-                        remote.manifest.current_version_id,
-                    ),
-                )
                 selected_scopes: dict[str, ProfileScope] = {
                     scope.scope_id: scope for scope in remote.scopes
                 }
@@ -2121,22 +2409,11 @@ class PersonalContextRepository:
                         ("proposal", proposal.proposal_id, proposal_version),
                     )
 
-                connection.execute(
-                    "UPDATE profile_meta SET profile_id = ?, purge_generation = ?, "
-                    "current_manifest_version = ? WHERE singleton = 1",
-                    (
-                        remote.manifest.profile_id,
-                        remote.purge_generation,
-                        remote.manifest.current_version_id,
-                    ),
-                )
                 for selected_table in _REBASELINE_TABLES:
                     table = _validated_rebaseline_identifier(
                         selected_table, "Personal Context rebaseline table"
                     )
-                    metadata = connection.execute(
-                        f"SELECT * FROM {table}"
-                    ).fetchall()
+                    metadata = connection.execute(f"SELECT * FROM {table}").fetchall()
                     connection.execute(f"DELETE FROM {table}")
                     columns = (
                         tuple(
@@ -2144,7 +2421,7 @@ class PersonalContextRepository:
                                 column,
                                 "Personal Context rebaseline column",
                             )
-                            for column in metadata[0].keys()
+                            for column in metadata[0].keys()  # noqa: SIM118 — sqlite3.Row iterates values.
                         )
                         if metadata
                         else ()
@@ -2175,10 +2452,15 @@ class PersonalContextRepository:
                     "SELECT outbox_id, object_type, object_id FROM encrypted_outbox"
                 ).fetchall():
                     mapped_object_id = outbox["object_id"]
-                    if outbox["object_type"] == "manifest" and mapped_object_id == old_profile_id:
+                    if (
+                        outbox["object_type"] == "manifest"
+                        and mapped_object_id == old_profile_id
+                    ):
                         mapped_object_id = remote.manifest.profile_id
                     elif outbox["object_type"] == "scope":
-                        mapped_object_id = scope_mapping.get(mapped_object_id, mapped_object_id)
+                        mapped_object_id = scope_mapping.get(
+                            mapped_object_id, mapped_object_id
+                        )
                     connection.execute(
                         "UPDATE encrypted_outbox SET object_id = ? WHERE outbox_id = ?",
                         (mapped_object_id, outbox["outbox_id"]),
@@ -2230,7 +2512,10 @@ class PersonalContextRepository:
                 local_history_ids = set(plan.local_only_record_ids)
                 for record_id in sorted(local_history_ids):
                     final_head = merged_records.get(record_id)
-                    if final_head is None or final_head.scope_id not in linked_scope_ids:
+                    if (
+                        final_head is None
+                        or final_head.scope_id not in linked_scope_ids
+                    ):
                         continue
                     history_rows = connection.execute(
                         "SELECT * FROM encrypted_objects WHERE object_type = 'record' "
@@ -2239,7 +2524,11 @@ class PersonalContextRepository:
                     ).fetchall()
                     history = {
                         str(row["version_id"]): ProfileRecord.model_validate_json(
-                            self._decrypt_row(row)
+                            self._decrypt_row(
+                                row,
+                                consumer_id="repository.apply_reviewed_link",
+                                connection=connection,
+                            )
                         )
                         for row in history_rows
                     }
@@ -2334,7 +2623,9 @@ class PersonalContextRepository:
     def first_link_head_rows(self) -> tuple[tuple[str, str, str], ...]:
         """Return content-free canonical head identities for convergence checks."""
 
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.first_link_head_rows"
+        ) as connection:
             rows = connection.execute(
                 "SELECT object_type, object_id, version_id FROM object_heads "
                 "WHERE object_type IN ('manifest', 'scope', 'record', 'proposal') "
@@ -2400,7 +2691,9 @@ class PersonalContextRepository:
             for domain, objects in heads.items()
             for object_id, version_id in objects.items()
         }
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.first_link_reviewed_lineage"
+        ) as connection:
             lineage.update(
                 (
                     f"personal_context.{row['object_type']}",
@@ -2408,8 +2701,7 @@ class PersonalContextRepository:
                     str(row["version_id"]),
                 )
                 for row in connection.execute(
-                    "SELECT object_type, object_id, version_id "
-                    "FROM encrypted_outbox"
+                    "SELECT object_type, object_id, version_id FROM encrypted_outbox"
                 )
                 if str(row["object_type"])
                 in {"manifest", "scope", "record", "proposal", "purge"}
@@ -2424,7 +2716,11 @@ class PersonalContextRepository:
     ) -> None:
         """Commit one exact synced manifest revision without an outbound echo."""
 
-        with self._mutation(profile_id=manifest.profile_id) as connection:
+        manifest = self._fresh_native_v1("manifest", manifest)
+        with self._mutation(
+            profile_id=manifest.profile_id,
+            consumer_id="repository.commit_manifest_version",
+        ) as connection:
             meta = connection.execute(
                 "SELECT current_manifest_version FROM profile_meta WHERE singleton = 1"
             ).fetchone()
@@ -2439,7 +2735,13 @@ class PersonalContextRepository:
             ).fetchone()
             if row is None:
                 raise ProfileIntegrityError("Current manifest is unavailable.")
-            current = ProfileManifest.model_validate_json(self._decrypt_row(row))
+            current = ProfileManifest.model_validate_json(
+                self._decrypt_row(
+                    row,
+                    consumer_id="repository.commit_manifest_version",
+                    connection=connection,
+                )
+            )
             if (
                 manifest.revision != current.revision + 1
                 or manifest.purge_generation != current.purge_generation
@@ -2478,6 +2780,7 @@ class PersonalContextRepository:
     ) -> None:
         """Atomically insert an immutable record, CAS its head, and queue sync."""
 
+        record = self._fresh_native_v1("record", record)
         orphan_tombstone = (
             allow_orphan_tombstone
             and expected_version_id is None
@@ -2485,7 +2788,9 @@ class PersonalContextRepository:
             and record.state is RecordState.DELETED
             and record.payload is None
         )
-        with self._mutation(profile_id=record.profile_id) as connection:
+        with self._mutation(
+            profile_id=record.profile_id, consumer_id="repository.commit_record_version"
+        ) as connection:
             if record.parent_version_id != expected_version_id and not orphan_tombstone:
                 raise ConcurrentProfileUpdateError(
                     "Record parent does not match the expected head."
@@ -2517,6 +2822,7 @@ class PersonalContextRepository:
                     version_id=record.version_id,
                     body=outbox_body,
                 )
+
     def commit_record_and_manifest(
         self,
         record: ProfileRecord,
@@ -2533,6 +2839,8 @@ class PersonalContextRepository:
     ) -> None:
         """Atomically CAS a record, next manifest, outbox, and optional Undo."""
 
+        record = self._fresh_native_v1("record", record)
+        manifest = self._fresh_native_v1("manifest", manifest)
         if record.profile_id != manifest.profile_id:
             raise ValueError("Record and manifest profile identities differ.")
         if record.parent_version_id != expected_record_version:
@@ -2544,7 +2852,10 @@ class PersonalContextRepository:
         ):
             raise ValueError("Undo metadata must be supplied together.")
 
-        with self._mutation(profile_id=record.profile_id) as connection:
+        with self._mutation(
+            profile_id=record.profile_id,
+            consumer_id="repository.commit_record_and_manifest",
+        ) as connection:
             self._require_authority_fence(connection, authority_fence)
             meta = connection.execute(
                 "SELECT current_manifest_version FROM profile_meta WHERE singleton = 1"
@@ -2564,7 +2875,11 @@ class PersonalContextRepository:
             if current_manifest_row is None:
                 raise ProfileIntegrityError("Current manifest is unavailable.")
             current_manifest = ProfileManifest.model_validate_json(
-                self._decrypt_row(current_manifest_row)
+                self._decrypt_row(
+                    current_manifest_row,
+                    consumer_id="repository.commit_record_and_manifest",
+                    connection=connection,
+                )
             )
             if (
                 manifest.revision != current_manifest.revision + 1
@@ -2672,6 +2987,8 @@ class PersonalContextRepository:
     ) -> None:
         """Atomically commit selected interview records and one manifest revision."""
 
+        manifest = self._fresh_native_v1("manifest", manifest)
+        records = tuple(self._fresh_native_v1("record", record) for record in records)
         record_ids = tuple(record.record_id for record in records)
         if len(set(record_ids)) != len(record_ids):
             raise ValueError("Interview batch contains duplicate record IDs.")
@@ -2687,7 +3004,10 @@ class PersonalContextRepository:
                 "Interview record parent does not match its expected head."
             )
 
-        with self._mutation(profile_id=manifest.profile_id) as connection:
+        with self._mutation(
+            profile_id=manifest.profile_id,
+            consumer_id="repository.commit_interview_batch",
+        ) as connection:
             meta = connection.execute(
                 "SELECT current_manifest_version FROM profile_meta WHERE singleton = 1"
             ).fetchone()
@@ -2706,7 +3026,11 @@ class PersonalContextRepository:
             if current_manifest_row is None:
                 raise ProfileIntegrityError("Current manifest is unavailable.")
             current_manifest = ProfileManifest.model_validate_json(
-                self._decrypt_row(current_manifest_row)
+                self._decrypt_row(
+                    current_manifest_row,
+                    consumer_id="repository.commit_interview_batch",
+                    connection=connection,
+                )
             )
             if (
                 manifest.revision != current_manifest.revision + 1
@@ -2800,6 +3124,9 @@ class PersonalContextRepository:
     ) -> None:
         """Atomically tombstone a shared identity and create its private successor."""
 
+        tombstone = self._fresh_native_v1("record", tombstone)
+        private_record = self._fresh_native_v1("record", private_record)
+        manifest = self._fresh_native_v1("manifest", manifest)
         if (
             tombstone.profile_id != manifest.profile_id
             or private_record.profile_id != manifest.profile_id
@@ -2812,7 +3139,10 @@ class PersonalContextRepository:
             or private_record.controls.sync_mode is not SyncMode.DEVICE_ONLY
         ):
             raise ValueError("Device-only split records are invalid.")
-        with self._mutation(profile_id=manifest.profile_id) as connection:
+        with self._mutation(
+            profile_id=manifest.profile_id,
+            consumer_id="repository.commit_device_only_split",
+        ) as connection:
             meta = connection.execute(
                 "SELECT current_manifest_version FROM profile_meta WHERE singleton = 1"
             ).fetchone()
@@ -2831,7 +3161,11 @@ class PersonalContextRepository:
             if current_manifest_row is None:
                 raise ProfileIntegrityError("Current manifest is unavailable.")
             current_manifest = ProfileManifest.model_validate_json(
-                self._decrypt_row(current_manifest_row)
+                self._decrypt_row(
+                    current_manifest_row,
+                    consumer_id="repository.commit_device_only_split",
+                    connection=connection,
+                )
             )
             if (
                 manifest.revision != current_manifest.revision + 1
@@ -2982,24 +3316,51 @@ class PersonalContextRepository:
                 (row["outbox_id"],),
             )
 
+    def _get_canonical_head(
+        self, kind: str, object_id: str, model: Any, *, consumer_id: str
+    ) -> Any:
+        """Read head, quarantine and body in one fresh guarded snapshot."""
+        with self._read_connection(consumer_id=consumer_id) as connection:
+            row = connection.execute(
+                "SELECT encrypted_objects.* FROM object_heads "
+                "JOIN encrypted_objects USING (object_type, object_id, version_id) "
+                "WHERE object_type=? AND object_id=?",
+                (kind, object_id),
+            ).fetchone()
+            if (
+                row is None
+                or connection.execute(
+                    "SELECT 1 FROM quarantine WHERE object_type=? AND object_id=? "
+                    "AND version_id IS ?",
+                    (kind, object_id, row["version_id"]),
+                ).fetchone()
+                is not None
+            ):
+                return None
+            try:
+                return model.model_validate_json(
+                    self._decrypt_row(
+                        row, consumer_id=consumer_id, connection=connection
+                    )
+                )
+            except (ProfileIntegrityError, ValidationError):
+                corrupt_version = row["version_id"]
+        # Release the reader before quarantine takes its write lock (including DELETE mode).
+        self.quarantine_object(kind, object_id, corrupt_version, "integrity_failure")
+        return None
+
     def get_record(self, record_id: str) -> ProfileRecord | None:
         """Return one current record, quarantining corrupt content."""
-
-        row = self._head_row("record", record_id)
-        if row is None or self._is_quarantined("record", record_id, row["version_id"]):
-            return None
-        try:
-            return ProfileRecord.model_validate_json(self._decrypt_row(row))
-        except (ProfileIntegrityError, ValidationError):
-            self.quarantine_object(
-                "record", record_id, row["version_id"], "integrity_failure"
-            )
-            return None
+        return self._get_canonical_head(
+            "record", record_id, ProfileRecord, consumer_id="repository.get_record"
+        )
 
     def get_record_derivation(self, record_id: str) -> str | None:
         """Return the encrypted peer-local source identity for a private record."""
 
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.get_record_derivation"
+        ) as connection:
             metadata = connection.execute(
                 "SELECT encrypted_link_version FROM local_record_links "
                 "WHERE record_id = ?",
@@ -3014,7 +3375,9 @@ class PersonalContextRepository:
             ).fetchone()
         if row is None:
             raise ProfileIntegrityError("Encrypted record link is unavailable.")
-        body = json.loads(self._decrypt_row(row))
+        body = json.loads(
+            self._decrypt_row(row, consumer_id="repository.get_record_derivation")
+        )
         if (
             not isinstance(body, dict)
             or set(body) != {"version", "source_record_id"}
@@ -3025,15 +3388,43 @@ class PersonalContextRepository:
             raise ProfileIntegrityError("Encrypted record link is invalid.")
         return body["source_record_id"]
 
-    def list_records(self) -> list[ProfileRecord]:
-        """Return authenticated current records, omitting quarantined objects."""
+    def _list_canonical_heads(
+        self, kind: str, model: type[BaseModel], *, consumer_id: str
+    ) -> list[Any]:
+        values = []
+        corrupt = []
+        with self._read_connection(consumer_id=consumer_id) as connection:
+            for row in self._iter_head_rows(
+                kind, consumer_id=consumer_id, connection=connection
+            ):
+                if (
+                    connection.execute(
+                        "SELECT 1 FROM quarantine WHERE object_type=? AND object_id=? AND version_id=?",
+                        (kind, row["object_id"], row["version_id"]),
+                    ).fetchone()
+                    is not None
+                ):
+                    continue
+                try:
+                    values.append(
+                        model.model_validate_json(
+                            self._decrypt_row(
+                                row, consumer_id=consumer_id, connection=connection
+                            )
+                        )
+                    )
+                except (ProfileIntegrityError, ValidationError):
+                    corrupt.append((row["object_id"], row["version_id"]))
+        # Release the read snapshot before a writer takes its lock (also works in DELETE journal mode).
+        for object_id, version_id in corrupt:
+            self.quarantine_object(kind, object_id, version_id, "integrity_failure")
+        return values
 
-        records: list[ProfileRecord] = []
-        for row in self._iter_head_rows("record"):
-            record = self.get_record(row["object_id"])
-            if record is not None:
-                records.append(record)
-        return records
+    def list_records(self) -> list[ProfileRecord]:
+        """Read supported current heads, then quarantine genuine corrupt V1 rows."""
+        return self._list_canonical_heads(
+            "record", ProfileRecord, consumer_id="repository.list_records"
+        )
 
     def _insert_scope(
         self,
@@ -3063,7 +3454,10 @@ class PersonalContextRepository:
     ) -> None:
         """Commit one encrypted canonical scope revision."""
 
-        with self._mutation(profile_id=scope.profile_id) as connection:
+        scope = self._fresh_native_v1("scope", scope)
+        with self._mutation(
+            profile_id=scope.profile_id, consumer_id="repository.commit_scope"
+        ) as connection:
             self._insert_scope(
                 connection,
                 scope,
@@ -3075,8 +3469,12 @@ class PersonalContextRepository:
     ) -> None:
         """Atomically create a canonical scope and its encrypted local binding."""
 
+        scope = self._fresh_native_v1("scope", scope)
         binding_version = _uuid("scope-binding-version")
-        with self._mutation(profile_id=scope.profile_id) as connection:
+        with self._mutation(
+            profile_id=scope.profile_id,
+            consumer_id="repository.commit_scope_with_binding",
+        ) as connection:
             self._require_unique_workspace_binding(connection, binding)
             self._insert_scope(
                 connection,
@@ -3111,23 +3509,16 @@ class PersonalContextRepository:
             )
 
     def get_scope(self, scope_id: str) -> ProfileScope | None:
-        row = self._head_row("scope", scope_id)
-        if row is None or self._is_quarantined("scope", scope_id, row["version_id"]):
-            return None
-        try:
-            return ProfileScope.model_validate_json(self._decrypt_row(row))
-        except (ProfileIntegrityError, ValidationError):
-            self.quarantine_object(
-                "scope", scope_id, row["version_id"], "integrity_failure"
-            )
-            return None
+        """Return one current scope through its guarded read snapshot."""
+        return self._get_canonical_head(
+            "scope", scope_id, ProfileScope, consumer_id="repository.get_scope"
+        )
 
     def list_scopes(self) -> list[ProfileScope]:
-        return [
-            scope
-            for row in self._iter_head_rows("scope")
-            if (scope := self.get_scope(row["object_id"]))
-        ]
+        """Read supported current heads, then quarantine genuine corrupt V1 rows."""
+        return self._list_canonical_heads(
+            "scope", ProfileScope, consumer_id="repository.list_scopes"
+        )
 
     def commit_proposal(
         self,
@@ -3140,10 +3531,13 @@ class PersonalContextRepository:
     ) -> None:
         """Commit a new immutable proposal head."""
 
+        proposal = self._fresh_native_v1("proposal", proposal)
         if proposal.state is not ProposalState.PENDING:
             raise ValueError("Only pending proposals may be committed.")
         version_id = _uuid("proposal-version")
-        with self._mutation(profile_id=proposal.profile_id) as connection:
+        with self._mutation(
+            profile_id=proposal.profile_id, consumer_id="repository.commit_proposal"
+        ) as connection:
             self._require_authority_fence(connection, authority_fence)
             if expire_before is not None:
                 self._expire_due_proposals_in_connection(connection, expire_before)
@@ -3154,7 +3548,13 @@ class PersonalContextRepository:
                 "WHERE object_type = 'proposal'"
             ).fetchall()
             for row in rows:
-                current = ProfileProposal.model_validate_json(self._decrypt_row(row))
+                current = ProfileProposal.model_validate_json(
+                    self._decrypt_row(
+                        row,
+                        consumer_id="repository.commit_proposal",
+                        connection=connection,
+                    )
+                )
                 pending += current.state is ProposalState.PENDING
             if pending >= unresolved_limit:
                 raise ProposalLimitExceededError("unresolved_proposal_limit")
@@ -3193,7 +3593,11 @@ class PersonalContextRepository:
     def commit_synced_proposal(self, proposal: ProfileProposal) -> None:
         """Commit one exact inbound proposal revision without an outbound echo."""
 
-        with self._mutation(profile_id=proposal.profile_id) as connection:
+        proposal = self._fresh_native_v1("proposal", proposal)
+        with self._mutation(
+            profile_id=proposal.profile_id,
+            consumer_id="repository.commit_synced_proposal",
+        ) as connection:
             row = connection.execute(
                 "SELECT encrypted_objects.* FROM object_heads "
                 "JOIN encrypted_objects USING (object_type, object_id, version_id) "
@@ -3219,7 +3623,13 @@ class PersonalContextRepository:
                 )
                 return
 
-            current = ProfileProposal.model_validate_json(self._decrypt_row(row))
+            current = ProfileProposal.model_validate_json(
+                self._decrypt_row(
+                    row,
+                    consumer_id="repository.commit_synced_proposal",
+                    connection=connection,
+                )
+            )
             if current == proposal:
                 return
             if (
@@ -3243,7 +3653,9 @@ class PersonalContextRepository:
     def expire_due_proposals(self, expire_before: datetime) -> int:
         """Transactionally replace every due pending proposal with a receipt."""
 
-        with self._mutation() as connection:
+        with self._mutation(
+            consumer_id="repository.expire_due_proposals"
+        ) as connection:
             return self._expire_due_proposals_in_connection(connection, expire_before)
 
     def _expire_due_proposals_in_connection(
@@ -3256,7 +3668,13 @@ class PersonalContextRepository:
         ).fetchall()
         expired = 0
         for row in rows:
-            proposal = ProfileProposal.model_validate_json(self._decrypt_row(row))
+            proposal = ProfileProposal.model_validate_json(
+                self._decrypt_row(
+                    row,
+                    consumer_id="repository._expire_due_proposals_in_connection",
+                    connection=connection,
+                )
+            )
             if (
                 proposal.state is ProposalState.PENDING
                 and proposal.expires_at <= expire_before
@@ -3272,36 +3690,18 @@ class PersonalContextRepository:
 
     def get_proposal(self, proposal_id: str) -> ProfileProposal | None:
         """Return one authenticated current proposal head."""
-
-        row = self._head_row("proposal", proposal_id)
-        if row is None or self._is_quarantined(
-            "proposal", proposal_id, row["version_id"]
-        ):
-            return None
-        try:
-            return ProfileProposal.model_validate_json(self._decrypt_row(row))
-        except (ProfileIntegrityError, ValidationError):
-            self.quarantine_object(
-                "proposal", proposal_id, row["version_id"], "integrity_failure"
-            )
-            return None
+        return self._get_canonical_head(
+            "proposal",
+            proposal_id,
+            ProfileProposal,
+            consumer_id="repository.get_proposal",
+        )
 
     def list_proposals(self) -> list[ProfileProposal]:
-        """Return all authenticated current proposal states."""
-
-        proposals: list[ProfileProposal] = []
-        for row in self._iter_head_rows("proposal"):
-            if self._is_quarantined("proposal", row["object_id"], row["version_id"]):
-                continue
-            try:
-                proposals.append(
-                    ProfileProposal.model_validate_json(self._decrypt_row(row))
-                )
-            except (ProfileIntegrityError, ValidationError):
-                self.quarantine_object(
-                    "proposal", row["object_id"], row["version_id"], "integrity_failure"
-                )
-        return proposals
+        """Read supported current heads, then quarantine genuine corrupt V1 rows."""
+        return self._list_canonical_heads(
+            "proposal", ProfileProposal, consumer_id="repository.list_proposals"
+        )
 
     def read_export_snapshot(
         self,
@@ -3319,6 +3719,9 @@ class PersonalContextRepository:
     def _read_export_snapshot(self, connection: sqlite3.Connection) -> tuple:
         try:
             connection.execute("BEGIN")
+            self._require_legacy_on_connection(
+                connection, consumer_id="repository.read_export_snapshot"
+            )
             meta = connection.execute(
                 "SELECT profile_id, current_manifest_version, destroyed "
                 "FROM profile_meta WHERE singleton = 1"
@@ -3335,7 +3738,11 @@ class PersonalContextRepository:
             if manifest_row is None:
                 raise ProfileIntegrityError("Current manifest is unavailable.")
             manifest = ProfileManifest.model_validate_json(
-                self._decrypt_row(manifest_row)
+                self._decrypt_row(
+                    manifest_row,
+                    consumer_id="repository.read_export_snapshot",
+                    connection=connection,
+                )
             )
 
             def current_rows(object_type: str) -> list[sqlite3.Row]:
@@ -3348,15 +3755,33 @@ class PersonalContextRepository:
                 ).fetchall()
 
             scopes = tuple(
-                ProfileScope.model_validate_json(self._decrypt_row(row))
+                ProfileScope.model_validate_json(
+                    self._decrypt_row(
+                        row,
+                        consumer_id="repository.read_export_snapshot",
+                        connection=connection,
+                    )
+                )
                 for row in current_rows("scope")
             )
             records = tuple(
-                ProfileRecord.model_validate_json(self._decrypt_row(row))
+                ProfileRecord.model_validate_json(
+                    self._decrypt_row(
+                        row,
+                        consumer_id="repository.read_export_snapshot",
+                        connection=connection,
+                    )
+                )
                 for row in current_rows("record")
             )
             proposals = tuple(
-                ProfileProposal.model_validate_json(self._decrypt_row(row))
+                ProfileProposal.model_validate_json(
+                    self._decrypt_row(
+                        row,
+                        consumer_id="repository.read_export_snapshot",
+                        connection=connection,
+                    )
+                )
                 for row in current_rows("proposal")
             )
             connection.commit()
@@ -3380,7 +3805,7 @@ class PersonalContextRepository:
         if state is ProposalState.PENDING:
             raise ValueError("A proposal resolution must be terminal.")
         version_id = _uuid("proposal-version")
-        with self._mutation() as connection:
+        with self._mutation(consumer_id="repository.resolve_proposal") as connection:
             row = connection.execute(
                 """
                 SELECT encrypted_objects.*
@@ -3406,7 +3831,13 @@ class PersonalContextRepository:
         version_id: str,
         enqueue_outbox: bool = True,
     ) -> ProfileProposal:
-        current = ProfileProposal.model_validate_json(self._decrypt_row(row))
+        current = ProfileProposal.model_validate_json(
+            self._decrypt_row(
+                row,
+                consumer_id="repository._resolve_proposal_in_connection",
+                connection=connection,
+            )
+        )
         if current.state is not ProposalState.PENDING:
             raise ValueError("Only a pending proposal can be resolved.")
         resolved = ProfileProposal.model_validate(
@@ -3469,13 +3900,18 @@ class PersonalContextRepository:
     ) -> ProfileProposal:
         """Atomically accept a proposal and commit its canonical record effects."""
 
+        record = self._fresh_native_v1("record", record)
+        manifest = self._fresh_native_v1("manifest", manifest)
         if record.profile_id != manifest.profile_id:
             raise ValueError("Record and manifest profile identities differ.")
         if record.parent_version_id != expected_record_version:
             raise ConcurrentProfileUpdateError(
                 "Record parent does not match the expected head."
             )
-        with self._mutation(profile_id=record.profile_id) as connection:
+        with self._mutation(
+            profile_id=record.profile_id,
+            consumer_id="repository.accept_proposal_and_record",
+        ) as connection:
             if expire_before is not None:
                 self._expire_due_proposals_in_connection(connection, expire_before)
             proposal_row = connection.execute(
@@ -3487,7 +3923,11 @@ class PersonalContextRepository:
             if proposal_row is None:
                 raise KeyError(proposal_id)
             proposal = ProfileProposal.model_validate_json(
-                self._decrypt_row(proposal_row)
+                self._decrypt_row(
+                    proposal_row,
+                    consumer_id="repository.accept_proposal_and_record",
+                    connection=connection,
+                )
             )
             if proposal.state is ProposalState.EXPIRED:
                 return proposal
@@ -3584,7 +4024,11 @@ class PersonalContextRepository:
                         "Promotion source changed concurrently."
                     )
                 source = ProfileRecord.model_validate_json(
-                    self._decrypt_row(source_row)
+                    self._decrypt_row(
+                        source_row,
+                        consumer_id="repository.accept_proposal_and_record",
+                        connection=connection,
+                    )
                 )
                 if (
                     source.scope_id != proposal.scope_id
@@ -3616,7 +4060,11 @@ class PersonalContextRepository:
             if current_manifest_row is None:
                 raise ProfileIntegrityError("Current manifest is unavailable.")
             current_manifest = ProfileManifest.model_validate_json(
-                self._decrypt_row(current_manifest_row)
+                self._decrypt_row(
+                    current_manifest_row,
+                    consumer_id="repository.accept_proposal_and_record",
+                    connection=connection,
+                )
             )
             if (
                 manifest.revision != current_manifest.revision + 1
@@ -3705,7 +4153,13 @@ class PersonalContextRepository:
             "WHERE object_type = 'record'"
         ).fetchall()
         for row in rows:
-            existing = ProfileRecord.model_validate_json(self._decrypt_row(row))
+            existing = ProfileRecord.model_validate_json(
+                self._decrypt_row(
+                    row,
+                    consumer_id="repository._require_no_record_collision_in_connection",
+                    connection=connection,
+                )
+            )
             if existing.record_id == record.record_id:
                 continue
             if (
@@ -3733,6 +4187,7 @@ class PersonalContextRepository:
             scope_id=scope_id,
             body=body,
             expected_version_id=expected_version_id,
+            consumer_id="repository.commit_runtime_policy",
         )
 
     def get_runtime_policy(self, scope_id: str) -> dict[str, Any] | None:
@@ -3741,11 +4196,15 @@ class PersonalContextRepository:
             "encrypted_policy_version",
             "runtime_policy",
             scope_id,
+            consumer_id="repository.get_runtime_policy",
         )
 
     def get_runtime_policy_version(self, scope_id: str) -> str | None:
         return self._get_local_version(
-            "local_runtime_policy", "encrypted_policy_version", scope_id
+            "local_runtime_policy",
+            "encrypted_policy_version",
+            scope_id,
+            consumer_id="repository.get_runtime_policy_version",
         )
 
     def commit_scope_binding(
@@ -3767,12 +4226,15 @@ class PersonalContextRepository:
             expected_version_id=expected_version_id,
             require_unique_local_workspace_id=require_unique_local_workspace_id,
             clear_explicit_unlinked=True,
+            consumer_id="repository.commit_scope_binding",
         )
 
     def is_scope_explicitly_unlinked(self, scope_id: str) -> bool:
         """Return whether first-link review retained this workspace as local-only."""
 
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.is_scope_explicitly_unlinked"
+        ) as connection:
             row = connection.execute(
                 "SELECT 1 FROM local_unlinked_scopes WHERE scope_id = ?",
                 (scope_id,),
@@ -3785,15 +4247,21 @@ class PersonalContextRepository:
             "encrypted_binding_version",
             "scope_binding",
             scope_id,
+            consumer_id="repository.get_scope_binding",
         )
 
     def get_scope_binding_version(self, scope_id: str) -> str | None:
         return self._get_local_version(
-            "local_scope_bindings", "encrypted_binding_version", scope_id
+            "local_scope_bindings",
+            "encrypted_binding_version",
+            scope_id,
+            consumer_id="repository.get_scope_binding_version",
         )
 
     def list_scope_bindings(self) -> dict[str, dict[str, Any]]:
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.list_scope_bindings"
+        ) as connection:
             rows = connection.execute(
                 "SELECT scope_id FROM local_scope_bindings ORDER BY scope_id"
             ).fetchall()
@@ -3831,7 +4299,9 @@ class PersonalContextRepository:
     def list_validated_scope_bindings(self) -> dict[str, dict[str, Any]]:
         """Return only authenticated exact-v1 workspace mappings."""
 
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.list_validated_scope_bindings"
+        ) as connection:
             scope_ids = [
                 row["scope_id"]
                 for row in connection.execute(
@@ -3845,9 +4315,9 @@ class PersonalContextRepository:
         }
 
     def _get_local_version(
-        self, table: str, version_column: str, scope_id: str
+        self, table: str, version_column: str, scope_id: str, *, consumer_id: str
     ) -> str | None:
-        with self._connection() as connection:
+        with self._read_connection(consumer_id=consumer_id) as connection:
             row = connection.execute(
                 f"SELECT {version_column} FROM {table} WHERE scope_id = ?",
                 (scope_id,),
@@ -3865,9 +4335,10 @@ class PersonalContextRepository:
         expected_version_id: str | None,
         require_unique_local_workspace_id: bool = False,
         clear_explicit_unlinked: bool = False,
+        consumer_id: str,
     ) -> str:
         version_id = _uuid(f"{object_type}-version")
-        with self._mutation() as connection:
+        with self._mutation(consumer_id=consumer_id) as connection:
             was_explicitly_unlinked = bool(
                 clear_explicit_unlinked
                 and connection.execute(
@@ -3934,7 +4405,13 @@ class PersonalContextRepository:
         ).fetchone()
         if scope_row is None:
             raise ProfileIntegrityError("Linked workspace scope is unavailable.")
-        scope = ProfileScope.model_validate_json(self._decrypt_row(scope_row))
+        scope = ProfileScope.model_validate_json(
+            self._decrypt_row(
+                scope_row,
+                consumer_id="repository._rebuild_newly_linked_scope_outbox",
+                connection=connection,
+            )
+        )
         if scope.kind is not ScopeKind.WORKSPACE:
             raise ValueError("Only workspace scopes may have local mappings.")
         self._retire_pending_outbox_content(
@@ -3959,7 +4436,13 @@ class PersonalContextRepository:
         ).fetchall()
         for head_row in record_heads:
             record_id = str(head_row["object_id"])
-            current = ProfileRecord.model_validate_json(self._decrypt_row(head_row))
+            current = ProfileRecord.model_validate_json(
+                self._decrypt_row(
+                    head_row,
+                    consumer_id="repository._rebuild_newly_linked_scope_outbox",
+                    connection=connection,
+                )
+            )
             self._retire_pending_outbox_content(
                 connection,
                 object_type="record",
@@ -3977,7 +4460,11 @@ class PersonalContextRepository:
             ).fetchall()
             history = {
                 str(row["version_id"]): ProfileRecord.model_validate_json(
-                    self._decrypt_row(row)
+                    self._decrypt_row(
+                        row,
+                        consumer_id="repository._rebuild_newly_linked_scope_outbox",
+                        connection=connection,
+                    )
                 )
                 for row in history_rows
             }
@@ -4014,7 +4501,11 @@ class PersonalContextRepository:
         ).fetchall()
         for proposal_row in proposal_heads:
             proposal = ProfileProposal.model_validate_json(
-                self._decrypt_row(proposal_row)
+                self._decrypt_row(
+                    proposal_row,
+                    consumer_id="repository._rebuild_newly_linked_scope_outbox",
+                    connection=connection,
+                )
             )
             self._retire_pending_outbox_content(
                 connection,
@@ -4023,8 +4514,7 @@ class PersonalContextRepository:
             )
             if (
                 proposal.proposed_record is not None
-                and proposal.proposed_record.controls.sync_mode
-                is not SyncMode.SYNCABLE
+                and proposal.proposed_record.controls.sync_mode is not SyncMode.SYNCABLE
             ):
                 continue
             self._insert_outbox(
@@ -4076,7 +4566,13 @@ class PersonalContextRepository:
                     "Encrypted workspace binding is unavailable."
                 )
             try:
-                body = json.loads(self._decrypt_row(row))
+                body = json.loads(
+                    self._decrypt_row(
+                        row,
+                        consumer_id="repository._require_unique_workspace_binding",
+                        connection=connection,
+                    )
+                )
             except (TypeError, ValueError) as exc:
                 raise ProfileIntegrityError(
                     "Encrypted workspace binding is invalid."
@@ -4091,8 +4587,10 @@ class PersonalContextRepository:
         version_column: str,
         object_type: str,
         scope_id: str,
+        *,
+        consumer_id: str,
     ) -> dict[str, Any] | None:
-        with self._connection() as connection:
+        with self._read_connection(consumer_id=consumer_id) as connection:
             version = connection.execute(
                 f"SELECT {version_column} FROM {table} WHERE scope_id = ?", (scope_id,)
             ).fetchone()
@@ -4105,7 +4603,7 @@ class PersonalContextRepository:
             ).fetchone()
         if row is None:
             raise ProfileIntegrityError("Encrypted local metadata is unavailable.")
-        return json.loads(self._decrypt_row(row))
+        return json.loads(self._decrypt_row(row, consumer_id=consumer_id))
 
     @staticmethod
     def _delete_undo(connection: sqlite3.Connection, undo_id: str) -> None:
@@ -4125,7 +4623,7 @@ class PersonalContextRepository:
     def list_undo_ids(self, *, now: str) -> list[str]:
         """Return unexpired encrypted Undo identifiers and purge expired rows."""
 
-        with self._mutation() as connection:
+        with self._mutation(consumer_id="repository.list_undo_ids") as connection:
             expired = connection.execute(
                 "SELECT undo_id FROM local_undo WHERE expires_at <= ?", (now,)
             ).fetchall()
@@ -4137,7 +4635,7 @@ class PersonalContextRepository:
         return [row["undo_id"] for row in rows]
 
     def get_undo(self, undo_id: str, *, now: str) -> dict[str, Any] | None:
-        with self._mutation() as connection:
+        with self._mutation(consumer_id="repository.get_undo") as connection:
             metadata = connection.execute(
                 "SELECT * FROM local_undo WHERE undo_id = ?", (undo_id,)
             ).fetchone()
@@ -4153,7 +4651,11 @@ class PersonalContextRepository:
             ).fetchone()
             if row is None:
                 raise ProfileIntegrityError("Encrypted Undo artifact is unavailable.")
-            return json.loads(self._decrypt_row(row))
+            return json.loads(
+                self._decrypt_row(
+                    row, consumer_id="repository.get_undo", connection=connection
+                )
+            )
 
     def _insert_outbox(
         self,
@@ -4164,6 +4666,16 @@ class PersonalContextRepository:
         version_id: str,
         body: Mapping[str, Any],
     ) -> str:
+        from .native_codec import NativeProfileDecodeError, native_v1_bytes
+        from .native_compatibility import ProfileCompatibilityError
+
+        if isinstance(body, Mapping):
+            for kind in ("manifest", "scope", "record", "proposal"):
+                if kind in body:
+                    try:
+                        native_v1_bytes(kind, body[kind])
+                    except NativeProfileDecodeError:
+                        raise ProfileCompatibilityError() from None
         outbox_id = _uuid("outbox")
         envelope_version = _uuid("outbox-envelope")
         self._insert_encrypted(
@@ -4217,7 +4729,7 @@ class PersonalContextRepository:
     ) -> str:
         """Commit an independently encrypted exact-wire outbox body."""
 
-        with self._mutation() as connection:
+        with self._mutation(consumer_id="repository.commit_outbox_body") as connection:
             return self._insert_outbox(
                 connection,
                 object_type=object_type,
@@ -4227,7 +4739,9 @@ class PersonalContextRepository:
             )
 
     def get_outbox_body(self, outbox_id: str) -> dict[str, Any] | None:
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.get_outbox_body"
+        ) as connection:
             outbox = connection.execute(
                 "SELECT envelope_version FROM encrypted_outbox WHERE outbox_id = ?",
                 (outbox_id,),
@@ -4241,14 +4755,18 @@ class PersonalContextRepository:
             ).fetchone()
         if row is None:
             return None
-        return json.loads(self._decrypt_row(row))
+        return json.loads(
+            self._decrypt_row(row, consumer_id="repository.get_outbox_body")
+        )
 
     def list_pending_outbox(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
         """Return bounded content-free metadata for pending encrypted entries."""
 
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ValueError("Outbox limit must be between 1 and 500.")
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.list_pending_outbox"
+        ) as connection:
             rows = connection.execute(
                 "SELECT outbox_id, object_type, object_id, version_id, status, "
                 "created_at FROM encrypted_outbox WHERE status = 'pending' "
@@ -4283,7 +4801,9 @@ class PersonalContextRepository:
         if ordered_scope_ids:
             placeholders = ",".join("?" for _ in ordered_scope_ids)
             scope_filter = f"canonical.scope_id IN ({placeholders})"
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.list_dispatchable_outbox"
+        ) as connection:
             rows = connection.execute(
                 "SELECT outbox.outbox_id, outbox.object_type, outbox.object_id, "
                 "outbox.version_id, outbox.status, outbox.created_at "
@@ -4307,7 +4827,7 @@ class PersonalContextRepository:
 
         if not isinstance(destination_envelope_id, str) or not destination_envelope_id:
             raise ValueError("Destination envelope id is required.")
-        with self._mutation() as connection:
+        with self._mutation(consumer_id="repository.acknowledge_outbox") as connection:
             row = connection.execute(
                 "SELECT envelope_version, destination_envelope_id FROM encrypted_outbox "
                 "WHERE outbox_id = ?",
@@ -4317,7 +4837,9 @@ class PersonalContextRepository:
                 raise KeyError(outbox_id)
             existing = row["destination_envelope_id"]
             if existing is not None and existing != destination_envelope_id:
-                raise ConcurrentProfileUpdateError("Outbox receipt changed concurrently.")
+                raise ConcurrentProfileUpdateError(
+                    "Outbox receipt changed concurrently."
+                )
             self._shred_outbox_body(connection, outbox_id, row["envelope_version"])
             connection.execute(
                 "UPDATE encrypted_outbox SET status = 'dispatched', "
@@ -4341,7 +4863,7 @@ class PersonalContextRepository:
             or len(reason_code) > 128
         ):
             raise ValueError("Outbox quarantine reason is invalid.")
-        with self._mutation() as connection:
+        with self._mutation(consumer_id="repository.quarantine_outbox") as connection:
             row = connection.execute(
                 "SELECT envelope_version FROM encrypted_outbox WHERE outbox_id = ?",
                 (outbox_id,),
@@ -4357,7 +4879,9 @@ class PersonalContextRepository:
             )
 
     def get_outbox_receipt(self, outbox_id: str) -> str | None:
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.get_outbox_receipt"
+        ) as connection:
             row = connection.execute(
                 "SELECT destination_envelope_id FROM encrypted_outbox WHERE outbox_id = ?",
                 (outbox_id,),
@@ -4365,7 +4889,9 @@ class PersonalContextRepository:
         return None if row is None else row["destination_envelope_id"]
 
     def get_outbox_quarantine_reason(self, outbox_id: str) -> str | None:
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.get_outbox_quarantine_reason"
+        ) as connection:
             row = connection.execute(
                 "SELECT quarantine_reason FROM encrypted_outbox WHERE outbox_id = ?",
                 (outbox_id,),
@@ -4398,7 +4924,7 @@ class PersonalContextRepository:
     ) -> None:
         """Record a content-free quarantine receipt once per object version."""
 
-        with self._mutation() as connection:
+        with self._mutation(consumer_id="repository.quarantine_object") as connection:
             exists = connection.execute(
                 "SELECT 1 FROM quarantine WHERE object_type = ? AND object_id = ? "
                 "AND version_id IS ?",
@@ -4420,7 +4946,9 @@ class PersonalContextRepository:
     def _is_quarantined(
         self, object_type: str, object_id: str, version_id: str | None
     ) -> bool:
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository._is_quarantined"
+        ) as connection:
             return (
                 connection.execute(
                     "SELECT 1 FROM quarantine WHERE object_type = ? AND object_id = ? "
@@ -4433,7 +4961,9 @@ class PersonalContextRepository:
     def list_quarantine(self) -> list[QuarantineEntry]:
         """Return content-free quarantine metadata."""
 
-        with self._connection() as connection:
+        with self._read_connection(
+            consumer_id="repository.list_quarantine"
+        ) as connection:
             rows = connection.execute(
                 "SELECT * FROM quarantine ORDER BY created_at, quarantine_id"
             ).fetchall()

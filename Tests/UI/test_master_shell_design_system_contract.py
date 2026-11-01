@@ -117,14 +117,13 @@ def test_agentic_terminal_tcss_module_is_implemented_and_imported():
         DS_PRIMITIVES_TCSS.read_text(encoding="utf-8"),
     ]
     family_sheets += [
-        (
-            DESIGN_SYSTEM_TCSS.parent.parent / rel
-        ).read_text(encoding="utf-8")
+        (DESIGN_SYSTEM_TCSS.parent.parent / rel).read_text(encoding="utf-8")
         for rel in (
             "features/_console.tcss",
             "features/_console_panels.tcss",
             "features/_library.tcss",
             "features/_library_panels.tcss",
+            "features/_library_notes_panels.tcss",
             "features/_settings.tcss",
             "features/_home.tcss",
             "layout/_destination.tcss",
@@ -329,9 +328,7 @@ def test_workbench_disabled_actions_do_not_stack_three_dimmers():
 
     workbench = Path("tldw_chatbook/css/components/_workbench.tcss").read_text()
 
-    match = re.search(
-        r"\.workbench-action\.is-disabled\s*\{([^}]*)\}", workbench, re.S
-    )
+    match = re.search(r"\.workbench-action\.is-disabled\s*\{([^}]*)\}", workbench, re.S)
     assert match, ".workbench-action.is-disabled rule is missing"
     body = match.group(1)
 

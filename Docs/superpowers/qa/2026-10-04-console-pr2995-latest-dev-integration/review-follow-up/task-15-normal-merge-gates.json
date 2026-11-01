@@ -1,0 +1,24 @@
+{
+  "read_at_utc": "2026-10-04T21:39:48Z",
+  "allow_merge_commit": true,
+  "allow_squash_merge": true,
+  "allow_rebase_merge": true,
+  "dev_protection": {
+    "enforce_admins": true,
+    "required_linear_history": false,
+    "required_approving_review_count": 0,
+    "required_status_check": "Derived artifacts reproduce from their sources",
+    "strict_current_base": true
+  },
+  "user_required_additional_gates": [
+    "current-head completed Qodo with all actionable findings addressed",
+    "PR Fast Lane",
+    "UI Fast Lane (1)",
+    "UI Fast Lane (2)",
+    "Perf Guard UI latency guardrails",
+    "fresh latest dev ancestry",
+    "no unresolved correctness issue"
+  ],
+  "normal_merge_only": true,
+  "no_admin_bypass": true
+}

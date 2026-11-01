@@ -425,15 +425,19 @@ def build_server_local_provider(
 
     resolved_root = Path(workspace_root).resolve()
     workspace_executor = WorkspaceToolExecutor(resolved_root)
-    external_specs = [
-        spec
-        for spec in _default_specs(
-            resolved_root,
-            workspace_executor=workspace_executor,
-            watchlists_service=watchlists_service,
-        )
-        if spec.exposure is LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
-    ] if local_tools else []
+    external_specs = (
+        [
+            spec
+            for spec in _default_specs(
+                resolved_root,
+                workspace_executor=workspace_executor,
+                watchlists_service=watchlists_service,
+            )
+            if spec.exposure is LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+        ]
+        if local_tools
+        else []
+    )
     if character_service is not None:
         # Re-marked here, not in `_default_specs`: flipping the enum there
         # would also publish them through the Hub-local composition.

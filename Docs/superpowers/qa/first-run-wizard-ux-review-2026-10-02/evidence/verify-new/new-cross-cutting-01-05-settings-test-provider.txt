@@ -1,0 +1,50 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────────────┐
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)       │  │  │  Scope Inspector                     │
+│  No filter | / focus         │  │  │                                                                                                                    │  │  │                                      │
+│  category search             │  │  │  Providers & Models                                                                                                │  │  │ Selected category: Providers &       │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Models                               │
+│  Core                        │  │  │ │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │  │  │  │ No unsaved changes                   │
+│      Overview (view)         │  │  │ │ │  ▶ Prompt-cache snapshots                                                                                 │ │  │  │  │  Guided edits: change a field        │
+│ █  > Providers & Models      │  │  │ │ │                                                                                                           │ │  │  │  │  first.                              │
+│      Web Search              │  │  │ │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │  │  │  │  Save (s) — no changes               │
+│      Speech & TTS            │  │  │ │                                                                                                               │  │  │  │  Revert (r) — no changes             │
+│  Interface                   │  │  │ │  Connect                                                                                                      │  │  │  │ Local-only: saves write your config  │
+│      Appearance              │  │  │ │ Provider                                                                                                      │  │  │  │ file.                                │
+│      Theme                   │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │▄ │  │  │  Focused setting: None — Tab to a    │
+│      Splash Screen           │  │  │ │ ▊  Search providers by name or ID                                                                           ▎ │  │  │  │  setting                             │
+│      Console Behavior        │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │  Purpose: Configure the default    ▂ │
+│  Data & Privacy              │  │  │ │ Nebius Token Factory                                                                                          │  │  │  │  provider, model, endpoint, and      │
+│      Storage                 │  │  │ │ Nous Research                                                                                                 │  │  │  │  credential source.                  │
+│      Workspaces              │  │  │ │ Novita AI                                                                                                     │  │  │  │  Saved as: chat_defaults plus        │
+│      Tool Profiles           │  │  │ │ NVIDIA NIM                                                                                                    │  │  │  │  provider-specific api_settings      │
+│      Privacy & Security      │  │  │ │ Ollama Cloud                                                                                                  │  │  │  │  Save: staged - press s to save, r   │
+│      Network                 │  │  │ │ OpenAI                                                                                                        │  │  │  │  to revert                           │
+│      My Profile              │  │  │ │ Choose a provider or enter a provider ID.                                                                     │  │  │  │  Validation: test provider           │
+│  Troubleshooting             │  │  │ │ Model                   │ gpt-5.6-terra                                                                       │  │  │  │  readiness before saving these       │
+│      Diagnostics (view)      │  │  │ │ Endpoint                │ https://api.openai.com/v1                                                           │  │  │  │  defaults                            │
+│      About (view)            │  │  │ │                                                                                                               │  │  │  │  Runtime owner: Settings persisted   │
+│      Agents                  │  │  │ │  Credentials                                                                                                  │  │  │  │  defaults; Console runtime           │
+│  Expert                      │  │  │ │  API key source: env:OPENAI_API_KEY                                                                           │  │  │  │  selection                           │
+│      Hooks                   │  │  │ │ API key                 │ Paste API key to save locally in config                                             │  │  │  │  Writes allowed: Yes                 │
+│      Internal Prompts        │  │  │ │                          Clear saved key                                                                      │  │  │  │  Owns: chat_defaults.provider        │
+│      Advanced Config         │  │  │ │ Env var                 │ OPENAI_API_KEY                                                                      │  │  │  │  chat_defaults.model                 │
+│   Domain Defaults ▸ (11)     │  │  │ │  Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the         │  │  │  │  api_settings.<provider>.          ▅ │
+│                              │  │  │ │  secret.                                                                                                      │  │  │  │    endpoint                          │
+│                              │  │  │ │  Review restored OpenAI connection                                                                            │  │  │  │  api_settings.<provider>.            │
+│                              │  │  │ │  Test Provider                                                                                                │  │  │  │    api_key                           │
+│                              │  │  │ │  Checks the settings, then lists models without generating: a cloud provider's listing checks the API key, a  │  │  │  │  api_settings.<provider>.            │
+│                              │  │  │ │  local server's shows it answers. Nothing is saved.                                                           │  │  │  │    api_key_env_var                   │
+│                              │  │  │ │ Readiness   Ready · verified 00:56                                                                            │  │  │  │  api_settings.<provider>.            │
+│                              │  │  │ │ Config      OpenAI is configured                                                                              │  │  │  │    api_mode                          │
+│                              │  │  │ │ Key         from env var OPENAI_API_KEY · key accepted (100+ models listed)                                   │  │  │  │  api_settings.<provider>.            │
+│                              │  │  │ │ Endpoint    https://api.openai.com/v1 (provider default) · model listing reached                              │  │  │  │ ▼ more — scroll the inspector        │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────────────┘
+ Default provider, model, context window, and readiness shared with Console.
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

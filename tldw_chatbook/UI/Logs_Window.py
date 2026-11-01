@@ -35,6 +35,12 @@ if TYPE_CHECKING:
 #: app's PersistentLogHandler via ``append_record``).
 MAX_LOG_RECORDS = 10000
 
+#: TASK-34966: newest records seeded synchronously at mount (paints within
+#: one refresh regardless of session uptime); the older backlog is rebuilt
+#: in worker chunks of this size with yields between them.
+_MOUNT_SEED_RECORDS = 1000
+_BACKFILL_CHUNK_RECORDS = 2000
+
 #: Debounce for the free-text filter `Input` -- mirrors the picker/filter
 #: family's 0.2 s shape (`console_prompt_picker_modal.py`). Every render
 #: pass rescans up to `MAX_LOG_RECORDS` buffered records, so it must not run
@@ -199,8 +205,18 @@ class LogsWindow(Container):
         # comparing against it instead of a bare dirty flag means neither the
         # mount-time restore nor a click-and-click-back sequence produces a
         # write.
+        # TASK-21235: the SCHEDULING gate additionally arms a dirty flag
+        # (the task-15470 dictation shape) instead of comparing against the
+        # baseline. A change landing while a debounced write is in flight
+        # used to compare against the STALE baseline -- `_persisted_filter_
+        # state` only advances on write completion -- so a revert to the
+        # on-disk state was judged a no-op and swallowed until unmount
+        # repaired it. Dirty is cleared when the worker takes its snapshot
+        # (so a mid-flight edit re-dirties); the write sides still compare
+        # against the live baseline for the genuine no-op cases.
         self._filter_save_timer: Timer | None = None
         self._filter_persist_worker = None
+        self._filter_state_dirty: bool = False
         self._persisted_filter_state: dict[str, str] | None = None
         # Mirror of the filter Input's value, kept current by
         # `_on_filter_text_changed` and the `load_from_app` restore. The
@@ -298,11 +314,45 @@ class LogsWindow(Container):
                 getattr(self.app_instance, "_log_records", ()) or ()
             )
             self._seeded_through = getattr(self.app_instance, "_log_records_seq", 0)
-        for entry in app_records:
+        # TASK-34966: seed only the newest slice synchronously so the mount
+        # paints within one refresh regardless of session uptime; the older
+        # backlog is rebuilt in worker chunks and spliced in front (the
+        # snapshot is immutable, so live appends during the backfill land
+        # after it and order is preserved).
+        backlog = app_records[:-_MOUNT_SEED_RECORDS]
+        tail = app_records[-_MOUNT_SEED_RECORDS:]
+        for entry in tail:
             level, name, message = entry
             self._records.append(LogRecord(level, name, message))
-        # The deque may have evicted oldest-first while seeding; rebuild the
-        # counts from the final buffer state (one pass, load-time only).
+        self._level_counts = Counter(record.level for record in self._records)
+        self._render_view()
+        if backlog:
+            self.run_worker(
+                self._backfill_records(backlog),
+                group="logs-mount-backfill",
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+    async def _backfill_records(self, backlog: tuple[tuple, ...]) -> None:
+        """Reconstruct older buffered records off the mount path (TASK-34966)."""
+        pending: list[LogRecord] = []
+        for index in range(0, len(backlog), _BACKFILL_CHUNK_RECORDS):
+            pending.extend(
+                LogRecord(level, name, message)
+                for level, name, message in backlog[
+                    index : index + _BACKFILL_CHUNK_RECORDS
+                ]
+            )
+            await asyncio.sleep(0)  # yield: keep the message pump responsive
+        if not self.is_mounted:
+            return
+        # Splice in front of everything seeded or appended live since; the
+        # deque's maxlen then evicts from the FRONT of the spliced backlog,
+        # which is the oldest data by construction.
+        combined = pending + list(self._records)
+        self._records.clear()
+        self._records.extend(combined)
         self._level_counts = Counter(record.level for record in self._records)
         self._render_view()
 
@@ -352,11 +402,18 @@ class LogsWindow(Container):
         """Schedule a debounced, batched, off-loop filter-state save.
 
         task-21124: the single gate chip clicks go through -- see
-        `LOGS_FILTER_SAVE_DEBOUNCE_SECONDS`. A no-op when the current state
-        already matches what is persisted (e.g. click away and back).
+        `LOGS_FILTER_SAVE_DEBOUNCE_SECONDS`.
+
+        TASK-21235: arming is UNCONDITIONAL (dirty flag, the task-15470
+        dictation shape). The old early-return compared the live state
+        against `_persisted_filter_state`, which is only advanced when a
+        debounced write COMPLETES -- so a change landing while a write was
+        in flight compared against a stale baseline, and a revert to the
+        on-disk state was swallowed as a no-op until unmount repaired it.
+        The write sides keep their own baseline comparison, so
+        click-away-and-back still produces no disk write.
         """
-        if self._filter_state_snapshot() == self._persisted_filter_state:
-            return
+        self._filter_state_dirty = True
         if self._filter_save_timer is not None:
             self._filter_save_timer.stop()
         self._filter_save_timer = self.set_timer(
@@ -378,11 +435,18 @@ class LogsWindow(Container):
 
         Snapshots on the main thread before handing the write to
         `to_thread`, so a further chip click cannot race the worker's read
-        (same shape as the task-15470 dictation persist).
+        (same shape as the task-15470 dictation persist). Clears
+        `_filter_state_dirty` at snapshot time, not write completion, so an
+        edit landing mid-write re-dirties and gets its own timer (the
+        dictation module's "edit 2 LOST" reasoning, adopted by TASK-21235).
         """
         snapshot = self._filter_state_snapshot()
         if snapshot == self._persisted_filter_state:
+            # Genuinely back at the on-disk state (click away and back):
+            # nothing to write, and the pending dirty is satisfied.
+            self._filter_state_dirty = False
             return
+        self._filter_state_dirty = False
         await asyncio.to_thread(self._write_filter_state, snapshot)
 
     async def on_unmount(self) -> None:
@@ -392,21 +456,31 @@ class LogsWindow(Container):
         persisted only at unmount -- but now only when the state actually
         changed, where the old code rewrote the config file on every exit
         from the Logs screen. If a debounced write is in flight, waits for
-        it rather than dispatching a second writer against the same file.
+        it rather than dispatching a second writer against the same file;
+        TASK-21235: the post-wait decision re-snapshots (the dirty flag
+        records any change the in-flight write's snapshot predates) -- the
+        same task-15470 shape the dictation module adopted for its
+        "edit 2 LOST" race.
         """
         if self._filter_save_timer is not None:
             self._filter_save_timer.stop()
             self._filter_save_timer = None
-        # Capture before any await: after the wait the Input may be gone.
-        snapshot = self._filter_state_snapshot()
         worker = self._filter_persist_worker
         if worker is not None and not worker.is_finished:
             try:
                 await worker.wait()
             except Exception:  # noqa: BLE001 - flush must never break teardown
                 pass
+        # Capture AFTER any wait: the mirror keeps the value current when
+        # the Input is already gone (see `_filter_state_snapshot`). The
+        # write gate stays the baseline comparison so filter-TEXT edits --
+        # which never arm the debounce (task-21124 kept them unmount-only)
+        # -- still persist here, and a genuine no-op teardown still writes
+        # nothing.
+        snapshot = self._filter_state_snapshot()
         if snapshot != self._persisted_filter_state:
             await asyncio.to_thread(self._write_filter_state, snapshot)
+        self._filter_state_dirty = False
 
     def append_record(self, level: str, name: str, message: str) -> None:
         """Receive one live log record from the app's logging handler.
@@ -549,8 +623,7 @@ class LogsWindow(Container):
             # task-15476 AC #2: the filter matched more than the rendered
             # cap -- say so, rather than silently showing a partial result.
             parts.append(
-                f"(filter matched {self._visible_total}; "
-                f"showing most recent {shown})"
+                f"(filter matched {self._visible_total}; showing most recent {shown})"
             )
         if total >= MAX_LOG_RECORDS:
             parts.append(f"(buffer keeps last {MAX_LOG_RECORDS:,})")
@@ -573,7 +646,10 @@ class LogsWindow(Container):
             "CRITICAL", 0
         )
         if errors:
-            status, label = "error", f"{errors} error{'s' if errors != 1 else ''} in buffer"
+            status, label = (
+                "error",
+                f"{errors} error{'s' if errors != 1 else ''} in buffer",
+            )
         else:
             status, label = "ready", "Listening"
         header.sync_state(

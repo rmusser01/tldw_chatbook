@@ -11,7 +11,9 @@ from tldw_chatbook.Scheduling.models import ReminderTask, ScheduledTask, TaskSta
 from tldw_chatbook.Scheduling.schedule_input_parsing import system_timezone_name
 from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services import SchedulingServerClient, SchedulingService
-from tldw_chatbook.Scheduling.services import scheduling_service as scheduling_service_module
+from tldw_chatbook.Scheduling.services import (
+    scheduling_service as scheduling_service_module,
+)
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.server_client import (
     ServerClientConfig,
@@ -844,7 +846,9 @@ async def test_list_tasks_includes_a_cadenced_briefing_schedule_ac1(db, tmp_path
     _force_briefing_created_at(subs_db, complete_id, "2026-01-01 00:00:00")
 
     projection = BriefingProjection(subs_db)
-    svc = SchedulingService(db=db, runtime_source="local", briefing_projection=projection)
+    svc = SchedulingService(
+        db=db, runtime_source="local", briefing_projection=projection
+    )
     await svc.create_reminder(_reminder_payload("Reminder"))
 
     tasks = await svc.list_tasks()
@@ -870,7 +874,9 @@ async def test_briefing_schedule_next_run_at_matches_the_projection_ac2(db, tmp_
     _force_briefing_created_at(subs_db, complete_id, "2026-01-01 00:00:00")
 
     projection = BriefingProjection(subs_db)
-    svc = SchedulingService(db=db, runtime_source="local", briefing_projection=projection)
+    svc = SchedulingService(
+        db=db, runtime_source="local", briefing_projection=projection
+    )
 
     tasks = await svc.list_tasks()
     [briefing_task] = [t for t in tasks if getattr(t, "type", None) == "briefing_job"]
@@ -895,7 +901,9 @@ async def test_null_cadence_watchlist_absent_from_scheduling_screen_ac4(db, tmp_
     WatchlistBundleService(subs_db).create(name="Never Scheduled")  # no cadence set
 
     projection = BriefingProjection(subs_db)
-    svc = SchedulingService(db=db, runtime_source="local", briefing_projection=projection)
+    svc = SchedulingService(
+        db=db, runtime_source="local", briefing_projection=projection
+    )
 
     tasks = await svc.list_tasks()
 
@@ -1027,7 +1035,13 @@ async def test_review_automation_result_local_only_updates_without_mutation(db):
 @pytest.mark.asyncio
 async def test_review_automation_result_server_mirrored_records_pending_mutation(db):
     result_id = db.create_automation_result(
-        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        "server:1",
+        "def-1",
+        "run-1",
+        "finding",
+        "T",
+        "S",
+        "key-1",
         server_id="srv-res-1",
     )
     svc = SchedulingService(db=db, runtime_source="server:1")
@@ -1059,7 +1073,13 @@ async def test_review_automation_result_records_mutation_under_row_owner(db):
     owner never sees it via ``get_pending_mutations``.
     """
     result_id = db.create_automation_result(
-        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        "server:1",
+        "def-1",
+        "run-1",
+        "finding",
+        "T",
+        "S",
+        "key-1",
         server_id="srv-res-1",
     )
     svc = SchedulingService(db=db, runtime_source="local")
@@ -1104,7 +1124,13 @@ async def test_review_automation_result_server_mirrored_makes_a_single_db_call(d
     can never land in different transactions.
     """
     result_id = db.create_automation_result(
-        "server:1", "def-1", "run-1", "finding", "T", "S", "key-1",
+        "server:1",
+        "def-1",
+        "run-1",
+        "finding",
+        "T",
+        "S",
+        "key-1",
         server_id="srv-res-1",
     )
     svc = SchedulingService(db=db, runtime_source="server:1")
@@ -1531,9 +1557,7 @@ async def test_save_definition_server_owner_offline_create_queues_one_mutation(d
     assert pending[0]["local_id"] == outcome.definition_id
     assert pending[0]["payload"]["action"] == "create"
     assert pending[0]["payload"]["server_definition_id"] is None
-    assert (
-        pending[0]["payload"]["definition_payload"]["family"] == "recurring_question"
-    )
+    assert pending[0]["payload"]["definition_payload"]["family"] == "recurring_question"
 
 
 @pytest.mark.asyncio
@@ -1674,8 +1698,8 @@ async def test_save_definition_server_owner_commit_rejection_is_error_not_queued
         "status": "valid",
         "validation_errors": [],
     }
-    server_client.create_automation_definition.side_effect = ServerClientValidationError(
-        "scheduled_task_schedule_invalid"
+    server_client.create_automation_definition.side_effect = (
+        ServerClientValidationError("scheduled_task_schedule_invalid")
     )
     svc = SchedulingService(
         db=db, server_client=server_client, runtime_source="server:1"
@@ -1755,9 +1779,9 @@ async def test_save_definition_edit_preserves_fields_the_payload_does_not_carry(
     assert row["notification_policy"]["on_success"] is False
     assert row["input"].get("provider") is None
 
-    outgoing = db.get_pending_mutations(
-        "server:1", primitive="automation_definition"
-    )[0]["payload"]["definition_payload"]
+    outgoing = db.get_pending_mutations("server:1", primitive="automation_definition")[
+        0
+    ]["payload"]["definition_payload"]
     assert outgoing["description"] == "Digest of everything that changed"
     assert outgoing["visibility_policy"] == {"mode": "metadata_only"}
     assert outgoing["approval_policy"] == {"mode": "manual"}
@@ -2194,7 +2218,9 @@ def test_transfer_refusal_configured_but_unreachable(db):
 
 def test_transfer_refusal_to_server_already_server_owned(db):
     svc = _transfer_service(db, server_client=_connected_server_client())
-    row = db.get_reminder_task(_make_reminder(db, owner_id="server:1", server_id="srv-1"))
+    row = db.get_reminder_task(
+        _make_reminder(db, owner_id="server:1", server_id="srv-1")
+    )
     reason = svc.transfer_refusal(row, "to_server")
     assert reason == "This row already lives on the server."
 
@@ -2268,7 +2294,9 @@ def test_transfer_refusal_to_local_recurring_question_quotes_health_reason(
     db, monkeypatch
 ):
     svc = _transfer_service(db, server_client=_connected_server_client())
-    _stub_health(monkeypatch, health="permission_required", reason="No provider configured.")
+    _stub_health(
+        monkeypatch, health="permission_required", reason="No provider configured."
+    )
     definition_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
     row = db.get_automation_definition(definition_id)
     reason = svc.transfer_refusal(row, "to_local")
@@ -2398,13 +2426,17 @@ async def test_refresh_server_reachability_401_proves_reachable_even_from_false(
     'server not reachable'."""
     client = AsyncMock()
     client.notifications_service = object()
-    client.get_capabilities.side_effect = ServerClientValidationError("401 unauthorized")
+    client.get_capabilities.side_effect = ServerClientValidationError(
+        "401 unauthorized"
+    )
     svc = SchedulingService(db=db, server_client=client)
     svc._server_reachable = False  # a prior probe had failed
 
     result = await svc.refresh_server_reachability()
 
-    assert result is True, "a 401 answer proves the server is there, unlike a prior failure"
+    assert result is True, (
+        "a 401 answer proves the server is there, unlike a prior failure"
+    )
     assert svc.server_reachable is True
     assert svc.server_permission_denied is True
 
@@ -2436,7 +2468,9 @@ async def test_refresh_server_reachability_bypasses_the_capabilities_cache(db):
     `SchedulingServerClient` (not a mock) so the cache-bypass wiring
     itself is under test, not just the service's exception handling."""
     service = MagicMock()
-    service.get_scheduled_automation_capabilities = AsyncMock(return_value={"items": []})
+    service.get_scheduled_automation_capabilities = AsyncMock(
+        return_value={"items": []}
+    )
     client = SchedulingServerClient(
         notifications_service=service,
         config=ServerClientConfig(max_retries=0, retry_delay=0),
@@ -2515,9 +2549,7 @@ def test_transfer_warnings_reminder_timeout_seconds_warns(db):
 def test_transfer_warnings_definition_imminent_one_time_warns(db):
     svc = _transfer_service(db, server_client=_connected_server_client())
     soon = datetime.now(timezone.utc).isoformat()
-    definition_id = _make_definition(
-        db, schedule={"kind": "one_time", "run_at": soon}
-    )
+    definition_id = _make_definition(db, schedule={"kind": "one_time", "run_at": soon})
     row = db.get_automation_definition(definition_id)
     warnings = svc.transfer_warnings(row, "to_server")
     assert any("5 minutes" in w for w in warnings)
@@ -2663,7 +2695,10 @@ async def test_begin_transfer_to_local_reminder_happy_path(db):
         on_queue_changed=lambda: notified.append(True),
     )
     mirror_id = _make_reminder(
-        db, owner_id="server:1", server_id="srv-1", schedule_kind="one_time",
+        db,
+        owner_id="server:1",
+        server_id="srv-1",
+        schedule_kind="one_time",
         run_at="2030-01-01T00:00:00+00:00",
     )
 
@@ -2759,7 +2794,11 @@ async def test_cancel_transfer_settled_definitive_failure_to_server_failed(db):
         reminder_id,
         "reminder_task",
         "server:1",
-        {"action": "transfer_to_server", "task_payload": {}, "transfer_errors": ["boom"]},
+        {
+            "action": "transfer_to_server",
+            "task_payload": {},
+            "transfer_errors": ["boom"],
+        },
     )
 
     outcome = await svc.cancel_transfer("reminder_task", reminder_id)
@@ -3140,9 +3179,7 @@ async def test_cancel_release_offline_still_drops_the_release_mutation(db):
     nowhere."""
     svc = _transfer_service(db, server_client=_connected_server_client())
     mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
-    copy_id = (
-        await svc.begin_transfer_to_local("reminder_task", mirror_id)
-    ).row_id
+    copy_id = (await svc.begin_transfer_to_local("reminder_task", mirror_id)).row_id
 
     offline = _transfer_service(
         db, server_client=_connected_server_client(), active_server_id=None
@@ -3205,10 +3242,14 @@ async def test_begin_transfer_to_local_refuses_a_second_press(db):
 
 
 @pytest.mark.asyncio
-async def test_begin_transfer_to_local_definition_refuses_a_second_press(db, monkeypatch):
+async def test_begin_transfer_to_local_definition_refuses_a_second_press(
+    db, monkeypatch
+):
     """I5 on the definitions leg -- same keying, same stranded copy."""
     monkeypatch.setattr(
-        scheduling_service_module, "compute_local_health", lambda app, row: ("ready", "")
+        scheduling_service_module,
+        "compute_local_health",
+        lambda app, row: ("ready", ""),
     )
     svc = _transfer_service(db, server_client=_connected_server_client())
     mirror_id = _make_definition(db, owner_id="server:1", server_id="srv-def-1")
@@ -3295,7 +3336,9 @@ async def test_edit_reminder_fields_invalid_timezone_returns_field_error(db):
 @pytest.mark.asyncio
 async def test_edit_reminder_fields_invalid_run_at_returns_field_error(db):
     svc = SchedulingService(db=db, runtime_source="local")
-    reminder_id = _make_reminder(db, schedule_kind="one_time", run_at="2030-01-01T00:00:00+00:00")
+    reminder_id = _make_reminder(
+        db, schedule_kind="one_time", run_at="2030-01-01T00:00:00+00:00"
+    )
 
     outcome = await svc.edit_reminder_fields(reminder_id, {"run_at": "not a date"})
 
@@ -3310,13 +3353,21 @@ async def test_edit_reminder_fields_valid_run_at_accepts_forgiving_local_format(
     space-separated datetime (not full ISO-8601) must parse and persist,
     same as the create form accepts."""
     svc = SchedulingService(db=db, runtime_source="local")
-    reminder_id = _make_reminder(db, schedule_kind="one_time", run_at="2030-01-01T00:00:00+00:00")
+    reminder_id = _make_reminder(
+        db, schedule_kind="one_time", run_at="2030-01-01T00:00:00+00:00"
+    )
 
-    outcome = await svc.edit_reminder_fields(reminder_id, {"run_at": "2031-06-15 09:30"})
+    outcome = await svc.edit_reminder_fields(
+        reminder_id, {"run_at": "2031-06-15 09:30"}
+    )
 
     assert outcome.status == "saved"
     assert outcome.task is not None
-    assert (outcome.task.run_at.year, outcome.task.run_at.month, outcome.task.run_at.day) == (
+    assert (
+        outcome.task.run_at.year,
+        outcome.task.run_at.month,
+        outcome.task.run_at.day,
+    ) == (
         2031,
         6,
         15,
@@ -3324,7 +3375,9 @@ async def test_edit_reminder_fields_valid_run_at_accepts_forgiving_local_format(
 
 
 @pytest.mark.asyncio
-async def test_edit_reminder_fields_bad_schedule_kind_returns_field_error_not_raw_exception(db):
+async def test_edit_reminder_fields_bad_schedule_kind_returns_field_error_not_raw_exception(
+    db,
+):
     """Belt-and-suspenders: a bad value the pre-checks above don't cover
     (schedule_kind isn't cron/run_at/timezone) still routes through
     `ReminderTask`'s own model validation inside `update_reminder` -- the
@@ -3400,9 +3453,7 @@ async def test_delete_reminder_refused_while_transferring(db):
     release is about to arm."""
     svc = _transfer_service(db, server_client=_connected_server_client())
     mirror_id = _make_reminder(db, owner_id="server:1", server_id="srv-1")
-    copy_id = (
-        await svc.begin_transfer_to_local("reminder_task", mirror_id)
-    ).row_id
+    copy_id = (await svc.begin_transfer_to_local("reminder_task", mirror_id)).row_id
 
     assert await svc.delete_reminder(copy_id) is False
     assert db.get_reminder_task(copy_id) is not None
@@ -3773,7 +3824,9 @@ async def test_resolve_definition_local_row_marks_solved(db):
         "local", definition_id, "run-1", "finding", "Found it", "Summary", "dk-1"
     )
 
-    outcome = await svc.resolve_definition(definition_id, solved=True, result_id=result_id)
+    outcome = await svc.resolve_definition(
+        definition_id, solved=True, result_id=result_id
+    )
 
     assert outcome.status == "saved"
     row = db.get_automation_definition(definition_id)
@@ -3891,9 +3944,7 @@ async def test_resolve_definition_server_row_offline_returns_error_without_queui
 
 @pytest.mark.asyncio
 async def test_resolve_definition_server_row_missing_server_id_returns_error(db):
-    svc = SchedulingService(
-        db=db, server_client=AsyncMock(), runtime_source="server:1"
-    )
+    svc = SchedulingService(db=db, server_client=AsyncMock(), runtime_source="server:1")
     definition_id = _make_definition(db, owner_id="server:1")  # no server_id set
 
     outcome = await svc.resolve_definition(definition_id, solved=True)
@@ -4004,7 +4055,9 @@ async def test_resolve_definition_local_result_without_server_id_fails_closed(db
         "server:1", definition_id, "run-1", "finding", "Found it", "Summary", "dk-1"
     )  # no server_id: not yet synced up
 
-    outcome = await svc.resolve_definition(definition_id, solved=True, result_id=result_id)
+    outcome = await svc.resolve_definition(
+        definition_id, solved=True, result_id=result_id
+    )
 
     assert outcome.status == "error"
     assert "not been synced to the server" in outcome.reason
@@ -4035,8 +4088,10 @@ async def test_resolve_definition_policy_denial_gets_distinct_reason(db):
     """Low finding 2: `_seam_failure_warning`'s wording split -- a
     deterministic policy refusal reads differently from "no connection"."""
     server_client = AsyncMock()
-    server_client.mark_automation_definition_solved.side_effect = ServerClientPolicyError(
-        "scheduler.automations.configure.server requires server mode."
+    server_client.mark_automation_definition_solved.side_effect = (
+        ServerClientPolicyError(
+            "scheduler.automations.configure.server requires server mode."
+        )
     )
     svc = SchedulingService(
         db=db, server_client=server_client, runtime_source="server:1"
@@ -4093,8 +4148,8 @@ async def test_resolve_definition_archived_409_reports_the_server_reason(db):
 @pytest.mark.asyncio
 async def test_resolve_definition_connectivity_failure_gets_generic_reason(db):
     server_client = AsyncMock()
-    server_client.mark_automation_definition_solved.side_effect = ServerUnavailableError(
-        "offline"
+    server_client.mark_automation_definition_solved.side_effect = (
+        ServerUnavailableError("offline")
     )
     svc = SchedulingService(
         db=db, server_client=server_client, runtime_source="server:1"

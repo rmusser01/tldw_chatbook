@@ -8,6 +8,7 @@ import re
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.css.query import QueryError
 from textual.widgets import Button, Checkbox, Input, ListItem, ListView, Static
 
@@ -187,18 +188,6 @@ class PersonasInspectorPane(VerticalScroll):
         self._actor_pack_revision: int | None = None
         self._actor_pack_eligible = False
         self._actor_pack_reason: str | None = None
-        # F-040: marked library rows drive bulk Delete/Export JSON affordances.
-        self._marked_count = 0
-
-    def set_marked_count(self, count: int) -> None:
-        """Bulk-mark awareness for Delete/Export (F-040).
-
-        With marks active, Delete and Export JSON target the marked set
-        (their tooltips say so) and Export PNG - a single-card format - is
-        disabled with a reason. Zero restores the selection-owned gates.
-        """
-        self._marked_count = max(0, int(count))
-        self._apply_action_state()
 
     def set_card_actions_visible(self, visible: bool) -> None:
         """Retain whether card-level actions belong in the current center view.
@@ -230,7 +219,8 @@ class PersonasInspectorPane(VerticalScroll):
             )
             collapse_button.tooltip = "Collapse Inspector rail"
             yield collapse_button
-        yield Static("Selected: none", id="personas-selected-name")
+        # TASK-34400: the selected name is untrusted text; never parse markup.
+        yield Static("Selected: none", id="personas-selected-name", markup=False)
         yield Static("Type: -", id="personas-selected-kind")
         # Portrait of the selected character. A roleplay user identifies a
         # character by its picture at least as much as by its name, and the
@@ -240,7 +230,9 @@ class PersonasInspectorPane(VerticalScroll):
         # selection - pre-selection the inspector is just the summary lines
         # plus one plain guidance line (the readiness Static below), not a
         # false "Validation: OK", dangling section headers, and dead buttons.
-        validation = Static("Validation: OK", id="personas-validation-summary")
+        validation = Static(
+            "Validation: OK", id="personas-validation-summary", markup=False
+        )
         validation.display = False
         yield validation
         # Read-only policy-rules summary (workspace-assistant-defaults
@@ -274,7 +266,10 @@ class PersonasInspectorPane(VerticalScroll):
         )
         readiness_header.display = False
         yield readiness_header
-        yield Static(_NO_SELECTION_GUIDANCE, id="personas-readiness-console")
+        # TASK-34400: block reasons quote provider names (config text); literal.
+        yield Static(
+            _NO_SELECTION_GUIDANCE, id="personas-readiness-console", markup=False
+        )
         actions = Vertical(id="personas-inspector-actions")
         actions.display = False
         with actions:
@@ -559,8 +554,7 @@ class PersonasInspectorPane(VerticalScroll):
                     extras.append(f"cap {rule['max_calls_per_turn']}")
                 suffix = f" ({', '.join(extras)})" if extras else ""
                 lines.append(
-                    f"{rule.get('rule_kind')}: {rule.get('rule_name')} "
-                    f"→ {verb}{suffix}"
+                    f"{rule.get('rule_kind')}: {rule.get('rule_name')} → {verb}{suffix}"
                 )
             summary = "\n".join(lines)
         try:
@@ -769,8 +763,7 @@ class PersonasInspectorPane(VerticalScroll):
                     disabled = True
                 elif has_more:
                     tail_copy = (
-                        f"Load {PERSONAS_CONVERSATIONS_PAGE_SIZE} "
-                        "older conversations"
+                        f"Load {PERSONAS_CONVERSATIONS_PAGE_SIZE} older conversations"
                     )
                     actionable = True
                     disabled = False
@@ -943,7 +936,9 @@ class PersonasInspectorPane(VerticalScroll):
                 target_index = (
                     first_new_index
                     if advance_from_loading_tail
-                    else list_view.index if index_changed else tail_index
+                    else list_view.index
+                    if index_changed
+                    else tail_index
                 )
                 list_view.index = tail_index
                 if target_index != tail_index:
@@ -982,9 +977,9 @@ class PersonasInspectorPane(VerticalScroll):
         )
         # Policy rules are a persona-record attribute (task-11); the section
         # hides for every other kind (the task-443 kind idiom).
-        self.query_one(
-            "#personas-policy-rules-summary", Static
-        ).display = selected and kind == "persona"
+        self.query_one("#personas-policy-rules-summary", Static).display = (
+            selected and kind == "persona"
+        )
         # F-036: only characters have saved conversations - the section hides
         # for persona/dictionary/lore selections (the task-443 kind idiom)
         # instead of dangling a header over an empty list.
@@ -1034,14 +1029,15 @@ class PersonasInspectorPane(VerticalScroll):
             export_tooltip = None
         # Send-to-draft tooltip only surfaces when the selection gate itself
         # is closed; the copy matches the readiness line's intent language.
-        attach_tooltip = None
+        attach_tooltip: str | Content | None = None
         if not self._console_actions_enabled:
             if not selected:
                 attach_tooltip = _NO_SELECTION_GUIDANCE
             elif unsaved:
                 attach_tooltip = _UNSAVED_TOOLTIP
             else:
-                attach_tooltip = (
+                # TASK-34400: a tooltip str parses as markup; the reason is not ours.
+                attach_tooltip = Content(
                     "Chat now and Send to Console draft blocked: "
                     f"{self._console_action_block_reason}"
                 )
@@ -1089,30 +1085,26 @@ class PersonasInspectorPane(VerticalScroll):
         if not self._console_actions_enabled:
             start_btn.tooltip = attach_tooltip
         elif self._provider_block_reason:
-            start_btn.tooltip = f"Chat now blocked: {self._provider_block_reason}"
+            start_btn.tooltip = Content(
+                f"Chat now blocked: {self._provider_block_reason}"
+            )
         else:
             start_btn.tooltip = None
-        # F-040: an active mark set retargets Delete/Export JSON at the
-        # marked rows (tooltips say so) and sidesteps the single-selection
-        # unsaved gate (bulk actions discard/ignore edit state by design,
-        # like single Delete). Export PNG stays single-card.
-        marked = self._marked_count
+        # Frame slice B2a (spec 3.6, 3.7): these act on the open item only;
+        # bulk Export and Delete moved to the list's marks bar.
         json_button = self.query_one("#personas-export-json", Button)
         json_button.display = export_json_applies
-        json_button.disabled = (not export_enabled) and marked == 0
-        json_button.tooltip = (
-            f"Export the {marked} marked items as JSON." if marked else export_tooltip
-        )
+        json_button.disabled = not export_enabled
+        json_button.tooltip = export_tooltip
         png_button = self.query_one("#personas-export-png", Button)
         png_button.display = export_png_applies
-        png_button.disabled = marked > 0 or not (export_enabled and kind == "character")
-        png_button.tooltip = "Bulk export is JSON only." if marked else export_tooltip
+        png_button.disabled = not (export_enabled and kind == "character")
+        png_button.tooltip = export_tooltip
         actor_pack_button = self.query_one("#personas-export-actor-pack", Button)
         actor_pack_applies = selected and kind in {"character", "persona"}
         actor_pack_enabled = bool(
             actor_pack_applies
             and not unsaved
-            and marked == 0
             and self._actor_pack_eligible
             and self._actor_pack_source == "local"
             and self._actor_pack_kind == kind
@@ -1128,20 +1120,12 @@ class PersonasInspectorPane(VerticalScroll):
             else (
                 _UNSAVED_TOOLTIP
                 if unsaved
-                else (
-                    "Select one item to export."
-                    if marked
-                    else self._actor_pack_reason or _NO_SELECTION_EXPORT_TOOLTIP
-                )
+                else self._actor_pack_reason or _NO_SELECTION_EXPORT_TOOLTIP
             )
         )
         delete_button = self.query_one("#personas-delete", Button)
-        delete_button.disabled = (not selected) and marked == 0
-        delete_button.tooltip = (
-            f"Delete the {marked} marked items."
-            if marked
-            else (None if selected else _NO_SELECTION_DELETE_TOOLTIP)
-        )
+        delete_button.disabled = not selected
+        delete_button.tooltip = None if selected else _NO_SELECTION_DELETE_TOOLTIP
 
         manage = self.query_one("#personas-buddy-use", Button)
         manage.display = True
@@ -1243,8 +1227,7 @@ class PersonasInspectorPane(VerticalScroll):
         if conversation_id is not None:
             self.post_message(ConversationRowSelected(conversation_id))
         elif (
-            event.item is self._conversation_tail
-            and self._conversation_tail_actionable
+            event.item is self._conversation_tail and self._conversation_tail_actionable
         ):
             self.post_message(OlderConversationsRequested())
 

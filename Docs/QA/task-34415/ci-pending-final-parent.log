@@ -1,0 +1,6 @@
+.............                                                            [100%]
+============================= slowest 25 durations =============================
+68.77s call     Tests/UI/test_console_pending_interrupt_projection.py::test_session_owned_pending_projection_journeys
+
+(24 durations < 1s hidden.)
+13 passed in 71.62s (0:01:11)

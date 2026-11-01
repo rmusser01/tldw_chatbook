@@ -10,6 +10,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, ListView, Select
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _static_text
 from tldw_chatbook.Agents.agent_models import AgentDefinition
 from tldw_chatbook.Agents.agent_presets import AGENT_PRESETS
@@ -306,7 +307,9 @@ async def test_preset_load_prefills_unsaved_editable_definition(runs_db, preset)
         assert panel.query_one("#agents-description-input").value == preset.description
         assert panel.query_one("#agents-instructions-area").text == preset.instructions
         assert panel.query_one("#agents-model-input").value == ""
-        assert panel.query_one("#agents-tools-input").value == ", ".join(preset.tool_allowlist)
+        assert panel.query_one("#agents-tools-input").value == ", ".join(
+            preset.tool_allowlist
+        )
         assert panel.query_one("#agents-wall-seconds-input").value == ""
         assert "save" in _static_text(panel.query_one("#agents-status")).lower()
         if preset.name == BULK_READER_NAME:
@@ -449,6 +452,22 @@ async def test_preset_actions_render_with_production_css(runs_db, size):
             instructions.content_region,
             instructions.virtual_size,
             instructions.scroll_offset,
+        )
+
+        fallback = panel.query_one("#agents-fallback-models-area")
+        fallback.text = "openai/alternate"
+        fallback.focus()
+        fallback.scroll_visible(animate=False)
+        await pilot.wait_for_scheduled_animations()
+        await pilot.pause()
+        assert fallback.content_region.height > 0
+        assert fallback.region.right <= size[0]
+        fallback_painted = " ".join(
+            _painted_text(pilot.app.export_screenshot(simplify=True)).split()
+        )
+        assert "openai/alternate" in fallback_painted, (
+            fallback.region,
+            fallback.content_region,
         )
 
         focused_values = (
@@ -635,7 +654,8 @@ async def test_panel_without_db_shows_notice(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_agents_category_renders_in_settings_screen():
+@private_profile_test
+async def test_agents_category_renders_in_settings_screen(request):
     # The category sweep (test_settings_category_sweep.py) already visits
     # every category; this pins OUR panel specifically: selecting Agents
     # renders either the editor or the no-DB notice (test app runs with a

@@ -158,7 +158,14 @@ project-instruction bodies never enter default durable capture.
     its newly active provider call terminated by startup recovery.
 
     Temporary conversations cannot make a durable Capture On call until Save & Send
-    promotes their in-memory lineage. Before dispatch, a component sanitization or
+    promotes their in-memory lineage. (Amended 2026-10-29, TASK-33621.17, owner
+    decision 2026-10-27: a temporary conversation resolves Capture Off unless the user
+    turns Capture On for it, so its sends never pause by default and Save & Send is
+    that opt-in's choice; saving the chat hands Capture back to the conversation's
+    own Capture choice, else the global setting, and a pending one-time next-send
+    choice still decides that one send (TASK-37811).
+    The default is resolved, never stored with the saved conversation.) Before
+    dispatch, a component sanitization or
     descriptor-verification failure may proceed only after a content-free
     omission/incomplete marker and the remaining boundary/header state commit durably.
     Inability to persist the boundary, header, or incomplete state blocks dispatch and
@@ -627,3 +634,276 @@ The receipt is local control metadata, not provider content or delivery evidence
 Nonempty provider, engine, model, media, unknown fields and malformed receipts
 remain ineligible. All parent, revision, sidecar, checkpoint and final-binding
 revalidation requirements above remain unchanged.
+
+### Integration recorded 2026-10-04: failed intermediate model calls
+
+A provider-call failure with no captured response is settled as a trace-owned
+terminal ERROR before the agent can retry. It cannot await the overall assistant
+message's terminal save: that message also owns the later successful retry.
+Successful and partial response handoffs retain canonical message linking.
+
+If sealing the failed attempt cannot complete, the sanitized handoff remains
+owned through cancellation and enters the existing store settlement custody.
+Its canonical assistant ID remains absent even when the overall assistant is
+later saved: changing that ID would change the pending settlement fingerprint
+and would incorrectly attach the successful retry's answer to the failed call.
+
+The existing TOOL_LOOP route includes subsequent model attempts within a run.
+After a durable ERROR it admits only an unchanged request surface, under the
+same attached owner, actor/chain, turn, source pin, frozen policy and latest
+call-boundary proof. The failed call must be settled and provider-inactive.
+Compare rendered system content against the immediately preceding call in
+both distinct-role and single-preamble wire formats. The final header comparison
+runs in the dispatch-binding transaction before capability promotion; changed
+system content cannot bypass unchanged-message checks. Provider, model, endpoint,
+generation parameters, response format, reasoning controls, tool schemas and
+literal provider envelope must also match the preceding failed attempt. The
+AGENT_FIRST to TOOL_LOOP route transition is allowed; it grants no target change.
+An appended or replaced surface, unknown/open dispatch, stale or foreign chain,
+or unsaved settlement remains ineligible. Each retry reserves a distinct ordered
+call; it never rewrites the failed call or relabels it as a tool response.
+
+
+## Current-owner integration amendment (2026-10-13)
+
+Canonical message/revision identity and predecessor ancestry remain reachable independently of archived payload. The existing admitted checkpoint roots and graph-epoch invalidation remain authoritative before reservation; metadata roots cannot retain deleted payload through another call sharing a policy. Retry capture compares canonical JSON bytes (including boolean/integer/float identity), and frozen arrays thaw only when forming PersistRequest fields.
+
+
+## Live native continuation advance amendment (TASK-35582, 2026-10-27)
+
+Actual native CaptureOn tool loops exposed a missing admission shape after the
+custom-hosted endpoint projection was repaired: a completed new native batch
+appends message rows while extending one live continuation surface value. The
+existing one-value replacement and completed-saved-turn witness cannot authorize
+that live mixed-domain operation. This amendment is adopted before implementation.
+Detailed design and controller boundary: [focused design](../../Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/native-trace-delta-design/design.md),
+[controller adoption](../../Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/native-trace-delta-design/controller-adoption.md).
+
+- Add one separately typed, host-issued live-native witness to existing capture
+  admission/capability machinery. It is restricted to the exact tool-loop run,
+  originating source/turn, segment, previous eligible call and predecessor head.
+  Completed-turn authorization and ordinary append/replacement/retry rules retain
+  their existing meaning; witness construction alone grants no authority.
+- Revalidate the current assistant generation, active path, acknowledged message/
+  checkpoint version, raw selected-provider identity and canonical protocol/model/
+  full-base binding under existing custody/CAS. Reuse host projection/signing
+  provenance where raw and durable checkpoints differ. Broad ignored-field or
+  redacted-byte equality cannot establish raw custody.
+- Admit exactly one changed current continuation: old rounds are byte/structure
+  exact, one new finished native batch has exact IDs/names/raw arguments/results,
+  no pending/executing calls remain, and its attachment is the newest exact batch.
+  The prior message domain is an unchanged prefix; the appended suffix and any
+  steering retain host provenance/order. Other continuation groups retain exact
+  value/order/descriptor. Bind suffix/span to existing limits and frozen policy.
+- Replace only that continuation node (span1) and append the message suffix using
+  existing surface_replace/surface_append events in the same transaction as header
+  and call dispatch binding. Preserve per-domain ordinals and old call heads.
+  Recheck predecessor and owner/version at final binding; rollback/ambiguous
+  commit uses existing owned reconciliation, with no automatic redispatch.
+- Preserve linear trace-owned storage: after the first full base, a distinct
+  versioned trace-only continuation-advance projection stores bounded top-level
+  metadata, prior round count and the single new sanitized round. Its predecessor
+  comes from the exact existing one-node replacement edge, never a caller-supplied
+  JSON reference. Do not store full growing checkpoints or growing prior-ID arrays.
+  Provider kwargs and current assistant V3 remain their full original formats.
+- Sanitize the full candidate under frozen policy and verify the old projected
+  prefix before compacting it. A projection change, missing/corrupt/cyclic/wrong-
+  lineage/policy edge, count/depth/byte overflow or failed custody is an explicit
+  refusal/unavailable outcome. Encoded deltas never become execution/Resume state.
+- Use a shared node-aware resolver in durable comparisons and native readers.
+  Legacy full values stay readable without reinterpretation. Fork/archive/copy
+  and GC must preserve actual graph dependencies, and final-owner deletion must
+  reclaim them. Verify raw artifact/metadata growth; reconstruction CPU and other
+  checkpoint owners are separate costs. No new mutable owner/table is planned.
+- Cold live advance requires existing explicit host custody evidence or refuses
+  before provider entry. Matching old bytes or a historical trace reference cannot
+  recreate execution authority. This does not add durable review-job recovery.
+
+Rejected alternatives: moving checkpoints into headers would lose their surface
+lineage; raising replacement counts admits unauthenticated history changes; using
+completed-turn proof mislabels a live chain; full-checkpoint snapshots duplicate
+old rounds; mutable-latest references lose old calls; dropping capture/private
+groups changes fidelity; a general patch engine or new registry is unnecessary.
+
+Existing ADR063/179 owns provider/current-checkpoint custody and is unchanged.
+TASK-35582/ADR281 links this amendment. No SQL migration is asserted until artifact
+codec/enum/archive constraints are audited; any required DDL uses normal versioned
+migration and a revised plan before source work. Required evidence includes actual
+normal Console2/3-round/multicall CaptureOn, strict owner/prefix/policy negatives,
+atomicity/races/privacy, legacy/corrupt graph reads, retention/forks and linear
+artifact-plus-metadata growth. No live provider allowance follows from this ADR.
+
+
+Runtime custody prerequisite (Ruling61, before this runtime edit): the existing
+continuation persistence callback receives only projected checkpoints/events and
+returns None. Exact raw-to-projected provenance is currently discarded. Add one
+optional capture-only host acknowledgment after that callback succeeds; carry
+exact invocation raw/projected relation to bounded current adapter custody, then
+existing store projection/sealing and final owner/version/CAS validation. Keep
+ordinary/CaptureOff behavior, durable persistence barriers and transition semantics.
+Raw values never enter generic event serialization, provider kwargs, DB bodies,
+logs, diagnostics or a history registry. Failed/missing/stale acknowledgment grants
+no capture witness or execution power. Cover private-body projection, managed
+sealing, persistence callback failure and no duplicated side effects explicitly.
+No SQL/checkpoint-format or review-job owner change is introduced.
+
+
+### Canonical completed-history replay amendment (Ruling64, before code)
+
+Adopt QA/ac24/review-wake-repair-design/completed-replay-correction.md and
+completed-replay-controller-assessment.md. Preserve the corrected existing
+transcript SYSTEM/payload USER policy; carrier-only work is removed. The real
+accepted-wake failure is retained complete checkpoint forwarding without its
+canonical native owner rows, alongside the independently proved capacity/tool loss.
+
+After existing host owner/target admission, derive canonical recorded assistant/
+tool history at final preparation from the exact complete persisted checkpoint.
+Reuse the existing translator; keep one collapsed semantic owner plus attachment
+as the atomic budget/eviction unit. Preserve exact IDs/args/results and one final
+content, private reasoning sidecar, all retained complete groups alongside current
+active groups, child isolation and explicit active Resume gates. No re-execution,
+fuzzy owner match, missing group tolerance or engine relaxation. Count the same
+projection before fit and avoid duplicate completed-expanded body charge.
+
+A narrowly deterministic one-to-many trace derivation may reuse existing completed
+owner/revision, private attachment and terminal lineage/range machinery. Recompute
+all output rows under frozen policy; derived rows are not fabricated saved ordinary
+revisions. Preserve count/span/source/actor/turn/CAS and final shadow gates. No
+arbitrary tool span acceptance, active-custody resurrection, growing per-call
+history arrays, codec/GC change, registry or new schema. Any needed durable shape
+requires concrete assessment before adding it. Existing provider/checkpointV3 and
+legacy readers remain. Actual handler-backed [2,1] plus CaptureOff/On, replay/live
+coexistence, counting/eviction and strict negatives are required before closure.
+
+
+Completed replay compound-transition clarification (Ruling67): the actual later
+MANUAL CaptureOn request changes both the old native tool span and its same-owner
+active checkpoint attachment. Permit only this exact compound replacement under
+the existing saved-response/terminal witness, canonical replay derivation and
+frozen-policy recorded-round/target proof. Preserve the whole unchanged prefix,
+other attachments, source/run/turn/policy lineage,256 span/count and CAS/final
+shadow checks. Changed/foreign checkpoints, altered recorded rounds and pending/
+executing ownership cannot pass. Use the existing graph transaction and retention;
+no generic mixed span, codec/GC/schema or active custody extension. The required
+negative controls and independent review must establish this boundary.
+
+
+Completed-history plus live-group append clarification (Ruling68): when old message
+and continuation domains each remain exact prefixes, append only the new native
+message rows/current checkpoint through existing surface_append and domain
+ordinals. The flat request concatenation may otherwise misclassify the unchanged
+historical checkpoint as a mixed replacement. Retain every historical node,
+exact descriptor/value/policy and the separate current host live-custody proof.
+Preserve final reconstruction/count/CAS, quotas/atomic rollback and all target/
+permission gates; reject changed history, insertion/reordering or foreign/changed
+attachments. No new durable shape, generic replacement, codec/GC/schema change or
+historical-to-live authority transfer.
+
+
+Recorded-value/privacy clarification (Ruling69): exact replay follows the admitted
+persisted checkpoint after existing tool-record projection. In particular the
+unchanged CodeReviewToolProvider intentionally persists schema_version/tool_name
+and body-free results rather than original ephemeral review args/source/report
+bodies. Do not restore those raw values or equate saved replay to old volatile
+wire bytes. Compare exact canonical saved strings/IDs/results; apply existing
+frozen credential/PII projection only when comparing disclosure trace artifacts.
+Raw provider/recompute/live-custody checks remain separate and strict. Masked
+byte equality cannot create custody; no ignored fields, disclosure or policy
+change. The final oracle and focused mask regression must state this distinction.
+
+
+Implementation evidence through c3f99ec: the corrected accepted-wake/completed
+replay contract passes scoped independent review after transient-credential and
+incoming-owner fixes. Canonical persisted replay, eligible MANUAL Safe/Full,
+strict negatives and final binding are covered in
+Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/review-wake-repair-fix/.
+One nonblocking precedence-fixture coverage gap and retained pending-refusal
+shutdown limitation remain explicit. No automatic capture-policy, durable format,
+codec/GC, execution authority or recovery expansion follows. Live qualification
+remains incomplete.
+### Clarification recorded 2026-10-18: thinking-serialized tool-call surface identity
+
+[TASK-33164](../tasks/task-33164%20-%20Preserve-captured-archive-recovery-follow-up-ownership.md) reproduced a completed native tool run whose compatible thinking serialization correctly produced MESSAGE_REWRITE provenance, with a THINKING artifact over its original TOOL_CALL artifact and matching THINKING_ATTACHMENT. Surface storage classified the whole rewritten tool-call row as thinking, so the existing completed-tool range validator refused the next captured user turn. The typed rewrite and the strict validator are both required; the surface classification must retain the causal tool-call identity.
+
+For new surface references, only an exact DerivedTraceProvenance MESSAGE_REWRITE with an outer THINKING artifact and direct ProviderArtifactTraceProvenance TOOL_CALL first input retains the tool_call component kind. Existing typed attachment validation remains mandatory. The complete serialized artifact bytes, causal inputs, capture policy, credential/PII projection and thinking/privacy semantics do not change. Ordinary assistant-thinking rewrites, standalone thinking artifacts, unknown transforms and other inputs retain their existing classification. Reference creation, lookup, durable comparison and node matching use the same classification.
+
+Completed-tool source, response-link, exact-value, bounded-range, run/owner/turn, route and policy checks remain unchanged. This does not add thinking to the generic permitted replacement kinds. Existing stored thinking nodes lack per-node causal descriptor proof; their bytes or labels alone cannot authorize retrospective promotion. They remain immutable and subject to the existing refusals. No schema migration or historical trace rewrite is introduced.
+
+This corrects the existing provenance handoff under [ADR090](090-console-thinking-block-ownership-and-replay.md), rather than creating a new authority or provider contract. [Implementation plan](../../Docs/superpowers/plans/2026-09-27-agent-archive-recovery-capture-on.md) records the bounded correction and qualification limits.
+
+### Amendment recorded 2026-10-18: version2 local-thinking response formats
+
+The owner approved a prospective versioned response-profile repair after native Qwen reasoning_content responses failed exact version1 tagged-thinking projection. New displayable local profiles use version2 and source_formats instead of scalar source_format, with the other existing profile fields unchanged. The closed adapter keys are llama_cpp, local_llamacpp, vllm and local_vllm, with a nonblank model. Canonical formats are start_anchored_think followed by reasoning_content, except a model name containing kimi case-insensitively permits only start_anchored_think because the existing structured parser excludes it. Producer and canonical projector share one closed rule; the profile must match its complete ordered result exactly. This declares supported parser formats, not template/native-tool/replay authority.
+
+The exact terminal block retains its concrete source_format and provider/model/protocol/status/text. Version2 validates the exact shape and integer versions, unchanged terminal-round/type/single-block evidence and process-keyed raw equality proof. Credential/PII projection and completed-tool revision/range/lineage/policy checks are unchanged. A scalar version1 profile remains strict; hosted proprietary profiles and legacy visible-only responses retain their meanings. Old headers, links, artifacts, revisions and reconstructions remain immutable; no relinking, migration or retrospective source inference is permitted. Fresh captures establish the new contract.
+
+The contract uses the existing immutable request-header defaults JSON; no schema/storage expansion or new retained raw bodies. Rejected alternatives are widening v1, rewriting old artifact links, relabeling actual parser provenance, weakening equality/completed-tool checks, or disabling capture/thinking. Design: Docs/superpowers/specs/2026-10-18-versioned-thinking-response-profile-design.md; recovery task TASK-33164 and its existing correction plan link this amendment.
+
+### Amendment recorded 2026-10-27: rewritten surface tail after Compact now or Edit & resend
+
+TASK-33621.29 and TASK-33621.7 (Console UX review, 2026-09-29) reproduced two
+ordinary actions that blocked capture for the rest of a chat. Compact now commits a
+conversation memory. The next request drops the compacted turns from
+`messages_payload` and carries the memory as a system message outside the history
+rows. Edit &
+resend dispatches its own call with Capture Off, because it has no turn
+preparation, so the edited sibling branch never reaches the surface. In both cases
+the next captured FRESH or AGENT_FIRST send carried a replacement of the recorded
+surface's tail plus the new turn. The planner admits only an append or a one-item
+replacement, so it refused the send with `count_or_span`, and every later send
+stopped at "Trace capture blocked". Measured live on dev `f9baac8706`: after Compact
+now, prefix 0, 13 recorded entries changed, 3 incoming; after Edit & resend, prefix
+2, 1 recorded entry changed, 3 incoming.
+
+Permit one more typed replacement-plus-append, the rewritten tail, for FRESH and
+AGENT_FIRST sends only, when no completed tool-turn transition applies. That
+transition's applicability requires matching descriptors and the permitted start
+sequence relative to its origin call, not merely an equal descriptor count. A
+selected completed transition still undergoes every durable ownership and range
+check; validation errors are not caught to retry with another proof. The replaced
+range is the recorded surface's whole tail after the matched prefix (no retained
+suffix), messages only, within the 256-node range limit. The limit is measured in
+stored sequences, the way the replacement is persisted and read back: sequences an
+earlier replacement left dead inside the range count, so the planner bounds the
+range's span, not its live row count. Every replacement row
+except the current user must be an exact saved revision; a saved response may carry
+its typed thinking replay. The current user may carry its admitted current-turn
+transform. Each row's live message must be an undeleted message of the attached
+conversation and the direct parent of the next row's message, and the last row must
+be the call's own turn. The oldest row's parent must be one proven anchor:
+
+- the message of the last retained saved row (an edited or switched branch);
+- the boundary of an active conversation memory (compaction). The memory reaches the
+  provider as a system message outside the history rows, so the active memory's
+  boundary is the durable proof of the dropped rows. Retained saved rows may precede
+  the gap, the shape a manual range memory sends; no link from them to the memory's
+  range is proven yet, and the anchor is any active memory of the conversation rather
+  than the one in effect on the branch (tightening both is TASK-37601); or
+- no parent, when no saved row is retained (a branch from the conversation root).
+
+Recheck the chain, the anchor and the memory's active state in the dispatch-binding
+transaction; any change fails capture closed. Removed rows contribute no disclosure
+policy or structural metadata to the composed request.
+
+This is not a general history-replacement permission. Retained suffixes, tool or
+project artifacts in the replacement, provider continuations, unsaved or foreign
+rows, gaps, deleted rows, inactive memories and unmatched anchors stay refused.
+Historical calls and heads stay immutable. No schema, retention change or durable
+registry is added; the proof is a bounded transient witness, like the completed
+tool-turn witness. Edit & resend and Regenerate themselves remain uncaptured: the
+edited branch enters the trace at the next captured send, not at the edit.
+
+Known limit (review, 2026-10-29). A rewritten tail wider than 256 stored sequences
+stays refused, so Compact now in a chat of more than about 128 recorded exchanges, or
+Edit & resend on an early message of one, still blocks every later captured send.
+Admitting it would reach the over-span fallback, which records an
+`unsupported_replacement_span` omission in place of the first new row and keeps
+every replaced row in the surface, so the trace would stop matching the request.
+Recording a wider replacement changes the durable format (`SurfaceReplacement`
+rejects a wider span when it is read back), so it needs its own owner decision
+(TASK-38298).
+
+The owner ruled on 2026-10-27 that TASK-33621.7 fixes the edited-branch trace
+defect only, with no remembered per-chat capture bypass. This amendment records
+the mechanism that fix and TASK-33621.29 share. It is recorded with the
+implementing change and is subject to the owner's review of that change.

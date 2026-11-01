@@ -107,7 +107,9 @@ class NotificationsPane(RecomposeCaptureGuard, Vertical):
             table.add_row(
                 Text("Read" if notification.get("is_read") else "Unread", style=style),
                 Text(
-                    strip_control_characters(notification.get("title") or "Notification"),
+                    strip_control_characters(
+                        notification.get("title") or "Notification"
+                    ),
                     style=style,
                 ),
                 Text(str(notification.get("category") or "-"), style=style),

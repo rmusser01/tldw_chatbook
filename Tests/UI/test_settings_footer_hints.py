@@ -23,9 +23,12 @@ These tests pin:
   the ACTIVE category's working shortcuts once that collapse happens.
 """
 
+from types import SimpleNamespace
+
 import pytest
 from textual.widgets import Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -45,6 +48,7 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     GUIDED_SETTINGS_MUTATION_CATEGORIES,
     SettingsScreen,
 )
+from tldw_chatbook.UI.Screens.settings_tools_hub import TOOLS_HUB_MODE_SHORTCUTS
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -64,23 +68,38 @@ _ALL_KNOWN_LABELS = (
 )
 
 
-def _expected_labels(category: SettingsCategoryId) -> tuple[str, ...]:
-    return tuple(
-        label for _key, label in SettingsScreen._category_footer_shortcuts(category)
-    )
+def _expected_labels(
+    screen: SettingsScreen, category: SettingsCategoryId
+) -> tuple[str, ...]:
+    return tuple(label for _key, label in screen._category_footer_shortcuts(category))
 
 
 def test_category_footer_shortcuts_only_advertise_working_keys():
     """Pure mapping check across all 12 sidebar categories (no Pilot needed)."""
     assert len(ALL_CATEGORY_IDS) >= 12
+    # task-35150: the mapping is an instance method now (the TOOLS branch
+    # reads the mounted hub pane), but it is still instance-STATE-only --
+    # an unmounted screen has no pane, so TOOLS resolves to its servers-mode
+    # default set whatever app instance backs the screen. A stub keeps this
+    # check pure instead of dragging in the `_build_test_app()` bootstrap
+    # the rest of this file's mounted tests already own.
+    screen = SettingsScreen(SimpleNamespace(unified_mcp_service=None))
     for category_value in ALL_CATEGORY_IDS:
         category = SettingsCategoryId(category_value)
-        shortcuts = SettingsScreen._category_footer_shortcuts(category)
+        shortcuts = screen._category_footer_shortcuts(category)
+        if category is SettingsCategoryId.TOOLS:
+            # ADR-240 (task-35150): TOOLS & MCP runs the hub's own per-mode
+            # key model (1-4/a/r everywhere, t in Tools mode, space in
+            # Permissions) instead of the s/r/t draft verbs, so the generic
+            # verb assertions below do not apply. Unmounted (no pane), the
+            # mapping pins the servers-mode default set.
+            assert shortcuts == TOOLS_HUB_MODE_SHORTCUTS["servers"]
+            continue
         theme_keys = SettingsScreen.THEME_SHORTCUTS
         if category is SettingsCategoryId.THEME:
             # TASK-33062: the theme list's own bindings, listed after the
             # screen-level keys (and only there).
-            assert shortcuts[-len(theme_keys):] == theme_keys
+            assert shortcuts[-len(theme_keys) :] == theme_keys
             shortcuts = shortcuts[: -len(theme_keys)]
         keys = tuple(key for key, _label in shortcuts)
         # Network owns a self-contained save path without a SettingsDraft;
@@ -119,7 +138,14 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         assert tuple(label for _key, label in shortcuts) == tuple(expected_labels)
 
 
+# task-35597: the app-constructing tests below keep the collection-time
+# bootstrap profile (same ADR-126 admission reason as the censused settings
+# suites): under isolate_test_environment's per-test TLDW_CONFIG_PATH
+# redirect, the guarded config reads on these mount paths fail closed with
+# RecoveryRequired("raw_source_selection_changed") before any assertion
+# runs. The @private_profile_test cases above already isolate per child.
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_profile_footer_explains_escape_hatch_while_editor_owns_keys() -> None:
     app = _build_test_app()
     app._personal_context_service = _ProfileServiceStub(_ready_snapshot())
@@ -127,9 +153,7 @@ async def test_profile_footer_explains_escape_hatch_while_editor_owns_keys() -> 
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _settle_settings(pilot)
-        await _click_settings_category(
-            pilot, SettingsCategoryId.PERSONAL_CONTEXT.value
-        )
+        await _click_settings_category(pilot, SettingsCategoryId.PERSONAL_CONTEXT.value)
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
@@ -146,7 +170,8 @@ async def test_profile_footer_explains_escape_hatch_while_editor_owns_keys() -> 
 
 
 @pytest.mark.asyncio
-async def test_footer_hints_follow_the_active_category():
+@private_profile_test
+async def test_footer_hints_follow_the_active_category(request):
     """The live footer re-registers its hint set on every category switch."""
     app = _build_test_app()
     app._personal_context_service = _ProfileServiceStub(_ready_snapshot())
@@ -161,9 +186,7 @@ async def test_footer_hints_follow_the_active_category():
             await _click_settings_category(pilot, category_value)
             screen = _active_destination_screen(host)
             footer = screen.query_one(AppFooterStatus)
-            expected = {
-                label for _key, label in screen._footer_shortcut_entries()
-            }
+            expected = {label for _key, label in screen._footer_shortcut_entries()}
             if category_value == SettingsCategoryId.PERSONAL_CONTEXT.value:
                 assert expected == _PROFILE_ACTION_LABELS
             for label in expected:
@@ -179,7 +202,8 @@ async def test_footer_hints_follow_the_active_category():
 
 
 @pytest.mark.asyncio
-async def test_printable_shortcut_keys_type_into_focused_text_fields():
+@private_profile_test
+async def test_printable_shortcut_keys_type_into_focused_text_fields(request):
     """Real key behavior (task-1367): Textual Input consumes printable keys,
     so s/r/t with a text field focused legitimately type into the field --
     the field IS the feedback. No action fires, no dialog, no crash."""
@@ -190,7 +214,10 @@ async def test_printable_shortcut_keys_type_into_focused_text_fields():
         await _settle_settings(pilot)
         await _click_settings_category(pilot, "providers-models")
         screen = _active_destination_screen(host)
-        model_input = screen.query_one("#settings-model-value", Input)
+        # TASK-33007.3, rewritten on purpose: the Model field users type in
+        # is the Default model picker's; #settings-model-value is a hidden,
+        # unfocusable adapter.
+        model_input = screen.query_one("#model-search-picker-input", Input)
         model_input.focus()
         await pilot.pause()
         assert screen.app.focused is model_input
@@ -217,7 +244,8 @@ async def test_printable_shortcut_keys_type_into_focused_text_fields():
 
 
 @pytest.mark.asyncio
-async def test_shortcut_keys_fire_actions_outside_text_entry():
+@private_profile_test
+async def test_shortcut_keys_fire_actions_outside_text_entry(request):
     """With focus outside text entry, s/r/t reach the screen bindings:
     s -> save notice, r -> revert confirmation dialog, t -> test stub toast."""
     app = _build_test_app()
@@ -231,6 +259,9 @@ async def test_shortcut_keys_fire_actions_outside_text_entry():
 
         # t on a category without a test action -> honest stub toast.
         await _click_settings_category(pilot, "theme")
+        # ThemeOptionList owns `t` for Try; exercise the SCREEN binding.
+        _active_destination_screen(host).set_focus(None)
+        await pilot.pause()
         await pilot.press("t")
         await pilot.pause()
         assert any("No test action is available" in toast for toast in toasts), (
@@ -267,7 +298,8 @@ async def test_shortcut_keys_fire_actions_outside_text_entry():
 
 
 @pytest.mark.asyncio
-async def test_revert_with_unsaved_changes_requires_confirmation():
+@private_profile_test
+async def test_revert_with_unsaved_changes_requires_confirmation(request):
     """Dirty-category revert asks first; confirm discards, cancel keeps."""
     app = _build_test_app()
     app.app_config["web_server"] = {"font_size": 12}
@@ -312,7 +344,8 @@ async def test_revert_with_unsaved_changes_requires_confirmation():
 
 
 @pytest.mark.asyncio
-async def test_revert_without_changes_keeps_the_nothing_to_revert_path():
+@private_profile_test
+async def test_revert_without_changes_keeps_the_nothing_to_revert_path(request):
     """A clean category never sees the confirmation dialog."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -335,7 +368,8 @@ async def test_revert_without_changes_keeps_the_nothing_to_revert_path():
 
 
 @pytest.mark.asyncio
-async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
+@private_profile_test
+async def test_narrow_footer_collapses_but_f1_help_stays_truthful(request):
     """The screen's own hints outrank the global cluster (task-2860/LIB-18).
 
     The ladder compacts the globals first, then retains the highest-priority
@@ -364,7 +398,7 @@ async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
         panel = host.screen
         assert isinstance(panel, WorkbenchHelpPanel)
         help_text = panel.state.render_text()
-        for label in _expected_labels(SettingsCategoryId.STORAGE):
+        for label in _expected_labels(screen, SettingsCategoryId.STORAGE):
             assert label in help_text, (
                 f"F1 help must keep {label!r} discoverable, got {help_text!r}"
             )
@@ -385,6 +419,7 @@ async def test_narrow_footer_collapses_but_f1_help_stays_truthful():
             assert label not in help_text
 
 
+@pytest.mark.bootstrap_profile
 def test_f1_help_has_contract_content_for_every_category():
     """TASK-23110: every category's F1 help body carries the save contract,
     ownership, and verbs -- no category may open an empty (title-only)
@@ -392,22 +427,21 @@ def test_f1_help_has_contract_content_for_every_category():
     app = _build_test_app()
     screen = SettingsScreen(app)
     members = tuple(SettingsCategoryId)
-    assert len(members) == 30
+    # task-35597: re-pinned 30 -> 33 (three categories landed since the pin;
+    # the loop below covers each new member, only the count had gone stale).
+    assert len(members) == 33
     for category in members:
         state = screen._workbench_help_state(category)
         body = state.render_text()
         assert body.strip() != state.title.strip(), category
         assert state.notes, category
         assert all(note.strip() for note in state.notes), category
-        assert any(
-            note.startswith("Save contract: ") for note in state.notes
-        ), category
+        assert any(note.startswith("Save contract: ") for note in state.notes), category
         # Ownership: either the matrix's runtime-owner line, or the
         # read-only domain pages' single "Owned by X" sentence
         # (review finding 11 de-duplicated their four echoes).
         assert any(
-            note.startswith(("Runtime owner: ", "Owned by "))
-            for note in state.notes
+            note.startswith(("Runtime owner: ", "Owned by ")) for note in state.notes
         ), category
         # Verbs: either real category shortcuts, or an explicit statement
         # that none exist here.
@@ -441,6 +475,7 @@ def test_f1_help_has_contract_content_for_every_category():
                 assert len(carriers) == 1, (category, value)
 
 
+@pytest.mark.bootstrap_profile
 def test_f1_help_video_gen_states_a_coherent_write_contract():
     """Review finding 6 (TASK-23110): Video Gen mutates like Image Gen --
     its help must not pair a draft badge with read-only-ownership copy."""
@@ -457,6 +492,7 @@ def test_f1_help_video_gen_states_a_coherent_write_contract():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_f1_help_renders_literal_brackets_in_notes():
     """Review finding 7 (TASK-23110): the help body must not eat literal
     bracket text as Textual markup -- Agents' boundary copy contains
@@ -479,6 +515,7 @@ async def test_f1_help_renders_literal_brackets_in_notes():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_f1_help_panel_body_carries_category_contract_when_mounted():
     """TASK-23110 (review round): the contract notes must survive the REAL
     F1 flow, not just the builder.
@@ -524,10 +561,8 @@ async def test_f1_help_panel_body_carries_category_contract_when_mounted():
             "active handles." in body
         ), body
         assert "Writes here: yes." in body, body
-        for label in _expected_labels(SettingsCategoryId.STORAGE):
-            assert label in body, (
-                f"rendered F1 body must teach {label!r}, got {body!r}"
-            )
+        for label in _expected_labels(screen, SettingsCategoryId.STORAGE):
+            assert label in body, f"rendered F1 body must teach {label!r}, got {body!r}"
 
         await pilot.press("escape")
         await pilot.pause()
@@ -547,8 +582,7 @@ async def test_f1_help_panel_body_carries_category_contract_when_mounted():
         assert "Save contract: Applies immediately." in body, body
         assert (
             "Runtime owner: Settings global gate; Schedules runtime actions; "
-            "Artifacts collection cadence."
-            in body
+            "Artifacts collection cadence." in body
         ), body
         assert "Writes here: yes." in body, body
         assert "No shortcut keys are specific to this category." in body, body
@@ -564,6 +598,7 @@ _SAVE_STUB_TOAST = "has no save action yet"
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_advertised_capabilities_match_real_action_branches():
     """Drift guard (task-1340 review): advertised keys must track REAL code.
 
@@ -573,6 +608,9 @@ async def test_advertised_capabilities_match_real_action_branches():
     * ``t``: the "No test action is available" stub toast must fire IFF the
       category is NOT in TESTABLE_SETTINGS_CATEGORIES. Adding a test
       branch (or deleting one) without updating the frozenset goes red.
+      TOOLS & MCP (ADR-240, task-35150) is the one carve-out: its ``t``
+      drives the hub pane's Test Tool flow instead of the stub, pinned in
+      test_settings_tools_hub.py.
     * ``s``: probed in CLEAN state only, so nothing is ever written -- every
       guided save branch early-returns "No Settings changes to save." when
       the category has no staged edits. The "has no save action yet"
@@ -604,11 +642,22 @@ async def test_advertised_capabilities_match_real_action_branches():
             await pilot.pause()
             test_stubbed = any(_TEST_STUB_TOAST in toast for toast in toasts)
             testable = category in SettingsScreen.TESTABLE_SETTINGS_CATEGORIES
-            assert test_stubbed == (not testable), (
-                f"{category_value}: test stub fired={test_stubbed} but category "
-                f"membership in TESTABLE_SETTINGS_CATEGORIES={testable} -- "
-                "update the frozenset or the action branches (toasts: {toasts})"
-            )
+            if category is SettingsCategoryId.TOOLS:
+                # ADR-240 (task-35150): TOOLS `t` dispatches to the hub
+                # pane's Test Tool flow (pinned in
+                # test_settings_tools_hub.py) instead of the stub toast,
+                # so the frozenset contract does not model this category.
+                assert not test_stubbed, (
+                    f"{category_value}: TOOLS `t` must reach the hub pane, "
+                    f"not the stub toast (toasts: {toasts})"
+                )
+            else:
+                assert test_stubbed == (not testable), (
+                    f"{category_value}: test stub fired={test_stubbed} but "
+                    f"category membership in TESTABLE_SETTINGS_CATEGORIES="
+                    f"{testable} -- update the frozenset or the action "
+                    f"branches (toasts: {toasts})"
+                )
 
             toasts.clear()
             screen.action_settings_save_category()
@@ -635,6 +684,7 @@ async def test_advertised_capabilities_match_real_action_branches():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_stacked_revert_dialogs_revert_only_once():
     """Two queued confirms must not double the revert (double toast)."""
     app = _build_test_app()

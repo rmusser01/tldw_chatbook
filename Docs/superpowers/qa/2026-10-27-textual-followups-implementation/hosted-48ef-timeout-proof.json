@@ -1,0 +1,275 @@
+{
+  "head": "48ef9bf97dea9d2b01d7f0e6d116d83db42bf779",
+  "snapshot_time": "2026-10-28T18:16:01.307009+00:00",
+  "runs": [
+    {
+      "id": 40738371347,
+      "name": "TASK-32011 one-off Linux storage evidence",
+      "status": "completed",
+      "conclusion": "skipped",
+      "jobs": {
+        "skipped": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40738371027,
+      "name": "TASK-19637 pinned workspace platform evidence",
+      "status": "completed",
+      "conclusion": "skipped",
+      "jobs": {
+        "skipped": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40738371172,
+      "name": "Perf Guard",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": {
+        "success": 1
+      },
+      "failures": []
+    },
+    {
+      "id": 40738371017,
+      "name": "Derived Artifacts",
+      "status": "in_progress",
+      "conclusion": null,
+      "jobs": {
+        "success": 20,
+        "cancelled": 3,
+        "in_progress": 1
+      },
+      "failures": []
+    }
+  ],
+  "jobs": [
+    {
+      "id": 122992968063,
+      "name": "UI latency guardrails",
+      "run": 40738371172,
+      "conclusion": "success",
+      "seconds": 404.0,
+      "log_sha256": "c9b811880cce5071111d1f57e88d51b0a67b040d8743c3c1d967c5e8d4c20b14"
+    },
+    {
+      "id": 122992967686,
+      "name": "PR Fast Lane (admission-sensitive)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 1654.0,
+      "log_sha256": "2bffcf5e02fd6e1b39212cf2961e8008cc3c53caf53b2e996fe57f99587ed381"
+    },
+    {
+      "id": 122992967998,
+      "name": "Console P0 regression gate",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 733.0,
+      "log_sha256": "dfe2da97babc362f7112d3e13d03a978c0a9a65711791d1c134f642a2ffb9d29"
+    },
+    {
+      "id": 122992968070,
+      "name": "Dreams tracking tests",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 483.0,
+      "log_sha256": "d69c71fe47cd842d1b0a188ddcf2e0f1c61c8fdeeeaba3432cee17f96faa81a5"
+    },
+    {
+      "id": 122992968116,
+      "name": "UI Fast Lane (6)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 1074.0,
+      "log_sha256": "21396ed60274b901abd3ed1a0aa7133a213f82d38c2c3fe793f487e48c266882"
+    },
+    {
+      "id": 122992968177,
+      "name": "PR Fast Lane",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 1675.0,
+      "log_sha256": "964b73b999cb4acb373e734fcff5f3d1caf3c1738d19fe156ac85c8859f270ae"
+    },
+    {
+      "id": 122992968325,
+      "name": "Dreams and Guardian boundary contracts",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 404.0,
+      "log_sha256": "8c2d4dad619e9f6cb6e1951e4a2a7285dad54b6bb07dc453aebda9d7c1b1aa98"
+    },
+    {
+      "id": 122992968338,
+      "name": "UI Fast Lane (8)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 1102.0,
+      "log_sha256": "c3466f9ee5e2ac76e85d002292bade0624d0f57d979e4dc2e279d067f51fd4fb"
+    },
+    {
+      "id": 122992968518,
+      "name": "UI Fast Lane (12)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 1132.0,
+      "log_sha256": "e5d3c82b5f777adc27a7667637c90e429a61a29a1e5cd0e1b4f39ab0586ab9bc"
+    },
+    {
+      "id": 122992968609,
+      "name": "UI Fast Lane (1)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 978.0,
+      "log_sha256": "7c67f2fc8624391d40b820d2432158616a7a6d1355a2e0aaf4303a40e698d40c"
+    },
+    {
+      "id": 122992968642,
+      "name": "UI Fast Lane (13)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 1024.0,
+      "log_sha256": "cff901df8672d4fa37fcacdc34e226691d74d5483eab38c2cefec5c15f01ae20"
+    },
+    {
+      "id": 122992968646,
+      "name": "UI Fast Lane (10)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 1097.0,
+      "log_sha256": "fa365a66ffa314bb2877a1afd6a4fccc51e759178c697af00d71282566d6c277"
+    },
+    {
+      "id": 122992968651,
+      "name": "UI Fast Lane (14)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 958.0,
+      "log_sha256": "7f7e2b2c953850efc43c603e841a659967eabd072aaeb693f4f5fda7ff93dcd2"
+    },
+    {
+      "id": 122992968653,
+      "name": "UI Fast Lane (3)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 986.0,
+      "log_sha256": "d96b6f1adf019a0ef8e26f427a21fd77cd054494122620b72710cc9513c1a55d"
+    },
+    {
+      "id": 122992968669,
+      "name": "UI Fast Lane (4)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 845.0,
+      "log_sha256": "0443c68688aa302256037ca635ff3e47a1e4516f299920698fb2baeb16b7bd45"
+    },
+    {
+      "id": 122992968737,
+      "name": "UI Fast Lane (16)",
+      "run": 40738371017,
+      "conclusion": "cancelled",
+      "seconds": 1211.0,
+      "log_sha256": "6681d5a4e60992d7d65c31de81e955efd46dee287b0d39473596dd77fcdfe4ac"
+    },
+    {
+      "id": 122992968772,
+      "name": "UI Fast Lane (5)",
+      "run": 40738371017,
+      "conclusion": "cancelled",
+      "seconds": 1217.0,
+      "log_sha256": "2989cca80617576babf6faac0660ded3f654594866704e2e688dfd1fd6f8e88c"
+    },
+    {
+      "id": 122992968797,
+      "name": "UI Fast Lane (9)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 1066.0,
+      "log_sha256": "8b9204bfb29f2654ab4d6d64ce66c53c6c3d4c50739d6a9580de4b9f1a4c2d08"
+    },
+    {
+      "id": 122992968806,
+      "name": "UI Fast Lane (17)",
+      "run": 40738371017,
+      "conclusion": "cancelled",
+      "seconds": 1218.0,
+      "log_sha256": "de2369ba26340ce2f567f81631969ac45023b07ca5822abbd6f608d74cb125d7"
+    },
+    {
+      "id": 122992968895,
+      "name": "PR Fast Lane (admission-sensitive 2)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 786.0,
+      "log_sha256": "06d3eaa60f2b5a7a48af987a9888594d1ae2c976a14cb688c2d8c297005b9109"
+    },
+    {
+      "id": 122992968925,
+      "name": "UI Fast Lane (2)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 903.0,
+      "log_sha256": "00eb0701923397bc59587ce75aea0c4e82ddae35cb14e629fb21f395540c9449"
+    },
+    {
+      "id": 122992968988,
+      "name": "UI Fast Lane (11)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 950.0,
+      "log_sha256": "f34b83dd815369dc0d63076f036117ee6ccb0d506274c239d428714ec88b403b"
+    },
+    {
+      "id": 122992969011,
+      "name": "UI Fast Lane (15)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 1003.0,
+      "log_sha256": "a56ba151271a4be5ca060a8db88004d6f953dc88b2d7326a63db0e7675cc8f59"
+    },
+    {
+      "id": 122992969012,
+      "name": "UI Fast Lane (7)",
+      "run": 40738371017,
+      "conclusion": "success",
+      "seconds": 891.0,
+      "log_sha256": "c01b9b1a9a03cad7c6b9c0c3b8c4ae508686b3bfc6782f3a5e670b4b5fe487f7"
+    }
+  ],
+  "timeout_annotations": [
+    {
+      "job": 122992968737,
+      "name": "UI Fast Lane (16)",
+      "messages": [
+        "The job has exceeded the maximum execution time of 20m0s"
+      ]
+    },
+    {
+      "job": 122992968772,
+      "name": "UI Fast Lane (5)",
+      "messages": [
+        "The job has exceeded the maximum execution time of 20m0s"
+      ]
+    },
+    {
+      "job": 122992968806,
+      "name": "UI Fast Lane (17)",
+      "messages": [
+        "The job has exceeded the maximum execution time of 20m0s"
+      ]
+    }
+  ],
+  "ui_shards_passed": 14,
+  "max_successful_ui_seconds": 1132,
+  "partial_executed_audit_selectors": 74,
+  "partial_audit_cases": 76,
+  "partial_settings_cases": 17,
+  "partial_new_scenarios": 19,
+  "repaint_cases": 2,
+  "original_ack_gate_passed": true,
+  "qualification": "Failed timeout run, never reported green. Three cancelled UI jobs are not execution proof. Other passing job results are qualified only as shown. Perf passed. Final successor-head CI required. Full raw logs remain private; only digests/counts are portable, avoiding synthetic-key-shaped test IDs.",
+  "audit_selectors_expected": 95
+}

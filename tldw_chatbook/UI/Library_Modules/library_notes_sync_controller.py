@@ -25,7 +25,11 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LibraryNotesLastingSyncSnapshot,
     build_reconciliation_review,
     check_failure_line,
+    migration_activation_blocked_line,
+    ROOT_STATUS_LABELS,
+    root_status_label,
     check_failure_row,
+    recovery_finished_line,
     initial_lasting_sync_snapshot,
     set_setup_value,
     validate_lasting_sync_history_page,
@@ -158,10 +162,29 @@ class _ImportOncePort(Protocol):
 
 
 class InertLastingSyncRuntime:
-    """Honest structural adapter when the app-owned runtime is unavailable."""
+    """Honest structural adapter when the app-owned runtime is unavailable.
+
+    TASK-21249: the default snapshot keeps reporting the cutover-shaped
+    ``("awaiting_cutover", "finish_upgrade")`` pair for harness doubles and
+    pre-cutover builds. When the app's lazy runtime property FAILED to
+    build, construct with ``status="failed", next_action="review_settings"``
+    instead -- a construction failure must be distinguishable from
+    "feature not available yet", both in the UI (the ``failed`` status
+    branch already exists) and in support logs (the wiring mixin logs the
+    build exception at ERROR before handing this adapter over).
+    """
+
+    def __init__(
+        self,
+        *,
+        status: str = "awaiting_cutover",
+        next_action: str = "finish_upgrade",
+    ) -> None:
+        self._status = status
+        self._next_action = next_action
 
     def snapshot(self) -> NotesSyncRuntimeSnapshot:
-        return NotesSyncRuntimeSnapshot("awaiting_cutover", "finish_upgrade")
+        return NotesSyncRuntimeSnapshot(self._status, self._next_action)
 
     async def _blocked(self) -> Never:
         raise RuntimeError("notes_sync_cutover_not_admitted")
@@ -246,22 +269,6 @@ class InertLastingSyncRuntime:
         return ()
 
 
-_STATUS_LABELS = {
-    "up_to_date": "✓ Up to date",
-    "changes_available": "◌ Changes available",
-    "paused": "Ⅱ Paused",
-    "offline": "⚠ Offline",
-    "passive": "Ⅱ Open in another process",
-    "needs_attention": "⚠ Needs attention",
-    #: task-32604 fix round 2: not a runtime status -- the label a root wears
-    #: when the runtime stopped watching. "✓ Up to date" is the last thing
-    #: PUBLISHED, not the truth, once nothing is carrying changes either way.
-    "not_watching": "⚠ Sync stopped",
-    "partial": "⚠ Partial",
-    "failed": "✕ Failed",
-    "unsupported": "✕ Blocked",
-    "starting": "◌ Starting",
-}
 _ACTION_LABELS = {
     "sync_now": "Check changes",
     "review_changes": "Review changes",
@@ -415,6 +422,7 @@ class LibraryNotesSyncController:
                 if binding_labels is None
                 else binding_labels
             ),
+            source=source,
         )
         return replace(
             review,
@@ -723,6 +731,8 @@ class LibraryNotesSyncController:
 
     def _unavailable_copy(self) -> str:
         runtime = self._runtime.snapshot()
+        if runtime.status == "starting":
+            return "Preparing folder sync…"
         if runtime.next_action == "close_other_process_and_restart":
             return (
                 "Close the other Chatbook process and restart before activating "
@@ -735,6 +745,11 @@ class LibraryNotesSyncController:
     @property
     def snapshot(self) -> LibraryNotesLastingSyncSnapshot:
         return self._state
+
+    def attach_prepared_runtime(self, runtime: LastingSyncRuntimePort) -> None:
+        """Bind the app-owned runtime after initial preparation on a worker."""
+        self._runtime = runtime
+        self.refresh_roots()
 
     def _publish(self) -> None:
         if callable(self._publish_snapshot):
@@ -798,25 +813,37 @@ class LibraryNotesSyncController:
         """
 
         failure, failed_action = self._root_failures.get(root.root_id, ("", ""))
+        status, next_action = root.status, root.next_action
+        action_label = failed_action or next_action
         # Fix round 1: the overlay owns the LABELS only. Rewriting ``status``
         # made an offline root's row render an enabled Check and a Pause,
         # because the canvas suppresses both by reading ``status`` -- the same
         # defect this overlay fixes for Resume, on a sibling status.
-        status, next_action = root.status, root.next_action
-        action_label = failed_action or next_action
         if failure:
-            status_label = _STATUS_LABELS["needs_attention"]
+            status_label = ROOT_STATUS_LABELS["needs_attention"]
         elif runtime_status != "active" and status == "up_to_date":
-            status_label = _STATUS_LABELS[
+            status_label = ROOT_STATUS_LABELS[
                 "starting" if runtime_status == "starting" else "not_watching"
             ]
+        elif status == "up_to_date" and not root.watching:
+            # TASK-34000.50: the same lie one level down -- the runtime is
+            # active, but THIS root's lease has no watcher (a folder held at
+            # startup and healed through Review or Recovery used to land
+            # here). ``watching`` is read live by the runtime's snapshot, so
+            # the label follows the fact, not the last publication; Check
+            # changes (``sync_now``, this status's own next action) starts
+            # the watcher.
+            status_label = ROOT_STATUS_LABELS["not_watching"]
         else:
-            status_label = _STATUS_LABELS.get(
-                status, status.replace("_", " ").title()
-            )
+            # TASK-32633 slice (N-03): the healthy label is dated from the
+            # publication, so "Up to date" never reads as a standing promise.
+            status_label = root_status_label(status, root.published_at)
+        # TASK-32451: the runtime stamps the root's folder name (or its
+        # honest fallback) on every publication; the bare fallback here is
+        # reachable only from a hand-built snapshot.
         return LastingSyncRootRow(
             root.root_id,
-            "Sync folder (name unavailable before cutover)",
+            root.display_name or "Sync folder",
             status,
             next_action,
             status_label,
@@ -939,6 +966,52 @@ class LibraryNotesSyncController:
         )
         self._publish()
 
+    def begin_add_from_files(self) -> bool:
+        """Start Add from files on the chooser; keep a step that is still running.
+
+        TASK-34000.17 (review finding N-17): the phase was ``choose`` exactly
+        once, at construction. Nothing returned to it -- ``abandon_setup``
+        releases the provisional root and ``return_to_roots`` lands on the
+        root list -- so after an activation, a check that found nothing, a
+        failed Recovery or a configure form left with ‹ Notes, the next Add
+        from files reopened on that leftover page for the rest of the session.
+        This is the one entry that means "start Add from files".
+
+        Returns:
+            True when the chooser was installed and published. False while a
+            check or activation is running (AC#2): that step is kept and its
+            own progress is what the canvas paints; nothing is published.
+        """
+
+        if self._state.phase in {"checking", "activating"}:
+            return False
+        # The same epoch advance ``abandon_setup`` and ``return_to_roots``
+        # make, so a late result from the abandoned walk cannot land on the
+        # fresh chooser. It also drops the Receipts rows and the Resolution
+        # history page (``_invalidate_receipt_history``), as every other exit
+        # does -- both are re-read when Manage sync folders opens.
+        self._begin_unbound_lifecycle()
+        self._review_plan = None
+        # The chooser snapshot, keeping the durable things Manage sync folders
+        # shows: the root rows, their paging and the write receipts. The
+        # snapshot's own validation rules out a typo'd phase. Availability is
+        # re-read from the runtime, as ``choose_relationship`` and
+        # ``refresh_roots`` read it, so a runtime that became ready since the
+        # last chooser is offered rather than remembered as inert.
+        self._state = replace(
+            initial_lasting_sync_snapshot(
+                lasting_available=(
+                    self._runtime.snapshot().status in _SETUP_READY_STATUSES
+                )
+            ),
+            roots=self._state.roots,
+            root_page=self._state.root_page,
+            root_page_count=self._state.root_page_count,
+            write_receipts=self._state.write_receipts,
+        )
+        self._publish()
+        return True
+
     def choose_relationship(self, relationship: str) -> str:
         """Choose one-time import or the gated lasting setup before any picker."""
 
@@ -1057,12 +1130,17 @@ class LibraryNotesSyncController:
         )
         if installed is None:
             return
+        blockers = self._state.review.activation_blockers
         self._state = replace(
             self._state,
             phase="review",
             status_line=(
                 (
-                    "Review migration before activating this folder."
+                    # TASK-34000.16 fix round 1 (I-2): a migrated candidate the
+                    # walk could not read holds Activate; say which and why.
+                    migration_activation_blocked_line(blockers)
+                    if source == "migration" and blockers
+                    else "Review migration before activating this folder."
                     if source == "migration"
                     else "Review the mutation-free check before applying changes."
                 )
@@ -1531,15 +1609,14 @@ class LibraryNotesSyncController:
             return
         if not self._lifecycle_is_current(root_id, epoch):
             return
-        # Fix round 1: `_CHECK_FAILURE_ROW` sends a recovery refusal here, so
-        # this is exactly the route whose success has to drop the overlay --
-        # otherwise the row keeps saying "Next: Resolve recovery" beside a
-        # status line reporting the recovery was reviewed.
+        # Fix round 1: this route's success drops the refusal overlay. TASK-34000.2:
+        # Recovery settles the entry and re-checks the folder; the line reads the
+        # status that check published, never a healthy outcome it cannot vouch for.
         self._clear_root_failure(root_id)
         self._state = replace(
             self._state,
             phase="roots",
-            status_line="Recovery reviewed. Check changes before the next mutation.",
+            status_line=recovery_finished_line(self._runtime, root_id),
         )
         self.refresh_roots()
 
@@ -2191,6 +2268,17 @@ class LibraryNotesSyncController:
             self._state = replace(
                 self._state,
                 status_line="Activation unavailable. Check the current migration review again.",
+            )
+            self._publish()
+            return False
+        if review.activation_blockers:
+            # TASK-34000.16 fix round 1 (I-2): the runtime refuses this too,
+            # before any mutation; the controller never even asks.
+            self._state = replace(
+                self._state,
+                status_line=migration_activation_blocked_line(
+                    review.activation_blockers
+                ),
             )
             self._publish()
             return False

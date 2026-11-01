@@ -1,0 +1,67 @@
+{
+  "base": "0e844e6e3a7c6d3314a3f424f66ceea0c802bcc0",
+  "changed_functions": [
+    "SchedulesWorkbench._on_reminder_form_result",
+    "SchedulesWorkbench._on_reminder_form_result._save_and_refresh"
+  ],
+  "imports_identical": true,
+  "worker_findings_equal": true,
+  "worker_findings": {
+    "ungrouped": [],
+    "refresh": {
+      "SchedulesWorkbench._request_tasks_refresh._load": "await self.load_tasks(...) is forbidden; dispatch through the loader-group refresh helper"
+    }
+  },
+  "files": [
+    {
+      "path": "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py",
+      "lines": 5530,
+      "sha256": "3fde4e3c8b6e6c3ecf04604f039ee41e60955d1cee691cab736aa54c10877caa"
+    },
+    {
+      "path": "Tests/UI/test_schedules_reminder_form_saves.py",
+      "lines": 428,
+      "sha256": "560d995176516eda4230e461fb9db7f7aaa0538494015f9a9ba4058037b61425"
+    },
+    {
+      "path": "Tests/Architecture/test_module_size_ratchet.py",
+      "lines": 647,
+      "sha256": "364c3cb3ad4db8e8da0bdd1a0e81ccbb07e60dc820611d07430c3c3c7ce8dfe6"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/evals_screen.py",
+      "lines": 4211,
+      "sha256": "71f910ebe96bbbeec8baa0b8ab57661afdde0400188d7f424b05083d168f4cb0"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/scheduling/forms/reminder_form.py",
+      "lines": 860,
+      "sha256": "ffca1af4a79f7077677bcde4d63f60e30c4c12b069e38b29053b865fd90f8c37"
+    },
+    {
+      "path": "tldw_chatbook/Scheduling/services/scheduling_service.py",
+      "lines": 3164,
+      "sha256": "390214ee673d2087f48c5194d697cfcdcc3f68eb6ce3e79ad6bafdd096235ee3"
+    },
+    {
+      "path": "tldw_chatbook/Scheduling/db/scheduled_tasks_db.py",
+      "lines": 3844,
+      "sha256": "f2c3fa6ce547b525e3fcfdfbde4fcbade6d29ed3b7c23388f68221d3fdc2233e"
+    },
+    {
+      "path": "tldw_chatbook/Scheduling/services/sync_engine.py",
+      "lines": 2020,
+      "sha256": "55eafc7a0b094d192045985c8fc0a2d018f0ab6e9abf24196b8fd0ab073b7a30"
+    },
+    {
+      "path": "tldw_chatbook/Scheduling/services/server_client.py",
+      "lines": 812,
+      "sha256": "ffb3792116c02791741b074ae83ddbfd6ffcb37a95b9b2d927bfc08bda0e21ba"
+    },
+    {
+      "path": "tldw_chatbook/Notifications/server_notifications_service.py",
+      "lines": 631,
+      "sha256": "95f2a813aaf4ac386ef6f6c7aa1a0f953da05fc9418f7fa7d15d056645583b6d"
+    }
+  ]
+}

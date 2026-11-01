@@ -400,6 +400,7 @@ class TestCCPPersonaHandler:
         mock_window.notify.assert_called_with(
             "Local chat greetings are not available yet.",
             severity="warning",
+            markup=False,
         )
 
 
@@ -436,3 +437,42 @@ async def test_ccp_character_load_discards_out_of_order_stale_results(mock_windo
     assert displayed == ["char.local.bob"]
     assert handler.current_character_id == "char.local.bob"
     assert handler.current_character_data == {"name": "Bob"}
+
+
+class TestCCPMessageDisplayBatching:
+    """TASK-34394: conversation display mounts all message widgets in one
+    `mount(*widgets)` call instead of one call per widget."""
+
+    def test_display_messages_batches_mount(self, mock_window):
+        manager = CCPMessageManager(mock_window)
+        manager.current_messages = [
+            {"id": "msg-1", "role": "user", "content": "one"},
+            {"id": "msg-2", "role": "assistant", "content": "two"},
+            {"id": "msg-3", "role": "user", "content": "three"},
+        ]
+        # Batching seam under test only: production `clear_messages()` also
+        # empties `current_messages` BEFORE this loop reads it, and
+        # `_create_message_widget` calls `ChatMessageEnhanced(content=...)`
+        # whose signature wants `message=` (both pre-existing bugs in this
+        # legacy path, out of TASK-34394 scope) -- neutralize both so the
+        # mount batching itself is what is asserted.
+        manager.clear_messages = Mock()
+        manager._create_message_widget = Mock(
+            side_effect=lambda msg: Mock(name=f"widget-{msg['id']}")
+        )
+
+        messages_view = Mock()
+        messages_view.children = []
+        mock_window.query_one.return_value = messages_view
+
+        with patch(
+            "tldw_chatbook.UI.CCP_Modules.ccp_message_manager.get_chachanotes_db_lazy",
+            create=True,
+        ):
+            manager._display_messages()
+
+        # Exactly one mount call, carrying every widget.
+        assert messages_view.mount.call_count == 1
+        mounted = messages_view.mount.call_args[0]
+        assert len(mounted) == 3
+        assert len(manager.message_widgets) == 3

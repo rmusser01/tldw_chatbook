@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                            Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Reply with exactly: gemini ok                                                                                                             │
+                       Context ◂  │   Reply with exactly…  ✕    New tab     Temporary                                                                                                        │
+   Terminal                       │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Workspaces                  ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Conversations               ▾    │                                                                                                                                                          │
+       Archive this chat          │                                                                                                                                                          │
+         Archived chats           │                                                                                                                                                          │
+       Search all chats…          │                                                                                                                                                          │
+   Reply with exactly: gemini     │                                                                                                                                                          │
+   ok                             │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                          │
+  ▊  Filter visible   ▎       ╭─ Switch model · now: Google Gemini · gemini-2.5-flash ───────────────────────────────────────────────────────────────────────────────────╮                   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎       │ Find gemini-3.8-flash                                                                                                                    │                   │
+                              │ TYPED MODEL ID · not in any catalog                                                                                                      │                   │
+  Chats                      ▾│ ▶ gemini-3.8-flash             Google Gemini         ~30k  Ready · not tested           typed id · in no catalog                         │                   │
+   Reply with exactly: ge…  💬│ Values for gemini-3.8-flash · Google Gemini                                                                                              │                   │◂ Inspect
+                              │ Temperature 0.6      Console Behavior  Max tokens 8192     provider          Streaming Off   ▼  provider                                 │                   │
+ ─────────────────────────────│  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel                      │                   │
+ Character · No chats        ▸│  Save as model default  saves Temperature, Max tokens, Streaming                                             Applies to: this chat only  │                   │
+ ─────────────────────────────╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                   │
+ Model                       ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Agent                       ▸    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ───────────────────────────────  │   User                                                                                                                                                   │
+ Details                     ▸    │   Reply with exactly: gemini ok                                                                                                                          │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │  ▊ Assistant  Failed                                                                                                                                     │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ▊  Response failed.                                                                                                                                     │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │   System                                                                                                                                                 │
+                                  │   Agent run failed: provider returned HTTP 404 (Provider error from google: provider unavailable. Status: 404.).                                         │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  failed
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Google Gemini     Model: gemini-2.5-flash     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                         Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

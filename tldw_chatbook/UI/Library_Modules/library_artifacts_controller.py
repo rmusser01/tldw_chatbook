@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
-from pathlib import Path
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -30,6 +29,21 @@ if TYPE_CHECKING:
 ARTIFACT_READER_PROFILE = AdaptiveReaderLayoutProfile(list_first_when_empty=True)
 
 
+@dataclass(frozen=True)
+class DemoConsent:
+    """What the Reports empty-state consent block shows (TASK-34000.23).
+
+    `lines` is the shared consequence copy (`daily_report_demo_consequences`)
+    or the no-provider sentence; `existing` selects the reuse wording for the
+    run button; `available` is False when no provider resolves, which
+    disables the run button with `lines[0]` as its reason.
+    """
+
+    lines: tuple[str, ...]
+    existing: bool = False
+    available: bool = True
+
+
 class LibraryArtifactsController:
     """Fence data by profile/scope/selection and presentation by active visit."""
 
@@ -50,9 +64,11 @@ class LibraryArtifactsController:
         self.detail_generation = 0
         self.presentation = 0
         self.disposed = False
+        self._dreams_refresh_pending = False
         self.suspended = False
         self.search_timer = None
         self.reader_open = False
+        self.demo_consent: DemoConsent | None = None
         self._views = {}
         self._restore_target = None
         self._restore_scroll = None
@@ -77,6 +93,96 @@ class LibraryArtifactsController:
             subscriptions_db=getattr(self.app_instance, "subscriptions_db", None),
             chachanotes_db=getattr(self.app_instance, "chachanotes_db", None),
             chatbook_service=getattr(self.app_instance, "local_chatbook_service", None),
+            dreams_db_getter=self._dreams_db,
+        )
+
+    def _dreams_db(self):
+        from ...Dreams.settings import dreams_setting
+
+        if not dreams_setting("enabled"):
+            return None
+        getter = getattr(self.app_instance, "get_dreams_db", None)
+        owner = (
+            getter()
+            if callable(getter)
+            else getattr(self.app_instance, "dreams_db", None)
+        )
+        if owner is None:
+            raise LookupError("Dreams storage is unavailable")
+        return owner
+
+    def _dreams_modal_getter(self, profile, owner):
+        # Modal suspension changes presentation, but never grants a new profile.
+        if self.disposed or self.profile() != profile:
+            return None
+        return owner if self._dreams_db() is owner else None
+
+    def _dreams_changed(self, profile):
+        if not self.disposed and self.profile() == profile and self.active():
+            if self.suspended:
+                self._dreams_refresh_pending = True
+            else:
+                self.request_scope(self.scope)
+
+    async def _open_dreams_goals(self, profile, presentation):
+        from ..Screens.artifacts_dreams_goals_modal import DreamsGoalsModal
+
+        try:
+            owner = await self.screen._run_library_service_call(self._dreams_db)
+        except LookupError:
+            if self.presentable(presentation, profile):
+                self.notify(
+                    "Dreams storage is unavailable. Retry after recovery.", "warning"
+                )
+            return
+        if not self.presentable(presentation, profile):
+            return
+        if owner is None:
+            self.notify("Enable Dreams in F4 Settings to edit goals.")
+            return
+        self.screen.app.push_screen(
+            DreamsGoalsModal(
+                dreams_db_getter=lambda: self._dreams_modal_getter(profile, owner),
+                on_changed=lambda: self._dreams_changed(profile),
+            )
+        )
+
+    def _open_dreams_story(self, detail, profile):
+        from ..Screens.artifacts_dreams_modal import DreamsStoryModal
+
+        owner = getattr(self.app_instance, "dreams_db", None)
+        if owner is None:
+            return
+
+        def current_app_value(name):
+            return (
+                getattr(self.app_instance, name, None)
+                if self._dreams_modal_getter(profile, owner)
+                else None
+            )
+
+        def capture():
+            ensure = current_app_value("ensure_collections_capture_services")
+            return (
+                ensure()
+                if callable(ensure)
+                else current_app_value("collections_capture_scope_service")
+            )
+
+        def scheduling():
+            return getattr(current_app_value("scheduling_service"), "db", None)
+
+        self.screen.app.push_screen(
+            DreamsStoryModal(
+                dict(detail.dream_story),
+                dreams_db_getter=lambda: self._dreams_modal_getter(profile, owner),
+                capture_backend_getter=capture,
+                subs_service_getter=lambda: current_app_value(
+                    "local_watchlists_service"
+                ),
+                scheduling_db_getter=scheduling,
+                on_changed=lambda: self._dreams_changed(profile),
+            )
         )
 
     def active(self) -> bool:
@@ -117,6 +223,7 @@ class LibraryArtifactsController:
         self.loading = self.detail_loading = False
         self.error = self.detail_error = ""
         self.reader_open = False
+        self.demo_consent = None
         self._restore_target = saved[1] if saved else None
         self._restore_scroll = saved[2:] if saved else None
 
@@ -175,6 +282,36 @@ class LibraryArtifactsController:
     def sync(self) -> None:
         if self.shell is not None and self.shell.is_mounted and self.active():
             self.shell.sync()
+
+    @property
+    def empty_actions_visible(self) -> bool:
+        """Whether the Reports empty-state actions (Watchlists, "Set up a
+        daily brief…") are offered (TASK-34000.23).
+
+        True for an unfiltered, loaded Reports page with no rows, and --
+        review 1 #2 (mirrors `ArtifactsScreen._latest_report_failed`) -- for
+        one whose newest row is a `failed` first run: that run leaves a row,
+        so the page is no longer empty, yet the failure toast says "run the
+        demo again" and no other surface offers it. Newest-first at the top
+        of the default page means `items[0]` IS the newest run.
+
+        One predicate for both panes (final review 2026-10-20, F4): the items
+        pane shows the actions on it and the work pane hides its own standing
+        "Watchlists" button while they are visible, so the empty state never
+        paints that control twice.
+        """
+        page = self.page
+        if self.loading or self.error or not page:
+            return False
+        if self.scope.view != "reports" or self.scope.query or self.scope.kept_only:
+            return False
+        if not page.items:
+            return True
+        return bool(
+            page.start == 0
+            and self.scope.sort == "newest"
+            and page.items[0].status == "failed"
+        )
 
     def resize(self, *, priority=None, manual_reopen=None) -> None:
         shell = self.shell
@@ -510,6 +647,9 @@ class LibraryArtifactsController:
             self._views.clear()
             self.request_scope(self.scope)
         elif self.active():
+            if self._dreams_refresh_pending:
+                self._dreams_refresh_pending = False
+                self.request_scope(self.scope)
             # Restart a query stopped while leaving; settled reads remain valid.
             if self.shell and self.shell.is_mounted:
                 query = self.shell.query_one("#library-artifacts-search", Input).value
@@ -522,6 +662,7 @@ class LibraryArtifactsController:
         if self.scope.view in self._views:
             self._restore_scroll = self._views[self.scope.view][2:]
         self.presentation += 1
+        self.demo_consent = None  # The pair is re-resolved on the next press.
         self.stop_timer()
 
     def dispose(self) -> None:
@@ -557,32 +698,41 @@ class LibraryArtifactsController:
         elif name in {"preview", "details"}:
             self.mode = name
             self.sync()
+        elif name == "dreams-goals" and self.active():
+            self.screen.run_worker(
+                self._open_dreams_goals(self.profile(), self.presentation),
+                group="library-dreams-goals",
+                exclusive=True,
+            )
         elif name == "manage":
             from ..Navigation.main_navigation import NavigateToScreen
 
             self.screen.post_message(NavigateToScreen("chatbooks"))
         elif name == "share" and self.detail and self.detail.can_share:
             self.screen._artifacts_share_controller.open_dialog(self.selected)
-        elif name == "watchlists":
+        elif name in {"watchlists", "watchlists-items"}:
             self.open_watchlists()
         elif name == "demo":
-            service = getattr(self.app_instance, "daily_report_demo_service", None)
-            if service:
-                task = service.run_demo_detached()
-                if task:
-                    task.add_done_callback(
-                        lambda _: (
-                            self.request_scope(self.scope)
-                            if not self.disposed and self.active()
-                            else None
-                        )
-                    )
-            else:
-                self.notify(
-                    "The report demo is unavailable in this runtime.", "warning"
-                )
+            self.open_demo_consent()
+        elif name == "demo-cancel":
+            self.close_demo_consent(focus="#library-artifacts-demo")
+        elif name == "demo-confirm-run":
+            if self.demo_consent is not None and self.demo_consent.available:
+                # The list is always present; the CTA block disappears once
+                # the brief lands, and a hidden focused button is a dead end.
+                self.close_demo_consent(focus="#library-artifacts-list")
+                self.start_demo()
         elif (
-            name in {"keep", "export", "scripts", "play", "source", "console"}
+            name
+            in {
+                "keep",
+                "export",
+                "scripts",
+                "play",
+                "source",
+                "console",
+                "dreams-actions",
+            }
             and self.detail
             and not (self.loading or self.error or self.busy)
         ):
@@ -615,6 +765,117 @@ class LibraryArtifactsController:
             }
         self.screen.post_message(NavigateToScreen("watchlists_collections", context))
 
+    # -- Daily Report demo consent (TASK-34000.23) ---------------------------
+
+    def open_demo_consent(self) -> None:
+        """Show what the demo will create and bill; write and fetch nothing.
+
+        The pair comes from `resolve_persisted_briefing_defaults`, the same
+        call-time disk read the brief itself spends through, so the copy
+        names the provider · model that will actually be billed. A schedule
+        already on disk switches to the reuse wording (the service never
+        re-seeds, ADR-079 §2). No provider -- or an unreadable config --
+        leaves the run button disabled with the reason as its tooltip.
+        """
+        from ...Subscriptions.briefing_service import (
+            resolve_persisted_briefing_defaults,
+        )
+        from ...Subscriptions.daily_report_demo import (
+            NO_PROVIDER_CONSEQUENCE,
+            daily_report_demo_consequences,
+        )
+
+        if getattr(self.app_instance, "daily_report_demo_service", None) is None:
+            self.notify("The report demo is unavailable in this runtime.", "warning")
+            return
+        try:
+            provider, model = resolve_persisted_briefing_defaults()
+        except Exception as exc:  # noqa: BLE001 - a press handler must not crash the screen
+            logger.debug(f"Reports demo consent: no pair ({type(exc).__name__})")
+            self.demo_consent = DemoConsent(
+                lines=(NO_PROVIDER_CONSEQUENCE,), available=False
+            )
+        else:
+            db = getattr(self.app_instance, "subscriptions_db", None)
+            try:
+                schedules = db.list_briefing_schedules() if db is not None else []
+            except Exception as exc:  # noqa: BLE001 - unreadable schedules read as none
+                logger.warning(
+                    f"Reports demo consent: schedules unreadable ({type(exc).__name__})"
+                )
+                schedules = []
+            existing = bool(schedules)
+            existing_name = ""
+            if existing:
+                # Review 1 minor 1: a reused schedule bills its default
+                # preset's own provider/model when the preset carries them
+                # (`generate_briefing`: `endpoint = provider or preset_provider`),
+                # so that is the pair the copy must name. Final review F3:
+                # `schedules[0]` is whatever watchlist has a cadence -- the
+                # same row `run_demo` reuses -- so the copy names it.
+                provider, model = self._reused_schedule_pair(
+                    db, int(schedules[0]["watchlist_id"]), (provider, model)
+                )
+                existing_name = str(schedules[0].get("name") or "")
+            self.demo_consent = DemoConsent(
+                lines=daily_report_demo_consequences(
+                    provider=provider,
+                    model=model,
+                    existing=existing,
+                    existing_name=existing_name,
+                ),
+                existing=existing,
+            )
+        self.sync()
+        generation, profile = self.presentation, self.profile()
+        self.screen.call_after_refresh(
+            self._focus, "#library-artifacts-demo-cancel", generation, profile
+        )
+
+    @staticmethod
+    def _reused_schedule_pair(db, watchlist_id: int, persisted: tuple[str, str]):
+        """The pair a reused schedule bills: its default preset's own
+        provider (and model) when set, else the persisted pair."""
+        try:
+            with db.transaction() as conn:
+                row = conn.execute(
+                    "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
+                    (watchlist_id,),
+                ).fetchone()
+            preset_id = row["default_briefing_preset_id"] if row else None
+            preset = db.get_briefing_preset(int(preset_id)) if preset_id else None
+        except Exception as exc:  # noqa: BLE001 - an unreadable preset names the persisted pair
+            logger.warning(
+                f"Reports demo consent: preset unreadable ({type(exc).__name__})"
+            )
+            return persisted
+        preset_provider = str((preset or {}).get("provider") or "").strip()
+        if not preset_provider:
+            return persisted
+        return preset_provider, str((preset or {}).get("model") or "").strip()
+
+    def close_demo_consent(self, *, focus: str) -> None:
+        self.demo_consent = None
+        self.sync()
+        generation, profile = self.presentation, self.profile()
+        self.screen.call_after_refresh(self._focus, focus, generation, profile)
+
+    def start_demo(self) -> None:
+        """The one way in: the service's detached run and its double-start guard."""
+        service = getattr(self.app_instance, "daily_report_demo_service", None)
+        if service is None:
+            self.notify("The report demo is unavailable in this runtime.", "warning")
+            return
+        task = service.run_demo_detached()
+        if task:
+            task.add_done_callback(
+                lambda _: (
+                    self.request_scope(self.scope)
+                    if not self.disposed and self.active()
+                    else None
+                )
+            )
+
     async def _run_action(self, name, identity) -> None:
         profile, key, revision, presentation = identity
         try:
@@ -633,7 +894,9 @@ class LibraryArtifactsController:
                     else "This copy changed. Retry to read its latest version."
                 )
                 return
-            if name == "keep" and fresh.can_keep:
+            if name == "dreams-actions" and fresh.dream_story is not None:
+                self._open_dreams_story(fresh, profile)
+            elif name == "keep" and fresh.can_keep:
                 from ...Subscriptions.briefing_keep import keep_briefing
 
                 result = await self.screen._run_library_service_call(
@@ -730,6 +993,7 @@ class LibraryArtifactsController:
     async def _export_dialog(self, key, profile, presentation) -> None:
         from ...Subscriptions.briefing_export import default_briefing_filename
         from ...Third_Party.textual_fspicker import FileSave
+        from .library_file_export import library_export_picker_location
 
         db = getattr(
             self.app_instance,
@@ -756,7 +1020,7 @@ class LibraryArtifactsController:
         # The accepted picker result owns its captured copy across parent suspension.
         await self.screen.app.push_screen(
             FileSave(
-                location=str(Path.home()),
+                location=library_export_picker_location(self.screen.app),
                 title="Export report as Markdown",
                 default_file=default_briefing_filename(
                     report, watchlist_name=str(report.get("watchlist_name") or "Report")
@@ -766,24 +1030,11 @@ class LibraryArtifactsController:
         )
 
     async def _write_export(self, path, report, profile) -> None:
-        from ...Subscriptions.briefing_export import briefing_markdown_document
-        from ...Utils.path_validation import validate_path_simple
+        # The body lives in library_file_export (TASK-34000.3): it asks before
+        # replacing an existing file, writes atomically, and names the full path.
+        from .library_file_export import export_library_report_file
 
-        if not path or self.profile() != profile or self.disposed:
-            return
-        try:
-            destination = validate_path_simple(Path(path), require_exists=False)
-            await asyncio.to_thread(
-                destination.write_text,
-                briefing_markdown_document(report),
-                encoding="utf-8",
-            )
-            self.notify(f"Report exported to {destination.name}")
-        except Exception:  # noqa: BLE001 - preserve the mounted reader on owner failure
-            self.notify(
-                "Report could not be exported. Check the destination and retry.",
-                "error",
-            )
+        await export_library_report_file(self, path, report, profile)
 
     async def _play(self, key, profile, presentation) -> None:
         from ...Subscriptions.briefing_audio import briefing_audio_dir

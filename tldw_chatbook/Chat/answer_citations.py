@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.citation_evidence_models import (
     CitationRef,
     EvidenceBundle,
@@ -20,6 +21,41 @@ QUOTE_BOUNDARY_CHARS = (".", "?", "!", "\n")
 MAX_CITATION_ARTIFACT_SUMMARY_TEXT_CHARS = 256
 MAX_CITATION_ARTIFACT_SUMMARY_IDS = 20
 MAX_CITATION_ARTIFACT_SUMMARY_REFERENCES = 200
+
+CONSOLE_CITATION_INSTRUCTIONS = (
+    '- Answer the user\'s actual request. Greetings, small talk (for example, "How are you today?"), thanks, and acknowledgements do not require Library or workspace evidence; respond naturally without searching for sources, adding citations, or reporting missing files.',
+    "- For questions that depend on Library content or workspace files, ground claims in relevant available Library references or workspace file evidence obtained through authorized tools.",
+    "- For mixed requests, respond to the conversational part normally and ground the source-dependent part in relevant evidence.",
+    "- Retrieved snippets may be unrelated to the request; use them only when they support the answer.",
+    "- Use [S#] labels only for the supplied Library references; cite claims supported by those references with their labels.",
+    "- Identify workspace file evidence by its binding label, relative path, and line range when available; do not assign Library labels to it.",
+    "- Unrelated or insufficient Library evidence does not rule out workspace file evidence. If a source-dependent question cannot be answered from the available sources, explain what support is missing instead of guessing. An empty search result does not prove that no relevant files exist; describe only the scope actually searched.",
+    "- Do not invent citation labels; unknown labels are untrusted.",
+)
+
+#: TASK-33620.8 (AC#4): the same mixed-source grounding for Library evidence
+#: that no citation record will cover, without asking for [S#] labels.
+CONSOLE_UNRECORDED_EVIDENCE_INSTRUCTIONS = (
+    "- Ground claims in relevant available Library references or workspace file evidence obtained through authorized tools.",
+    "- These Library references are not saved as citations for this reply. Refer to each one by its title, and do not add bracketed labels such as [S1].",
+    "- Identify workspace file evidence by its binding label, relative path, and line range when available.",
+    "- Unrelated or insufficient Library evidence does not rule out workspace file evidence. Say when the available sources are insufficient instead of guessing.",
+)
+
+
+def unrecorded_evidence_text(blocks: list[str]) -> str:
+    """Join unlabelled evidence blocks under the unrecorded-evidence guidance.
+
+    Args:
+        blocks: One text block per Library reference, already formatted.
+
+    Returns:
+        The guidance and blocks, or an empty string when there are no blocks.
+    """
+    if not blocks:
+        return ""
+    guidance = "\n".join(CONSOLE_UNRECORDED_EVIDENCE_INSTRUCTIONS)
+    return f"[Citation instructions]\n{guidance}\n\n" + "\n---\n".join(blocks)
 
 
 @dataclass(frozen=True)
@@ -175,6 +211,61 @@ def format_evidence_for_cited_answer(value: Any) -> str:
         Prompt-ready staged evidence block, or an empty string when no valid
         evidence bundle is available.
     """
+    return _format_evidence_for_cited_answer(
+        value,
+        instructions=(
+            "- Use only available evidence references below to ground factual claims.",
+            "- Cite each evidence-supported claim with its bracketed source label, for example [S1].",
+            "- If the available evidence is insufficient, say so explicitly instead of guessing.",
+            "- Do not invent citation labels; unknown labels are untrusted.",
+        ),
+    )
+
+
+def format_console_evidence_for_cited_answer(value: Any) -> str:
+    """Render Library evidence alongside the Console's other grounding sources.
+
+    Args:
+        value: Existing evidence bundle or serialized evidence bundle payload.
+
+    Returns:
+        Mixed-source grounding instructions and references, or an empty string
+        when the evidence bundle is invalid.
+    """
+    return _format_evidence_for_cited_answer(
+        value,
+        instructions=CONSOLE_CITATION_INSTRUCTIONS,
+    )
+
+
+def format_console_evidence_without_labels(value: Any) -> str:
+    """Render available Library evidence for a reply that has no citation record.
+
+    TASK-33620.8 (AC#4): a send that cannot save a citation record (the
+    dispatch-retry path, or an Automatic send with no app to capture through)
+    must not ask the model for [S#] labels nobody can trace. The available
+    references go out by title, under the unrecorded-evidence guidance.
+
+    Args:
+        value: Existing evidence bundle or serialized evidence bundle payload.
+
+    Returns:
+        The unlabelled evidence text, or an empty string when there is none.
+    """
+    bundle = evidence_bundle_from_value(value)
+    references = () if bundle is None else bundle.available_references()
+    return unrecorded_evidence_text(
+        [
+            f"{reference.title}\n{reference.snippet}".strip()
+            for reference in references
+            if reference.title or reference.snippet
+        ]
+    )
+
+
+def _format_evidence_for_cited_answer(
+    value: Any, *, instructions: tuple[str, ...]
+) -> str:
     bundle = evidence_bundle_from_value(value)
     if bundle is None:
         return ""
@@ -186,10 +277,7 @@ def format_evidence_for_cited_answer(value: Any) -> str:
         f"Evidence query: {bundle.query or 'none'}",
         f"Evidence status: {bundle.status}",
         "[Citation instructions]",
-        "- Use only available evidence references below to ground factual claims.",
-        "- Cite each evidence-supported claim with its bracketed source label, for example [S1].",
-        "- If the available evidence is insufficient, say so explicitly instead of guessing.",
-        "- Do not invent citation labels; unknown labels are untrusted.",
+        *instructions,
     ]
     if available_count == 0:
         lines.append("No available evidence references are eligible for grounding.")
@@ -377,3 +465,63 @@ def _quote_for_marker(answer_text: str, marker_span: EvidenceLabelMarkerSpan) ->
         else len(answer_text)
     )
     return answer_text[start:end].strip()
+
+
+def prepend_console_evidence_context(
+    provider_messages: list[dict[str, Any]],
+    context: str,
+    *,
+    instructions: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
+    """Prefix optional guidance and exact evidence to the provider-only message."""
+    from .console_chat_controller import ConsoleChatController
+
+    final_index = next(
+        (
+            index
+            for index in range(len(provider_messages) - 1, -1, -1)
+            if provider_messages[index].get("role") == ConsoleMessageRole.USER.value
+        ),
+        None,
+    )
+    if final_index is None:
+        return provider_messages
+    guidance = (
+        "[Citation instructions]\n" + "\n".join(instructions) + "\n\n"
+        if instructions
+        else ""
+    )
+    prefix = f"{guidance}Evidence: {context}\n\n---\n\n"
+    message = provider_messages[final_index]
+    content = message.get("content")
+    if isinstance(content, str):
+        new_content: Any = ConsoleChatController._preserve_plugin_text_transform(
+            content, prefix + content
+        )
+    elif isinstance(content, list):
+        new_content = list(content)
+        text_index = next(
+            (
+                index
+                for index, part in enumerate(new_content)
+                if isinstance(part, dict)
+                and part.get("type") == "text"
+                and isinstance(part.get("text"), str)
+            ),
+            None,
+        )
+        if text_index is None:
+            new_content.insert(0, {"type": "text", "text": prefix})
+        else:
+            text_part = new_content[text_index]
+            new_content[text_index] = {
+                **text_part,
+                "text": ConsoleChatController._preserve_plugin_text_transform(
+                    text_part["text"], prefix + text_part["text"]
+                ),
+            }
+    else:
+        return provider_messages
+    updated = list(provider_messages)
+    updated[final_index] = {**message, "content": new_content}
+    return updated

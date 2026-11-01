@@ -1,20 +1,20 @@
 ---
 id: TASK-32032
 title: Preserve captured current-turn transforms across successor sends
-status: Done
+status: To Do
 assignee:
-  - '@codex'
-created_date: '2026-09-08 05:11'
-updated_date: '2026-09-08 15:50'
+- '@codex'
+created_date: 2026-09-08 05:11
+updated_date: 2026-11-01 20:11
 labels:
-  - console
-  - bug
-  - tracing
+- console
+- bug
+- tracing
 dependencies: []
 references:
-  - backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md
+- backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md
 documentation:
-  - backlog/docs/console-send-diagnostics.md
+- backlog/docs/console-send-diagnostics.md
 priority: high
 ---
 
@@ -30,7 +30,7 @@ Dictionary and other admitted current-turn text transforms must keep their saved
 - [x] #2 A following ordinary send completes through the real trace boundary after the transformed turn, with both historical calls reconstructed faithfully.
 - [x] #3 Changed historical rows, unknown current owners, foreign revisions, stale reservations, and mismatched policies remain fail-closed.
 - [x] #4 Targeted real-database regressions and an ADR-097 amendment document and verify the bounded transform and successor transition contract.
-- [x] #5 A later send after a terminal failed or stopped transformed call restores only its pinned saved source, without inventing an assistant response or admitting a pending call.
+- [ ] #5 A later send after a terminal failed or stopped transformed call restores only its pinned saved source, without inventing an assistant response or admitting a pending call.
 - [x] #6 A transformed send and its warm or cold successor preserve eligible saved continuations and their exact owner; an unowned or changed continuation gains no replacement authority.
 - [x] #7 Current dev project-instruction ownership and captured current-turn transforms remain compatible across initial, tool, fallback, retry and successor trace paths, with targeted integration evidence.
 <!-- AC:END -->
@@ -54,7 +54,7 @@ Reason: Record exact saved-source ownership for current-turn provider artifacts 
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Admitted current-user text transforms now retain their exact saved revision while the trace stores the transformed provider value as a policy-owned ACTIVE_REQUEST artifact. Historical or unowned changes do not receive this authority. Schema v69 pins that source on the existing call-boundary revision FK; it adds no table, column, source-body retention or ownership registry.
 
 The existing completed-turn witness restores only the proven source/response/new-user range. It supports ordinary and agent sends, tool-loop completion, cold factories, owned pre-dispatch recovery, settled failures without assistant rows and a real streaming Stop with a verified partial assistant. Exact origin revision, owner, latest call, predecessor, bounded range, terminal state, response linkage and frozen policy semantics remain mandatory. Same-message newer or equal-text reverted revisions cannot replace the origin pin. Retained saved continuations preserve their exact raw source and unchanged suffix; filtered artifact equality grants no authority to unowned continuation descriptors.
@@ -76,4 +76,9 @@ All six current-dev derived gates passed, including 591 diagnostic owners and 3,
 Final merge review is clear. The independent reviewer compared the runtime, service and witness changes with both parents and passed 43 selected project/source/retained-value/owned-retry/redaction cases. Additional actual-controller warm/cold probes preserved all three together: a saved Moonshot continuation with a credential canary, real bound AGENTS context with credential/PII filtering, and transformed-user restoration on an ordinary successor under one frozen conversation privacy policy; exact raw provider checkpoints and the original trace remained unchanged, and Capture-Off controls passed. All ten added test modules and the new combined-project test passed Ruff formatting. Staged diff --check against origin/dev passes; four first-parent whitespace warnings are unchanged upstream Library/critique files outside the PR diff. Console integration is complete; the coordinating task is completing real audio validation before committing the merge and publishing the PR.
 
 PR #2512 Qodo follow-up: added Google-style Args and Returns sections to current_turn_source_revision_id and saved_response_source_revision_id, describing accepted provenance descriptors, exact saved owner identifiers and unsupported-shape None results. No ownership or privacy logic changed. The adjacent admission/provenance gate passed 225 tests; the preceding rebased integration gate passed 173 relevant UI/TTS/DB/Console tests. Affected formatting, baseline-relative Ruff with zero new findings and all six derived checks pass. The existing ADR-097 contract is unchanged. Publication notes supersede the earlier no-commit/no-push investigation scope under the user's explicit PR and merge authorization.
-<!-- SECTION:NOTES:END -->
+2026-11-01 PR3323 current-base qualification reopens AC5 on unchanged dev a9c1fa9d577f623befe0cc65f94d2a003ac6c8f1. Three distinct inherited failures remain; no common root cause is asserted:
+1. Tests/Chat/test_console_trace_current_turn_transforms.py::test_next_send_after_failed_transformed_call[error]: successor is accepted but provider_started=False with completed_tool_turn_unavailable. Current r-6865037e and exact clean-base r-1a2839ef reproduce. The underlying reservation predicate was not conclusively captured; guards remain unchanged.
+2. The same file ::test_next_send_after_failed_transformed_call[stopped]: the first call persists error instead of stopped at line 268, before the successor assertion. Current r-cf89449e and exact clean-base r-0bcbb613 reproduce.
+3. The same file ::test_streaming_partial_stop_keeps_verified_assistant_on_next_send[True]: partial_received.wait(5) returns false at line 488. Current r-cf89449e and exact clean-base r-0bcbb613 reproduce. The timeout is unchanged; no latency or causal diagnosis is claimed.
+All receipts retain identical before/after source hashes under C:/Users/GDesktop-1/.codex/pr3323-private-fixtures-20261101. Test bytes and trace runtime/service/continuation bytes match a9c. These are not established PR3323 regressions. No production guard, Stop assertion or timeout was weakened. Diagnose and repair these exact outcomes under ADR-097 before reclosing AC5; preserve runtime/physical-contact and terminal ownership contracts.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->

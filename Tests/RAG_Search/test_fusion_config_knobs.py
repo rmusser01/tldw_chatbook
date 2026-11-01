@@ -26,6 +26,7 @@ recorded k breaks that re-derivation silently: the row is arithmetically
 "fine" but no longer provably RRF to that consumer. Exercised at a
 NON-DEFAULT k (10) so a hard-coded 60 anywhere on the path cannot pass.
 """
+
 import asyncio
 
 import pytest
@@ -614,9 +615,9 @@ def test_overflow_range_pool_multiplier_falls_back_with_warning(warnings_capture
         == DEFAULT_HYBRID_POOL_MULTIPLIER
         == 2
     )
-    assert any(
-        "hybrid_pool_multiplier" in message for message in warnings_captured
-    ), f"an overflow-range hybrid_pool_multiplier must leave a warning trace: {warnings_captured}"
+    assert any("hybrid_pool_multiplier" in message for message in warnings_captured), (
+        f"an overflow-range hybrid_pool_multiplier must leave a warning trace: {warnings_captured}"
+    )
 
 
 def test_invalid_pool_multiplier_falls_back_to_its_own_default_not_search_result_multiplier(

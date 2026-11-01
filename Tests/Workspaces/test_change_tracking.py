@@ -5,6 +5,7 @@ git's actual behavior on real machines is the risk surface). The hostile-HOME
 test is the crown jewel: each of its three hazards is a real first-turn
 failure on a real dev machine.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -51,8 +52,7 @@ def test_snapshot_succeeds_from_a_hostile_home(service, root, monkeypatch, tmp_p
     hook.write_text("#!/bin/sh\necho HOSTILE HOOK RAN >&2\nexit 1\n")
     hook.chmod(0o755)
     (home / ".gitconfig").write_text(
-        "[commit]\n\tgpgsign = true\n"
-        f"[core]\n\thooksPath = {hooks}\n"
+        f"[commit]\n\tgpgsign = true\n[core]\n\thooksPath = {hooks}\n"
         # deliberately NO [user] section: commit fails without identity
     )
     monkeypatch.setenv("HOME", str(home))

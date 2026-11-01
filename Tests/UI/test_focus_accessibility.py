@@ -202,7 +202,7 @@ def test_generated_notes_body_focus_is_exact_boundary_only_exception():
 
     for selector in ("#library-note-body:focus", "#file-notes-editor:focus"):
         block = css_block(css_content, selector)
-        assert "outline: heavy $ds-action-focus;" in block
+        assert "outline: heavy $ds-active-fg;" in block
         assert "background: $ds-surface-raised;" in block
         assert not any(
             property_name in block

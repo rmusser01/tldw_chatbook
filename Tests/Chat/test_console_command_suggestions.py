@@ -33,6 +33,8 @@ COMMANDS = [
     "/generate-video",
     "/stream-video",
     "/steer",
+    "/omfg",
+    "/rules",
     "/redirect",
     "/stop",
     "/emergency-stop",
@@ -48,6 +50,8 @@ COMMANDS = [
     "/settings",
     "/context",
     "/endpoint",
+    "/compact",  # TASK-33621.4
+    "/goal",
 ]
 
 
@@ -214,3 +218,154 @@ def test_context_none_outside_completion_contexts():
     # A trailing newline (Shift+Enter multiline draft) leaves the context --
     # the pattern's `\Z` (not `$`) exists for exactly this.
     assert completion_context_for_draft("/prompt\n") is None
+
+
+def test_goal_command_completion_preserves_description_mode():
+    result = suggestions_for_draft("/go", default_console_registry(), SKILLS)
+    assert _labels(result) == ["/goal"]
+    assert (
+        suggestions_for_draft(
+            "/goal repair fixture", default_console_registry(), SKILLS
+        )
+        is None
+    )
+
+# ---------------------------------------------------------------------------
+# TASK-18921: usage ranking (display-only; matching and filtering unchanged)
+# ---------------------------------------------------------------------------
+
+from tldw_chatbook.Chat.console_command_suggestions import (
+    CommandSuggestion,
+    count_suggestion_usage,
+    rank_suggestions_by_usage,
+    suggestion_usage_key,
+)
+
+
+def _suggestion(label: str, insert_text: str | None = None) -> CommandSuggestion:
+    return CommandSuggestion(
+        insert_text=insert_text if insert_text is not None else f"{label} ",
+        label=label,
+    )
+
+
+def test_usage_keys_for_every_row_kind():
+    # Command row.
+    assert suggestion_usage_key(_suggestion("/model")) == "command:model"
+    # The /skills command row itself is a command, not a skill.
+    assert suggestion_usage_key(_suggestion("/skills")) == "command:skills"
+    # Command-mode skill row carries the skill identity.
+    assert (
+        suggestion_usage_key(_suggestion("/skills web-search", "/skills web-search "))
+        == "skill:web-search"
+    )
+    # Skills-arg mode rows are bare names.
+    assert suggestion_usage_key(_suggestion("web-search")) == "skill:web-search"
+    # Keys are case-folded.
+    assert suggestion_usage_key(_suggestion("/Model")) == "command:model"
+
+
+def test_count_mines_slash_commands_and_skills_invocations():
+    counts = count_suggestion_usage(
+        [
+            "/model gpt-5",
+            "/stop",
+            "/model",
+            "/skills web-search",
+            "/SKILLS Summarize",
+            "an ordinary prompt",
+            "",
+        ]
+    )
+    assert counts["command:model"] == 2
+    assert counts["command:stop"] == 1
+    assert counts["command:skills"] == 2
+    assert counts["skill:web-search"] == 1
+    assert counts["skill:summarize"] == 1
+    # No other keys: ordinary prompts carry no command counts.
+    assert set(counts) == {
+        "command:model",
+        "command:stop",
+        "command:skills",
+        "skill:web-search",
+        "skill:summarize",
+    }
+
+
+def test_count_mines_dollar_mentions_once_per_text():
+    counts = count_suggestion_usage(
+        [
+            "run $web-search then $web-search again",
+            "and $summarize too",
+            "$HOME and $PATH stay literal (no skill carries these keys)",
+        ]
+    )
+    assert counts["skill:web-search"] == 1
+    assert counts["skill:summarize"] == 1
+    # Non-skill sigil tokens count toward keys no suggestion ever carries.
+    assert counts["skill:home"] == 1
+    assert counts["skill:path"] == 1
+
+
+def test_count_ignores_leading_sigil_inside_command_texts():
+    # A slash draft is a command count; a $ inside it never double-counts a
+    # skill (the mention scan only runs on non-slash texts).
+    counts = count_suggestion_usage(["/prompt use $web-search now"])
+    assert counts == {"command:prompt": 1}
+
+
+def test_rank_with_no_usage_data_returns_input_order():
+    rows = [_suggestion("/prompt"), _suggestion("/model"), _suggestion("/skills a")]
+    # Empty counts: byte-identical order.
+    assert rank_suggestions_by_usage(rows, {}) == rows
+    # Counts that cover none of the set's keys: still today's order.
+    assert rank_suggestions_by_usage(rows, {"command:doctor": 9}) == rows
+    # All-zero counts for the set's keys: still today's order.
+    assert rank_suggestions_by_usage(rows, {"command:model": 0}) == rows
+
+
+def test_rank_most_used_first_with_alphabetical_ties():
+    rows = [
+        _suggestion("/prompt"),
+        _suggestion("/model"),
+        _suggestion("/help"),
+        _suggestion("/stop"),
+        _suggestion("/skills web-search"),
+    ]
+    ranked = rank_suggestions_by_usage(
+        rows, {"command:stop": 1, "command:model": 3, "skill:web-search": 2}
+    )
+    assert [s.label for s in ranked] == [
+        "/model",
+        "/skills web-search",
+        "/stop",
+        "/help",  # zero-count rows tie-break alphabetically
+        "/prompt",
+    ]
+
+
+def test_rank_is_a_permutation_of_the_filtered_set():
+    rows = [
+        _suggestion("/prompt"),
+        _suggestion("/model"),
+        _suggestion("web-search"),
+        _suggestion("summarize"),
+    ]
+    ranked = rank_suggestions_by_usage(
+        rows, {"skill:summarize": 4, "command:prompt": 1, "skill:web-search": 1}
+    )
+    assert sorted(r.label for r in ranked) == sorted(r.label for r in rows)
+    # The most-used row leads.
+    assert ranked[0].label == "summarize"
+
+
+def test_ranked_suggestions_keep_prefix_filtering_semantics():
+    # Filtering happens upstream and is untouched: ranking a filtered set
+    # never reintroduces rows the filter dropped.
+    registry = default_console_registry()
+    filtered = suggestions_for_draft("/s", registry, SKILLS)
+    ranked = rank_suggestions_by_usage(
+        filtered, {"command:settings": 5, "command:prompt": 5, "skill:nope": 5}
+    )
+    assert {s.label for s in ranked} == {s.label for s in filtered}
+    assert ranked[0].label == "/settings"  # /s filter + usage beats registry order

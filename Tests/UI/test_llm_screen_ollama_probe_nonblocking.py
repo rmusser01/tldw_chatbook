@@ -107,7 +107,9 @@ async def test_probe_reports_down_on_a_refused_connection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_probe_caps_at_the_configured_timeout_against_an_unresponsive_address() -> None:
+async def test_probe_caps_at_the_configured_timeout_against_an_unresponsive_address() -> (
+    None
+):
     """Down = timeout, capped at the same 0.25s the blocking probe used.
 
     Best-effort against a real network condition (see `_BLACKHOLE_HOST`'s
@@ -134,8 +136,7 @@ async def test_probe_never_calls_the_blocking_socket_primitives(monkeypatch) -> 
 
     def _forbidden(*args, **kwargs):
         raise AssertionError(
-            "the async probe must never call the blocking "
-            "socket.create_connection"
+            "the async probe must never call the blocking socket.create_connection"
         )
 
     monkeypatch.setattr(socket, "create_connection", _forbidden)

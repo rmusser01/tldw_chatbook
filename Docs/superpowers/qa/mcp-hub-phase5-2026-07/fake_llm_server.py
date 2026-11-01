@@ -57,6 +57,7 @@ For the most recent **user** message, match a trigger phrase (see
 No frameworks, stdlib only (`http.server`), single file, no repo imports
 (deliberately independent of the app under test).
 """
+
 from __future__ import annotations
 
 import json
@@ -262,13 +263,19 @@ class Handler(BaseHTTPRequestHandler):
         tools = payload.get("tools")
         model = payload.get("model") or "fake-model"
         offered = _offered_tool_names(tools)
-        last_role = messages[-1].get("role") if messages and isinstance(messages[-1], dict) else None
+        last_role = (
+            messages[-1].get("role")
+            if messages and isinstance(messages[-1], dict)
+            else None
+        )
 
         finish_reason, message = decide(messages, offered)
 
         self.log_message(
             "chat.completions: last_role=%s offered=%s last_user=%r -> %s %r",
-            last_role, sorted(offered), _last_user_content(messages)[:60],
+            last_role,
+            sorted(offered),
+            _last_user_content(messages)[:60],
             finish_reason,
             message.get("tool_calls") or message.get("content"),
         )

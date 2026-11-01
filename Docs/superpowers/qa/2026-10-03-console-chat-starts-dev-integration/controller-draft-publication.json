@@ -1,0 +1,30 @@
+{
+  "time": 1791068726.5277162,
+  "pr": {
+    "baseRefName": "dev",
+    "headRefName": "codex/console-chat-starts-dev",
+    "headRefOid": "ee351749710ca0fdf065bbb3f7ba2a8a034d5b12",
+    "isDraft": true,
+    "mergeable": "MERGEABLE",
+    "number": 2995,
+    "state": "OPEN",
+    "title": "feat(console): add workspace and casual chat creation",
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2995"
+  },
+  "attached_artifact": {
+    "artifact_type": "pull_request",
+    "url": "https://github.com/rmusser01/tldw_chatbook/pull/2995",
+    "isError": false
+  },
+  "qualified_product_sha": "3c4c522b40091901514959061c29c092033bb874",
+  "push_returncode": 0,
+  "initial_automatic_rejection": "publication-auto-review-rejection.md",
+  "retry": "Direct approval-reviewed push succeeded after verified public destination and complete local credential audit/adjudication; no workaround.",
+  "task": "TASK34215.2",
+  "task_status": "In Progress",
+  "remaining": [
+    "Important I2 caret/selection-only mounted draft consumption",
+    "Successor dev integration qualification"
+  ],
+  "plan_step8": "open"
+}

@@ -102,7 +102,9 @@ async def test_notifications_pane_carries_one_line_of_guidance_when_empty():
 
 
 @pytest.mark.asyncio
-async def test_notifications_pane_hides_the_guidance_once_rows_exist(sample_notifications):
+async def test_notifications_pane_hides_the_guidance_once_rows_exist(
+    sample_notifications,
+):
     app = NotificationsPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(NotificationsPane)

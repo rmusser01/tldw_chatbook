@@ -288,7 +288,10 @@ until the write settles. A link that opens a prompt from somewhere else (a
 Search / RAG result's **Open**, or a deep link the screen reconciles on entry)
 is refused by the same unsaved edit, and names the one it did not open: "Can't
 open Prompt 7 — Save or Discard the open Prompt first." Nothing is queued: save
-or discard, then follow the link again. The save-status line reports the outcome:
+or discard, then follow the link again. Quitting with **Ctrl+Q** asks first,
+'Quit and discard unsaved changes to "<name>"?', with **Keep editing**
+selected; only **Discard and quit** exits without the edit. The save-status
+line reports the outcome:
 
 - "Saved."
 - "Name already in use — pick another or open the existing prompt." —
@@ -387,6 +390,12 @@ close it and return focus to More actions.
   replace the session System prompt with confirmation.
 - **Export…** saves a representable Prompt or Recipe as Markdown. The filename
   field starts focused; press **Tab**, then **Enter** on Save to write it.
+  The picker opens in the folder you last exported to this session. If the
+  chosen file already exists, a "Replace existing file?" prompt names the file
+  and its folder, with **Cancel** focused — Escape or Cancel leaves that file
+  untouched and only **Replace** overwrites it (atomically, so a failed write
+  never leaves a half-written file). The status then names the folder and the
+  file: "Prompt exported successfully to ~/exp/Weekly review coach.md".
   Cancel or completion returns focus to Export.
 - **Copy Markdown** copies the exact live working copy. Copy and Export results
   appear in the editor's status area, which scrolls into view without moving

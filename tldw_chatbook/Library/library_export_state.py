@@ -94,7 +94,17 @@ _MEDIA_QUALITY_HELPER_COPY: dict[str, str] = {
 # back to varying by option -- and the chooser's own helper captions
 # (``_MEDIA_QUALITY_HELPER_COPY`` above), which describe the same absent
 # behaviour, must be corrected in the SAME change.
-_BUNDLE_PAYLOAD_COPY = "text only"
+#
+# TASK-34000.19 (L-04): the bundle now carries each item's keywords for every
+# exported type (media, notes, conversations; Prompts and characters already
+# did), so the phrase names them. Media-bearing scopes keep the "only" -- it
+# is what tells the user the original media file is NOT in the archive --
+# and every other scope gets the phrase too, since notes and conversations
+# travel the same way. "If any item type cannot carry them, the line names
+# that type" (AC#3) is vacuous after this change: the per-type round-trip
+# tests pin it, not copy.
+_BUNDLE_KEYWORDS_PAYLOAD_COPY = "text + keywords"
+_BUNDLE_PAYLOAD_COPY = f"{_BUNDLE_KEYWORDS_PAYLOAD_COPY} only"
 
 
 def format_export_bytes(size_bytes: int) -> str:
@@ -343,7 +353,17 @@ def build_library_export_form_state(
     # a name and then wrote a bundle nobody had seen the contents of, at a
     # fidelity chosen by a control rendered at the same weight as "sort".
     # This states the consequence in one line, above the button.
-    payload = f" · {_BUNDLE_PAYLOAD_COPY}" if show_media_fields else ""
+    # The "only" rides with the media-bearing scopes (media AND everything):
+    # those are the scopes that show the quality chooser and its "copies
+    # full media files into the zip" caption directly above this line, and
+    # the "only" is what contradicts that caption (task-32353 / Qodo #1;
+    # TASK-34000.19 fix round 1, I-1). Scopes that carry no media name the
+    # payload without it.
+    payload = (
+        f" · {_BUNDLE_PAYLOAD_COPY}"
+        if show_media_fields
+        else f" · {_BUNDLE_KEYWORDS_PAYLOAD_COPY}"
+    )
     # "before compression" is load-bearing, not padding: this counts the
     # content going IN, while the receipt after the run stats the zip that
     # came OUT (live check: a 9 KB estimate wrote a 4 KB archive). Without

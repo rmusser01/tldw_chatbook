@@ -18,6 +18,9 @@ from Tests.UI.test_console_dictation_streaming import (
 from tldw_chatbook.Persona_Buddy.controller import PersonaBuddyController
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
+# Real config readers retain the profile admitted at collection.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(

@@ -1,0 +1,270 @@
+{
+  "interpreter": "3.12.11 (main, Aug 14 2025, 16:05:17) [Clang 20.1.4 ]",
+  "sqlite_source": "/private/tmp/archive-fenced-green-diagnosis/test_captured_native_turn_rest0/followup-runs.sqlite",
+  "read_only": true,
+  "query": "SELECT run_id,seq,payload FROM agent_run_steps ORDER BY created_at,seq",
+  "source_sha256_before_and_after": "101ab1e2c8a36a352018b02b51ebec6906a01822733eeb432d28fca23bbe9372",
+  "selected_steps": [
+    {
+      "run_id": "169bbf90461945348bbdde9a1c32424b",
+      "seq": 0,
+      "step": {
+        "args": null,
+        "call_id": "",
+        "created_at": "2026-10-18T17:54:37.069163Z",
+        "field_states": {},
+        "index": 0,
+        "kind": "model",
+        "owner_seq": 6,
+        "parent_event_id": "agent-step:169bbf90461945348bbdde9a1c32424b:1000003",
+        "parent_step_index": 1000003,
+        "replacement_event_id": null,
+        "result": "",
+        "sensitivity": "",
+        "source_event_id": null,
+        "source_step_index": null,
+        "status": "",
+        "summary": "```tool_call\n{\"name\": \"load_tools\", \"arguments\": {\"ids\": [\"archive_recovery:request_conversation_restore\"]}}\n```",
+        "tool_name": "",
+        "tool_outcome": null
+      }
+    },
+    {
+      "run_id": "169bbf90461945348bbdde9a1c32424b",
+      "seq": 2,
+      "step": {
+        "args": null,
+        "call_id": "turn-1-call-0",
+        "created_at": "2026-10-18T17:54:37.079150Z",
+        "field_states": {
+          "result": "observed"
+        },
+        "index": 2,
+        "kind": "tool_result",
+        "owner_seq": 13,
+        "parent_event_id": "agent-run:169bbf90461945348bbdde9a1c32424b",
+        "parent_step_index": null,
+        "replacement_event_id": null,
+        "result": "loaded: request_conversation_restore",
+        "sensitivity": "tool_content",
+        "source_event_id": null,
+        "source_step_index": null,
+        "status": "",
+        "summary": "load_tools recorded",
+        "tool_name": "load_tools",
+        "tool_outcome": "success"
+      }
+    },
+    {
+      "run_id": "169bbf90461945348bbdde9a1c32424b",
+      "seq": 3,
+      "step": {
+        "args": null,
+        "call_id": "",
+        "created_at": "2026-10-18T17:54:38.243641Z",
+        "field_states": {},
+        "index": 3,
+        "kind": "model",
+        "owner_seq": 16,
+        "parent_event_id": "agent-step:169bbf90461945348bbdde9a1c32424b:1000010",
+        "parent_step_index": 1000010,
+        "replacement_event_id": null,
+        "result": "",
+        "sensitivity": "",
+        "source_event_id": null,
+        "source_step_index": null,
+        "status": "",
+        "summary": "```tool_call\n{\"name\": \"request_conversation_restore\", \"arguments\": {\"result_ref\": \"bwrz34TPBH06OPdjOrKqvr3QbF5X7Ao5\", \"scope\": \"chat_only\"}}\n```",
+        "tool_name": "",
+        "tool_outcome": null
+      }
+    },
+    {
+      "run_id": "169bbf90461945348bbdde9a1c32424b",
+      "seq": 1000011,
+      "step": {
+        "args": null,
+        "call_id": "turn-2-call-0",
+        "created_at": "2026-10-18T17:54:38.244692Z",
+        "field_states": {
+          "args": "omitted",
+          "result": "not_available"
+        },
+        "index": 1000011,
+        "kind": "tool_proposed",
+        "owner_seq": 17,
+        "parent_event_id": "agent-run:169bbf90461945348bbdde9a1c32424b",
+        "parent_step_index": null,
+        "replacement_event_id": null,
+        "result": "",
+        "sensitivity": "tool_content",
+        "source_event_id": null,
+        "source_step_index": null,
+        "status": "proposed",
+        "summary": "request_conversation_restore proposed",
+        "tool_name": "request_conversation_restore",
+        "tool_outcome": null
+      }
+    },
+    {
+      "run_id": "169bbf90461945348bbdde9a1c32424b",
+      "seq": 1000012,
+      "step": {
+        "args": null,
+        "call_id": "turn-2-call-0",
+        "created_at": "2026-10-18T17:54:38.244948Z",
+        "field_states": {
+          "args": "omitted",
+          "result": "not_available"
+        },
+        "index": 1000012,
+        "kind": "approval_requested",
+        "owner_seq": 18,
+        "parent_event_id": "agent-step:169bbf90461945348bbdde9a1c32424b:1000011",
+        "parent_step_index": 1000011,
+        "replacement_event_id": null,
+        "result": "",
+        "sensitivity": "tool_content",
+        "source_event_id": null,
+        "source_step_index": null,
+        "status": "pending",
+        "summary": "Approval requested for request_conversation_restore",
+        "tool_name": "request_conversation_restore",
+        "tool_outcome": null
+      }
+    },
+    {
+      "run_id": "169bbf90461945348bbdde9a1c32424b",
+      "seq": 1000013,
+      "step": {
+        "args": null,
+        "call_id": "turn-2-call-0",
+        "created_at": "2026-10-18T17:54:38.245140Z",
+        "field_states": {
+          "args": "omitted",
+          "result": "omitted"
+        },
+        "index": 1000013,
+        "kind": "approval_approved",
+        "owner_seq": 19,
+        "parent_event_id": "agent-step:169bbf90461945348bbdde9a1c32424b:1000012",
+        "parent_step_index": 1000012,
+        "replacement_event_id": null,
+        "result": "",
+        "sensitivity": "tool_content",
+        "source_event_id": "agent-step:169bbf90461945348bbdde9a1c32424b:1000011",
+        "source_step_index": 1000011,
+        "status": "approved",
+        "summary": "Approval granted for request_conversation_restore",
+        "tool_name": "request_conversation_restore",
+        "tool_outcome": null
+      }
+    },
+    {
+      "run_id": "169bbf90461945348bbdde9a1c32424b",
+      "seq": 1000014,
+      "step": {
+        "args": null,
+        "call_id": "turn-2-call-0",
+        "created_at": "2026-10-18T17:54:38.245610Z",
+        "field_states": {
+          "args": "omitted",
+          "result": "not_available"
+        },
+        "index": 1000014,
+        "kind": "tool_execution_started",
+        "owner_seq": 20,
+        "parent_event_id": "agent-step:169bbf90461945348bbdde9a1c32424b:1000013",
+        "parent_step_index": 1000013,
+        "replacement_event_id": null,
+        "result": "",
+        "sensitivity": "tool_content",
+        "source_event_id": "agent-step:169bbf90461945348bbdde9a1c32424b:1000011",
+        "source_step_index": 1000011,
+        "status": "started",
+        "summary": "request_conversation_restore execution started",
+        "tool_name": "request_conversation_restore",
+        "tool_outcome": null
+      }
+    },
+    {
+      "run_id": "169bbf90461945348bbdde9a1c32424b",
+      "seq": 4,
+      "step": {
+        "args": null,
+        "call_id": "turn-2-call-0",
+        "created_at": "2026-10-18T17:54:38.245784Z",
+        "field_states": {
+          "args": "omitted"
+        },
+        "index": 4,
+        "kind": "tool_call",
+        "owner_seq": 21,
+        "parent_event_id": "agent-run:169bbf90461945348bbdde9a1c32424b",
+        "parent_step_index": null,
+        "replacement_event_id": null,
+        "result": "",
+        "sensitivity": "tool_content",
+        "source_event_id": null,
+        "source_step_index": null,
+        "status": "",
+        "summary": "",
+        "tool_name": "request_conversation_restore",
+        "tool_outcome": null
+      }
+    },
+    {
+      "run_id": "169bbf90461945348bbdde9a1c32424b",
+      "seq": 1000015,
+      "step": {
+        "args": null,
+        "call_id": "turn-2-call-0",
+        "created_at": "2026-10-18T17:54:38.253669Z",
+        "field_states": {
+          "args": "omitted",
+          "result": "omitted"
+        },
+        "index": 1000015,
+        "kind": "tool_failed",
+        "owner_seq": 22,
+        "parent_event_id": "agent-step:169bbf90461945348bbdde9a1c32424b:1000014",
+        "parent_step_index": 1000014,
+        "replacement_event_id": null,
+        "result": "",
+        "sensitivity": "tool_content",
+        "source_event_id": "agent-step:169bbf90461945348bbdde9a1c32424b:1000011",
+        "source_step_index": 1000011,
+        "status": "failed",
+        "summary": "request_conversation_restore failed",
+        "tool_name": "request_conversation_restore",
+        "tool_outcome": "failed"
+      }
+    },
+    {
+      "run_id": "169bbf90461945348bbdde9a1c32424b",
+      "seq": 5,
+      "step": {
+        "args": null,
+        "call_id": "turn-2-call-0",
+        "created_at": "2026-10-18T17:54:38.256405Z",
+        "field_states": {
+          "result": "observed"
+        },
+        "index": 5,
+        "kind": "tool_result",
+        "owner_seq": 23,
+        "parent_event_id": "agent-run:169bbf90461945348bbdde9a1c32424b",
+        "parent_step_index": null,
+        "replacement_event_id": null,
+        "result": "ERROR: unavailable: Native recovery call identity required",
+        "sensitivity": "tool_content",
+        "source_event_id": null,
+        "source_step_index": null,
+        "status": "",
+        "summary": "request_conversation_restore recorded",
+        "tool_name": "request_conversation_restore",
+        "tool_outcome": "failed"
+      }
+    }
+  ]
+}

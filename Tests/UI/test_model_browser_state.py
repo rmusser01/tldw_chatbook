@@ -539,9 +539,16 @@ def test_install_failure_messages_are_typed_labeled_and_sanitized() -> None:
         GatedRepositoryError(marker),
         "Configure HUGGINGFACE_API_KEY (or HF_TOKEN) and retry.",
     )
+    # TASK-34100.14 ([voice-speech-08]): the busy copy no longer blames the
+    # caller's own model ("Another Whisper install..."); with no in-process
+    # holder named it stays generic, and a named holder is named.
     _check(
         AcquisitionBusyError(marker),
-        "Another Whisper install is already in progress. Try again shortly.",
+        "Another model download is already running. Try again when it finishes.",
+    )
+    _check(
+        AcquisitionBusyError(marker, holder_label="OmniVoice voice model"),
+        "The OmniVoice voice model download is still running.",
     )
     _check(
         ConsentMismatchError(marker),
@@ -569,3 +576,27 @@ def test_install_failure_messages_are_typed_labeled_and_sanitized() -> None:
         RuntimeError(marker),
         "Whisper install failed. See the application log for details.",
     )
+
+
+def test_transfer_readout_never_promises_time_left_past_its_total() -> None:
+    """TASK-34100.14 review F1-b: a count at or past its total (a restarted
+    file, or a rounding edge) used to read "1116.6 of 512.8 MiB · 5.0 MiB/s ·
+    less than a minute left" with minutes still to go. The figure is capped
+    at the total and no time left is promised.
+    """
+    from tldw_chatbook.UI.Screens.model_browser_state import (
+        TransferRateEstimator,
+        transfer_summary,
+    )
+
+    mib = 1024 * 1024
+    clock = [100.0]
+    estimator = TransferRateEstimator(lambda: clock[0])
+    estimator.observe("fetch", 1000 * mib)
+    clock[0] += 4.0
+    estimator.observe("fetch", 1020 * mib)
+
+    over = transfer_summary(1020 * mib, 512 * mib, estimator)
+    assert over == "512.0 of 512.0 MiB · 5.0 MiB/s"
+    under = transfer_summary(500 * mib, 512 * mib, estimator)
+    assert under == "500.0 of 512.0 MiB · 5.0 MiB/s · less than a minute left"

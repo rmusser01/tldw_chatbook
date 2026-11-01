@@ -48,6 +48,8 @@ from loguru import logger as logging
 
 #
 # Local Imports
+from .keyword_store import KeywordStore, KeywordStoreSpec
+from .library_search_engine import LibrarySearchSpec, library_search_page
 from .sql_validation import validate_table_name, validate_column_name
 from .sql_logging import preview_params
 from tldw_chatbook.Backup_Recovery.participants import (
@@ -334,6 +336,71 @@ class PromptsDatabase:
         if not client_id:
             raise ValueError("Client ID cannot be empty or None.")
         self.client_id = client_id
+        # TASK-34904: shared library page-search engine.
+        self._library_search_spec = LibrarySearchSpec(
+            table="Prompts",
+            base_filter="deleted = 0",
+            exact_column="name",
+            substring_branches=(
+                ("name LIKE ? ESCAPE '\\'", "name"),
+                ("coalesce(details, '') LIKE ? ESCAPE '\\'", "details"),
+                ("coalesce(system_prompt, '') LIKE ? ESCAPE '\\'", "system_prompt"),
+                ("coalesce(user_prompt, '') LIKE ? ESCAPE '\\'", "user_prompt"),
+                (
+                    "coalesce(prompt_definition, '') LIKE ? ESCAPE '\\'",
+                    "prompt_definition",
+                ),
+            ),
+            fts_branches=(
+                (
+                    "id IN (SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)",
+                    None,
+                ),
+            ),
+            keyword_branch=(
+                "id IN (SELECT pkl.prompt_id FROM PromptKeywordLinks pkl "
+                "JOIN PromptKeywordsTable k ON pkl.keyword_id = k.id "
+                "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+            ),
+            page_columns=self._library_prompt_page_columns(),
+            tiebreaker="id DESC",
+            fetch_keywords=self._library_keywords_for_prompts,
+            make_item=self._library_prompt_item,
+            make_database_error=lambda message: DatabaseError(message),
+            error_prefix="Failed to search library prompts: ",
+            fts_attribution=self._library_prompt_fts_fields,
+            log_label="library prompts search",
+        )
+        # TASK-34903: shared keyword write path. The spec's callables close
+        # over ``self`` because normalization/canonicalization are instance
+        # methods here; conflict construction preserves the original
+        # 3-arg (message, table, identifier) shape.
+        self._keywords = KeywordStore(
+            self,
+            KeywordStoreSpec(
+                keywords_table="PromptKeywordsTable",
+                fts_table="prompt_keywords_fts",
+                link_table="PromptKeywordLinks",
+                entity_table="Prompts",
+                entity_fk="prompt_id",
+                entity_label="Prompt",
+                sync_entity="PromptKeywordsTable",
+                link_sync_entity="PromptKeywordLinks",
+                entity_uuid_key="prompt_uuid",
+                normalize_keyword=self._normalize_keyword,
+                canonicalize_keywords=self._canonicalize_prompt_keywords,
+                make_input_error=lambda message: InputError(message),
+                make_database_error=lambda message: DatabaseError(message),
+                make_conflict=lambda site, kw_id: ConflictError(
+                    "Failed to undelete keyword due to version mismatch or it was not found."
+                    if site == "undelete"
+                    else "Failed to soft-delete keyword due to a version mismatch.",
+                    "PromptKeywordsTable",
+                    kw_id,
+                ),
+                unlink_all_links=True,
+            ),
+        )
 
         logging.info(
             f"Initializing PromptsDatabase object for path: {self.db_path_str} [Client ID: {self.client_id}]"
@@ -1323,30 +1390,13 @@ class PromptsDatabase:
             logging.error("Prompt FTS delete failed category={}", type(e).__name__)
             raise DatabaseError("Failed to delete Prompt FTS.") from None
 
-    def _update_fts_prompt_keyword(
-        self, conn: sqlite3.Connection, keyword_id: int, keyword: str
-    ):
-        try:
-            conn.execute(
-                "INSERT OR REPLACE INTO prompt_keywords_fts (rowid, keyword) VALUES (?, ?)",
-                (keyword_id, keyword),
-            )
-        except sqlite3.Error as e:
-            logging.error(
-                "Prompt keyword FTS update failed category={}", type(e).__name__
-            )
-            raise DatabaseError("Failed to update Prompt keyword FTS.") from None
+    def _update_fts_prompt_keyword(self, conn, keyword_id: int, keyword: str) -> None:
+        """Delegate to the shared keyword store (task-34903)."""
+        self._keywords.update_fts(conn, keyword_id, keyword)
 
-    def _delete_fts_prompt_keyword(self, conn: sqlite3.Connection, keyword_id: int):
-        try:
-            conn.execute(
-                "DELETE FROM prompt_keywords_fts WHERE rowid = ?", (keyword_id,)
-            )
-        except sqlite3.Error as e:
-            logging.error(
-                "Prompt keyword FTS delete failed category={}", type(e).__name__
-            )
-            raise DatabaseError("Failed to delete Prompt keyword FTS.") from None
+    def _delete_fts_prompt_keyword(self, conn, keyword_id: int) -> None:
+        """Delegate to the shared keyword store (task-34903)."""
+        self._keywords.delete_fts(conn, keyword_id)
 
     # --- Public Mutating Methods ---
     def add_keyword(self, keyword_text: str) -> Optional[int]:
@@ -1365,130 +1415,12 @@ class PromptsDatabase:
     def _add_keyword_full(
         self, keyword_text: str
     ) -> Tuple[Optional[int], Optional[str]]:
-        if not keyword_text or not keyword_text.strip():
-            raise InputError("Keyword cannot be empty.")
-        normalized_keyword = self._normalize_keyword(keyword_text)
-        current_time = self._get_current_utc_timestamp_str()
-        client_id = self.client_id
-
-        try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT id, uuid, deleted, version FROM PromptKeywordsTable WHERE keyword = ?",
-                    (normalized_keyword,),
-                )
-                existing = cursor.fetchone()
-
-                if existing:
-                    kw_id, kw_uuid, is_deleted, current_version = (
-                        existing["id"],
-                        existing["uuid"],
-                        existing["deleted"],
-                        existing["version"],
-                    )
-                    if is_deleted:  # Undelete
-                        new_version = current_version + 1
-                        cursor.execute(
-                            "UPDATE PromptKeywordsTable SET deleted=0, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
-                            (
-                                current_time,
-                                new_version,
-                                client_id,
-                                kw_id,
-                                current_version,
-                            ),
-                        )
-                        if cursor.rowcount == 0:
-                            raise ConflictError(
-                                "Failed to undelete keyword due to version mismatch or it was not found.",
-                                "PromptKeywordsTable",
-                                kw_id,
-                            )
-                        cursor.execute(
-                            "SELECT * FROM PromptKeywordsTable WHERE id=?", (kw_id,)
-                        )
-                        payload = dict(cursor.fetchone())
-                        self._log_sync_event(
-                            conn,
-                            "PromptKeywordsTable",
-                            kw_uuid,
-                            "update",
-                            new_version,
-                            payload,
-                        )
-                        self._update_fts_prompt_keyword(conn, kw_id, normalized_keyword)
-                        return kw_id, kw_uuid
-                    else:  # Already active, just return its ID and UUID
-                        logger.debug(
-                            "Prompt keyword reused operation=add_keyword "
-                            "category=existing"
-                        )
-                        return kw_id, kw_uuid
-                else:  # New keyword
-                    new_uuid = self._generate_uuid()
-                    new_version = 1
-                    cursor.execute(
-                        "INSERT INTO PromptKeywordsTable (keyword, uuid, last_modified, version, client_id, deleted) VALUES (?, ?, ?, ?, ?, 0)",
-                        (
-                            normalized_keyword,
-                            new_uuid,
-                            current_time,
-                            new_version,
-                            client_id,
-                        ),
-                    )
-                    kw_id = cursor.lastrowid
-                    if not kw_id:
-                        raise DatabaseError("Failed to get ID for new prompt keyword.")
-                    cursor.execute(
-                        "SELECT * FROM PromptKeywordsTable WHERE id=?", (kw_id,)
-                    )
-                    payload = dict(cursor.fetchone())
-                    self._log_sync_event(
-                        conn,
-                        "PromptKeywordsTable",
-                        new_uuid,
-                        "create",
-                        new_version,
-                        payload,
-                    )
-                    self._update_fts_prompt_keyword(conn, kw_id, normalized_keyword)
-                    return kw_id, new_uuid
-        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as exc:
-            logger.error(
-                "Prompt keyword write failed operation=add_keyword category={}",
-                type(exc).__name__,
-            )
-            if isinstance(exc, (InputError, ConflictError, DatabaseError)):
-                raise
-            raise DatabaseError("Failed to add or update Prompt keyword.") from None
+        """Add (or undelete) a keyword; see KeywordStore.add_keyword_full."""
+        return self._keywords.add_keyword_full(keyword_text)
 
     def get_active_keyword_by_text(self, keyword_text: str) -> Optional[Dict]:
-        """
-        Fetches an active (not deleted) keyword by its exact normalized text.
-
-        Args:
-            keyword_text: The keyword text to search for.
-
-        Returns:
-            A dictionary of the keyword's data if found and active, else None.
-        """
-        if not keyword_text or not keyword_text.strip():
-            return None  # Or raise InputError if strictness is preferred here
-        normalized_keyword = self._normalize_keyword(keyword_text)
-        query = "SELECT id, uuid, keyword, last_modified, version, client_id FROM PromptKeywordsTable WHERE keyword = ? AND deleted = 0"
-        try:
-            cursor = self.execute_query(query, (normalized_keyword,))
-            result = cursor.fetchone()
-            return dict(result) if result else None
-        except (DatabaseError, sqlite3.Error) as e:
-            logger.error(
-                f"Error fetching active keyword by text '{normalized_keyword}': {e}"
-            )
-            # Depending on desired strictness, could raise or return None
-            # For a simple check, returning None on error is acceptable if the next step handles it.
-            return None
+        """Fetch an active keyword by exact normalized text; see KeywordStore."""
+        return self._keywords.get_active_keyword_by_text(keyword_text)
 
     def add_prompt(
         self,
@@ -1838,125 +1770,11 @@ class PromptsDatabase:
             else:
                 raise DatabaseError(f"Failed to process prompt '{name}': {e}") from e
 
-    def update_keywords_for_prompt(self, prompt_id: int, keywords_list: List[str]):
-        normalized_new_keywords = self._canonicalize_prompt_keywords(keywords_list)
-
-        try:
-            # TASK-32801.2: same shape as the Media P0 (TASK-32801.1). This
-            # said it is 'called within an existing transaction' and took the
-            # raw connection, but the connection keeps the legacy isolation
-            # level, so a caller that opened none left an implicit transaction
-            # that nothing committed -- and `transaction()` then borrows it and
-            # skips its own commit, so every later write on that thread is
-            # rolled back at close. `Prompts_Interop.update_keywords_for_prompt`
-            # is exactly such a wrapper; it has no caller today, which made this
-            # a trap rather than a live loss. `transaction()` joins an open
-            # outer transaction, so `add_prompt` and friends are unaffected.
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-
-                # Get prompt_uuid for logging
-                cursor.execute(
-                    "SELECT uuid FROM Prompts WHERE id = ? AND deleted = 0", (prompt_id,)
-                )
-                prompt_info = cursor.fetchone()
-                if not prompt_info:
-                    raise InputError(
-                        f"Cannot update keywords: Prompt ID {prompt_id} not found or deleted."
-                    )
-                prompt_uuid = prompt_info["uuid"]
-
-                # Get current keywords for the prompt
-                cursor.execute(
-                    """
-                               SELECT pkl.keyword_id, pkw.keyword, pkw.uuid as keyword_uuid
-                               FROM PromptKeywordLinks pkl
-                                        JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
-                               WHERE pkl.prompt_id = ? AND pkw.deleted = 0
-                               """,
-                    (prompt_id,),
-                )
-                current_keyword_links = {
-                    row["keyword_id"]: {"text": row["keyword"], "uuid": row["keyword_uuid"]}
-                    for row in cursor.fetchall()
-                }
-                current_keyword_ids = set(current_keyword_links.keys())
-
-                target_keyword_data: Dict[
-                    int, Dict[str, str]
-                ] = {}  # {keyword_id: {'text': text, 'uuid': uuid}}
-                if normalized_new_keywords:
-                    for kw_text in normalized_new_keywords:
-                        # _add_keyword_full is an instance method, it will use the existing transaction
-                        kw_id, kw_uuid = self._add_keyword_full(kw_text)
-                        if kw_id and kw_uuid:
-                            target_keyword_data[kw_id] = {"text": kw_text, "uuid": kw_uuid}
-                        else:
-                            # This should not happen if add_keyword is robust
-                            raise DatabaseError(
-                                f"Failed to get/add keyword '{kw_text}' during prompt keyword update."
-                            )
-
-                target_keyword_ids = set(target_keyword_data.keys())
-
-                ids_to_add = target_keyword_ids - current_keyword_ids
-                ids_to_remove = current_keyword_ids - target_keyword_ids
-                link_sync_version = 1  # For link/unlink operations, version is on the junction table itself if it had one, or just 1 for the event
-
-                if ids_to_remove:
-                    remove_placeholders = ",".join("?" * len(ids_to_remove))
-                    cursor.execute(
-                        f"DELETE FROM PromptKeywordLinks WHERE prompt_id = ? AND keyword_id IN ({remove_placeholders})",
-                        (prompt_id, *list(ids_to_remove)),
-                    )
-                    for removed_id in ids_to_remove:
-                        keyword_uuid = current_keyword_links[removed_id]["uuid"]
-                        link_composite_uuid = (
-                            f"{prompt_uuid}_{keyword_uuid}"  # Composite UUID for the link
-                        )
-                        payload = {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid}
-                        self._log_sync_event(
-                            conn,
-                            "PromptKeywordLinks",
-                            link_composite_uuid,
-                            "unlink",
-                            link_sync_version,
-                            payload,
-                        )
-
-                if ids_to_add:
-                    insert_params = [(prompt_id, kid) for kid in ids_to_add]
-                    cursor.executemany(
-                        "INSERT OR IGNORE INTO PromptKeywordLinks (prompt_id, keyword_id) VALUES (?, ?)",
-                        insert_params,
-                    )
-                    for added_id in ids_to_add:
-                        keyword_uuid = target_keyword_data[added_id]["uuid"]
-                        link_composite_uuid = f"{prompt_uuid}_{keyword_uuid}"
-                        payload = {"prompt_uuid": prompt_uuid, "keyword_uuid": keyword_uuid}
-                        self._log_sync_event(
-                            conn,
-                            "PromptKeywordLinks",
-                            link_composite_uuid,
-                            "link",
-                            link_sync_version,
-                            payload,
-                        )
-
-                if ids_to_add or ids_to_remove:
-                    logger.debug(
-                        "Prompt keyword membership updated added={} removed={}",
-                        len(ids_to_add),
-                        len(ids_to_remove),
-                    )
-        except (InputError, DatabaseError, sqlite3.Error) as exc:
-            logger.error(
-                "Prompt keyword membership update failed category={}",
-                type(exc).__name__,
-            )
-            if isinstance(exc, (InputError, DatabaseError)):
-                raise
-            raise DatabaseError("Keyword update failed.") from None
+    def update_keywords_for_prompt(
+        self, prompt_id: int, keywords_list: List[str]
+    ) -> None:
+        """Synchronize the Prompt row's keyword links; see KeywordStore."""
+        self._keywords.update_keywords_for_entity(prompt_id, keywords_list)
 
     def update_prompt_by_id(
         self,
@@ -2855,111 +2673,10 @@ class PromptsDatabase:
         return restored_payload
 
     def soft_delete_keyword(self, keyword_text: str) -> bool:
+        """Soft-delete a keyword and unlink it; see KeywordStore."""
         if not keyword_text or not keyword_text.strip():
             raise InputError("Keyword to delete cannot be empty.")
-        normalized_keyword = self._normalize_keyword(keyword_text)
-        current_time = self._get_current_utc_timestamp_str()
-        client_id = self.client_id
-
-        try:
-            with self.transaction() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT id, uuid, version FROM PromptKeywordsTable WHERE keyword = ? AND deleted = 0",
-                    (normalized_keyword,),
-                )
-                kw_info = cursor.fetchone()
-                if not kw_info:
-                    logger.warning(
-                        f"Prompt keyword '{normalized_keyword}' not found or already deleted."
-                    )
-                    return False
-
-                kw_id, kw_uuid, current_version = (
-                    kw_info["id"],
-                    kw_info["uuid"],
-                    kw_info["version"],
-                )
-                new_version = current_version + 1
-
-                cursor.execute(
-                    "UPDATE PromptKeywordsTable SET deleted=1, last_modified=?, version=?, client_id=? WHERE id=? AND version=?",
-                    (current_time, new_version, client_id, kw_id, current_version),
-                )
-                if cursor.rowcount == 0:
-                    raise ConflictError(
-                        "Failed to soft-delete keyword due to a version mismatch.",
-                        "PromptKeywordsTable",
-                        kw_id,
-                    )
-
-                delete_payload = {
-                    "uuid": kw_uuid,
-                    "last_modified": current_time,
-                    "version": new_version,
-                    "client_id": client_id,
-                    "deleted": 1,
-                }
-                self._log_sync_event(
-                    conn,
-                    "PromptKeywordsTable",
-                    kw_uuid,
-                    "delete",
-                    new_version,
-                    delete_payload,
-                )
-                self._delete_fts_prompt_keyword(conn, kw_id)
-
-                # Explicitly unlink from prompts and log events
-                cursor.execute(
-                    """
-                               SELECT p.uuid AS prompt_uuid
-                               FROM PromptKeywordLinks pkl
-                                        JOIN Prompts p ON pkl.prompt_id = p.id
-                               WHERE pkl.keyword_id = ? AND p.deleted = 0
-                               """,
-                    (kw_id,),
-                )
-                prompts_to_unlink = cursor.fetchall()
-
-                if prompts_to_unlink:
-                    # FK ON DELETE CASCADE will handle actual deletion from PromptKeywordLinks.
-                    # Log these unlinks.
-                    cursor.execute(
-                        "DELETE FROM PromptKeywordLinks WHERE keyword_id = ?", (kw_id,)
-                    )
-                    link_sync_version = 1
-                    for p_to_unlink in prompts_to_unlink:
-                        prompt_uuid_val = p_to_unlink["prompt_uuid"]
-                        link_composite_uuid = f"{prompt_uuid_val}_{kw_uuid}"
-                        unlink_payload = {
-                            "prompt_uuid": prompt_uuid_val,
-                            "keyword_uuid": kw_uuid,
-                        }
-                        self._log_sync_event(
-                            conn,
-                            "PromptKeywordLinks",
-                            link_composite_uuid,
-                            "unlink",
-                            link_sync_version,
-                            unlink_payload,
-                        )
-                    logging.debug(
-                        f"Unlinked keyword ID {kw_id} from {len(prompts_to_unlink)} prompts during soft delete."
-                    )
-
-                logger.info(
-                    f"Soft deleted prompt keyword '{normalized_keyword}' (ID: {kw_id}, UUID: {kw_uuid})."
-                )
-                return True
-        except (InputError, ConflictError, DatabaseError, sqlite3.Error) as e:
-            logger.opt(exception=True).error(
-                f"Error soft deleting prompt keyword '{keyword_text}': {e}"
-            )
-            if isinstance(e, (InputError, ConflictError, DatabaseError)):
-                raise e
-            else:
-                raise DatabaseError(f"Failed to soft delete prompt keyword: {e}") from e
+        return self._keywords.soft_delete_keyword(keyword_text)
 
     # --- Read Methods ---
     def get_all_active_prompt_ids(self) -> List[int]:
@@ -3406,7 +3123,6 @@ class PromptsDatabase:
 
     _LIBRARY_PROMPT_PREVIEW_CHARS = 241
     _LIBRARY_PROMPT_KEYWORD_CAP = 20
-    _LIBRARY_PROMPT_FTS_TOKEN_LIMIT = 20
     _LIBRARY_PROMPT_SECTIONS = (
         "details",
         "system_prompt",
@@ -3419,35 +3135,21 @@ class PromptsDatabase:
         """Escape LIKE metacharacters so user input matches literally."""
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
-    @classmethod
-    def _library_prompt_fts_query(cls, raw_query: str) -> Optional[str]:
-        """Build a safe FTS5 MATCH query from raw user text (operators inert).
-
-        The AND-of-quoted-tokens form, not a phrase: each token is
-        double-quoted and they are space-joined, which is FTS5's implicit
-        AND. Returns None when the input contains no usable tokens.
-        """
-        tokens = re.findall(r"\w+", raw_query, flags=re.UNICODE)
-        if not tokens:
-            return None
-        tokens = tokens[: cls._LIBRARY_PROMPT_FTS_TOKEN_LIMIT]
-        return " ".join(quote_fts5_token(token) for token in tokens)
-
     def _library_keywords_for_prompts(
         self, conn: sqlite3.Connection, prompt_ids: List[int]
     ) -> Dict[int, List[str]]:
         """Fetch active keywords for a page of prompt ids, grouped by prompt id."""
         if not prompt_ids:
             return {}
-        placeholders = ",".join("?" * len(prompt_ids))
-        query = f"""
+        query = """
             SELECT pkl.prompt_id, k.keyword
             FROM PromptKeywordLinks pkl
             JOIN PromptKeywordsTable k ON pkl.keyword_id = k.id
-            WHERE pkl.prompt_id IN ({placeholders}) AND k.deleted = 0
+            WHERE pkl.prompt_id IN (SELECT value FROM json_each(?))
+              AND k.deleted = 0
             ORDER BY k.keyword COLLATE NOCASE
         """
-        cursor = conn.execute(query, tuple(prompt_ids))
+        cursor = conn.execute(query, (json.dumps(prompt_ids),))
         keywords_by_prompt: Dict[int, List[str]] = {}
         for row in cursor.fetchall():
             keywords_by_prompt.setdefault(row["prompt_id"], []).append(row["keyword"])
@@ -3565,125 +3267,14 @@ class PromptsDatabase:
         user_prompt/prompt_definition, tokenized safe FTS over the same
         fields, and keyword substring via PromptKeywordLinks. Exact-name hits
         rank first, then recency, then id.
-
-        Args:
-            query: Raw user search text.
-            limit: Maximum number of items to return.
-            offset: Number of items to skip.
-
-        Returns:
-            Dict with ``items`` (library projections plus ``matched_fields``
-            and ``matched_keywords``) and ``total``.
-
-        Raises:
-            DatabaseError: If a database error occurs.
         """
-        like_pattern = f"%{self._escape_library_prompt_like(query)}%"
-        fts_query = self._library_prompt_fts_query(query)
-        keyword_branch = (
-            "id IN (SELECT pkl.prompt_id FROM PromptKeywordLinks pkl "
-            "JOIN PromptKeywordsTable k ON pkl.keyword_id = k.id "
-            "WHERE k.deleted = 0 AND k.keyword LIKE ? ESCAPE '\\')"
+        return library_search_page(
+            self,
+            self._library_search_spec,
+            query=query,
+            limit=limit,
+            offset=offset,
         )
-        section_columns = (
-            ("details", 2),
-            ("system_prompt", 3),
-            ("user_prompt", 4),
-            ("prompt_definition", 5),
-        )
-
-        branches = [
-            "LOWER(name) = LOWER(?)",
-            "name LIKE ? ESCAPE '\\'",
-        ]
-        params: List[Any] = [query, like_pattern]
-        for column, _index in section_columns:
-            branches.append(f"coalesce({column}, '') LIKE ? ESCAPE '\\'")
-            params.append(like_pattern)
-        fts_index: Optional[int] = None
-        if fts_query is not None:
-            fts_index = len(branches)
-            branches.append(
-                "id IN (SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)"
-            )
-            params.append(fts_query)
-        keyword_index = len(branches)
-        branches.append(keyword_branch)
-        params.append(like_pattern)
-
-        where_clause = " OR ".join(f"({branch})" for branch in branches)
-        hit_selects = ", ".join(
-            f"({branch}) AS hit_{index}" for index, branch in enumerate(branches)
-        )
-        hit_params = list(params)
-
-        try:
-            with self.transaction() as conn:
-                total = conn.execute(
-                    f"SELECT COUNT(*) AS count FROM Prompts "
-                    f"WHERE deleted = 0 AND ({where_clause})",
-                    tuple(params),
-                ).fetchone()["count"]
-                cursor = conn.execute(
-                    f"""
-                    SELECT {self._library_prompt_page_columns()},
-                           {hit_selects}
-                    FROM Prompts
-                    WHERE deleted = 0 AND ({where_clause})
-                    ORDER BY (LOWER(name) = LOWER(?)) DESC,
-                             last_modified DESC, id DESC
-                    LIMIT ? OFFSET ?
-                    """,
-                    tuple(hit_params + params + [query, limit, offset]),
-                )
-                rows = cursor.fetchall()
-                keywords_by_prompt = self._library_keywords_for_prompts(
-                    conn, [row["id"] for row in rows]
-                )
-                # FTS can hit across token boundaries where no LIKE branch
-                # fires; attribute those rows honestly with per-column probes.
-                fts_only_fields: Dict[int, List[str]] = {}
-                if fts_index is not None and fts_query is not None:
-                    for row in rows:
-                        literal_hit = any(
-                            row[f"hit_{index}"]
-                            for index in range(len(branches))
-                            if index != fts_index
-                        )
-                        if row[f"hit_{fts_index}"] and not literal_hit:
-                            fts_only_fields[row["id"]] = (
-                                self._library_prompt_fts_fields(
-                                    conn, row["id"], fts_query
-                                )
-                            )
-            lowered_query = query.lower()
-            items = []
-            for row in rows:
-                item = self._library_prompt_item(row, keywords_by_prompt)
-                matched_fields = set()
-                if row["hit_0"] or row["hit_1"]:
-                    matched_fields.add("name")
-                for column, index in section_columns:
-                    if row[f"hit_{index}"]:
-                        matched_fields.add(column)
-                if fts_index is not None and row[f"hit_{fts_index}"]:
-                    matched_fields.update(fts_only_fields.get(row["id"], []))
-                if row[f"hit_{keyword_index}"]:
-                    matched_fields.add("keywords")
-                item["matched_fields"] = sorted(matched_fields)
-                item["matched_keywords"] = [
-                    keyword
-                    for keyword in keywords_by_prompt.get(row["id"], [])
-                    if lowered_query in keyword.lower()
-                ][: self._LIBRARY_PROMPT_KEYWORD_CAP]
-                items.append(item)
-            return {"items": items, "total": total}
-        except sqlite3.Error as e:
-            logger.error(
-                "Error searching library prompts "
-                f"(query_chars={len(query)}, limit={limit}, offset={offset}): {e}"
-            )
-            raise DatabaseError(f"Failed to search library prompts: {e}") from e
 
     def get_library_prompt_overview(self, prompt_uuid: str) -> Optional[Dict[str, Any]]:
         """Return a bounded overview of one active prompt.
@@ -3975,8 +3566,7 @@ class PromptsDatabase:
             id_params: list[Any] = []
             if any(field in text_search_fields for field in search_fields):
                 id_legs.append(
-                    "p.id IN (SELECT rowid FROM prompts_fts "
-                    "WHERE prompts_fts MATCH ?)"
+                    "p.id IN (SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)"
                 )
                 id_params.append(effective_match_query)
             if "keywords" in search_fields:
@@ -4007,11 +3597,15 @@ class PromptsDatabase:
                 paginated_params = tuple(params + [results_per_page, offset])
                 results_cursor = self.execute_query(results_sql, paginated_params)
                 results_list = [dict(row) for row in results_cursor.fetchall()]
-                # Attach keywords to each result
+                # Attach keywords to each result with ONE batched query
+                # (the per-row fetch_keywords_for_prompt loop made page
+                # cost O(page_size) queries; this matches
+                # list_library_prompts_page).
+                keywords_by_prompt = self._library_keywords_for_prompts(
+                    self.get_connection(), [res["id"] for res in results_list]
+                )
                 for res_dict in results_list:
-                    res_dict["keywords"] = self.fetch_keywords_for_prompt(
-                        res_dict["id"], include_deleted=False
-                    )
+                    res_dict["keywords"] = keywords_by_prompt.get(res_dict["id"], [])
 
             # Log success metrics
             duration = time.time() - start_time
@@ -4467,7 +4061,11 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed to fetch all keywords: {e}") from e
 
     def search_prompts_by_keyword(
-        self, keyword: str, include_deleted: bool = False
+        self,
+        keyword: str,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
     ) -> List[Dict]:
         """
         Search for prompts that have a specific keyword.
@@ -4475,6 +4073,9 @@ class PromptsDatabase:
         Args:
             keyword: The keyword to search for
             include_deleted: Whether to include soft-deleted prompts
+            limit: Maximum number of prompts to return (page size, matching
+                ``search_prompts``' default).
+            offset: Number of matching prompts to skip before the page.
 
         Returns:
             List of prompt dictionaries that have the keyword
@@ -4487,7 +4088,7 @@ class PromptsDatabase:
         normalized_keyword = self._normalize_keyword(keyword)
 
         query = """
-            SELECT DISTINCT p.* 
+            SELECT DISTINCT p.*
             FROM Prompts p
             JOIN PromptKeywordLinks pkl ON p.id = pkl.prompt_id
             JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
@@ -4498,17 +4099,21 @@ class PromptsDatabase:
         if not include_deleted:
             query += " AND p.deleted = 0 AND pkw.deleted = 0"
 
-        query += " ORDER BY p.name COLLATE NOCASE"
+        query += " ORDER BY p.name COLLATE NOCASE LIMIT ? OFFSET ?"
+        params.extend((limit, offset))
 
         try:
-            cursor = self.execute_query(query, tuple(params))
+            conn = self.get_connection()
+            cursor = conn.execute(query, tuple(params))
             results = [dict(row) for row in cursor.fetchall()]
 
-            # Attach keywords to each result
+            # Attach keywords to each result with ONE batched query (the
+            # per-row fetch_keywords_for_prompt loop was N+1 per search).
+            keywords_by_prompt = self._library_keywords_for_prompts(
+                conn, [res["id"] for res in results]
+            )
             for res_dict in results:
-                res_dict["keywords"] = self.fetch_keywords_for_prompt(
-                    res_dict["id"], include_deleted=False
-                )
+                res_dict["keywords"] = keywords_by_prompt.get(res_dict["id"], [])
 
             # Log success metrics
             duration = time.time() - start_time
@@ -4554,7 +4159,11 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed to search prompts by keyword: {e}") from e
 
     def search_prompts_by_text(
-        self, search_text: str, include_deleted: bool = False
+        self,
+        search_text: str,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
     ) -> List[Dict]:
         """
         Full-text search across prompt content.
@@ -4566,6 +4175,9 @@ class PromptsDatabase:
                 of them must appear but they need not be adjacent -- NOT a
                 phrase, and FTS5 operators in it are inert.
             include_deleted: Whether to include soft-deleted prompts
+            limit: Maximum number of prompts to return (page size, matching
+                ``search_prompts``' default).
+            offset: Number of matching prompts to skip before the page.
 
         Returns:
             List of prompt dictionaries matching the search
@@ -4574,7 +4186,6 @@ class PromptsDatabase:
             return []
 
         try:
-            # Use FTS to find matching prompt IDs
             # TASK-19558: `search_text` is plain user text; quote each of
             # its tokens and AND them rather than binding it as an FTS5
             # expression (and rather than one whole-query phrase, which
@@ -4582,33 +4193,34 @@ class PromptsDatabase:
             match_expression = build_and_match_query(search_text)
             if not match_expression:
                 return []
-            cursor = self.execute_query(
-                "SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?",
-                (match_expression,),
+
+            # TASK-32804.10 (same shape as `search_prompts`): keep the
+            # matching-id set in SQLite instead of materialising every
+            # matching rowid in Python and binding them as one
+            # `id IN (?,?,...)` list.
+            conn = self.get_connection()
+            query = (
+                "SELECT * FROM Prompts WHERE id IN "
+                "(SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)"
             )
-            matching_ids = [row["rowid"] for row in cursor.fetchall()]
-
-            if not matching_ids:
-                return []
-
-            # Build query for full prompt data
-            placeholders = ",".join("?" * len(matching_ids))
-            query = f"SELECT * FROM Prompts WHERE id IN ({placeholders})"
-            params = list(matching_ids)
+            params: List[Any] = [match_expression]
 
             if not include_deleted:
                 query += " AND deleted = 0"
 
-            query += " ORDER BY name COLLATE NOCASE"
+            query += " ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?"
+            params.extend((limit, offset))
 
-            cursor = self.execute_query(query, tuple(params))
+            cursor = conn.execute(query, tuple(params))
             results = [dict(row) for row in cursor.fetchall()]
 
-            # Attach keywords to each result
+            # Attach keywords to each result with ONE batched query (the
+            # per-row fetch_keywords_for_prompt loop was N+1 per search).
+            keywords_by_prompt = self._library_keywords_for_prompts(
+                conn, [res["id"] for res in results]
+            )
             for res_dict in results:
-                res_dict["keywords"] = self.fetch_keywords_for_prompt(
-                    res_dict["id"], include_deleted=False
-                )
+                res_dict["keywords"] = keywords_by_prompt.get(res_dict["id"], [])
 
             return results
         except (DatabaseError, sqlite3.Error) as e:
@@ -4646,88 +4258,6 @@ class PromptsDatabase:
             Dictionary with prompt data and keywords, or None if not found
         """
         return self.fetch_prompt_details(prompt_id_or_name_or_uuid, include_deleted)
-
-    def _add_keyword_with_retry(
-        self, keyword_text: str
-    ) -> Tuple[Optional[int], Optional[str]]:
-        """
-        Internal method to add a keyword with retry logic for concurrent access.
-
-        Args:
-            keyword_text: The keyword text to add
-
-        Returns:
-            Tuple of (keyword_id, keyword_uuid)
-        """
-        max_retries = 5
-        retry_delay = 0.1  # Start with 100ms
-
-        for attempt in range(max_retries):
-            try:
-                return self._add_keyword_full(keyword_text)
-            except sqlite3.OperationalError as e:
-                if "database is locked" in str(e) and attempt < max_retries - 1:
-                    logger.warning(
-                        f"Database locked on add_keyword attempt {attempt + 1}, retrying in {retry_delay}s"
-                    )
-                    import time
-
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    raise
-            except Exception:
-                raise
-
-    def execute_query_with_retry(
-        self, query: str, params: tuple = None, *, commit: bool = False
-    ) -> sqlite3.Cursor:
-        """
-        Execute a query with retry logic for database lock errors.
-
-        Args:
-            query: SQL query to execute
-            params: Query parameters
-            commit: Whether to commit after execution
-
-        Returns:
-            Cursor object
-        """
-        max_retries = 5
-        retry_delay = 0.1  # Start with 100ms
-
-        for attempt in range(max_retries):
-            try:
-                return self.execute_query(query, params, commit=commit)
-            except sqlite3.OperationalError as e:
-                if "database is locked" in str(e) and attempt < max_retries - 1:
-                    logger.warning(
-                        f"Database locked on query attempt {attempt + 1}, retrying in {retry_delay}s"
-                    )
-                    import time
-
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    raise
-            except Exception:
-                raise
-
-    def export_keywords_to_csv(
-        self, file_path: Optional[str] = None
-    ) -> Tuple[str, str]:
-        """
-        Export keywords to CSV file.
-        This is a convenience method that calls the standalone function.
-
-        Args:
-            file_path: Optional path for the CSV file. If not provided, generates one.
-
-        Returns:
-            Tuple of (status_message, file_path)
-        """
-        # Call the standalone function directly
-        return export_prompt_keywords_to_csv(self, file_path)
 
     def update_prompt(self, prompt_id: int, **kwargs) -> bool:
         """
@@ -4861,7 +4391,6 @@ def export_prompt_keywords_to_csv(
     import csv
     import tempfile
     import os
-    from datetime import datetime
 
     if not isinstance(db_instance, PromptsDatabase):
         raise TypeError("db_instance must be a PromptsDatabase object.")

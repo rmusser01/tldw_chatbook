@@ -34,3 +34,35 @@ class TraceCallPersistenceError(RuntimeError):
         super().__init__("Provider call trace persistence failed.")
         self.boundary = boundary
         self.reservation_status = reservation_status
+
+
+class TraceSurfaceChangeRefused(ValueError):
+    """A surface fence refused construction before any call was reserved."""
+
+    def __init__(self) -> None:
+        super().__init__("unsupported_surface_change")
+
+
+class TraceReservationRefused(ValueError):
+    """The reservation transaction refused a call and rolled it back.
+
+    TASK-33621.6: like ``TraceSurfaceChangeRefused``, this type survives
+    only a successful rollback (a failed rollback or commit surfaces as a
+    database error instead), so it proves no call was reserved. The code is
+    the code-owned refusal reason, e.g. ``trace_tool_chain_unavailable``.
+    """
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+
+
+class TraceReservationUnconfirmed(TraceCallPersistenceError):
+    """Capture On cannot retry a call whose reservation outcome is unknown.
+
+    TASK-33621.6: the call never entered the provider adapter, so this is
+    not an unknown delivery, but nothing proves no reservation exists. Only
+    an explicit Capture Off send (or Cancel) may continue.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(reservation_status="unknown")

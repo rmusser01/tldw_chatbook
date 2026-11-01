@@ -53,7 +53,10 @@ def test_add_folder_binding_stores_canonical_ro_binding(
 
     assert binding.locator == str(folder.resolve())
     assert binding.label == "project"
-    assert str(binding.binding_kind) in ("local-filesystem", "RuntimeBindingKind.LOCAL_FILESYSTEM")
+    assert str(binding.binding_kind) in (
+        "local-filesystem",
+        "RuntimeBindingKind.LOCAL_FILESYSTEM",
+    )
     assert binding.metadata["access"] == "ro"
     assert str(binding.status) in ("ready", "RuntimeBindingStatus.READY")
 

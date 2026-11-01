@@ -73,7 +73,10 @@ from tldw_chatbook.Image_Generation.config import (
     DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS,
     get_image_generation_config,
 )
-from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
+from tldw_chatbook.Image_Generation.exceptions import (
+    ImageBackendUnavailableError,
+    ImageGenerationError,
+)
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
 from tldw_chatbook.Utils.egress import origin_set
 
@@ -251,13 +254,17 @@ class FalImageAdapter:
             output_format,
             max_bytes=self._max_output_bytes(),
         )
-        return ImageGenResult(content=content, content_type=content_type, bytes_len=len(content))
+        return ImageGenResult(
+            content=content, content_type=content_type, bytes_len=len(content)
+        )
 
     def _max_output_bytes(self) -> int:
         return effective_inline_max_bytes(self._config)
 
     def _timeout(self) -> int:
-        return self._config.fal_image_timeout_seconds or DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS
+        return (
+            self._config.fal_image_timeout_seconds or DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS
+        )
 
     def _resolve_api_key(self) -> str:
         api_key = (self._config.fal_image_api_key or "").strip()
@@ -277,7 +284,11 @@ class FalImageAdapter:
         return cleaned.rstrip("/")
 
     def _resolve_model_path(self, request: ImageGenRequest) -> str:
-        model = request.model or self._config.fal_image_default_model or DEFAULT_FAL_IMAGE_MODEL
+        model = (
+            request.model
+            or self._config.fal_image_default_model
+            or DEFAULT_FAL_IMAGE_MODEL
+        )
         return _validate_model_path(model)
 
     @staticmethod
@@ -350,10 +361,14 @@ class FalImageAdapter:
             raise ImageGenerationError("fal submit response was not JSON")
         request_id = data.get("request_id")
         if not isinstance(request_id, str) or not request_id.strip():
-            raise ImageGenerationError("fal submit response did not include a request_id")
+            raise ImageGenerationError(
+                "fal submit response did not include a request_id"
+            )
         request_id = request_id.strip()
         if not _REQUEST_ID_RE.match(request_id):
-            raise ImageGenerationError("fal submit response returned an invalid request_id")
+            raise ImageGenerationError(
+                "fal submit response returned an invalid request_id"
+            )
         return request_id
 
     @staticmethod
@@ -397,9 +412,15 @@ class FalImageAdapter:
         )
 
     def _poll_until_complete(self, status_url: str, api_key: str) -> None:
-        timeout_seconds = float(self._config.fal_image_timeout_seconds or DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS)
+        timeout_seconds = float(
+            self._config.fal_image_timeout_seconds or DEFAULT_FAL_IMAGE_TIMEOUT_SECONDS
+        )
         poll_interval = max(
-            1.0, float(self._config.fal_image_poll_interval_seconds or DEFAULT_FAL_IMAGE_POLL_INTERVAL_SECONDS)
+            1.0,
+            float(
+                self._config.fal_image_poll_interval_seconds
+                or DEFAULT_FAL_IMAGE_POLL_INTERVAL_SECONDS
+            ),
         )
         deadline = time.monotonic() + timeout_seconds
         # status_url is self-built from the configured base_url plus
@@ -428,7 +449,9 @@ class FalImageAdapter:
             # Anything else (FAILED, an error status, or an unrecognized/
             # missing status) is a hard stop -- only the sanitized status
             # label is included, never the raw response payload.
-            raise ImageGenerationError(f"fal task did not complete (status: {status or 'unknown'})")
+            raise ImageGenerationError(
+                f"fal task did not complete (status: {status or 'unknown'})"
+            )
 
         raise ImageGenerationError("timed out waiting for fal image task result")
 

@@ -14,6 +14,7 @@ So the rank arithmetic, the ADMIT/REJECT rule, the `# admitted:` comment the
 protocol requires in the fixture files, and the report table are pinned here
 and run with no env var set.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -162,7 +163,10 @@ def test_a_mode_that_returned_nothing_at_all_never_counts_as_a_miss():
     )
     outcome = verdict(result)
     assert outcome.admitted is False
-    assert "no rows" in outcome.reason.lower() or "returned nothing" in outcome.reason.lower()
+    assert (
+        "no rows" in outcome.reason.lower()
+        or "returned nothing" in outcome.reason.lower()
+    )
 
 
 def test_a_candidate_with_no_targets_cannot_be_admitted():
@@ -199,7 +203,9 @@ def test_the_admission_comment_renders_a_found_rank_as_a_number():
 def test_the_report_shows_one_row_per_candidate_with_every_mode_and_a_verdict():
     text = format_probe_report(
         [
-            _result(query_id="cand-admit", semantic=(None,), plain=(1,), hybrid=(None,)),
+            _result(
+                query_id="cand-admit", semantic=(None,), plain=(1,), hybrid=(None,)
+            ),
             _result(query_id="cand-reject", semantic=(1,), plain=(1,), hybrid=(1,)),
         ],
         k=10,
@@ -217,7 +223,17 @@ def test_the_report_shows_one_row_per_candidate_with_every_mode_and_a_verdict():
 
 
 def test_the_report_names_the_targets_and_the_depth_it_judged_at():
-    text = format_probe_report([_result(targets=("doc-a", "doc-b"), semantic=(None, None), plain=(1, None), hybrid=(None, None))], k=7)
+    text = format_probe_report(
+        [
+            _result(
+                targets=("doc-a", "doc-b"),
+                semantic=(None, None),
+                plain=(1, None),
+                hybrid=(None, None),
+            )
+        ],
+        k=7,
+    )
     assert "k=7" in text
     assert "doc-a" in text
 

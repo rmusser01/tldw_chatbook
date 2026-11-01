@@ -1,0 +1,2 @@
+Tests/UI/test_console_native_chat_flow.py: formatter-required hunk overlaps changed lines
+Tests/UI/test_console_native_chat_flow.py: normalized formatter debt grew from 157 to 161

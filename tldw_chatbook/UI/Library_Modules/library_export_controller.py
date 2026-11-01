@@ -260,7 +260,7 @@ from ...Library.library_shell_state import (
 )
 from ...Third_Party.textual_fspicker import FileSave
 from ...Utils.path_validation import validate_path_simple
-from ...Widgets.Library import LibraryExportCanvas
+from .canvas_sync import _sync_library_canvas
 from .library_export_state import LibraryExportState
 
 if TYPE_CHECKING:
@@ -767,22 +767,31 @@ class LibraryExportController:
         note_flush = await self._flush_library_note_save()
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
+        # TASK-34000.22 fix round 1 (C-1): the Media reader's authoring forms
+        # refuse this exit too, beside the note flush -- the row used to move
+        # to Export while the dirty form stayed set behind it, and every way
+        # back was then refused for a form nobody could see. The user stays
+        # on Media with one toast and the form on screen.
+        if self._screen._library_media_editor_dirty():
+            self._screen._notify_media_editor_dirty_veto()
+            return
         # task-4023 AC#7: remember which canvas opened Export so Escape
-        # (action_library_export_back) can return there -- "Export… from
-        # within Media navigates away with no return path". Recorded
-        # AFTER the flush admits the switch, BEFORE the row id moves.
-        self._library_export_origin_row_id = self._library_selected_row_id
+        # (action_library_export_back) can return there. Recorded AFTER the
+        # flush admits the switch, BEFORE the row id moves; a repeat press
+        # (Export already selected) keeps the first press's origin.
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            self._library_export_origin_row_id = self._library_selected_row_id
         self._set_library_destination_with_conversation_fence(LIBRARY_ROW_INGEST_EXPORT)
         self._reset_library_export_transient_state(scope)
-        # task-21116: rail selection + canvas-child swap only, never a
-        # whole-screen rebuild for a per-click section "Export…" action.
-        await self._apply_library_open_item_surface(
-            lambda: LibraryExportCanvas(
-                self._build_library_export_state(),
-                id="library-export-canvas",
-            )
-        )
-        self._start_library_export_counts_worker()
+        # task-31249: schedule the projection after the press dispatch;
+        # inline, the structural recompose deadlocks (see the screen helper
+        # ``LibraryScreen._project_library_export_canvas``). The counts
+        # worker starts there too, once the surface has landed.
+        self.call_after_refresh(self._project_library_export_canvas)
+
+    async def _project_library_export_canvas(self) -> None:
+        """Forward to the screen's out-of-band projection (task-31249)."""
+        await self._screen._project_library_export_canvas()
 
     def _library_export_is_server_mode(self) -> bool:
         """True when the Library is in server runtime mode.
@@ -934,17 +943,29 @@ class LibraryExportController:
         run_id = self._library_export_run_id
         self._library_export_cancel_event = threading.Event()
         cancel_event = self._library_export_cancel_event
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._sync_library_emergency_guard_presentation)
-        self.call_after_refresh(
-            self._start_library_export_worker,
-            run_id=run_id,
-            scope=self._library_export_scope,
-            name=name,
-            description=description,
-            media_quality=media_quality,
-            destination=destination,
-            cancel_event=cancel_event,
+
+        # TASK-21243: canvas-scoped. The transition INTO ``running`` only
+        # changes export-canvas inputs (status line, running gate on the
+        # Export button); the whole-screen recompose it used to pay rebuilt
+        # the rail and shell for a form the user never left. The
+        # emergency-guard sync and the worker start are ordered after the
+        # canvas's own recompose via the seam's follow-up hook; a failure
+        # inside the seam takes its own whole-screen fallback and re-runs
+        # the follow-up there, preserving the old ordering.
+        def _after_export_running_recompose() -> None:
+            self._sync_library_emergency_guard_presentation()
+            self._start_library_export_worker(
+                run_id=run_id,
+                scope=self._library_export_scope,
+                name=name,
+                description=description,
+                media_quality=media_quality,
+                destination=destination,
+                cancel_event=cancel_event,
+            )
+
+        _sync_library_canvas(
+            self._screen, "export", then=_after_export_running_recompose
         )
 
     @staticmethod
@@ -1288,17 +1309,26 @@ class LibraryExportController:
         self._library_export_quality_choices_visible = (
             not self._library_export_quality_choices_visible
         )
-        self.refresh(recompose=True)
-        if self._library_export_quality_choices_visible:
-            self.call_after_refresh(
-                self._focus_library_choice_strip_active,
-                ".library-export-quality-choice",
-                str(self._library_export_form.get("quality", DEFAULT_MEDIA_QUALITY)),
-            )
-        else:
-            self.call_after_refresh(
-                self._focus_library_control, "#library-export-quality"
-            )
+
+        # TASK-21243: canvas-scoped -- the strip open/close only changes
+        # export-canvas inputs. The focus follow-up rides the canvas's own
+        # recompose through the seam (the ordering guarantee the
+        # PostRecomposeCallback hook exists for); a seam failure takes the
+        # whole-screen fallback and re-runs it there.
+        def _after_quality_strip_recompose() -> None:
+            if self._library_export_quality_choices_visible:
+                self._focus_library_choice_strip_active(
+                    ".library-export-quality-choice",
+                    str(
+                        self._library_export_form.get("quality", DEFAULT_MEDIA_QUALITY)
+                    ),
+                )
+            else:
+                self._focus_library_control("#library-export-quality")
+
+        _sync_library_canvas(
+            self._screen, "export", then=_after_quality_strip_recompose
+        )
 
     @on(Button.Pressed, ".library-export-quality-choice")
     def handle_library_export_quality_choice(self, event: Button.Pressed) -> None:
@@ -1312,8 +1342,14 @@ class LibraryExportController:
         self._library_export_quality_choices_visible = False
         if requested in MEDIA_QUALITY_OPTIONS:
             self._library_export_form["quality"] = requested
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._focus_library_control, "#library-export-quality")
+
+        # TASK-21243: canvas-scoped (same shape as the strip open/close).
+        def _after_quality_choice_recompose() -> None:
+            self._focus_library_control("#library-export-quality")
+
+        _sync_library_canvas(
+            self._screen, "export", then=_after_quality_choice_recompose
+        )
 
     @on(Button.Pressed, "#library-export-destination")
     def handle_library_export_choose_destination(self, event: Button.Pressed) -> None:
@@ -1406,7 +1442,9 @@ class LibraryExportController:
         self._library_export_form["destination"] = str(normalized_path)
         self._library_export_form["destination_error"] = ""
         self._library_export_form["destination_exists"] = normalized_path.exists()
-        self.refresh(recompose=True)
+        # TASK-21243: canvas-scoped -- only the export canvas's destination
+        # row changes.
+        _sync_library_canvas(self._screen, "export")
 
     def _refuse_library_export_destination(self, reason: str) -> None:
         """Clear the destination and say why, on the destination row.
@@ -1419,7 +1457,8 @@ class LibraryExportController:
         self._library_export_form["destination_error"] = (
             f"Can't save there: {reason}"
         )
-        self.refresh(recompose=True)
+        # TASK-21243: canvas-scoped (same destination-row-only delta).
+        _sync_library_canvas(self._screen, "export")
 
 # --- BEGIN generated export-controller-state shims ---
 # Permanent, not a cleanup-PR deletion target -- same reasoning as

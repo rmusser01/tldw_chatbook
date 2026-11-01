@@ -12,6 +12,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
@@ -328,7 +329,8 @@ class PetdexImportReviewDialog(
             self._sync()
 
     def _set_state_options(self, states: tuple) -> None:
-        choices = [(state.name, state.name) for state in states]
+        # TASK-34400: state names are typed or imported; str prompts are markup.
+        choices = [(Content(state.name), state.name) for state in states]
         names = {state.name for state in states}
         defaults = {
             "idle": "idle",

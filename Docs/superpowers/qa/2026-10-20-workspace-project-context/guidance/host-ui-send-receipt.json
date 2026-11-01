@@ -1,0 +1,79 @@
+{
+  "profile": "fresh private task-local profile",
+  "model": "deepseek-flash",
+  "protocol": "native tools",
+  "scenarios": [
+    {
+      "name": "host-ui-send",
+      "question": "Summarize this project",
+      "accepted": true,
+      "run_status": "stopped",
+      "policy_before": [
+        [
+          "62303604-919c-4f0f-bda7-92ee6528d2ea",
+          1,
+          0,
+          0,
+          2,
+          "2026-10-21T06:14:59"
+        ]
+      ],
+      "policy_after": [
+        [
+          "62303604-919c-4f0f-bda7-92ee6528d2ea",
+          1,
+          0,
+          0,
+          2,
+          "2026-10-21T06:14:59"
+        ]
+      ],
+      "durable_policy_unchanged": true,
+      "saved_policy": {
+        "auto_retrieve": "never",
+        "assistant_access": "blocked"
+      },
+      "staged_evidence_consumed": true,
+      "full_console_state_file": "host-ui-send-state.jsonl",
+      "full_console_state_sha256": "925552186b08473b875f37b5802903ff277494f0b845571628c86e36e6c98892",
+      "final_answer": "",
+      "user_messages": [
+        {
+          "role": "user",
+          "content": "Summarize this project"
+        }
+      ],
+      "tool_transcript": [
+        "I'll take a look at the project folder first.",
+        "âš™ find_tools â†’ local:ask_user â€” ask_user: Ask the user up to 4 multiple-choice questions and wait for the answers. Use it ONLY for a decision that is genuinely the user's to make: a preference, a trade-off between valid designs, or something neither the code nor the conversation can tell you. Do not ask when a conventional default exists, when the answer is discoverable by reading the code or running a tool, when you can proceed and state your assumption, or to confirm a plan you already have. Batch related questions into ONE call instead of asking several times. Each question offers 2-4 options; the user can always type a free-text 'Other' answer instead. The result lists the selected labels per question; 'unanswered' marks questions the user skipped, and 'answered': false with a reason means no answer will come. If the reason is 'busy', another question is already waiting for the user: proceed without asking again this turn.\nlocal:fs_list â€” fs_list: List a directory's entries (dirs first, then files), relative to the workspace root.\nlocal:fs_read â€” fs_read: Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.\nlocal:git_blame â€” git_blame: Show per-line authorship (blame) for a file in the workspace repository, optionally restricted to a 1-based inclusive line range. Read-only; cannot modify the repository.\nlocal:git_branches â€” git_branches: List the workspace repository's branches (current branch marked with *), with commit and upstream info. Read-only; cannot modify the repository.\ncanvas:canvas_guide â€” canvas_guide: Read a focused authoring guide after the user requests or accepts Canvas.\ncanvas:canvas_list â€” canvas_list: List named Canvases and selected revision IDs reachable on this conversation branch.\ncanvas:canvas_read â€” canvas_read: Read a reachable Canvas's complete selected HTML and revision_id before updating it.",
+        "âš™ load_tools â†’ loaded: fs_list, fs_read, git_branches",
+        "âš™ fs_list â†’ pyproject.toml\nREADME.md",
+        "âš™ fs_read â†’ ERROR: tool call cancelled: fs_read",
+        "âš™ fs_read"
+      ]
+    }
+  ],
+  "gateway_type": "ConsoleProviderGateway",
+  "route": "normal ChatScreen.handle_console_send_message(Button.Pressed) and runtime-owned send",
+  "action_snapshot": {
+    "returned": false,
+    "intended_session": "65cec9df-af8c-4796-9e92-b5e44a0cfb16",
+    "visible_draft_session": "65cec9df-af8c-4796-9e92-b5e44a0cfb16",
+    "active_session": "65cec9df-af8c-4796-9e92-b5e44a0cfb16",
+    "draft_at_action": "Summarize this project",
+    "draft_after_action": "Summarize this project",
+    "send_blocked_reason": "",
+    "saved_user_rows": 0,
+    "pending_send_review": false,
+    "gateway_untouched": true
+  },
+  "stop_on_deadline": true,
+  "action_result": false,
+  "normal_refresh_completed": true,
+  "user_profile_unchanged": {
+    "config_sha256_unchanged": true,
+    "user_data_file_metadata_unchanged": true
+  },
+  "harness_provenance": "Separate Host(Textual App) mounted ChatScreen borrowing a non-running TldwCli instance. This is not a valid normal application UI qualification.",
+  "receipt_schema": "workspace-guidance-qa-v1"
+}

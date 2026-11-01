@@ -7,13 +7,26 @@ import pytest
 from tldw_chatbook import config
 
 
-def test_rag_citation_canonical_writes_default_off() -> None:
+def test_rag_citation_canonical_writes_ship_on() -> None:
+    """Owner decision 2026-10-27 (TASK-33620.8): citations persist by default."""
     parsed = tomllib.loads(config.CONFIG_TOML_CONTENT)
 
-    assert parsed["rag_citations"]["canonical_writes_enabled"] is False
+    assert parsed["rag_citations"]["canonical_writes_enabled"] is True
     assert config.DEFAULT_CONFIG_FROM_TOML["rag_citations"] == {
-        "canonical_writes_enabled": False
+        "canonical_writes_enabled": True
     }
+
+
+def test_rag_citation_switch_missing_key_is_the_shipped_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        config,
+        "load_cli_config_and_ensure_existence",
+        lambda: {"rag_citations": {}},
+    )
+
+    assert config.get_rag_citation_canonical_writes_enabled() is True
 
 
 def test_rag_citation_switch_docstring_describes_return_value() -> None:

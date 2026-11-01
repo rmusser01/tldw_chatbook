@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "pytest",
+    "-q",
+    "--junitxml=Docs\\superpowers\\qa\\2026-10-31-pr3162-backlog-rebase\\review-followup\\card-red.xml",
+    "Tests/UI/test_console_archive_recovery_cards.py::test_receipt_only_retires_its_own_mounted_confirmation"
+  ],
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\review-card-red-2f6affece7",
+  "outer_timeout_seconds": 90
+}

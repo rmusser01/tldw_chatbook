@@ -363,9 +363,7 @@ async def test_llm_provider_catalog_scope_service_forwards_shared_cache_opt_out(
             "discover_models",
             {
                 "provider": "Custom",
-                "staged_settings": {
-                    "api_settings": {"custom": {"api_key": ""}}
-                },
+                "staged_settings": {"api_settings": {"custom": {"api_key": ""}}},
                 "use_shared_cache": False,
             },
         )

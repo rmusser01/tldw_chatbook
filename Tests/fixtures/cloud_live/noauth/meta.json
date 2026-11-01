@@ -1,0 +1,39 @@
+{
+  "server": "meta",
+  "base_url": "https://api.meta.ai/v1",
+  "probe_model": "probe-model",
+  "listing": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "invalid_api_key",
+        "message": "Unauthorized",
+        "param": null,
+        "type": "authentication_error"
+      }
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "invalid_api_key",
+        "message": "Unauthorized",
+        "param": null,
+        "type": "authentication_error"
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "invalid_api_key",
+        "message": "Unauthorized",
+        "param": null,
+        "type": "authentication_error"
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:20:02+00:00"
+}

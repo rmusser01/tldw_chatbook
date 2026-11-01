@@ -42,6 +42,8 @@ PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "kilo": "Kilo Gateway",
     "koboldcpp": "KoboldCpp",
     "llama_cpp": "llama.cpp",
+    "strata": "Strata",
+    "polystrata": "PolyStrata",
     "local_llamacpp": "llama.cpp (legacy alias)",
     "local_llamafile": "Llamafile",
     "local_llm": "Local LLM (legacy generic)",
@@ -107,6 +109,45 @@ PROVIDER_CUSTOM_GROUP_KEYS = frozenset(
         "mistral",
     }
 )
+#: The legacy aliases alone: the custom group minus the built-in custom slots,
+#: which stay listable (ADR-146) while Console hides an alias unless it is
+#: configured or current (ADR-066).
+PROVIDER_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
+#: TASK-35578: said under a server's listing in Chat settings and the first-run
+#: wizard's model step, whose picks never join a model list: a provider's
+#: saved list (``[providers]``) or, for a named custom endpoint, its own list
+#: (``custom_endpoints.<slug>.models``), which Settings edits only in Custom
+#: endpoints. The controls are named as Settings names them
+#: (``UI/Settings_Modules/saved_model_list.py`` and
+#: ``providers_models_card.compose_custom_endpoints_children``).
+_LISTED_PICK_NOTES = {
+    False: (
+        "A pick here is not added to the saved model list. To add one, use "
+        "Settings ▸ Providers & Models{key} ▸ Advanced ▸ Saved model list: after "
+        "Discover models, choose it in Default model and press s, or check it "
+        "and press Add to model list."
+    ),
+    True: (
+        "A pick here is not added to this endpoint's model list. To add one, use "
+        "Settings ▸ Providers & Models{key} ▸ Advanced ▸ Custom endpoints: press "
+        "Edit on this endpoint, add it to Models and press Save endpoint."
+    ),
+}
+
+
+def listed_pick_note(*, entry: bool = False, settings_key: str = "") -> str:
+    """Say that a pick from a server's listing joins no model list, and where
+    one is added (TASK-35578).
+
+    Args:
+        entry: The listing is a named custom endpoint's (``custom-ep:<slug>``).
+        settings_key: The key that opens Settings, where the surface has one
+            (Chat settings passes " (F4)", as its other Settings pointers do).
+
+    Returns:
+        The note, naming the Settings controls that add a model to that list.
+    """
+    return _LISTED_PICK_NOTES[entry].format(key=settings_key)
 
 
 def provider_display_name(

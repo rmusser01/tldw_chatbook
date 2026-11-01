@@ -62,8 +62,7 @@ async def test_rail_click_leaves_the_chrome_and_the_rail_widget_in_place(
         await pilot.pause()
 
         assert _identities(screen, _STABLE_CHROME) == before, (
-            "A rail selection rebuilt screen chrome that does not read the "
-            "selection."
+            "A rail selection rebuilt screen chrome that does not read the selection."
         )
         assert id(screen.query_one(MainNavigationBar)) == nav_before
         assert id(screen.query_one(LibraryRail)) == rail_before, (
@@ -103,9 +102,9 @@ async def test_rail_click_keeps_focus_on_the_clicked_row(evals_app, seeded_bench
         await pilot.pause()
         await pilot.pause()
 
-        assert (
-            getattr(evals_app.focused, "id", None) == "evals-rail-row-benches-0"
-        ), "Focus escaped the rail row the user just clicked."
+        assert getattr(evals_app.focused, "id", None) == "evals-rail-row-benches-0", (
+            "Focus escaped the rail row the user just clicked."
+        )
 
 
 async def test_region_swaps_never_destroy_the_frames_collapse_headers(

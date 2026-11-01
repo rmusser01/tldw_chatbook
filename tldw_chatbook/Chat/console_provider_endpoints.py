@@ -12,9 +12,12 @@ from tldw_chatbook.Chat.provider_endpoint_contract import (
     resolve_provider_endpoint,
 )
 
+#: Chat settings' footer action that saves an unsaved endpoint.
+SAVE_ENDPOINT_ACTION_LABEL = "Save endpoint & use model"
 UNSAVED_ENDPOINT_COPY = (
-    "Provider blocked: this endpoint is not saved. Save it with Save model "
-    "defaults in Console Settings, or in F4 Settings, before sending."
+    "Provider blocked: this endpoint is not saved. Save it with "
+    f"{SAVE_ENDPOINT_ACTION_LABEL} in Chat settings, or in F4 Settings, before "
+    "sending."
 )
 #: Single source of the llama.cpp origin Chatbook defaults to (and teaches in
 #: its docs) when nothing is configured. The stock `llama-server` port 8080 is
@@ -88,6 +91,37 @@ def first_configured_endpoint(provider_settings: Mapping[str, object]) -> str | 
         if stripped:
             return stripped
     return None
+
+
+def with_provider_endpoint(
+    app_config: Mapping[str, object], provider_key: str, endpoint: str
+) -> dict[str, object]:
+    """Return a copy of ``app_config`` whose provider's one endpoint is ``endpoint``.
+
+    In memory only: readiness and probes then read an endpoint the session
+    uses (a detected server, a session-only endpoint) as the configured one.
+    Every endpoint alias is dropped first, so no higher-ranked alias outranks
+    it. The input is not changed.
+
+    Args:
+        app_config: The configuration snapshot.
+        provider_key: The ``api_settings`` section to configure.
+        endpoint: The endpoint the copy is configured with.
+
+    Returns:
+        The copied configuration with that section's ``api_url`` set.
+    """
+    api_settings = app_config.get("api_settings")
+    api_settings = dict(api_settings) if isinstance(api_settings, Mapping) else {}
+    section = api_settings.get(provider_key)
+    settings = {
+        key: value
+        for key, value in (section.items() if isinstance(section, Mapping) else ())
+        if key not in _ENDPOINT_SETTING_KEYS
+    }
+    settings["api_url"] = endpoint
+    api_settings[provider_key] = settings
+    return {**app_config, "api_settings": api_settings}
 
 
 def effective_provider_endpoint(
@@ -164,6 +198,62 @@ def builtin_provider_endpoint(
     if provider_key == "huggingface" and _huggingface_router_mode(settings):
         return "https://router.huggingface.co/hf-inference"
     return _BUILTIN_PROVIDER_ENDPOINTS.get(provider_key)
+
+
+#: TASK-2117: first-party cloud providers whose adapters accept an
+#: ``api_base_url`` request pin but whose primary Console sends previously
+#: left the kwarg unset (the auxiliary path already pins it). Shared by the
+#: gateway kwargs builders and the trace verifier's independent
+#: reconstruction, so the two can never drift.
+CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
+    {
+        "openai",
+        "cohere",
+        "deepseek",
+        "google",
+        "groq",
+        "huggingface",
+        "openrouter",
+    }
+)
+
+
+def adapter_api_base_url(execution_key: str, base_url: str | None) -> str | None:
+    """Project the transport base; legacy custom slots accept the full endpoint.
+
+    Args:
+        execution_key: Resolved adapter key.
+        base_url: Resolved destination URL, without changing its durable identity.
+
+    Returns:
+        The API base for the custom engine, otherwise the original nonempty URL.
+    """
+    if execution_key == "custom-hosted" and base_url is not None:
+        base_url = base_url.rstrip("/").removesuffix("/chat/completions")
+    return base_url or None
+
+
+def meaningful_adapter_base_url(execution_key: str, base_url: str | None) -> str | None:
+    """Pin the resolved endpoint only when it carries real information.
+
+    TASK-2117: a resolution's ``base_url`` always carries SOMETHING -- the
+    builtin cloud default when neither a configured
+    ``[api_settings.<provider>].api_base_url`` nor a session-selected endpoint
+    exists. Forwarding that builtin would pin the adapter to a value it
+    already falls back to on its own, and would shadow endpoints configured
+    in the adapter's OWN legacy config section (``[google]``,
+    ``huggingface_api``) that today win when Console's canonical table is
+    empty. The kwarg is therefore forwarded only when the resolved endpoint
+    differs from the provider's shipped default -- i.e. exactly when a
+    configured or session-selected URL must reach the request.
+    """
+    if execution_key not in CONDITIONAL_BASE_URL_EXECUTION_KEYS:
+        return None
+    if not isinstance(base_url, str) or not base_url.strip():
+        return None
+    if base_url == builtin_provider_endpoint(execution_key):
+        return None
+    return base_url
 
 
 def _huggingface_router_mode(provider_settings: Mapping[str, object]) -> bool:

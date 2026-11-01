@@ -1,0 +1,11 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+1.23s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-rebuild]
+1.17s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-file-drift]
+1.17s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-file]
+1.16s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-rebuild]
+1.11s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-file-drift]
+1.07s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-file]
+
+(12 durations < 1s hidden.)
+6 passed, 21 deselected in 7.26s

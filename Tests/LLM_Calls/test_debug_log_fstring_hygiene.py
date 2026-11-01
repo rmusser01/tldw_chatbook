@@ -171,9 +171,8 @@ def test_anthropic_debug_log_interpolates_payload_values(monkeypatch):
                 "usage": {"input_tokens": 4, "output_tokens": 5},
             }
 
-    monkeypatch.setattr(
-        LLM_API_Calls, "create_default_session", lambda: _CapturedSession()
-    )
+    monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: _CapturedSession(), raising=False)
+    monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: _CapturedSession(), raising=False)
 
     secret_user_text = "MY-VERY-PRIVATE-MESSAGE-CONTENT"
     LLM_API_Calls.chat_with_anthropic(

@@ -1,0 +1,15 @@
+{
+  "path": ".test-tmp\\textual-37031-37034\\final-fix-guards01\\result.xml",
+  "sha256": "c0b9481fd558daac17b03a4f30afb1d3ec5c382e5d7ce1326a4147c2a7869fed",
+  "cases": 5,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "names": [
+    "test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py]",
+    "test_budget_is_not_left_slack[tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py]",
+    "test_preimport_pass_payload_stays_within_budget",
+    "test_first_send_warmup_payload_stays_within_budget",
+    "test_app_import_own_module_count_stays_at_the_post_diet_size"
+  ]
+}

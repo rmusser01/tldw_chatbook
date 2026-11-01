@@ -28,7 +28,6 @@ def test_no_dead_chat_with_provider_import_anywhere():
     [
         "tldw_chatbook.MCP.server",
         "tldw_chatbook.Tools.code_audit_tool",
-        "tldw_chatbook.UI.Tools_Settings_Window",
     ],
 )
 def test_touched_modules_import_clean(module):

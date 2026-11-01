@@ -110,11 +110,6 @@ EXPECTED_PARENT_CREATORS = {
         "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
     ),
     (
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        "ToolsSettingsWindow._backup_worker",
-        "backup_dir.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
         "tldw_chatbook/Evals/eval_orchestrator",
         "EvaluationOrchestrator._initialize_database",
         "Path(db_path).parent.mkdir(parents=True, exist_ok=True)",
@@ -507,6 +502,34 @@ def _qualified_core_recovery_dispatch(source_path, symbol, call):
 
 def _qualified_fixed_validation_dispatch(source_path, production_module, symbol, call):
     """Admit the six reviewed restore sites only with their fixed declarations."""
+    if production_module == "tldw_chatbook/DB/recovery_response_rules":
+        if symbol != "prepare_imported_candidate" or ast.unparse(call) != (
+            "open_recovery_validation(owner.owner_id, candidate, writable=True, "
+            "with_restrictions=True, cancel=cancel)"
+        ):
+            return False
+        tree = _parse_source(source_path)
+        function = next((node for node in tree.body if isinstance(node, ast.FunctionDef)
+                         and node.name == symbol), None)
+        if function is None:
+            return False
+        expected_owner = ast.parse(
+            'owner = next(a for a in core_adapters() if a.owner_id == "db.chachanotes.primary")'
+        ).body[0]
+        expected_validation = ast.parse(
+            'issues = validate_candidate(owner, candidate, cancel, migrate=False)'
+        ).body[0]
+        expected_guard = ast.parse("if issues:\n    raise ValueError(issues[0])").body[0]
+        statements = [node for node in function.body
+                      if not isinstance(node, (ast.Import, ast.ImportFrom))
+                      and not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))]
+        return (len(statements) == 4
+                and ast.dump(statements[0]) == ast.dump(expected_owner)
+                and ast.dump(statements[1]) == ast.dump(expected_validation)
+                and ast.dump(statements[2]) == ast.dump(expected_guard)
+                and isinstance(statements[3], ast.With)
+                and len(statements[3].items) == 1
+                and ast.dump(statements[3].items[0].context_expr) == ast.dump(call))
     declarations = {
         "tldw_chatbook/DB/recovery_operations": ("_SubscriptionsAdapter", "db.subscriptions"),
         "tldw_chatbook/Backup_Recovery/recovered_media": ("_RecoveredAdapter", "recovered.media"),
@@ -546,6 +569,34 @@ def _qualified_file_notes_core_read(source_path, symbol, call):
     return any(isinstance(node, ast.Assign) and ast.dump(node) == ast.dump(expected)
                for node in ast.walk(tree))
 
+
+
+def _qualified_store_kernel_dispatch(source_path, symbol, call):
+    """Admit the store kernel's per-subclass owner dispatch (ADR-228).
+
+    The ONE qualified connect lives in SQLiteStoreKernel._get_connection;
+    each subclass declares a class-level _kernel_sqlite_owner that
+    _init_store_kernel validates non-empty and that must resolve to a
+    registered, documented owner policy at connect time (registry<->doc
+    parity). The allowance is tied to that validation being present.
+    """
+    if symbol not in {
+        "SQLiteStoreKernel._get_connection",
+        "SQLiteStoreKernel._open_connection",
+    } or not call.args:
+        return False
+    if ast.unparse(call.args[0]) != "self._kernel_sqlite_owner":
+        return False
+    tree = _parse_source(source_path)
+    qualified = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "connect_private_sqlite" and node.args
+        and not isinstance(node.args[0], ast.Constant)
+    ]
+    if len(qualified) != 1:
+        return False
+    return "if not self._kernel_sqlite_owner:" in source_path.read_text()
 
 def _private_sqlite_seam_violations(
     source_path: Path,
@@ -595,6 +646,8 @@ def _private_sqlite_seam_violations(
                 if production_module == "tldw_chatbook/DB/recovery_core" and _qualified_core_recovery_dispatch(source_path, symbol, call):
                     continue
                 if production_module == "tldw_chatbook/Notes/recovery" and _qualified_file_notes_core_read(source_path, symbol, call):
+                    continue
+                if production_module == "tldw_chatbook/DB/store_kernel" and _qualified_store_kernel_dispatch(source_path, symbol, call):
                     continue
                 violations.append(
                     f"{production_module}:{symbol}: non-literal {keyword_name}"
@@ -743,16 +796,24 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C57 discovers native fleet results at launch without migration (ADR-135).
         # C92 owns local workflow definitions and recoverable authoring drafts.
         # C93/C94 own plugin registry and in-memory schema validation.
+        # C95 validates the installed Guardian v1/v2 recovery catalogs.
+        # C97 is the SQLiteStoreKernel contract-test owner (TASK-33132;
+# renumbered after dev minted C95/C96 mid-flight).
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
         # C89 validates recovered-media restore edges against staged catalog
         # rows and archive-relative payload topology under the existing owner.
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
-        for number in range(1, 95) if number not in {10, 75}
+        # C08/C09 were the legacy settings window's VACUUM and integrity
+        # workers; they left with the window (TASK-33244).
+        for number in range(1, 99) if number not in {8, 9, 10, 75}
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 39) if number not in {10, 11, 12, 16, 34}
+        # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
+        f"B{number:02d}"
+        for number in range(1, 41)
+        if number not in {4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 34}
     ]
 
 
@@ -1356,7 +1417,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 3,
             "backup_open_connections_to_private": 2,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 26,
+            "copy_private_sqlite": 22,
             "migrate_profile_store_to_candidate": 1,
         }
     )
@@ -1442,13 +1503,6 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
         for source_path in PRODUCTION_ROOT.rglob("*.py")
     )
 
-    settings_path = PROJECT_ROOT / "tldw_chatbook/UI/Tools_Settings_Window.py"
-    settings_copy_count = sum(
-        isinstance(node, ast.Call) and _is_named_call(node, "shutil", "copy2")
-        for node in ast.walk(_parse_source(settings_path))
-    )
-    assert settings_copy_count == 0
-
     expected_calls = Counter(
         {
             ("tldw_chatbook/Backup_Recovery/recovered_media", "_RecoveredAdapter.capture", "copy_private_sqlite"): 1,
@@ -1492,14 +1546,11 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
                 "ProfileMigrationBoundarySnapshot.backup_to",
                 "backup_profile_migration_boundary",
             ): 1,
-            (
-                "tldw_chatbook/UI/Tools_Settings_Window",
-                "ToolsSettingsWindow._backup_worker",
-                "copy_private_sqlite",
-            ): 1,
         }
     )
     expected_calls.update({
+        ("tldw_chatbook/DB/recovery_dreams_guardian", "_GuardianAdapter.capture", "copy_private_sqlite"): 1,
+        ("tldw_chatbook/DB/recovery_dreams_guardian", "_DreamsAdapter.capture", "copy_private_sqlite"): 1,
         ('tldw_chatbook/Scheduling/recovery', '_ScheduledTasksAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Sync_Interop/recovery', '_SyncAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Notes/recovery', '_FileNotesAdapter.capture', "copy_private_sqlite"): 1,
@@ -1748,6 +1799,8 @@ def test_core_recovery_factory_exactly_matches_registered_backup_authority():
         "recovery.domain.evals", "recovery.domain.study",
     }
     installed_domain_authority |= {
+        'recovery.operations.guardian',
+        'recovery.operations.dreams',
         'recovery.operations.workspaces',
         'recovery.operations.agent_runs',
         'recovery.operations.subscriptions',
@@ -1848,3 +1901,31 @@ def test_plugins_registry_is_private_readonly_and_memory_without_backup() -> Non
         "PluginRegistry.__init__",
         "PluginRegistry._reference_schema",
     }
+
+
+@pytest.mark.parametrize("damage", ["owner", "path", "namespace", "validation", "guard", "reassign", "order"])
+def test_response_rule_import_dispatch_is_exact_and_validated(tmp_path, damage):
+    path = PROJECT_ROOT / "tldw_chatbook/DB/recovery_response_rules.py"
+    source = path.read_text()
+    module = "tldw_chatbook/DB/recovery_response_rules"
+    _, clean = _private_sqlite_seam_violations(path, module)
+    assert clean == []
+    if damage == "owner":
+        source = source.replace('a.owner_id == "db.chachanotes.primary"', 'a.owner_id == "db.media.primary"')
+    elif damage == "path":
+        source = source.replace("owner.owner_id, candidate, writable=True", "owner.owner_id, alternate, writable=True")
+    elif damage == "namespace":
+        module += "_unreviewed"
+    elif damage == "validation":
+        source = source.replace("issues = validate_candidate(owner, candidate, cancel, migrate=False)", "issues = ()")
+    elif damage == "guard":
+        source = source.replace("raise ValueError(issues[0])", "pass")
+    elif damage == "reassign":
+        source = source.replace("    with open_recovery_validation(", '    owner = requested_owner\n    with open_recovery_validation(')
+    else:
+        line = '    issues = validate_candidate(owner, candidate, cancel, migrate=False)\n'
+        source = source.replace(line, "") + line
+    candidate = tmp_path / "recovery.py"
+    candidate.write_text(source)
+    _, violations = _private_sqlite_seam_violations(candidate, module)
+    assert any("unqualified recovery validation" in violation for violation in violations)

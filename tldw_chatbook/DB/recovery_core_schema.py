@@ -9,6 +9,9 @@ are supported; Prompts v4 is retained alongside its installed v5 catalog.
 TASK-33621.3 requalified db.chachanotes.primary at v74 (the ALTER-added
 console_auxiliary_attempts.failure_reason) from a fresh actual constructor.
 PR #2946 requalified v75, including continuation receipts, from the same constructor.
+TASK-19565 requalified v76 the same way: the notes_au guard step recreates the
+trigger with the body the catalog already carried, so all 533 entries are
+unchanged and only the version moves.
 """
 
 PROMPTS_DRAFTS_TABLE_SQL = "CREATE TABLE LocalPromptDrafts (\n                        draft_id INTEGER PRIMARY KEY AUTOINCREMENT,\n                        content TEXT NOT NULL CHECK(length(trim(content)) > 0),\n                        created_at TEXT NOT NULL,\n                        updated_at TEXT NOT NULL,\n                        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1)\n                    )"
@@ -21,8 +24,8 @@ PROMPTS_V4_TO_V5_SQL = (
 
 CORE_SCHEMAS = (
     (
-        'db.chachanotes.primary',
-        75,
+        "db.chachanotes.primary",
+        76,
         (
             "CREATE INDEX character_conversation_search_dirty_authority_revision\n  ON character_conversation_search_dirty(data_authority_id, source_revision)",
             "CREATE INDEX character_conversation_search_documents_character\n  ON character_conversation_search_documents(\n    data_authority_id, character_id, generation_id, conversation_id\n  )",
@@ -560,7 +563,7 @@ CORE_SCHEMAS = (
         ),
     ),
     (
-        'db.media.primary',
+        "db.media.primary",
         9,
         (
             "CREATE INDEX idx_chunking_templates_deleted\n            ON ChunkingTemplates(deleted)",
@@ -621,7 +624,7 @@ CORE_SCHEMAS = (
             "CREATE INDEX idx_unvectorizedmediachunks_merge_parent_uuid ON UnvectorizedMediaChunks(merge_parent_uuid)",
             "CREATE INDEX idx_unvectorizedmediachunks_prev_version ON UnvectorizedMediaChunks(prev_version)",
             "CREATE UNIQUE INDEX idx_unvectorizedmediachunks_uuid ON UnvectorizedMediaChunks(uuid)",
-            "CREATE TABLE \"ChunkingTemplates\" (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            uuid TEXT NOT NULL UNIQUE,\n            name TEXT NOT NULL,\n            description TEXT,\n            template_json TEXT NOT NULL,\n            tags TEXT,\n            is_builtin BOOLEAN NOT NULL DEFAULT 0,\n            version INTEGER NOT NULL DEFAULT 1,\n            deleted BOOLEAN NOT NULL DEFAULT 0,\n            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n        )",
+            'CREATE TABLE "ChunkingTemplates" (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            uuid TEXT NOT NULL UNIQUE,\n            name TEXT NOT NULL,\n            description TEXT,\n            template_json TEXT NOT NULL,\n            tags TEXT,\n            is_builtin BOOLEAN NOT NULL DEFAULT 0,\n            version INTEGER NOT NULL DEFAULT 1,\n            deleted BOOLEAN NOT NULL DEFAULT 0,\n            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n        )',
             "CREATE TABLE DocumentVersions (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        media_id INTEGER NOT NULL,\n        version_number INTEGER NOT NULL,\n        prompt TEXT,\n        analysis_content TEXT,\n        content TEXT NOT NULL,\n        created_at DATETIME,\n        uuid TEXT UNIQUE NOT NULL,\n        last_modified DATETIME NOT NULL,\n        version INTEGER NOT NULL DEFAULT 1,\n        client_id TEXT NOT NULL,\n        deleted BOOLEAN NOT NULL DEFAULT 0,\n        prev_version INTEGER,\n        merge_parent_uuid TEXT,\n        FOREIGN KEY (media_id) REFERENCES Media(id) ON DELETE CASCADE,\n        UNIQUE (media_id, version_number)\n    )",
             "CREATE TABLE Keywords (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        keyword TEXT NOT NULL UNIQUE COLLATE NOCASE,\n        uuid TEXT UNIQUE NOT NULL,\n        last_modified DATETIME NOT NULL,\n        version INTEGER NOT NULL DEFAULT 1,\n        client_id TEXT NOT NULL,\n        deleted BOOLEAN NOT NULL DEFAULT 0,\n        prev_version INTEGER,\n        merge_parent_uuid TEXT\n    )",
             "CREATE TABLE Media (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        url TEXT UNIQUE,\n        title TEXT NOT NULL,\n        type TEXT NOT NULL,\n        content TEXT,\n        author TEXT,\n        ingestion_date DATETIME,\n        transcription_model TEXT,\n        is_trash BOOLEAN DEFAULT 0 NOT NULL,\n        trash_date DATETIME,\n        vector_embedding BLOB,\n        chunking_status TEXT DEFAULT 'pending' NOT NULL,\n        vector_processing INTEGER DEFAULT 0 NOT NULL,\n        content_hash TEXT UNIQUE NOT NULL,\n        uuid TEXT UNIQUE NOT NULL,\n        last_modified DATETIME NOT NULL,\n        version INTEGER NOT NULL DEFAULT 1,\n        client_id TEXT NOT NULL,\n        deleted BOOLEAN NOT NULL DEFAULT 0,\n        prev_version INTEGER,\n        merge_parent_uuid TEXT\n    , chunking_config TEXT, transcription_provenance_json TEXT DEFAULT NULL)",
@@ -654,7 +657,7 @@ CORE_SCHEMAS = (
         ),
     ),
     (
-        'db.prompts.primary',
+        "db.prompts.primary",
         5,
         (
             PROMPTS_DRAFTS_INDEX_SQL,
@@ -695,7 +698,7 @@ CORE_SCHEMAS = (
         ),
     ),
     (
-        'db.library_collections',
+        "db.library_collections",
         4,
         (
             "CREATE INDEX idx_collection_capture_highlights_by_item\n        ON collection_capture_highlights(authority_key, capture_id, created_at, highlight_id)\n        ",
@@ -739,7 +742,7 @@ CORE_SCHEMAS = (
         ),
     ),
     (
-        'db.library_ingest_jobs',
+        "db.library_ingest_jobs",
         7,
         (
             "CREATE TABLE \"ingest_jobs\" (\n                    seq INTEGER PRIMARY KEY,\n                    job_id TEXT UNIQUE NOT NULL,\n                    source_path TEXT NOT NULL,\n                    title TEXT NOT NULL DEFAULT '',\n                    author TEXT NOT NULL DEFAULT '',\n                    keywords TEXT NOT NULL DEFAULT '[]',\n                    perform_analysis INTEGER NOT NULL DEFAULT 0,\n                    chunk_enabled INTEGER NOT NULL DEFAULT 0,\n                    chunk_size INTEGER NOT NULL DEFAULT 0,\n                    state TEXT NOT NULL CHECK (state IN ('queued','parsing','writing','done','failed','cancelled')),\n                    retry_count INTEGER NOT NULL DEFAULT 0,\n                    detected_type TEXT NOT NULL DEFAULT '',\n                    error TEXT NOT NULL DEFAULT '',\n                    finished_at_wall TEXT NOT NULL DEFAULT '',\n                    media_id INTEGER,\n                    superseded INTEGER NOT NULL DEFAULT 0,\n                    dismissed INTEGER NOT NULL DEFAULT 0,\n                    permanent INTEGER NOT NULL DEFAULT 0,\n                    ingest_options TEXT DEFAULT '{}',\n                    error_detail TEXT DEFAULT NULL,\n                    progress TEXT DEFAULT NULL,\n                    content_hash TEXT DEFAULT NULL,\n                    origin TEXT NOT NULL DEFAULT 'local' CHECK (origin IN ('local','server')),\n                    remote_job_id TEXT DEFAULT NULL,\n                    batch_id TEXT DEFAULT NULL\n                , remote_media_id TEXT DEFAULT NULL, retry_of_job_id TEXT DEFAULT NULL, stt_failure_provenance_json TEXT DEFAULT NULL, retry_source_failure_provenance_json TEXT DEFAULT NULL, research_source_operation_id TEXT DEFAULT NULL, dispatch_held INTEGER NOT NULL DEFAULT 0\n                    CHECK (dispatch_held IN (0, 1)))",
@@ -768,4 +771,350 @@ CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = tuple(
     for sql in next(
         row[2] for row in CORE_SCHEMAS if row[0] == "db.chachanotes.primary"
     )
+)
+
+
+# ADR-219: exact constructor-captured v76 deltas; retain both qualified v75 catalogs.
+CHACHANOTES_V75_SCHEMA = next(
+    row[2] for row in CORE_SCHEMAS if row[0] == "db.chachanotes.primary"
+)
+CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
+_CHACHANOTES_V76_REPLACEMENTS = {
+    "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n  ON console_dispatch_checkpoints(user_message_id)": "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n    ON console_dispatch_checkpoints(user_message_id)",
+    "CREATE TABLE console_dispatch_checkpoints (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued')),\n    queue_entry_id TEXT,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n)": "CREATE TABLE \"console_dispatch_checkpoints\" (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued', 'agent_chat_start')),\n    queue_entry_id TEXT,\n    agent_chat_start_attempt_id TEXT UNIQUE,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK ((origin = 'queued' AND queue_entry_id IS NOT NULL)\n        OR (origin IN ('manual', 'agent_chat_start') AND queue_entry_id IS NULL)),\n    CHECK ((origin = 'agent_chat_start' AND agent_chat_start_attempt_id IS NOT NULL\n            AND length(agent_chat_start_attempt_id) BETWEEN 1 AND 200)\n        OR (origin IN ('manual', 'queued') AND agent_chat_start_attempt_id IS NULL))\n)",
+}
+CHACHANOTES_V76_SCHEMA = tuple(
+    _CHACHANOTES_V76_REPLACEMENTS.get(sql, sql) for sql in CHACHANOTES_V75_SCHEMA
+)
+# Freeze the earlier strong native76/77 catalogs before deriving repaired77.
+CHACHANOTES_V76_NATIVE_SCHEMAS = (
+    CHACHANOTES_V76_SCHEMA,
+    tuple(
+        _CHACHANOTES_V76_REPLACEMENTS.get(sql, sql)
+        for sql in CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA
+    ),
+)
+CHACHANOTES_V76_SHIPPED_SCHEMAS = (
+    CHACHANOTES_V75_SCHEMA,
+    CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
+)
+_CHACHANOTES_V77_QUEUE_CHECK = "CHECK ((origin = 'queued' AND queue_entry_id IS NOT NULL)\n        OR (origin IN ('manual', 'agent_chat_start') AND queue_entry_id IS NULL))"
+CHACHANOTES_V77_SCHEMA, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = (
+    tuple(
+        sql.replace(
+            _CHACHANOTES_V77_QUEUE_CHECK,
+            "CHECK (origin != 'agent_chat_start' OR queue_entry_id IS NULL)",
+        )
+        for sql in schema
+    )
+    for schema in CHACHANOTES_V76_NATIVE_SCHEMAS
+)
+CORE_SCHEMAS = tuple(
+    (owner, 77, CHACHANOTES_V77_SCHEMA)
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+
+
+CHACHANOTES_NATIVE_V76_TO_V77_SQL = (
+    "UPDATE db_schema_version SET version = 77 "
+    "WHERE schema_name = 'rag_char_chat_schema' AND version = 76",
+)
+
+
+# ADR-199/219: fleet progress follows shipped native v77; old catalogs stay frozen.
+CHACHANOTES_V77_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
+CHACHANOTES_V77_SCHEMAS = (
+    CHACHANOTES_V77_SCHEMA,
+    CHACHANOTES_V77_DICTIONARY_UPDATE_SCHEMA,
+    *CHACHANOTES_V76_NATIVE_SCHEMAS,
+)
+CHACHANOTES_FLEET_PROGRESS_SQL = (
+    "CREATE INDEX idx_fleet_progress_conversation_sequence\n  ON fleet_progress_messages(conversation_id, sequence)",
+    "CREATE TABLE fleet_progress_messages (\n  sequence INTEGER PRIMARY KEY AUTOINCREMENT,\n  message_id TEXT NOT NULL UNIQUE CHECK(length(message_id) BETWEEN 1 AND 128),\n  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,\n  handle_id TEXT NOT NULL CHECK(length(handle_id) BETWEEN 1 AND 128),\n  run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 128),\n  parent_run_id TEXT NOT NULL CHECK(length(parent_run_id) BETWEEN 1 AND 128),\n  chain_id TEXT CHECK(chain_id IS NULL OR length(chain_id) BETWEEN 1 AND 128),\n  agent TEXT NOT NULL CHECK(length(agent) BETWEEN 1 AND 80),\n  body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+)
+
+
+def _fleet_progress_catalog(schema):
+    """Append the two frozen progress objects in sqlite_schema type/name order."""
+    import re
+
+    def catalog_key(sql):
+        match = re.match(
+            r"""CREATE (?:UNIQUE |VIRTUAL )?(INDEX|TABLE|TRIGGER|VIEW) (?:IF NOT EXISTS )?["`']?([^"`' (]+)""",
+            sql,
+        )
+        assert match is not None
+        return match[1].lower(), match[2]
+
+    return tuple(sorted(schema + CHACHANOTES_FLEET_PROGRESS_SQL, key=catalog_key))
+
+
+CHACHANOTES_V78_SCHEMAS = tuple(
+    _fleet_progress_catalog(schema) for schema in CHACHANOTES_V77_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V78_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 78, CHACHANOTES_V78_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, schema)
+    for owner, version, schema in CORE_SCHEMAS
+)
+# The installed .sql file owns DDL; this fixed step owns only its stamp.
+CHACHANOTES_FLEET_V77_TO_V78_SQL = (
+    "UPDATE db_schema_version SET version=78 WHERE schema_name='rag_char_chat_schema' AND version=77",
+)
+
+# ADR-224: sargable timestamp normalization follows fleet v78; old catalogs
+# stay frozen. The migration's DDL change is exactly these two indexes (the
+# conversations sync trigger is dropped and recreated with identical text,
+# so its catalog entry is unchanged); the data normalization UPDATEs do not
+# appear in sqlite_schema.
+CHACHANOTES_SARGABLE_V79_SQL = (
+    "CREATE INDEX idx_character_cards_visible_name\n    ON character_cards(name COLLATE NOCASE)\n    WHERE deleted = 0\n      AND json_extract(CASE WHEN json_valid(extensions) THEN extensions ELSE '{}' END,\n                       '$.actor_pack_persona_portrait_owner') IS NULL",
+    "CREATE INDEX idx_conv_char_lm\n    ON conversations(character_id, last_modified DESC, id DESC)",
+)
+
+
+def _sargable_catalog(schema):
+    """Append the two frozen ADR-224 indexes in sqlite_schema type/name order."""
+
+    def catalog_key(sql):
+        import re
+
+        match = re.match(
+            r"""CREATE (?:UNIQUE |VIRTUAL )?(INDEX|TABLE|TRIGGER|VIEW) (?:IF NOT EXISTS )?["`']?([^"`' (]+)""",
+            sql,
+        )
+        assert match is not None
+        return match[1].lower(), match[2]
+
+    return tuple(sorted(schema + CHACHANOTES_SARGABLE_V79_SQL, key=catalog_key))
+
+
+CHACHANOTES_V79_SCHEMAS = tuple(
+    _sargable_catalog(schema) for schema in CHACHANOTES_V78_SCHEMAS
+)
+
+# ADR-216: v80 appends the two browse-order indexes to every frozen v79
+# catalog; old catalogs stay frozen.
+CHACHANOTES_BROWSE_ORDER_INDEX_SQL = (
+    "CREATE INDEX idx_conversations_last_modified\n  ON conversations(last_modified DESC, id DESC)",
+    "CREATE INDEX idx_conversations_archived_browse_order\n  ON conversations(archived, last_modified DESC, id DESC)",
+)
+
+
+def _browse_order_catalog(schema):
+    """Merge the two frozen browse-order indexes in sqlite_schema type/name order."""
+
+    def catalog_key(sql):
+        import re
+
+        match = re.match(
+            r"""CREATE (?:UNIQUE |VIRTUAL )?(INDEX|TABLE|TRIGGER|VIEW) (?:IF NOT EXISTS )?["`']?([^"`' (]+)""",
+            sql,
+        )
+        assert match is not None
+        return match[1].lower(), match[2]
+
+    return tuple(sorted(schema + CHACHANOTES_BROWSE_ORDER_INDEX_SQL, key=catalog_key))
+
+
+CHACHANOTES_V80_SCHEMAS = tuple(
+    _browse_order_catalog(schema) for schema in CHACHANOTES_V79_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V80_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 80, CHACHANOTES_V80_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, schema)
+    for owner, version, schema in CORE_SCHEMAS
+)
+# The installed .sql file owns DDL; this fixed step owns only its stamp.
+CHACHANOTES_SARGABLE_V78_TO_V79_SQL = (
+    "UPDATE db_schema_version SET version=79 WHERE schema_name='rag_char_chat_schema' AND version=78",
+)
+# The installed .sql file owns DDL; this fixed step owns only its stamp.
+CHACHANOTES_BROWSE_V79_TO_V80_SQL = (
+    "UPDATE db_schema_version SET version=80 WHERE schema_name='rag_char_chat_schema' AND version=79",
+)
+
+
+# ADR-207: exact fresh and native v4-to-v5 capture table SQL (PR2921).
+COLLECTIONS_V4_SCHEMA = next(schema for owner, _, schema in CORE_SCHEMAS
+                             if owner == "db.library_collections")
+COLLECTIONS_V5_CAPTURE_TABLES = ("CREATE TABLE collection_capture_items (\n            authority_key TEXT NOT NULL,\n            capture_id TEXT NOT NULL,\n            submitted_url TEXT NOT NULL,\n            canonical_url TEXT NOT NULL,\n            domain TEXT NOT NULL DEFAULT '',\n            title TEXT,\n            summary TEXT,\n            freeform_note TEXT,\n            text_content TEXT,\n            clean_html TEXT,\n            byline TEXT,\n            published_at TEXT,\n            read_at TEXT,\n            content_hash TEXT,\n            word_count INTEGER,\n            status TEXT NOT NULL CHECK(status IN ('saved', 'reading', 'read', 'archived')),\n            favorite INTEGER NOT NULL CHECK(favorite IN (0, 1)),\n            processing_state TEXT NOT NULL\n                CHECK(processing_state IN ('queued', 'processing', 'ready', 'failed', 'interrupted')),\n            last_fetch_error TEXT,\n            extraction_owner_token TEXT,\n            extraction_lease_expires_at TEXT,\n            media_authority_key TEXT,\n            media_item_id TEXT,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),\n            purge_state TEXT,\n            url_provenance TEXT NOT NULL DEFAULT 'unknown'\n                CHECK(url_provenance IN ('unknown', 'user_entered')),\n            PRIMARY KEY(authority_key, capture_id),\n            UNIQUE(authority_key, canonical_url)\n        )", "CREATE TABLE collection_capture_items (\n            authority_key TEXT NOT NULL,\n            capture_id TEXT NOT NULL,\n            submitted_url TEXT NOT NULL,\n            canonical_url TEXT NOT NULL,\n            domain TEXT NOT NULL DEFAULT '',\n            title TEXT,\n            summary TEXT,\n            freeform_note TEXT,\n            text_content TEXT,\n            clean_html TEXT,\n            byline TEXT,\n            published_at TEXT,\n            read_at TEXT,\n            content_hash TEXT,\n            word_count INTEGER,\n            status TEXT NOT NULL CHECK(status IN ('saved', 'reading', 'read', 'archived')),\n            favorite INTEGER NOT NULL CHECK(favorite IN (0, 1)),\n            processing_state TEXT NOT NULL\n                CHECK(processing_state IN ('queued', 'processing', 'ready', 'failed', 'interrupted')),\n            last_fetch_error TEXT,\n            extraction_owner_token TEXT,\n            extraction_lease_expires_at TEXT,\n            media_authority_key TEXT,\n            media_item_id TEXT,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),\n            purge_state TEXT, url_provenance TEXT NOT NULL DEFAULT 'unknown'\nCHECK(url_provenance IN ('unknown', 'user_entered')),\n            PRIMARY KEY(authority_key, capture_id),\n            UNIQUE(authority_key, canonical_url)\n        )")
+COLLECTIONS_V5_SCHEMAS = tuple(
+    tuple(table if sql.startswith("CREATE TABLE collection_capture_items") else sql
+          for sql in COLLECTIONS_V4_SCHEMA)
+    for table in COLLECTIONS_V5_CAPTURE_TABLES
+)
+COLLECTIONS_V4_TO_V5_SQL = (
+    "ALTER TABLE collection_capture_items\nADD COLUMN url_provenance TEXT NOT NULL DEFAULT 'unknown'\nCHECK(url_provenance IN ('unknown', 'user_entered'))",
+    "DELETE FROM schema_version",
+    "INSERT INTO schema_version VALUES (5)",
+)
+
+
+# ADR-232: append fixed rule declarations to all four accepted v80 lineages.
+CHACHANOTES_V81_ADDITIONS = (
+    "CREATE INDEX idx_machine_followup_receipts_conversation ON console_machine_followup_receipts(conversation_id)",
+    "CREATE INDEX idx_response_rule_assessments_source ON console_response_rule_assessments(conversation_id, message_id)",
+    "CREATE INDEX idx_response_rule_drafts_scope ON console_response_rule_drafts(scope_kind, scope_id)",
+    "CREATE TABLE console_machine_followup_receipts (\n    operation_id TEXT NOT NULL CHECK(length(operation_id) > 0),\n    parent_turn_id TEXT NOT NULL CHECK(length(parent_turn_id) > 0),\n    settlement_id TEXT NOT NULL CHECK(length(settlement_id) > 0),\n    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,\n    parent_assistant_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,\n    assistant_message_id TEXT NOT NULL,\n    chain_id TEXT NOT NULL CHECK(length(chain_id) > 0),\n    admitted_turns INTEGER NOT NULL CHECK(admitted_turns BETWEEN 1 AND 3),\n    native_turns INTEGER NOT NULL CHECK(native_turns BETWEEN 0 AND 2 AND native_turns <= admitted_turns),\n    contributors_json TEXT NOT NULL CHECK(json_valid(contributors_json) AND length(contributors_json) <= 64),\n    PRIMARY KEY(operation_id, parent_turn_id, settlement_id)\n)",
+    "CREATE TABLE console_response_rule_assessments (\n    assessment_id TEXT PRIMARY KEY NOT NULL,\n    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,\n    message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,\n    state TEXT NOT NULL CHECK(state IN ('pending','completed','cancelled','stale')),\n    assessment_json TEXT NOT NULL CHECK(length(CAST(assessment_json AS BLOB)) <= 65536 AND json_valid(assessment_json))\n)",
+    "CREATE TABLE console_response_rule_bindings (\n    scope_kind TEXT NOT NULL CHECK(scope_kind IN ('chat','workspace','global')),\n    scope_id TEXT NOT NULL CHECK(length(scope_id) > 0),\n    rule_id TEXT NOT NULL CHECK(length(rule_id) > 0),\n    revision INTEGER,\n    state TEXT NOT NULL CHECK(state IN ('enabled','disabled','excluded')),\n    binding_revision INTEGER NOT NULL CHECK(binding_revision > 0),\n    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,\n    PRIMARY KEY(scope_kind, scope_id, rule_id),\n    FOREIGN KEY(rule_id, revision) REFERENCES console_response_rule_revisions(rule_id, revision),\n    CHECK(state = 'excluded' OR revision > 0),\n    CHECK(conversation_id IS NULL OR (scope_kind = 'chat' AND scope_id = conversation_id))\n)",
+    "CREATE TABLE console_response_rule_drafts (\n    draft_id TEXT PRIMARY KEY NOT NULL,\n    scope_kind TEXT NOT NULL CHECK(scope_kind IN ('chat','workspace','global')),\n    scope_id TEXT NOT NULL,\n    rule_id TEXT,\n    revision INTEGER,\n    source_json TEXT NOT NULL CHECK(length(CAST(source_json AS BLOB)) <= 8192 AND json_valid(source_json)),\n    result_json TEXT NOT NULL CHECK(length(CAST(result_json AS BLOB)) <= 65536 AND json_valid(result_json)),\n    complaint TEXT NOT NULL CHECK(length(CAST(complaint AS BLOB)) <= 8192),\n    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,\n    message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,\n    FOREIGN KEY(rule_id, revision) REFERENCES console_response_rule_revisions(rule_id, revision) ON DELETE CASCADE\n)",
+    "CREATE TABLE console_response_rule_fixtures (\n    rule_id TEXT NOT NULL,\n    revision INTEGER NOT NULL,\n    case_id TEXT NOT NULL,\n    case_type TEXT NOT NULL CHECK(case_type IN ('recorded_violation','synthetic_violation','synthetic_correction','synthetic_acceptable')),\n    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,\n    message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,\n    message_version INTEGER NOT NULL CHECK(message_version > 0),\n    input_json TEXT CHECK(input_json IS NULL OR (length(CAST(input_json AS BLOB)) <= 65536 AND json_valid(input_json))),\n    PRIMARY KEY(rule_id, revision, case_id),\n    FOREIGN KEY(rule_id, revision) REFERENCES console_response_rule_revisions(rule_id, revision) ON DELETE CASCADE,\n    CHECK((case_type = 'recorded_violation' AND input_json IS NULL) OR (case_type != 'recorded_violation' AND input_json IS NOT NULL))\n)",
+    "CREATE TABLE console_response_rule_revisions (\n    rule_id TEXT NOT NULL CHECK(length(rule_id) > 0),\n    revision INTEGER NOT NULL CHECK(revision > 0),\n    definition_json TEXT NOT NULL CHECK(length(CAST(definition_json AS BLOB)) <= 8192 AND json_valid(definition_json)),\n    schema_version INTEGER NOT NULL CHECK(schema_version = 1),\n    origin_json TEXT NOT NULL CHECK(length(CAST(origin_json AS BLOB)) <= 8192 AND json_valid(origin_json)),\n    created_at TEXT NOT NULL,\n    PRIMARY KEY(rule_id, revision)\n)",
+    "CREATE TABLE console_response_rule_validations (\n    rule_id TEXT NOT NULL,\n    revision INTEGER NOT NULL,\n    validation_json TEXT NOT NULL CHECK(length(CAST(validation_json AS BLOB)) <= 32768 AND json_valid(validation_json)),\n    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,\n    message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,\n    message_version INTEGER NOT NULL CHECK(message_version > 0),\n    PRIMARY KEY(rule_id, revision),\n    FOREIGN KEY(rule_id, revision) REFERENCES console_response_rule_revisions(rule_id, revision) ON DELETE CASCADE\n)",
+    "CREATE TRIGGER console_response_rules_conversation_cleanup\nAFTER DELETE ON conversations BEGIN\n    DELETE FROM console_response_rule_revisions\n    WHERE NOT EXISTS (\n        SELECT 1 FROM console_response_rule_bindings b\n        WHERE b.rule_id = console_response_rule_revisions.rule_id\n          AND b.revision = console_response_rule_revisions.revision\n    ) AND NOT EXISTS (\n        SELECT 1 FROM console_response_rule_drafts d\n        WHERE d.rule_id = console_response_rule_revisions.rule_id\n          AND d.revision = console_response_rule_revisions.revision\n    );\nEND",
+)
+
+def _installed_schema_order(sql: str) -> tuple[str, str]:
+    # Only immutable installed constants enter this ordering function. SQL bodies
+    # are never normalized and archive-supplied SQL never enters this catalog.
+    import re
+    match = re.match(r"CREATE (?:(?:UNIQUE|VIRTUAL) )?(INDEX|TABLE|TRIGGER|VIEW)\s+([^\s(]+)", sql)
+    if match is None:
+        raise ValueError("installed_schema_declaration_invalid")
+    return match[1].lower(), match[2].strip("\"'`[]")
+
+CHACHANOTES_V81_SCHEMAS = tuple(
+    tuple(sorted(schema + CHACHANOTES_V81_ADDITIONS, key=_installed_schema_order))
+    for schema in CHACHANOTES_V80_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V81_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 81, CHACHANOTES_V81_SCHEMAS[0])
+    if owner == "db.chachanotes.primary" else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_RULES_V80_TO_V81_SQL = (
+    "UPDATE db_schema_version SET version=81 WHERE schema_name='rag_char_chat_schema' AND version=80",
+)
+
+# ADR-239: fixed successors for every accepted v81 catalog, without SQL normalization.
+CHACHANOTES_V82_SCHEMAS = tuple(
+    tuple(
+        sorted(
+            tuple(
+                sql
+                for sql in schema
+                if sql
+                != (
+                    "CREATE UNIQUE INDEX idx_canvas_revisions_canvas_sequence\n"
+                    "  ON canvas_revisions(canvas_id, sequence)"
+                )
+            )
+            + (
+                (
+                    "CREATE INDEX idx_canvas_revisions_canvas_sequence\n"
+                    "  ON canvas_revisions(canvas_id, sequence, id)"
+                ),
+                (
+                    "CREATE UNIQUE INDEX uq_canvas_revisions_single_root\n"
+                    "  ON canvas_revisions(canvas_id) WHERE parent_revision_id IS NULL"
+                ),
+            ),
+            key=_installed_schema_order,
+        )
+    )
+    for schema in CHACHANOTES_V81_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V82_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 82, CHACHANOTES_V82_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_CANVAS_V81_TO_V82_SQL = (
+    "UPDATE db_schema_version SET version=82 WHERE schema_name='rag_char_chat_schema' AND version=81",
+)
+
+# ADR-242: fixed installed declarations; never execute archive-supplied SQL.
+CHACHANOTES_V83_ADDITIONS = (
+    "CREATE TABLE character_portrait_performance_frames (\n    performance_id INTEGER NOT NULL REFERENCES character_portrait_performances(id) ON DELETE CASCADE,\n    role TEXT NOT NULL CHECK(role IN ('rest','small','open','blink_rest','blink_small','blink_open')),\n    png BLOB NOT NULL CHECK(typeof(png) = 'blob' AND length(png) BETWEEN 1 AND 4194304),\n    width INTEGER NOT NULL CHECK(width > 0),\n    height INTEGER NOT NULL CHECK(height > 0 AND width * height <= 1048576),\n    sha256 TEXT NOT NULL CHECK(length(sha256) = 64),\n    PRIMARY KEY(performance_id, role)\n)",
+    "CREATE TABLE character_portrait_performances (\n    id INTEGER PRIMARY KEY,\n    character_id INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE,\n    expression_key TEXT NOT NULL CHECK(length(expression_key) > 0),\n    source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),\n    source_kind TEXT NOT NULL CHECK(source_kind IN ('portrait','legacy_expression','visual_identity')),\n    source_ref_json TEXT NOT NULL CHECK(json_valid(source_ref_json) AND length(source_ref_json) <= 128),\n    schema_version INTEGER NOT NULL DEFAULT 1 CHECK(schema_version = 1),\n    revision INTEGER NOT NULL CHECK(revision > 0),\n    active INTEGER NOT NULL CHECK(active IN (0,1)),\n    UNIQUE(character_id, expression_key)\n)",
+)
+CHACHANOTES_V83_SCHEMAS = tuple(
+    tuple(sorted(schema + CHACHANOTES_V83_ADDITIONS, key=_installed_schema_order))
+    for schema in CHACHANOTES_V82_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V83_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 83, CHACHANOTES_V83_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_PORTRAIT_V82_TO_V83_SQL = CHACHANOTES_V83_ADDITIONS + (
+    "UPDATE db_schema_version SET version=83 WHERE schema_name='rag_char_chat_schema' AND version=82",
+)
+
+# Exact installed v84 declarations, including SQLite's ALTER TABLE rendering.
+CHACHANOTES_V84_PARENT = "CREATE TABLE character_portrait_performances (\n    id INTEGER PRIMARY KEY,\n    character_id INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE,\n    expression_key TEXT NOT NULL CHECK(length(expression_key) > 0),\n    source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),\n    source_kind TEXT NOT NULL CHECK(source_kind IN ('portrait','legacy_expression','visual_identity')),\n    source_ref_json TEXT NOT NULL CHECK(json_valid(source_ref_json) AND length(source_ref_json) <= 128),\n    schema_version INTEGER NOT NULL DEFAULT 1 CHECK(schema_version = 1),\n    revision INTEGER NOT NULL CHECK(revision > 0),\n    active INTEGER NOT NULL CHECK(active IN (0,1)), composition_recipe_json TEXT\n    CHECK(composition_recipe_json IS NULL OR (json_valid(composition_recipe_json) AND length(CAST(composition_recipe_json AS BLOB)) <= 2048)),\n    UNIQUE(character_id, expression_key)\n)"
+CHACHANOTES_V84_REGIONS = "CREATE TABLE character_portrait_regions (\n    character_id INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE,\n    expression_key TEXT NOT NULL CHECK(length(expression_key) > 0),\n    source_sha256 TEXT NOT NULL CHECK(length(source_sha256) = 64),\n    source_kind TEXT NOT NULL CHECK(source_kind IN ('portrait','legacy_expression','visual_identity')),\n    source_ref_json TEXT NOT NULL CHECK(json_valid(source_ref_json) AND length(source_ref_json) <= 128),\n    recipe_json TEXT NOT NULL CHECK(json_valid(recipe_json) AND length(CAST(recipe_json AS BLOB)) <= 2048),\n    revision INTEGER NOT NULL CHECK(revision > 0),\n    PRIMARY KEY(character_id, expression_key)\n)"
+CHACHANOTES_V84_SCHEMAS = tuple(
+    tuple(
+        sorted(
+            tuple(
+                CHACHANOTES_V84_PARENT
+                if statement == CHACHANOTES_V83_ADDITIONS[1]
+                else statement
+                for statement in schema
+            )
+            + (CHACHANOTES_V84_REGIONS,),
+            key=_installed_schema_order,
+        )
+    )
+    for schema in CHACHANOTES_V83_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V84_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 84, CHACHANOTES_V84_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_REGIONS_V83_TO_V84_SQL = (
+    CHACHANOTES_V84_REGIONS,
+    "ALTER TABLE character_portrait_performances ADD COLUMN composition_recipe_json TEXT\n    CHECK(composition_recipe_json IS NULL OR (json_valid(composition_recipe_json) AND length(CAST(composition_recipe_json AS BLOB)) <= 2048))",
+    "UPDATE db_schema_version SET version=84 WHERE schema_name='rag_char_chat_schema' AND version=83",
+)
+
+# ADR-166: exact successors of every shipped v84 lineage; predecessors stay frozen.
+CHACHANOTES_ARCHIVE_INDEX_SQL = "CREATE INDEX idx_conversations_archive_chronology\n    ON conversations(deleted, archived, archived_at DESC, id)"
+CHACHANOTES_ARCHIVE_UPDATE_SQL = "CREATE TRIGGER conversations_sync_update\nAFTER UPDATE ON conversations\nWHEN OLD.deleted = NEW.deleted AND (\n     OLD.title IS NOT NEW.title OR\n     OLD.rating IS NOT NEW.rating OR\n     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR\n     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR\n     OLD.character_id IS NOT NEW.character_id OR\n     OLD.assistant_kind IS NOT NEW.assistant_kind OR\n     OLD.assistant_id IS NOT NEW.assistant_id OR\n     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR\n     OLD.scope_type IS NOT NEW.scope_type OR\n     OLD.workspace_id IS NOT NEW.workspace_id OR\n     OLD.state IS NOT NEW.state OR\n     OLD.topic_label IS NOT NEW.topic_label OR\n     OLD.topic_label_source IS NOT NEW.topic_label_source OR\n     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR\n     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR\n     OLD.cluster_id IS NOT NEW.cluster_id OR\n     OLD.source IS NOT NEW.source OR\n     OLD.external_ref IS NOT NEW.external_ref OR\n     OLD.runtime_backend IS NOT NEW.runtime_backend OR\n     OLD.discovery_owner IS NOT NEW.discovery_owner OR\n     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR\n     OLD.system_prompt IS NOT NEW.system_prompt OR\n     OLD.metadata IS NOT NEW.metadata OR\n     OLD.thinking_history_policy IS NOT NEW.thinking_history_policy OR\n     OLD.root_id IS NOT NEW.root_id OR\n     OLD.created_at IS NOT NEW.created_at OR\n     OLD.client_id IS NOT NEW.client_id OR\n     (OLD.archived IS NEW.archived AND OLD.archived_at IS NEW.archived_at AND (\n         OLD.last_modified IS NOT NEW.last_modified OR\n         OLD.version IS NOT NEW.version)))\nBEGIN\n  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)\n  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,\n         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,\n                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,\n                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,\n                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,\n                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,\n                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,\n                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,\n                     'source',NEW.source,'external_ref',NEW.external_ref,\n                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,\n                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,\n                     'metadata',NEW.metadata,'thinking_history_policy',NEW.thinking_history_policy,\n                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,\n                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));\nEND"
+CHACHANOTES_ARCHIVE_PRUNE_SQL = "CREATE TRIGGER sync_log_prune_conversations\nAFTER INSERT ON sync_log\nWHEN NEW.entity = 'conversations'\nBEGIN\n  DELETE FROM sync_log\n   WHERE entity = 'conversations'\n     AND entity_id = NEW.entity_id\n     AND version < (\n         SELECT MAX(frontier.version) FROM sync_log AS frontier\n          WHERE frontier.entity = 'conversations'\n            AND frontier.entity_id = NEW.entity_id);\nEND"
+CHACHANOTES_V85_SCHEMAS = tuple(
+    tuple(
+        sorted(
+            tuple(
+                sql[:-1] + ", archived_at TEXT)"
+                if sql.startswith("CREATE TABLE conversations(")
+                else CHACHANOTES_ARCHIVE_UPDATE_SQL
+                if sql.startswith("CREATE TRIGGER conversations_sync_update\n")
+                else CHACHANOTES_ARCHIVE_PRUNE_SQL
+                if sql.startswith("CREATE TRIGGER sync_log_prune_conversations\n")
+                else sql
+                for sql in schema
+            )
+            + (CHACHANOTES_ARCHIVE_INDEX_SQL,),
+            key=_installed_schema_order,
+        )
+    )
+    for schema in CHACHANOTES_V84_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V85_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 85, CHACHANOTES_V85_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_ARCHIVE_V84_TO_V85_SQL = (
+    "UPDATE db_schema_version SET version=85 WHERE schema_name='rag_char_chat_schema' AND version=84",
 )

@@ -9,6 +9,7 @@ import base64
 import os
 import secrets
 import sys
+from functools import lru_cache
 from typing import Dict, Any
 
 from Cryptodome.Cipher import AES
@@ -16,6 +17,17 @@ from Cryptodome.Protocol.KDF import scrypt
 from loguru import logger
 
 from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+
+
+# scrypt is deliberately expensive, and decrypt re-derives the same per-value
+# key on every config load/save cycle (the salt is embedded in the ciphertext
+# and stable between saves). Memoize on the full derivation input; bounded so
+# per-value random salts cannot grow it without limit.
+@lru_cache(maxsize=128)
+def _derive_key_cached(
+    password: str, salt: bytes, n: int, key_len: int, r: int, p: int
+) -> bytes:
+    return scrypt(password.encode("utf-8"), salt, key_len=key_len, N=n, r=r, p=p)
 
 
 def unlock_recovery_value(value: str) -> str:
@@ -91,13 +103,19 @@ class ConfigEncryption:
         # Return with prefix
         return f"{self.ENCRYPTION_PREFIX}{encrypted_b64}"
 
-    def decrypt_value(self, encrypted_value: str, password: str) -> str:
+    def decrypt_value(
+        self, encrypted_value: str, password: str, *, log_failure: bool = True
+    ) -> str:
         """
         Decrypt an encrypted string value with authentication.
 
         Args:
             encrypted_value: The encrypted string (with or without prefix)
             password: The password to use for decryption
+            log_failure: Log a failed decrypt at ERROR. ``verify_password``
+                passes False: a wrong password is an expected answer there,
+                and the startup prompt must not print an error between tries
+                (TASK-34100.4).
 
         Returns:
             The decrypted string
@@ -143,25 +161,41 @@ class ConfigEncryption:
             return plaintext.decode("utf-8")
 
         except Exception as e:
-            logger.error(f"Decryption failed: {type(e).__name__}")
+            if log_failure:
+                logger.error(f"Decryption failed: {type(e).__name__}")
             raise ValueError(
                 "Failed to decrypt value. Invalid password or corrupted data."
             )
 
     def _derive_key(self, *, password: str, salt: bytes, version: int) -> bytes:
         n = self.LEGACY_SCRYPT_N if version == self.LEGACY_VERSION else self.SCRYPT_N
-        return scrypt(
-            password.encode("utf-8"),
+        return _derive_key_cached(
+            password,
             salt,
-            key_len=self.KEY_SIZE,
-            N=n,
-            r=self.SCRYPT_R,
-            p=self.SCRYPT_P,
+            n,
+            self.KEY_SIZE,
+            self.SCRYPT_R,
+            self.SCRYPT_P,
         )
+
+    @staticmethod
+    def clear_derived_key_cache() -> None:
+        """Drop memoized scrypt keys; call when the master password changes."""
+        _derive_key_cached.cache_clear()
 
     def is_encrypted(self, value: str) -> bool:
         """Check if a value is encrypted based on its prefix."""
         return isinstance(value, str) and value.startswith(self.ENCRYPTION_PREFIX)
+
+    def is_legacy(self, value: str) -> bool:
+        """Check if an encrypted value carries the v1 (scrypt 2^20) version byte."""
+        if not self.is_encrypted(value):
+            return False
+        try:
+            payload = base64.b64decode(value[len(self.ENCRYPTION_PREFIX) :])
+        except ValueError:
+            return False
+        return payload[:1] == bytes([self.LEGACY_VERSION])
 
     def encrypt_config(self, config: Dict[str, Any], password: str) -> Dict[str, Any]:
         """
@@ -203,13 +237,17 @@ class ConfigEncryption:
         return self._decrypt_config(config, password, strict=False)
 
     def decrypt_config_strict(
-        self, config: Dict[str, Any], password: str
+        self, config: Dict[str, Any], password: str, *, log_failure: bool = True
     ) -> Dict[str, Any]:
         """Decrypt a configuration dictionary, failing on any invalid value.
 
         Args:
             config: Dictionary with potentially encrypted values.
             password: Password to use for decryption.
+            log_failure: Log a failed decrypt at ERROR. The startup unlock
+                passes False: a value that does not decrypt is an answer it
+                reports to the user, not an error to print between prompts
+                (TASK-34100.4).
 
         Returns:
             Dictionary with decrypted values.
@@ -217,7 +255,9 @@ class ConfigEncryption:
         Raises:
             ValueError: If any encrypted value cannot be decrypted.
         """
-        return self._decrypt_config(config, password, strict=True)
+        return self._decrypt_config(
+            config, password, strict=True, log_failure=log_failure
+        )
 
     def _decrypt_config(
         self,
@@ -225,13 +265,16 @@ class ConfigEncryption:
         password: str,
         *,
         strict: bool,
+        log_failure: bool = True,
     ) -> Dict[str, Any]:
         decrypted_config: Dict[str, Any] = {}
 
         for key, value in config.items():
             if self.is_encrypted(value):
                 try:
-                    decrypted_config[key] = self.decrypt_value(value, password)
+                    decrypted_config[key] = self.decrypt_value(
+                        value, password, log_failure=log_failure
+                    )
                 except ValueError:
                     if strict:
                         raise
@@ -243,6 +286,7 @@ class ConfigEncryption:
                     value,
                     password,
                     strict=strict,
+                    log_failure=log_failure,
                 )
             else:
                 # Keep non-encrypted values as-is
@@ -276,7 +320,7 @@ class ConfigEncryption:
             True if password is correct, False otherwise
         """
         try:
-            decrypted = self.decrypt_value(verifier, password)
+            decrypted = self.decrypt_value(verifier, password, log_failure=False)
             # Check if it's a valid verification token
             return decrypted.startswith("PASSWORD_VERIFICATION_TOKEN_")
         except ValueError:

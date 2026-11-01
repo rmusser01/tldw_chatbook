@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from statistics import median
 from time import perf_counter
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -115,6 +115,7 @@ async def test_loading_surfaces_keep_unicode_copy_and_notes_sync_hook() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None:
     """Notes toggle/select/open interactions never remount the Library shell."""
     app = _build_test_app()
@@ -164,6 +165,7 @@ async def test_notes_per_click_updates_keep_screen_and_canvas_identity() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_media_choice_and_rag_toggles_are_canvas_scoped() -> None:
     """Media chooser/Escape and Search/RAG toggles preserve shell identity."""
     app = _build_test_app()
@@ -191,7 +193,10 @@ async def test_media_choice_and_rag_toggles_are_canvas_scoped() -> None:
             await _wait_for_selector(screen, pilot, "#library-media-type-filter")
         assert calls == []
         assert screen.query_one("#library-rail") is media_rail
-        assert screen.query_one("#library-media-canvas", LibraryMediaCanvas) is media_canvas
+        assert (
+            screen.query_one("#library-media-canvas", LibraryMediaCanvas)
+            is media_canvas
+        )
 
         screen.query_one("#library-row-browse-search").press()
         await _wait_for_selector(screen, pilot, "#library-rag-mode-toggle")
@@ -227,9 +232,7 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         _library_selected_row_id="",
         run_worker=Mock(),
     )
-    skill_event = SimpleNamespace(
-        stop=Mock(), button=SimpleNamespace(skill_name=None)
-    )
+    skill_event = SimpleNamespace(stop=Mock(), button=SimpleNamespace(skill_name=None))
     prompt_screen = SimpleNamespace(
         _prompts_state=SimpleNamespace(
             mutation_in_flight=False,
@@ -249,9 +252,7 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         _library_selected_row_id="",
         run_worker=Mock(),
     )
-    prompt_event = SimpleNamespace(
-        stop=Mock(), button=SimpleNamespace(prompt_id=1)
-    )
+    prompt_event = SimpleNamespace(stop=Mock(), button=SimpleNamespace(prompt_id=1))
 
     with patch.object(
         library_screen_module,
@@ -267,6 +268,7 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_real_prompt_and_skill_rows_keep_their_canvas_identity(tmp_path) -> None:
     """Real service-backed list-to-work-pane loads avoid screen fallback."""
     prompt_path = tmp_path / "prompts"
@@ -317,9 +319,7 @@ async def test_real_prompt_and_skill_rows_keep_their_canvas_identity(tmp_path) -
         screen = _active_library_screen(skills_host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-skills").press()
-        row = await _wait_for_selector(
-            screen, pilot, "#library-skill-row-scoped-skill"
-        )
+        row = await _wait_for_selector(screen, pilot, "#library-skill-row-scoped-skill")
         canvas = screen.query_one("#library-skills-canvas")
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
@@ -356,6 +356,7 @@ def test_ingest_checkbox_updates_group_without_canvas_rebuild() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.allow_network
+@pytest.mark.bootstrap_profile
 async def test_ingest_backend_switch_recomposes_only_the_ingest_canvas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -366,8 +367,11 @@ async def test_ingest_backend_switch_recomposes_only_the_ingest_canvas(
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
     screen._build_library_ingest_state = lambda: build_library_ingest_state(
-        (), form=screen._ingest_state.form, ingest_backend=backend["value"],
-        runtime_source="server", server_ingest_available=True,
+        (),
+        form=screen._ingest_state.form,
+        ingest_backend=backend["value"],
+        runtime_source="server",
+        server_ingest_available=True,
     )
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
     host = LibraryHarness(app, screen=screen)
@@ -398,6 +402,43 @@ async def test_ingest_backend_switch_recomposes_only_the_ingest_canvas(
         assert screen.query_one("#library-ingest-canvas", LibraryIngestCanvas) is canvas
 
 
+def _library_skills_status_screen(status_line: SimpleNamespace) -> SimpleNamespace:
+    """A Skills screen double whose import-status methods are the real ones.
+
+    TASK-21232: the harness used to fake only the leaf state this test
+    checks, so when task-32055 (579135667a) split
+    ``_apply_library_skills_import_status`` into a status-line builder plus a
+    patcher, the double stopped providing the new methods and the test
+    failed on a harness AttributeError instead of measuring anything. Here
+    the double's METHOD surface is bound straight from ``LibraryScreen``, so
+    only STATE is faked: the visibility guard, the in-place patch, and the
+    ``_sync_library_canvas`` fallback all run as production code, and any
+    future read of a state attribute the double lacks still fails with an
+    ``AttributeError`` naming that attribute.
+    """
+    screen = SimpleNamespace(
+        is_mounted=True,
+        _library_selected_row_id=library_screen_module.LIBRARY_ROW_BROWSE_SKILLS,
+        _library_skills_import_status="",
+        _library_skills_import_in_flight=False,
+        _library_structural_waits={},
+        query_one=Mock(return_value=status_line),
+    )
+    screen.app = SimpleNamespace(screen=screen)
+    for method_name in (
+        "_library_structural_wait_for",
+        "_library_skills_import_row_visible",
+        "_library_skills_import_status_line",
+        "_patch_library_skills_import_status_line",
+    ):
+        setattr(
+            screen,
+            method_name,
+            MethodType(getattr(LibraryScreen, method_name), screen),
+        )
+    return screen
+
+
 def test_import_status_lines_patch_the_mounted_static_without_recompose() -> None:
     """One-line Prompt/Skill receipts update their existing Static only."""
     prompt_line = SimpleNamespace(update=Mock())
@@ -412,22 +453,14 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
     )
     prompt_screen.app = SimpleNamespace(screen=prompt_screen)
     skill_line = SimpleNamespace(update=Mock())
-    skill_screen = SimpleNamespace(
-        is_mounted=True,
-        _library_selected_row_id=library_screen_module.LIBRARY_ROW_BROWSE_SKILLS,
-        _library_skills_import_status="",
-        query_one=Mock(return_value=skill_line),
-    )
-    skill_screen.app = SimpleNamespace(screen=skill_screen)
+    skill_screen = _library_skills_status_screen(skill_line)
 
     with patch.object(
         library_screen_module,
         "_sync_library_canvas",
         side_effect=AssertionError("mounted status line must not recompose"),
     ):
-        LibraryScreen._apply_library_prompts_import_status(
-            prompt_screen, "2 imported"
-        )
+        LibraryScreen._apply_library_prompts_import_status(prompt_screen, "2 imported")
         prompt_screen._library_selected_row_id = (
             library_screen_module.LIBRARY_ROW_BROWSE_NOTES
         )
@@ -449,6 +482,7 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_notes_select_toggle_latency_probe() -> None:
     """Measure the mounted Notes toggle with an identical before/after probe.
 

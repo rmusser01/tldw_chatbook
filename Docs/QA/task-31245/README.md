@@ -2,6 +2,38 @@
 
 This directory records measured evidence, not blanket release acceptance.
 
+The [2026-10-04 ownership checkpoint](ownership-qualification-2026-10-04.md)
+records hydration, fixture and finite-scope corrections: final **155 affected
+Console tests** and **71 activation/reuse tests** pass without warnings.
+The strict read-only census checks constructor profiles and each run's explicit
+temporary root, with zero retained database files after every teardown;
+intermediate leaks and inherited broader failures remain in the receipt.
+Native/full-corpus/performance qualification is not complete.
+The [native qualification checklist](native-qualification-checklist.md) is
+prepared and has a source-bound synthetic-data launch packet. It remains HOLD
+for the required native viewport/input workflows, Windows and actual participants;
+the recorded macOS walkthroughs are partial, not release acceptance.
+The approved [fixture rebuild plan](fixture-rebuild-proposal.md) and
+[fresh tooling checkpoint](fixture-rebuild-2026-10-04.md) provide the reviewed
+builder/guarded launcher and fresh-source commands. Tiny automated evidence is
+not scale/native acceptance; the old ignored corpus/launcher remains unavailable.
+
+The latest frozen `b5e0f37bb0` checkpoint passes 300 standalone Keyword queries
+and all 60 UI searches/eight exact activations, but five activation loop windows
+still exceed 50 ms (maximum 78.352583 ms). Two separate full-activity ownership
+traces retain no worker-owned connections after executor join; five constructor
+caches remain, with 22/24 database descriptors. This is headless diagnostic
+evidence, not application-cache retirement or native/performance qualification.
+
+Frozen `b738054edf` adds the tested native-label fallback read correction.
+Fresh standalone Keyword passes300 queries (P95105.448875ms); the normal UI
+matrix still fails six activation windows (maximum89.041708ms) and one search.
+All60 searches/eight exact opens complete; preparation/busy limits pass. Native
+MRU is observed only at244x73. Integrated computer use explicitly refuses
+Terminal; no UI workaround follows, and only the disposable QA Python process
+is controller-interrupted. Required native/Windows/participant and app-cache
+retirement proof remain open. This supports draft review, not merge acceptance.
+
 The [2026-09-07 switcher follow-up](switcher-reuse-and-mode-follow-up.md) records
 the duplicate-tab and selected-mode corrections reported during manual QA.
 

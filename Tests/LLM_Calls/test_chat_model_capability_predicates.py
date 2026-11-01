@@ -94,8 +94,7 @@ def test_moonshot_legacy_and_lookalikes_never_match_kimi_series(model):
 )
 def test_moonshot_min_temperature_interplay_is_v1_family_only(model, expected):
     assert (
-        moonshot_model_requires_min_temperature_for_multiple_choices(model)
-        is expected
+        moonshot_model_requires_min_temperature_for_multiple_choices(model) is expected
     )
 
 

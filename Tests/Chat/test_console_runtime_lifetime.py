@@ -569,13 +569,14 @@ async def test_custody_task_creation_failure_releases_registration(monkeypatch):
     def fail_create_task(coroutine):
         raise RuntimeError("scheduler unavailable")
 
-    monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_runtime.asyncio.create_task",
-        fail_create_task,
-    )
-
-    with pytest.raises(RuntimeError, match="scheduler unavailable"):
-        runtime.accept_turn(request)
+    with monkeypatch.context() as scheduling:
+        scheduling.setattr(
+            runtime,
+            "_create_custody_task",
+            fail_create_task,
+        )
+        with pytest.raises(RuntimeError, match="scheduler unavailable"):
+            runtime.accept_turn(request)
 
     assert runtime._turn_custody == {}
     restored = store.pending_attachments(request.session_id)
@@ -590,12 +591,14 @@ async def test_custody_task_creation_failure_releases_registration(monkeypatch):
     assert request.staged_evidence_launch.payload == {
         "evidence": "sensitive recovery payload"
     }
+    await runtime.dispose()
 
 
 # -- Navigation is a pure view detach ---------------------------------------
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_leaving_console_preserves_stream_queue_and_controller_state():
     """Navigation clears the view without mutating app-owned work."""
     gateway = _StalledGateway()
@@ -727,6 +730,7 @@ async def test_leaving_console_does_not_cancel_an_in_flight_wake_turn():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_the_wake_exemption_never_outlives_its_turn():
     """A wake turn that finishes leaves nothing exempt behind."""
     store = ConsoleChatStore()
@@ -848,6 +852,7 @@ async def test_the_prompt_queue_admits_again_on_the_next_visit():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_runtime_closes_its_thread_local_db_after_coordinator_disposal(tmp_path):
     app = SimpleNamespace(
         chachanotes_db=SimpleNamespace(db_path=tmp_path / "chatbook.db")

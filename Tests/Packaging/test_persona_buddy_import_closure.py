@@ -186,7 +186,9 @@ def describe_leak(resident, what):
 sys.meta_path.insert(0, _ChainTracer())
 '''
 
-_BUDDY_CLOSURE_SNIPPET = _IMPORT_CHAIN_TRACER + """
+_BUDDY_CLOSURE_SNIPPET = (
+    _IMPORT_CHAIN_TRACER
+    + """
 import tldw_chatbook.app  # noqa: F401
 
 resident = resident_heavy_modules()
@@ -212,6 +214,7 @@ for expected in (
 
 print("PERSONA_BUDDY_CLOSURE_OK")
 """
+)
 
 
 def test_app_import_does_not_execute_persona_visual_or_pil(tmp_path: Path) -> None:
@@ -297,7 +300,9 @@ def test_persona_package_inits_are_lazy_and_single_sourced(tmp_path: Path) -> No
 # The three Actor_Packs modules `app.py` imports at module scope. Naming them
 # (and their heavy dependencies) explicitly is the point: a count-only guard
 # tells the next author that something regressed, not what to defer.
-_ACTOR_PACK_SOURCE_SNIPPET = _IMPORT_CHAIN_TRACER + """
+_ACTOR_PACK_SOURCE_SNIPPET = (
+    _IMPORT_CHAIN_TRACER
+    + """
 import sys
 
 # app.py imports these three DIRECTLY (not via the package facade), so each
@@ -327,6 +332,7 @@ assert "tldw_chatbook.Character_Chat.visual_identity" not in sys.modules
 
 print("ACTOR_PACK_SOURCE_CLOSURE_OK")
 """
+)
 
 
 def test_actor_pack_modules_do_not_execute_persona_visual_or_pil(

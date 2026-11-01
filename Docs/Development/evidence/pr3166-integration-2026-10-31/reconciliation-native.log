@@ -1,0 +1,110 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 90.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 56 items
+
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_original_reconcile_read_allows_loop_progress_and_is_one_use PASSED [  1%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_held_reconciliation_never_resumes_after_drift[session] PASSED [  3%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_held_reconciliation_never_resumes_after_drift[workspace] PASSED [  5%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_held_reconciliation_never_resumes_after_drift[view] PASSED [  7%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_held_reconciliation_never_resumes_after_drift[source] PASSED [  8%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_held_reconciliation_never_resumes_after_drift[registry] PASSED [ 10%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_held_reconciliation_never_resumes_after_drift[generation] PASSED [ 12%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_held_reconciliation_never_resumes_after_drift[runtime] PASSED [ 14%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_held_reconciliation_never_resumes_after_drift[cancel] PASSED [ 16%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_custom_active_workspace_callback_keeps_original_loop_affinity PASSED [ 17%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_custom_reconciler_does_not_prepare_unused_registry_read PASSED [ 19%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_custom_connection_configuration_keeps_original_loop_affinity PASSED [ 21%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_prepared_registry_change_repairs_session_on_original_loop PASSED [ 23%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_new_attach_visit_defers_resume_while_original_read_is_held[resume] PASSED [ 25%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_new_attach_visit_defers_resume_while_original_read_is_held[new_visit] PASSED [ 26%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_new_attach_visit_defers_resume_while_original_read_is_held[retry] PASSED [ 28%]
+Tests/UI/test_console_workspace_reconciliation_preparation.py::test_failed_resume_read_does_not_persist_exception_body PASSED [ 30%]
+Tests/UI/test_console_return_acknowledgement.py::test_explicit_return_syncs_only_for_a_captured_unread_token[no_session] PASSED [ 32%]
+Tests/UI/test_console_return_acknowledgement.py::test_explicit_return_syncs_only_for_a_captured_unread_token[unsaved] PASSED [ 33%]
+Tests/UI/test_console_return_acknowledgement.py::test_explicit_return_syncs_only_for_a_captured_unread_token[read] PASSED [ 35%]
+Tests/UI/test_console_return_acknowledgement.py::test_explicit_return_syncs_only_for_a_captured_unread_token[refused] PASSED [ 37%]
+Tests/UI/test_console_return_acknowledgement.py::test_explicit_return_syncs_only_for_a_captured_unread_token[unread] PASSED [ 39%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[current] PASSED [ 41%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[unbound] PASSED [ 42%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[error] PASSED [ 44%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[config_error] PASSED [ 46%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[preexisting_error] PASSED [ 48%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[cleanup_error] PASSED [ 50%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[pause_before] PASSED [ 51%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[pause_inside] PASSED [ 53%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[selector_inside] PASSED [ 55%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[database] PASSED [ 57%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-rebuild] PASSED [ 58%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-file] PASSED [ 60%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-rebuild] PASSED [ 62%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-file] PASSED [ 64%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-file-drift] PASSED [ 66%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-file-drift] PASSED [ 67%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_refresh_retries_after_native_pause_without_stale_state[native-canceled] PASSED [ 69%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_refresh_retries_after_native_pause_without_stale_state[native-duplicates] PASSED [ 71%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_refresh_retries_after_native_pause_without_stale_state[native-local-pause] PASSED [ 73%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_body_pause_error_is_not_mistaken_for_entry_deferral PASSED [ 75%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_retry_uses_one_screen_owned_timer[timer-retry] PASSED [ 76%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_retry_uses_one_screen_owned_timer[timer-teardown] PASSED [ 78%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker] PASSED [ 80%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-real-pause] PASSED [ 82%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-inprogress] PASSED [ 83%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-teardown] PASSED [ 85%]
+Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-external] PASSED [ 87%]
+Tests/UI/test_console_full_config_preparation.py::test_expired_original_full_awaits_config_without_main_native_entry PASSED [ 89%]
+Tests/UI/test_console_full_config_preparation.py::test_full_waits_responsively_and_rechecks_held_original_config[none] PASSED [ 91%]
+Tests/UI/test_console_full_config_preparation.py::test_full_waits_responsively_and_rechecks_held_original_config[session] PASSED [ 92%]
+Tests/UI/test_console_full_config_preparation.py::test_full_waits_responsively_and_rechecks_held_original_config[source] PASSED [ 94%]
+Tests/UI/test_console_full_config_preparation.py::test_full_waits_responsively_and_rechecks_held_original_config[visit] PASSED [ 96%]
+Tests/UI/test_console_full_config_preparation.py::test_full_waits_responsively_and_rechecks_held_original_config[maintenance] PASSED [ 98%]
+Tests/UI/test_console_full_config_preparation.py::test_cancelled_full_keeps_original_config_read_owned_until_retirement PASSED [100%]
+
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+16.21s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-rebuild]
+15.77s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-rebuild]
+14.79s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-file]
+14.15s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[current]
+14.05s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_refresh_retries_after_native_pause_without_stale_state[native-duplicates]
+13.72s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker]
+13.69s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[pause_before]
+13.02s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-file]
+12.99s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[pause_inside]
+12.46s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[cleanup_error]
+12.35s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[database]
+11.78s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-real-pause]
+10.80s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[selector_inside]
+9.40s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[unbound]
+8.70s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_refresh_retries_after_native_pause_without_stale_state[native-canceled]
+8.47s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[control-file-drift]
+8.45s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[error]
+8.17s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_retry_uses_one_screen_owned_timer[timer-teardown]
+8.15s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-inprogress]
+8.01s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[preexisting_error]
+7.48s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_refresh_retries_after_native_pause_without_stale_state[native-local-pause]
+7.16s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_worker_defers_later_native_reads_with_its_refresh[native-worker-external]
+7.13s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_busy_config_locks_defer_both_refresh_callers[rail-file-drift]
+6.54s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_control_refresh_keeps_native_config_lifetime[config_error]
+6.27s call     Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_console_native_retry_uses_one_screen_owned_timer[timer-retry]
+================= 56 passed, 2 warnings in 363.91s (0:06:03) ==================

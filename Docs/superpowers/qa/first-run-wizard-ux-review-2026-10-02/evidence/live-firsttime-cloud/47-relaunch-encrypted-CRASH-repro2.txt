@@ -1,0 +1,51 @@
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4
+.4) doesn't match a supported version!
+  warnings.warn(
+2026-10-02 19:49:50.068 | WARNING  | tldw_chatbook.config:_decrypt_config_section_with_status:1050 - Encryption is enabled but no password is set. Cannot decrypt config.
+2026-10-02 19:49:50.073 | WARNING  | tldw_chatbook.config:_decrypt_config_section_with_status:1050 - Encryption is enabled but no password is set. Cannot decrypt config.
+2026-10-02 19:49:50.500 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+╭───────────────────────────────────────────────────────────────────────────────── Traceback (most recent call last) ──────────────────────────────────────────────────────────────────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-review/tldw_chatbook/app_entry.py:501 in on_mount                                                                       │
+│                                                                                                                                                                                                      │
+│   498 │   │   │   │                                                                                                                                                                                  │
+│   499 │   │   │   │   async def on_mount(self) -> None:                                                                                                                                              │
+│   500 │   │   │   │   │   """Show password dialog immediately on mount."""                                                                                                                           │
+│ ❱ 501 │   │   │   │   │   password = await self.push_screen(                                                                                                                                         │
+│   502 │   │   │   │   │   │   PasswordDialog(                                                                                                                                                        │
+│   503 │   │   │   │   │   │   │   mode="unlock",                                                                                                                                                     │
+│   504 │   │   │   │   │   │   │   title="Unlock Configuration",                                                                                                                                      │
+│                                                                                                                                                                                                      │
+│ ╭──────────────────────────────────────────────────────────────────────────────────────────── locals ─────────────────────────────────────────────────────────────────────────────────────────────╮  │
+│ │ encryption_config = {'enabled': True, 'method': 'AES-256-GCM-scrypt', 'version': 1, 'password_verifier': 'enc:<REDACTED>'+88} │  │
+│ │              self = PasswordPromptApp(title='PasswordPromptApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark'})                                                                      │  │
+│ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │
+│                                                                                                                                                                                                      │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2962 in push_screen                                                                              │
+│                                                                                                                                                                                                      │
+│   2959 │   │   │   try:                                                                                                                                                                              │
+│   2960 │   │   │   │   get_current_worker()                                                                                                                                                          │
+│   2961 │   │   │   except NoActiveWorker:                                                                                                                                                            │
+│ ❱ 2962 │   │   │   │   raise NoActiveWorker(                                                                                                                                                         │
+│   2963 │   │   │   │   │   "push_screen must be run from a worker when `wait_for_dismiss` is Tr                                                                                                      │
+│   2964 │   │   │   │   ) from None                                                                                                                                                                   │
+│   2965 │   │   │   return future                                                                                                                                                                     │
+│                                                                                                                                                                                                      │
+│ ╭───────────────────────────────────────────────────────── locals ──────────────────────────────────────────────────────────╮                                                                        │
+│ │      await_mount = AwaitMount(parent=PasswordDialog(), widgets=[PasswordDialog()])                                        │                                                                        │
+│ │         callback = None                                                                                                   │                                                                        │
+│ │           future = <Future pending>                                                                                       │                                                                        │
+│ │             loop = <_UnixSelectorEventLoop running=True closed=False debug=False>                                         │                                                                        │
+│ │     message_pump = PasswordPromptApp(title='PasswordPromptApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark'}) │                                                                        │
+│ │             mode = '_default'                                                                                             │                                                                        │
+│ │      mode_screen = Screen(id='_default')                                                                                  │                                                                        │
+│ │      next_screen = PasswordDialog()                                                                                       │                                                                        │
+│ │           screen = PasswordDialog()                                                                                       │                                                                        │
+│ │     screen_stack = [Screen(id='_default'), PasswordDialog()]                                                              │                                                                        │
+│ │             self = PasswordPromptApp(title='PasswordPromptApp', classes={'-dark-mode'}, pseudo_classes={'focus', 'dark'}) │                                                                        │
+│ │ wait_for_dismiss = True                                                                                                   │                                                                        │
+│ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                                                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+NoActiveWorker: push_screen must be run from a worker when `wait_for_dismiss` is True
+2026-10-02 19:49:52 [ERROR   ] tldw_chatbook.app_entry:651 - Cannot proceed without decryption password.
+EXITED:1
+

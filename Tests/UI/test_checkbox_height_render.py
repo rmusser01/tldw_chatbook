@@ -40,7 +40,10 @@ from textual.widgets import Checkbox
 # and Tests/UI/test_non_obscuring_focus_contract.py -- layout-stable
 # regardless of how the package itself is installed/imported.
 _BUNDLED_CSS_PATH = (
-    Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
 )
 assert _BUNDLED_CSS_PATH.is_file(), (
     f"Production CSS bundle not found at {_BUNDLED_CSS_PATH} -- these tests "

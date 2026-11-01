@@ -485,7 +485,10 @@ def test_closeout_candidates_have_exact_non_vacuous_margin() -> None:
         "on_console_selection_feedback_requested": (
             "on(ConsoleSelectionFeedbackRequested)",
         ),
-        "on_console_selection_note_requested": ("on(ConsoleSelectionNoteRequested)",),
+        "on_console_selection_note_requested": (
+            "on(ConsoleTraceCopyRequested)",
+            "on(ConsoleSelectionNoteRequested)",
+        ),
     }
     assert REVIEW_SELECTION_ACTION_DELEGATE_METHODS == {"action_open_trajectory_view"}
     assert "open_trajectory_view" in _binding_actions(owner)

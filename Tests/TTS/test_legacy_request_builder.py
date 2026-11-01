@@ -30,9 +30,23 @@ pytestmark = pytest.mark.unit
 # provider_id, model_id, response_format, expected_model, expected_format, expected_internal_id
 _KNOWN_PROVIDER_CASES = (
     ("openai", "tts-1-hd", "opus", "tts-1-hd", "opus", "openai_official_tts-1-hd"),
-    ("elevenlabs", "eleven_multilingual_v2", "wav", "elevenlabs", "mp3", "elevenlabs_elevenlabs"),
+    (
+        "elevenlabs",
+        "eleven_multilingual_v2",
+        "wav",
+        "elevenlabs",
+        "mp3",
+        "elevenlabs_elevenlabs",
+    ),
     ("kokoro", "kokoro", "mp3", "kokoro", "wav", "local_kokoro_default_onnx"),
-    ("chatterbox", "chatterbox", "mp3", "chatterbox", "wav", "local_chatterbox_default"),
+    (
+        "chatterbox",
+        "chatterbox",
+        "mp3",
+        "chatterbox",
+        "wav",
+        "local_chatterbox_default",
+    ),
     ("higgs", "higgs-audio-v2", "wav", "higgs-audio-v2", "wav", "local_higgs_v2"),
     ("alltalk", "alltalk", "mp3", "alltalk", "wav", "alltalk_default"),
 )

@@ -28,6 +28,7 @@ from tldw_chatbook.Utils.input_validation import (
 from tldw_chatbook.Utils.input_validation import (
     ConsoleHookEvent,
 )
+from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.hook_permissions import HookReviewSnapshot
@@ -141,7 +142,7 @@ class HooksSettingsPanel(Vertical):
                 classes="settings-hooks-action",
             )
             return
-        yield Checkbox(
+        yield StateCheckbox(
             "Enable Console hooks",
             value=section.get("enabled", True) is True,
             id="settings-hooks-enabled",
@@ -255,7 +256,7 @@ class HooksSettingsPanel(Vertical):
         }
         with Vertical(id="settings-hooks-editor"):
             yield Static(f"Hook {self.selected + 1}", classes="destination-section")
-            yield Checkbox(
+            yield StateCheckbox(
                 "Enable hook",
                 value=self._display["enabled"],
                 id="settings-hooks-row-enabled",

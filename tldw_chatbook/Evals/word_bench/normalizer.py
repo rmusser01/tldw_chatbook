@@ -118,7 +118,9 @@ def normalize_logprobs(
         return _to_token_probs(content[0]), 0
 
     for offset, entry in enumerate(content[:CONTENT_TOKEN_WINDOW]):
-        if not is_control_token(entry.get("token", ""), float(entry.get("logprob", 0.0))):
+        if not is_control_token(
+            entry.get("token", ""), float(entry.get("logprob", 0.0))
+        ):
             return _to_token_probs(entry), offset
 
     raise NormalizerError(

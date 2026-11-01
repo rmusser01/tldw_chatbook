@@ -70,6 +70,7 @@ from tldw_chatbook.Canvas.limits import CanvasLimits
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+
 if TYPE_CHECKING:
     from tldw_chatbook.Canvas.web_auth import WebAuthPolicy
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
@@ -85,6 +86,7 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
 from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.startup_errors import private_path_repair_hint
 from tldw_chatbook.Utils.private_paths import (
@@ -110,6 +112,40 @@ if TYPE_CHECKING:
 #######################################################################################################################
 #
 # Functions:
+
+def _contains_literal_backslash_x(value: Any) -> bool:
+    pending = [value]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if type(current) is str:  # Inspect builtin values without custom coercion.
+            if "\\x" in current:
+                return True
+        elif type(current) in (dict, list, tuple):
+            identity = id(current)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            # Only builtin containers enter this branch; custom mappings keep the legacy route.
+            pending.extend(current.values() if type(current) is dict else current)
+    return False
+
+
+def dumps_cli_config(config_data: Mapping[str, Any]) -> str:
+    """Retain the original codec and defer the exceptional literal encoder.
+
+    Args:
+        config_data: Original configuration mapping passed to the writer.
+
+    Returns:
+        TOML text using the existing ordinary or literal-backslash-x codec.
+    """
+    if not _contains_literal_backslash_x(config_data):
+        return toml.dumps(config_data)
+    from tldw_chatbook.Utils.toml_serialization import dumps_cli_config as special
+
+    return special(config_data)
+
 
 logger.debug("CRITICAL DEBUG: config.py module is being imported/executed NOW.")
 # --- Constants ---
@@ -312,9 +348,7 @@ def _canvas_remote_access_status(
             port=port,
             access_token=credential,
             public_url=public_url,
-            allow_insecure_remote_http=(
-                web.get("allow_insecure_remote_http") is True
-            ),
+            allow_insecure_remote_http=(web.get("allow_insecure_remote_http") is True),
             trusted_proxy_addresses=tuple(str(value) for value in proxies),
             direct_tls=bool(certificate and private_key),
         )
@@ -503,7 +537,9 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
         enable_multiplexing=enable_multiplexing,
         connect_timeout_s=coerce_int_setting(
             get_cli_setting(
-                "console_ssh", "connect_timeout_s", DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S
+                "console_ssh",
+                "connect_timeout_s",
+                DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S,
             ),
             DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S,
             minimum=1,
@@ -518,6 +554,8 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
             minimum=1,
         ),
     )
+
+
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
 from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
@@ -598,7 +636,9 @@ def _default_stt_provider_for_platform() -> str:
 def application_owned_config_directory(config_path: Path) -> Path | None:
     """Return the app-owned default config parent, never a custom parent."""
 
-    if _config_participants.verified_companion_parent(sys.modules[__name__], config_path):
+    if _config_participants.verified_companion_parent(
+        sys.modules[__name__], config_path
+    ):
         return None
     if os.environ.get("TLDW_CONFIG_PATH"):
         return None
@@ -622,7 +662,31 @@ def _report_config_path_posture(
 
 
 # --- Encryption support ---
-_ENCRYPTION_PASSWORD = None  # Cached password for the session
+
+
+def _take_startup_unlock() -> tuple[Optional[str], bool]:
+    """The startup unlock's outcome, if it is running (TASK-34100.4 round 2).
+
+    `Backup_Recovery.launcher.startup_unlock` imports this module only after
+    the master password was typed; taking it here, before the module-level
+    load below, means that load decrypts instead of warning "no password is
+    set" right after the right password. Read through ``sys.modules`` so
+    config never imports the launcher itself.
+
+    Returns:
+        ``(password, pending)`` from ``launcher.take_startup_unlock()``, or
+        ``(None, False)`` when no startup unlock is in progress.
+    """
+    launcher = sys.modules.get("tldw_chatbook.Backup_Recovery.launcher")
+    take = getattr(launcher, "take_startup_unlock", None)
+    if not callable(take):
+        return None, False
+    return take()
+
+
+# Cached password for the session; True while a startup reset or re-key is
+# about to finish the unlock (the locked import-time load is then expected).
+_ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING = _take_startup_unlock()
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
 _CONFIG_GENERATION = 0
 _CONFIG_PERSISTENCE_ERROR = None
@@ -774,8 +838,6 @@ DEFAULT_RAG_SEARCH_CONFIG = {
 }
 
 DEFAULT_MEDIA_INGESTION_CONFIG = {
-    # UI Configuration for all media types
-    "ui_style": "default",  # Options: "default", "redesigned", "new", "grid", "wizard", "split"
     "pdf": {
         "chunk_method": "semantic",
         "chunk_size": 500,
@@ -1013,9 +1075,12 @@ def set_encryption_password(password: str):
     re-decrypted on the next load.
     """
     global _ENCRYPTION_PASSWORD, _SETTINGS_CACHE, _CONFIG_CACHE
+    global _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = password
+    _STARTUP_UNLOCK_PENDING = False
     _SETTINGS_CACHE = None
     _CONFIG_CACHE = None
+    get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password set for current session")
 
 
@@ -1026,8 +1091,10 @@ def get_encryption_password() -> Optional[str]:
 
 def clear_encryption_password():
     """Clear the encryption password from memory."""
-    global _ENCRYPTION_PASSWORD
+    global _ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = None
+    _STARTUP_UNLOCK_PENDING = False
+    get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password cleared from memory")
 
 
@@ -1047,9 +1114,15 @@ def _decrypt_config_section_with_status(
 
     password = get_encryption_password()
     if not password:
-        logger.warning(
-            "Encryption is enabled but no password is set. Cannot decrypt config."
-        )
+        if _STARTUP_UNLOCK_PENDING:
+            # A startup reset or re-key installs its outcome right after this
+            # import; a locked load now is expected, not a problem to report
+            # under the prompt (TASK-34100.4 review round 2).
+            logger.debug("Encrypted config loaded before the startup unlock finished.")
+        else:
+            logger.warning(
+                "Encryption is enabled but no password is set. Cannot decrypt config."
+            )
         return _ConfigDecryptionResult(config_data, True)
 
     try:
@@ -1539,13 +1612,53 @@ PROVIDER_API_KEY_PLACEHOLDERS = frozenset(
 )
 
 
+#: The prefix `Utils/config_encryption.ConfigEncryption` writes on every
+#: encrypted config value (pinned equal by
+#: Tests/test_config_encryption_lifecycle.py). Kept as a literal here so the
+#: key resolver below never imports the encryption engine.
+ENCRYPTED_CONFIG_VALUE_PREFIX = "enc:"
+
+
+def is_encrypted_config_value(value: object) -> bool:
+    """Whether ``value`` is still-encrypted ``enc:`` config ciphertext.
+
+    TASK-34100.4 (new-protect-summary-03): ciphertext is never a credential.
+    A locked session (encryption on, no password) or a value that did not
+    decrypt keeps its ``enc:`` form in the loaded config, so every code path
+    that reads a key straight from config must treat it as unusable.
+    """
+    return isinstance(value, str) and value.strip().startswith(
+        ENCRYPTED_CONFIG_VALUE_PREFIX
+    )
+
+
+def without_ciphertext(value: Any, absent: Any = None) -> Any:
+    """Return ``value`` unchanged, or ``absent`` when it is ``enc:`` ciphertext.
+
+    For key reads that must keep their own blank/placeholder semantics (the
+    summarizers distinguish a configured-blank key from a missing one) but
+    must never send ciphertext. Provider handlers use
+    `resolve_provider_api_key` instead.
+    """
+    return absent if is_encrypted_config_value(value) else value
+
+
 def resolve_provider_api_key(value: object) -> Optional[str]:
     """Return `value` stripped, or `None` if it is not a usable provider API
-    key (not a string, blank, or one of `PROVIDER_API_KEY_PLACEHOLDERS`)."""
+    key (not a string, blank, one of `PROVIDER_API_KEY_PLACEHOLDERS`, or
+    still-encrypted `enc:` ciphertext).
+
+    TASK-34100.4 (new-protect-summary-03): ciphertext reads as ABSENT. A
+    locked session (encryption on, no password) or a value that did not
+    decrypt keeps its `enc:` form in the loaded config; accepting it made
+    readiness report Ready and sent the ciphertext as a bearer token.
+    """
     if not isinstance(value, str):
         return None
     stripped = value.strip()
     if stripped in PROVIDER_API_KEY_PLACEHOLDERS:
+        return None
+    if is_encrypted_config_value(stripped):
         return None
     return stripped or None
 
@@ -1732,6 +1845,7 @@ def _normalize_legacy_provider_api_key(
     raw_api_section: Dict[str, Any],
     toml_key: str,
     env_var: str,
+    bridged_from_legacy: set[str] | None = None,
 ) -> Optional[str]:
     """One normalized credential for `provider_key` -- PR-T2 Task 7.
 
@@ -1769,8 +1883,8 @@ def _normalize_legacy_provider_api_key(
     (it has its own env fallback), this bridge deliberately does not write
     env-sourced values into `api_settings` (see the paragraph above on
     `api_key_source` and prefill safety -- that behavior is pinned and
-    correct), google's legacy dict is `google_generative_api` which the
-    handler no longer reads, and `chat_with_google` has no env fallback of
+    correct), google's legacy top-level dict was removed as dead code
+    (nothing read it), and `chat_with_google` has no env fallback of
     its own. A caller that passes no explicit `api_key` -- the Library RAG
     path among them -- is therefore gated OPEN and fails at the wire. Any
     claim that google is fully closed must say "config-sourced" or name
@@ -1856,6 +1970,8 @@ def _normalize_legacy_provider_api_key(
             `"anthropic_api_key"`.
         env_var: The conventional environment variable, e.g.
             `"ANTHROPIC_API_KEY"`.
+        bridged_from_legacy: When given, `provider_key` is added to it if
+            the TOML-sourced fallback filled the table (TASK-33001.15).
 
     Returns:
         The normalized credential (feeds the legacy `<provider>_api` dict
@@ -1878,13 +1994,28 @@ def _normalize_legacy_provider_api_key(
     #   * The modern/legacy branches validated the STRIPPED form but
     #     returned the raw one, so `api_key = " sk-xyz "` showed
     #     `sk-xyz` in readiness and spent ` sk-xyz ` (a 401).
-    modern_value = resolve_provider_api_key(
-        provider_table.get("api_key") if isinstance(provider_table, dict) else None
-    )
+    table = provider_table if isinstance(provider_table, dict) else {}
+    # TASK-33641.11 (ADR-012): a recorded `credential_source` decides as it
+    # does for `provider_readiness.resolve_provider_credential` (not imported:
+    # that is a cycle). "none" uses no key; "stored" the table's key or the
+    # legacy one copied below, never the variable; "environment" only the
+    # variable the table names. No source keeps the order below.
+    source = table.get("credential_source")
+    source = source.strip().lower() if type(source) is str else None
+    if source == "none":
+        return None
+    if source == "environment":
+        named = table.get("api_key_env_var")
+        named = named.strip() if isinstance(named, str) else ""
+        return resolve_provider_api_key(os.getenv(named)) if named else None
+
+    modern_value = resolve_provider_api_key(table.get("api_key"))
     if modern_value:
         return modern_value  # explicit modern config always wins
 
-    env_value = resolve_provider_api_key(os.getenv(env_var))
+    env_value = (
+        None if source == "stored" else resolve_provider_api_key(os.getenv(env_var))
+    )
     if env_value:
         return env_value
 
@@ -1894,6 +2025,8 @@ def _normalize_legacy_provider_api_key(
             provider_table = {}
             api_settings_section[provider_key] = provider_table
         provider_table["api_key"] = legacy_value
+        if bridged_from_legacy is not None:
+            bridged_from_legacy.add(provider_key)
         return legacy_value
 
     return None
@@ -1982,9 +2115,63 @@ def _settings_cache_hit(active_config_path: Path) -> dict | None:
         posture = _SETTINGS_CACHE_POSTURE
     if cached is None or source != active_config_path:
         return None
-    if _config_file_posture(active_config_path) != posture:
+    if not _posture_unchanged(active_config_path, cached, posture):
         return None
     return cached
+
+
+#: Per-thread record of the last UI-loop stretch that re-checked the posture.
+_POSTURE_STRETCH = None
+
+
+def _posture_unchanged(active_config_path: Path, cached: dict, posture: tuple) -> bool:
+    """Whether the config path still has ``posture``; one check per loop stretch.
+
+    TASK-33620.15: a warm hit ``lstat``s every path component, and one Console
+    send made 114-243 warm hits on the UI loop (53-251 ms in the mounted
+    harness; a 294 ms live stall in the 0.2 s sync tick, where each ``lstat``
+    gives up the GIL to busy workers). On the thread running an event loop,
+    one check now covers the callbacks the loop runs before its next batch,
+    which no other code on that thread can interleave with; a rebuild or a
+    write installs a new settings object, which is never matched. Every
+    caller off a loop -- workers, tests, scripts -- still checks every hit.
+
+    Args:
+        active_config_path: The config path the warm hit is for.
+        cached: The installed settings object that hit.
+        posture: The identity stamped when ``cached`` was read.
+
+    Returns:
+        True while the path's identity is the stamped one.
+    """
+    global _POSTURE_STRETCH
+    import asyncio
+
+    loop = asyncio._get_running_loop()
+    if loop is None:
+        return _config_file_posture(active_config_path) == posture
+    if _POSTURE_STRETCH is None:
+        _POSTURE_STRETCH = _threading.local()
+    stretch = _POSTURE_STRETCH
+    seen = getattr(stretch, "seen", None)
+    if (
+        seen is not None
+        and seen[0] is loop
+        and seen[1] is cached
+        and seen[2] is posture
+        and seen[3] == active_config_path
+    ):
+        return True
+    if _config_file_posture(active_config_path) != posture:
+        return False
+    stretch.seen = (loop, cached, posture, active_config_path)
+    loop.call_soon(_end_posture_stretch, stretch)
+    return True
+
+
+def _end_posture_stretch(stretch: Any) -> None:
+    """Make the next loop batch re-check the config path's identity."""
+    stretch.seen = None
 
 
 def load_settings(
@@ -2206,6 +2393,9 @@ def _load_settings_uncached(
     # the ingest template resolution order (``[chunking] default_template``).
     # Distinct from the legacy CamelCase "Chunking" server section above.
     final_chunking_settings_cli = get_toml_section("chunking")
+    # (task-34389, ADR-229) The [sync] table -- the sync-journal retention
+    # window the startup maintenance pass reads.
+    final_sync_settings_cli = get_toml_section("sync")
     final_image_generation_settings_cli = get_toml_section("image_generation")
     final_video_generation_settings_cli = get_toml_section("video_generation")
     # F-E fix: the first-run wizard's own state (setup_started/setup_completed)
@@ -2238,9 +2428,7 @@ def _load_settings_uncached(
     )
     from tldw_chatbook.Utils.reasoning_config import resolve_console_reasoning_config
 
-    reasoning_resolution = resolve_console_reasoning_config(
-        final_console_settings_cli
-    )
+    reasoning_resolution = resolve_console_reasoning_config(final_console_settings_cli)
     for diagnostic in reasoning_resolution.diagnostics:
         logger.warning("Invalid Console reasoning configuration: {}", diagnostic)
     final_console_settings_cli.update(reasoning_resolution.settings.model_dump())
@@ -2263,10 +2451,6 @@ def _load_settings_uncached(
     else:
         _status_chips_position = _status_chips_position.strip().lower()
     final_console_settings_cli["status_chips_position"] = _status_chips_position
-    final_console_settings_cli["status_chips_collapsed"] = coerce_bool_setting(
-        final_console_settings_cli.get("status_chips_collapsed", False),
-        False,
-    )
     final_console_settings_cli["paste_collapse_threshold"] = coerce_int_setting(
         final_console_settings_cli.get(
             "paste_collapse_threshold",
@@ -2455,6 +2639,7 @@ def _load_settings_uncached(
     # never disagree about the same config. `elevenlabs` is untouched: it
     # is a TTS credential, not a Chat provider `get_provider_readiness`
     # resolves.
+    _legacy_api_key_providers: set[str] = set()
     _bridged_provider_api_keys = {
         provider_key: _normalize_legacy_provider_api_key(
             final_api_settings,
@@ -2462,6 +2647,7 @@ def _load_settings_uncached(
             raw_api_section=api_section_legacy,
             toml_key=toml_key,
             env_var=env_var,
+            bridged_from_legacy=_legacy_api_key_providers,
         )
         for provider_key, toml_key, env_var in _LEGACY_PROVIDER_API_KEY_BRIDGE
     }
@@ -2472,7 +2658,6 @@ def _load_settings_uncached(
     huggingface_api_key = _bridged_provider_api_keys["huggingface"]
     openrouter_api_key = _bridged_provider_api_keys["openrouter"]
     deepseek_api_key = _bridged_provider_api_keys["deepseek"]
-    google_api_key = _bridged_provider_api_keys["google"]
     mistral_api_key = _bridged_provider_api_keys["mistral"]
     elevenlabs_api_key = get_api_key("elevenlabs_api_key", "ELEVENLABS_API_KEY")
 
@@ -2599,6 +2784,11 @@ def _load_settings_uncached(
         "logging": final_logging_settings,  # For TUI log settings like log_max_bytes
         "database": final_database_settings_cli,  # For TUI DB paths
         "api_settings": final_api_settings,  # CRUCIAL for local API calls
+        # TASK-33001.15: provider tables whose `api_key` above is not in the
+        # table on disk -- the loader copied it from legacy `[API]`. Names
+        # only, always present; a Settings save that records "stored" for one
+        # of them writes the key into the table (provider_setup_persistence).
+        "legacy_api_key_providers": tuple(sorted(_legacy_api_key_providers)),
         "providers": final_providers_settings,  # For UI dropdowns
         "model_catalog": final_model_catalog_settings_cli,
         "chat_defaults": final_chat_defaults_cli,
@@ -2606,6 +2796,7 @@ def _load_settings_uncached(
         "appearance": copy.deepcopy(toml_config_data.get("appearance", {})),
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
+        "sync": final_sync_settings_cli,  # Sync-journal retention (task-34389, ADR-229)
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "hooks": final_hooks_settings_cli,  # Raw [hooks] table for Agents/run_hooks.py (Console run hooks)
@@ -2613,9 +2804,27 @@ def _load_settings_uncached(
         "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
         "persona_buddy": copy.deepcopy(toml_config_data.get("persona_buddy", {})),
+        **(
+            {"buddy_interaction": copy.deepcopy(toml_config_data["buddy_interaction"])}
+            if "buddy_interaction" in toml_config_data
+            else {}
+        ),
         # [skills] disabled_builtins is read from app_config on every skills
         # read (TASK-32954); without this a disabled built-in returned on restart.
         "skills": copy.deepcopy(toml_config_data.get("skills", {})),
+        "agents": copy.deepcopy(toml_config_data.get("agents", {})),
+        "tools": copy.deepcopy(toml_config_data.get("tools", {})),
+        # [analysis_defaults] is the Library's analysis provider/model/call
+        # shape: the Media reader's Generate, bulk Analyze and
+        # Analyze-after-import all resolve it from app_config through
+        # Library/ingest_analysis.py, and the Media viewer's analysis panel
+        # seeds its inputs from it. It was never carried over, so analysis
+        # reported "no provider configured" for every user (TASK-34000.5,
+        # review finding L-02). Tests/test_config_load_settings_table_guard.py
+        # fails on the next table a reader needs that this dict drops.
+        "analysis_defaults": copy.deepcopy(
+            toml_config_data.get("analysis_defaults", {})
+        ),
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
@@ -2671,20 +2880,6 @@ def _load_settings_uncached(
             "api_timeout": api_section_legacy.get("deepseek_api_timeout", 90),
             "api_retries": api_section_legacy.get("deepseek_api_retry", 3),
             "api_retry_delay": api_section_legacy.get("deepseek_api_retry_delay", 5),
-        },
-        "google_generative_api": {  # Renamed to avoid confusion with Google Search API
-            "api_key": google_api_key,
-            "model": api_section_legacy.get("google_model", "gemini-2.5-flash"),
-            "streaming": api_section_legacy.get("google_streaming", False),
-            "temperature": api_section_legacy.get("google_temperature", 0.7),
-            "top_p": api_section_legacy.get("google_top_p", 0.95),
-            "min_p": api_section_legacy.get(
-                "google_min_p", 0.05
-            ),  # Check if 'min_p' is valid for Gemini
-            "max_tokens": api_section_legacy.get("google_max_tokens", 4096),
-            "api_timeout": api_section_legacy.get("google_api_timeout", 90),
-            "api_retries": api_section_legacy.get("google_api_retry", 3),
-            "api_retry_delay": api_section_legacy.get("google_api_retry_delay", 5),
         },
         "groq_api": {
             "api_key": groq_api_key,
@@ -2772,10 +2967,6 @@ def _load_settings_uncached(
             ),
             "api_key": api_section_legacy.get("kobold_api_key", ""),
             "streaming": api_section_legacy.get("kobold_streaming", False),
-            "temperature": api_section_legacy.get("kobold_temperature", 0.7),
-            "top_p": api_section_legacy.get("kobold_top_p", 0.95),
-            "top_k": api_section_legacy.get("kobold_top_k", 100),
-            "max_tokens": api_section_legacy.get("kobold_max_tokens", 4096),
             "api_timeout": api_section_legacy.get("kobold_api_timeout", 90),
             "api_retries": api_section_legacy.get("kobold_api_retry", 3),
             "api_retry_delay": api_section_legacy.get("kobold_api_retry_delay", 5),
@@ -3479,7 +3670,10 @@ def _load_settings_uncached(
             ),
             "bing_search_api_key": _get_typed_value(
                 search_engines_section, "bing_search_api_key", ""
-            ) or _get_typed_value(search_engines_section, "search_engine_api_key_bing", ""),
+            )
+            or _get_typed_value(
+                search_engines_section, "search_engine_api_key_bing", ""
+            ),
             "brave_search_api_key": _get_typed_value(
                 search_engines_section, "brave_search_api_key", ""
             ),
@@ -3497,7 +3691,8 @@ def _load_settings_uncached(
             ),
             "searx_search_api_url": _get_typed_value(
                 search_engines_section, "searx_search_api_url", ""
-            ) or _get_typed_value(search_engines_section, "search_engine_searx_api", ""),
+            )
+            or _get_typed_value(search_engines_section, "search_engine_searx_api", ""),
             "tavily_search_api_key": _get_typed_value(
                 search_engines_section, "tavily_search_api_key", ""
             ),
@@ -3694,7 +3889,8 @@ def _load_settings_uncached(
     from .Utils.paths import get_user_data_dir
 
     chat_dicts_folder = (
-        get_user_data_dir() if bootstrap.succeeded
+        get_user_data_dir()
+        if bootstrap.succeeded
         else profile_paths.user_data_dir(toml_config_data)
     ) / "chat_dicts"
     config_dict["chat_dictionaries"]["chat_dicts_folder"] = str(chat_dicts_folder)
@@ -3705,7 +3901,11 @@ def _load_settings_uncached(
     # 0700 and hardens an existing 0775 instance in place.
     try:
         if bootstrap.succeeded:
-            with _config_participants.operation(sys.modules[__name__], route="config_chat_dicts", target=chat_dicts_folder):
+            with _config_participants.operation(
+                sys.modules[__name__],
+                route="config_chat_dicts",
+                target=chat_dicts_folder,
+            ):
                 secure_private_directory(
                     chat_dicts_folder, create=True, application_owned=True
                 )
@@ -3847,29 +4047,6 @@ API_MODELS_BY_PROVIDER = {
         "google/gemini-2.5-flash-preview-05-20",
     ],
 }
-LOCAL_PROVIDERS = {
-    "llama_cpp": ["None"],
-    "Oobabooga": ["None"],
-    "koboldcpp": ["None"],
-    "Ollama": [
-        "gemma3:12b",
-        "gemma3:4b",
-        "gemma3:27b",
-        "qwen3:4b",
-        "qwen3:8b",
-        "qwen3:14b",
-        "qwen3:30b",
-        "qwen3:32b",
-        "qwen3:235b",
-        "devstral:24b",
-        "deepseek-r1:671b",
-    ],
-    "vLLM": ["vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"],
-    "TabbyAPI": ["tabby-model", "tabby-model-2", "tabby-model-3"],
-    "Aphrodite": ["aphrodite-engine", "aphrodite-engine-2"],
-    "Custom": ["custom-model-alpha", "custom-model-beta"],
-    "Custom-2": ["custom-model-gamma", "custom-model-delta"],
-}
 
 #######################################################################################################################
 # --- CLI User Configuration Section ---
@@ -3908,6 +4085,7 @@ collapse_large_pastes = true  # Display large pasted chunks compactly in Console
 # the [api_settings.custom] fallbacks are identical either way.
 custom_endpoints_use_engine = true
 show_model_thinking = true  # Presentation only; capture and replay are unchanged
+show_tokens_per_second = true  # Console status chip: live streaming rate, then the finished response's average
 thinking_history_policy_default = "auto"  # auto, include, exclude for new conversations
 # Environment overrides: TLDW_CONSOLE_REASONING_HISTORY (mode), and JSON maps in
 # TLDW_CONSOLE_REASONING_HISTORY_OVERRIDES / TLDW_CONSOLE_REASONING_NATIVE_TOOL_OVERRIDES.
@@ -3993,6 +4171,18 @@ scope = "transcript"  # transcript, workbench
 intensity = "low"  # low, medium, high
 fps = 6  # 1-12
 
+# Opt-in OS notifications for background Console events (TASK-18925):
+# desktop notifications for run finished / run failed / needs approval when
+# the terminal window is buried. Off by default; the body carries only the
+# conversation/tab name and the outcome category -- never message content.
+# macOS uses osascript, Linux uses notify-send; other platforms skip with a
+# debug log. Cadence matches the in-app toasts (one per guarded event).
+[console.os_notifications]
+enabled = false
+run_finished = true
+run_failed = true
+needs_approval = true
+
 [console_ssh]
 # SSH ControlMaster lifecycle for remote workspace bindings (spec
 # 2026-09-24-ssh-remote-workspace-bindings). `control_persist` rides the
@@ -4046,7 +4236,7 @@ character_expression_mode = "dynamic"  # Dynamic animates character expressions;
 density = "normal"  # compact, normal, or comfortable default control density
 animations_enabled = true  # Enable optional UI animations where supported
 smooth_scrolling = true  # Enable smooth scrolling where supported
-reduce_motion = false  # Render animations as static frames (splash screen, Console setup backdrop)
+reduce_motion = false  # Render animations as static frames (splash screen, character expressions, Buddy)
 ascii_glyphs = false  # Substitute ASCII status markers for unicode glyphs (narrow-font terminals)
 console_transcript_style = "role_accents"  # neutral, role_accents, or immersive_rp
 
@@ -4232,6 +4422,13 @@ openai_cache_key = false
 # every completion (toast, badge, durable mark); the wake turn just never
 # fires.
 # autowake_enabled = true
+# Goal policy cannot replenish an existing immutable launch allowance.
+# goal_runs_enabled = false
+# max_goal_generations = 3
+# max_goal_model_calls = 32
+# max_goal_budget_tokens = 500000
+# max_goal_output_tokens = 8192
+# max_goal_wall_seconds = 900
 #
 # --- Sub-agent routing (ADR-147) ---
 # Default provider/model for spawned sub-agents when neither the spawn call
@@ -4248,6 +4445,10 @@ openai_cache_key = false
 # provider id ("llama_cpp", "custom-ep:qwen-local") or "provider/model-glob"
 # ("llama_cpp/qwen3.8-*"). Presets are user-authored and never gated.
 # spawn_override_allowlist = []
+
+[agents.code_review]
+reviewers = []
+verifier_preset_id = ""
 
 [splash_screen]
 # Splash screen configuration for startup animations
@@ -4294,6 +4495,13 @@ fade_out_duration = 0.2  # Fade out time in seconds
 animation_speed = 1.0  # Animation playback speed multiplier
 
 custom_image_path = ""  # Set path to your image file for custom_image splash screen
+
+[session_summary]
+# Optional quit-time session usage summary (issue #365).
+# After a confirmed quit (Ctrl+Q), briefly show total session tokens and
+# elapsed session time before the app exits. Any key skips it.
+enabled = false  # Show the summary on quit (default off)
+duration_seconds = 3  # Auto-dismiss delay in seconds (clamped to 1..30)
 
 [logging]
 # Log file will be placed in the same directory as the chachanotes_db_path below.
@@ -4499,14 +4707,17 @@ OpenCodeZen = ["qwen3.8-max", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepsee
 CommandCode = ["gpt-5.5", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash", "Qwen/Qwen3.7-Max", "Qwen/Qwen3.6-Plus", "moonshotai/Kimi-K3", "moonshotai/Kimi-K2.6", "zai-org/GLM-5.3", "zai-org/GLM-5.1", "MiniMaxAI/MiniMax-M3", "MiniMaxAI/MiniMax-M2.7", "stepfun/Step-3.5-Flash", "xiaomi/mimo-v2.5-pro", "google/gemini-3.5-flash"]
 # Local Providers
 Llama_cpp = ["None"]
+Strata = []
+PolyStrata = []
 koboldcpp = ["None"]
 Oobabooga = ["None"]
 Ollama = ["gemma3:12b", "gemma3:4b", "gemma3:27b", "qwen3:4b", "qwen3:8b", "qwen3:14b", "qwen3:30b", "qwen3:32b", "qwen3:235b", "devstral:24b", "deepseek-r1:671b"]
-vLLM = ["vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"]
-Custom = ["custom-model-alpha", "custom-model-beta"]
-Custom_2 = ["custom-model-gamma", "custom-model-delta"]
-TabbyAPI = ["tabby-model", "tabby-model-2", "tabby-model-3"]
-Aphrodite = ["aphrodite-engine", "aphrodite-engine-2"]
+# These five fill via Discover models (Settings > Providers & Models).
+vLLM = []
+Custom = []
+Custom_2 = []
+TabbyAPI = []
+Aphrodite = []
 local-llm = ["None"] # Add if you have a specific local-llm provider entry
 local_llamacpp = ["None"]
 local_llamafile = ["None"]
@@ -5011,6 +5222,21 @@ write_to_config = [] # exact [providers] keys whose new models append to this fi
     # --- Local Providers ---
     # Local providers default to streaming = true so slow generations render
     # incrementally instead of timing out on one long blocking completion.
+    # External Strata/PolyStrata servers; discover model IDs from the server.
+    [api_settings.strata]
+    api_key_env_var = "STRATA_API_KEY"
+    api_url = "http://127.0.0.1:8080/v1"
+    model = ""
+    max_tokens = 4096
+    streaming = true
+
+    [api_settings.polystrata]
+    api_key_env_var = "STRATA_API_KEY" # PolyStrata uses this server variable too
+    api_url = "http://127.0.0.1:8080/v1"
+    model = ""
+    max_tokens = 4096
+    streaming = true
+
     [api_settings.llama_cpp] # Matches key in [providers]
     api_key_env_var = "LLAMA_CPP_API_KEY" # If you set one on the server
     # api_key = ""
@@ -5282,6 +5508,10 @@ rag_auto_retrieve_on_send = false  # New Console chats do not search Library aut
 # not trip. Non-positive disables the watchdog. Default 90s. Env override:
 # TLDW_STREAM_STALL_TIMEOUT_SECONDS (precedence: env -> this key -> default).
 # stream_stall_timeout_seconds = 90
+# TASK-34100.5: the wait for a reply's FIRST token. A large local model can
+# take minutes to load; default 300 for self-hosted providers, the stall window
+# above for cloud ones. Env override: TLDW_FIRST_TOKEN_TIMEOUT_SECONDS.
+# first_token_timeout_seconds = 300
 # Default settings specifically for the 'Chat' tab
 user_display_name = "User"
 provider = "OpenAI"
@@ -5292,6 +5522,14 @@ top_p = 0.95
 min_p = 0.05
 top_k = 50
 strip_thinking_tags = true
+# TASK-33620.10 (owner decision 2026-10-27): Console replies stream for every
+# provider. This key outranks each [api_settings.*] `streaming` value. Older
+# config files get it too (these defaults are merged under every load), unless
+# they set `streaming` here or only the legacy `enable_streaming`. For a server
+# that refuses streamed requests, turn Streaming off for that model (Console's
+# "Save as model default") or provider ([console.provider_defaults.<provider>]
+# streaming = false); both outrank this key.
+streaming = true
 
 # Console transcript view pruning: when the transcript's virtual height (in
 # terminal rows) exceeds prune_high_watermark, the oldest message rows are
@@ -5343,11 +5581,14 @@ default = "pixels"
 
 [web_security]
 # Egress guard (SSRF protection) for web scraping / ingestion / subscription
-# fetches. When enabled, content-derived URLs (redirects, sitemap/crawl
-# discoveries, feed items) must resolve to public IPs; URLs you explicitly
-# configure (feed sources, Confluence base_url, ingest URLs) may be private.
-# Cloud metadata endpoints (169.254.169.254 etc.) are always blocked unless
-# the exact host is listed in allowed_hosts.
+# fetches. When enabled, a URL must resolve to public IPs unless you typed it
+# into the app (Watchlists New source / Add several, Library Capture, an
+# ingest URL, a Confluence base_url); a redirect back to that URL's own host
+# keeps its trust. Crawl discoveries, feed items, a redirect to any other
+# host, and watch sources from an older version or an OPML/bundle import
+# never count. allowed_hosts admits each listed host (exact name, no port,
+# IPv6 without brackets) for every fetch, unchecked, cloud metadata
+# endpoints included (otherwise always blocked).
 enabled = true
 allowed_hosts = []
 # Default (connect, read) timeout applied by `Utils/egress.py`'s
@@ -5558,7 +5799,7 @@ recovery_capacity_bytes = 268435456  # Device-private lasting-sync recovery capa
 # Lasting-sync change watcher: base poll interval, and the cap it backs off to
 # while roots are quiet (backed-off sleeps are jittered by up to +/-50%).
 sync_watcher_interval_seconds = 1.0
-sync_watcher_max_interval_seconds = 10.0
+sync_watcher_max_interval_seconds = 30.0
 
 # Auto-save settings
 auto_save_enabled = true             # Enable auto-save feature
@@ -5713,7 +5954,7 @@ cache_size_limit_gb = 10.0
 # RAG (Retrieval-Augmented Generation) Configuration
 # ==========================================================
 [rag_citations]
-canonical_writes_enabled = false
+canonical_writes_enabled = true
 
 [rag]
 # Comprehensive configuration for the RAG system
@@ -5809,6 +6050,22 @@ llm_context_document_limit = 10
 default_template = ""
 
 
+# ==========================================================
+# Sync Journal Retention
+# ==========================================================
+[sync]
+# Retention window, in days, for the local sync journals (`sync_log` in the
+# ChaChaNotes and media databases). Every conversation/message/note/media
+# mutation leaves a full-copy JSON event there, so without a bound the table
+# grows with total mutations forever. A background pass after startup (and
+# then once a day) deletes rows older than this many days; the number of
+# pruned rows is logged. Rows within the window are never touched, so sync
+# consumers reading by change_id cursor still see every unpruned change.
+# Set 0 (or any negative number) to disable pruning entirely.
+# (TASK-34389; ADR-229.)
+sync_log_retention_days = 90
+
+
 # --- Model Capabilities Configuration ---
 [model_capabilities]
 # This section defines which models have specific capabilities like vision support.
@@ -5884,6 +6141,7 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # Deep-Search Configuration
 # ==========================================================
 [tools]
+code_review_enabled = true
 # web_deep_search_enabled = false    # Opt-in deep-search tool; the Console picks this up on its next agent run (each run rebuilds its tool catalog fresh, no app restart needed); external MCP clients only see it on their next client launch, and only when [mcp] expose_local_tools = true; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
 
 [SearchSettings]
@@ -6101,7 +6359,8 @@ default_provider = "__DEFAULT_TRANSCRIPTION_PROVIDER__"
 # For canary: nvidia/canary-1b-flash, nvidia/canary-1b
 #   Note: Canary supports multilingual ASR and translation between en, de, es, fr
 # For remote-whisper: Depends on your server (e.g., "whisper-1" for OpenAI)
-default_model = "distil-large-v3"
+# Fresh installs use the smaller base model. Existing configured choices win.
+default_model = "base"
 
 # Default language for transcription (use "auto" for automatic detection)
 # For source language in transcription
@@ -6243,7 +6502,7 @@ expose_prompts = true  # Expose prompt templates
 require_auth = false  # Require authentication (not implemented yet)
 rate_limit = 100  # Max requests per minute per client
 max_concurrent_requests = 10  # Max concurrent requests
-# approval_timeout_seconds = 0  # Console approval-card auto-deny ceiling: 0 (default) waits indefinitely; e.g. 120 auto-denies undecided calls after 120s
+# approval_timeout_seconds = 0  # Human approval ceiling for Console cards and live MCP confirmations: 0 (default) waits indefinitely; e.g. 120 auto-denies undecided calls after 120s
 
 # expose_local_tools = false   # expose workspace, web, and Watchlists agent tools (fs_*/git_*/web_*/watchlists_*) to external MCP clients; each tool remains permission-gated
 # expose_character_tools = false   # expose character_search and character_get to external MCP clients (independent of expose_local_tools and [tools] character_tools_enabled); each tool remains permission-gated
@@ -6399,7 +6658,7 @@ enabled = true  # Enable web server functionality
 host = "localhost"  # Host address to bind to
 port = 8000  # Port to bind to
 title = "tldw chatbook"  # Title for the web page
-font_size = 12  # Browser terminal font size; 12 keeps Textual Web close to native terminal density
+font_size = 16  # Browser terminal font size in CSS pixels (16px is approximately 12pt)
 debug = false  # Enable debug mode for development
 # Remote access is denied unless a dedicated credential resolves in this order:
 # TLDW_CHATBOOK_WEB_ACCESS_TOKEN, this access_token field, then the OS keyring
@@ -6448,6 +6707,38 @@ except tomllib.TOMLDecodeError as e:
     DEFAULT_CONFIG_FROM_TOML = {}  # Should not happen with valid TOML string
 
 
+def _merge_user_config_over_shipped_defaults(
+    user_config: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Deep-merge one raw user config over the shipped template.
+
+    Every published view of the config (bootstrap load, post-write install,
+    atomic snapshot) is built here, so they agree. TASK-33620.10: the
+    template's ``[chat_defaults] streaming = true`` must not shadow a user's
+    legacy ``enable_streaming``, which is read only when the user's file has no
+    ``streaming``. When the file holds the legacy key alone, the template's
+    ``streaming`` is left out of the merged view and readers bridge the legacy
+    value as before.
+
+    Args:
+        user_config: The user's raw (parsed, migrated) config file.
+
+    Returns:
+        A new merged mapping; neither input is modified.
+    """
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(user_config))
+    user_chat_defaults = user_config.get("chat_defaults")
+    if (
+        isinstance(user_chat_defaults, Mapping)
+        and "enable_streaming" in user_chat_defaults
+        and "streaming" not in user_chat_defaults
+    ):
+        merged_chat_defaults = merged.get("chat_defaults")
+        if isinstance(merged_chat_defaults, dict):
+            merged_chat_defaults.pop("streaming", None)
+    return merged
+
+
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
@@ -6483,19 +6774,19 @@ def first_profile_created_this_session() -> bool:
 #: -- only genuinely dynamic-keyed sections -- so real typos elsewhere still
 #: surface. Each entry is a tuple path prefix.
 _FREEFORM_CONFIG_PREFIXES: tuple[tuple[str, ...], ...] = (
-    ("agents",),                # deliberately EMPTY in the default shape: the
-                                # authoritative defaults live in
-                                # Agents/agent_service.py (two-homes drift),
-                                # so documented overrides here would all flag
-                                # as unknown (Qodo #13, PR #2301)
+    ("agents",),  # deliberately EMPTY in the default shape: the
+    # authoritative defaults live in
+    # Agents/agent_service.py (two-homes drift),
+    # so documented overrides here would all flag
+    # as unknown (Qodo #13, PR #2301)
     ("console", "reasoning_history_overrides"),
     ("console", "reasoning_native_tool_overrides"),
-    ("api_settings",),          # provider configs incl. user-added custom providers
-    ("providers",),             # provider display sections + model lists
-    ("model_capabilities", "models"),    # arbitrary model names
+    ("api_settings",),  # provider configs incl. user-added custom providers
+    ("providers",),  # provider display sections + model lists
+    ("model_capabilities", "models"),  # arbitrary model names
     ("model_capabilities", "patterns"),  # arbitrary model-name patterns
-    ("SearchEngines",),         # per-engine configs
-    ("Prompts",),               # user prompt content
+    ("SearchEngines",),  # per-engine configs
+    ("Prompts",),  # user prompt content
     ("prompts",),
 )
 
@@ -6514,8 +6805,8 @@ _DEPRECATED_CONFIG_KEYS: Dict[str, str] = {
 class ConfigKeyFinding:
     """One advisory config-key finding."""
 
-    path: str                       # dotted path, e.g. "general.focus_mdoe"
-    kind: str                       # "unknown" | "deprecated"
+    path: str  # dotted path, e.g. "general.focus_mdoe"
+    kind: str  # "unknown" | "deprecated"
     suggestion: Optional[str] = None  # near-miss key or replacement path
 
 
@@ -6558,7 +6849,9 @@ def validate_config_keys(
             here = (*path, key)
             replacement = _deprecated_config_replacement(here)
             if replacement is not None:
-                findings.append(ConfigKeyFinding(".".join(here), "deprecated", replacement))
+                findings.append(
+                    ConfigKeyFinding(".".join(here), "deprecated", replacement)
+                )
                 continue
             if key in ref:
                 ref_value = ref[key]
@@ -6709,7 +7002,9 @@ def migrate_config_file_if_needed() -> Optional[Path]:
         )
         persisted = _config_data_for_persistence(migrated)
         raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-        _publish_runtime_config_unlocked(raw_config=raw_written)
+        _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         return backup_path
 
 
@@ -6748,9 +7043,7 @@ def _preserve_corrupt_config_aside(config_path: Path) -> Optional[Path]:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         aside = source.with_name(f"{source.name}.corrupt-{stamp}")
         shutil.copy2(source, aside)
-        logger.warning(
-            f"Preserved unparseable config {source} at {aside}"
-        )
+        logger.warning(f"Preserved unparseable config {source} at {aside}")
         _LAST_PRESERVED_CORRUPT_KEY = key
         _LAST_PRESERVED_CORRUPT_ASIDE = aside
         return aside
@@ -6864,7 +7157,7 @@ def _load_cli_config_bootstrap_unlocked(
         _CONFIG_SCHEMA_CONFLICT = _schema_conflict
         if _schema_conflict is not None:
             logger.warning(_schema_conflict)
-        loaded_config = deep_merge_dicts(loaded_config, user_config_from_file)
+        loaded_config = _merge_user_config_over_shipped_defaults(user_config_from_file)
         logger.info(f"Successfully loaded and merged CLI config from {config_path}")
         decryption = _decrypt_config_section_with_status(loaded_config, strict=True)
         if decryption.succeeded:
@@ -6998,6 +7291,27 @@ def _warm_config_cache_hit() -> Optional[Dict[str, Any]]:
     return None
 
 
+def config_read_would_wait() -> bool:
+    """Whether a config read on this thread would wait for another thread.
+
+    TASK-35645: warm settings and CLI config caches never wait; a cold one
+    waits while another thread holds the config locks (a rebuild or a write),
+    so they are probed without blocking, in their usual order. A storage
+    pause makes a cold read raise rather than wait, as it always has.
+    """
+    if (
+        _warm_config_cache_hit() is not None
+        and _settings_cache_hit(_get_effective_config_path()) is not None
+    ):
+        return False
+    with ExitStack() as acquired:
+        for lock in (_settings_rebuild_lock(), _config_file_lock()):
+            if not lock.acquire(blocking=False):
+                return True
+            acquired.callback(lock.release)
+    return False
+
+
 def load_cli_config_and_ensure_existence(
     force_reload: bool = False,
 ) -> Dict[str, Any]:  # Renamed from load_cli_config
@@ -7080,6 +7394,19 @@ def _target_config_section(config_data: Dict[str, Any], section: str) -> Dict[st
 # separate lock and defeat serialization on the first write.
 import threading as _threading  # noqa: E402
 
+from tldw_chatbook.Utils.private_paths import (
+    _lock_stream_for_callbacks,
+    open_private_lock_stream,
+)
+
+_LOCK_STREAM_SELECTOR_BINDING = (
+    _lock_stream_for_callbacks,
+    _lock_stream_for_callbacks.__code__,
+    _lock_stream_for_callbacks.__globals__,
+    tuple(cell.cell_contents for cell in _lock_stream_for_callbacks.__closure__),
+)
+
+
 _CONFIG_FILE_LOCK = _threading.RLock()
 
 
@@ -7093,68 +7420,142 @@ def _config_file_lock():
     return _CONFIG_FILE_LOCK
 
 
-@contextmanager
-def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
-    """Hold one OS-backed lock across a whole-file config transaction."""
+def _bind_config_interprocess_lock(definition):
+    """Capture the original optional selector before caller-marker lookup."""
+    @contextmanager
+    def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
+        """Hold one OS-backed lock across a whole-file config transaction."""
 
-    with _config_participants.operation(sys.modules[__name__], target=config_path):
-        lock_path = config_path.with_name(f"{config_path.name}.lock")
-        application_directory = application_owned_config_directory(config_path)
-        try:
-            create_private_text(
-                lock_path,
-                "",
-                application_owned_directory=application_directory,
-            )
-        except FileExistsError:
-            pass
-        stream = open_private_text_append_stream(
-            lock_path,
-            application_owned_directory=application_directory,
-        )
-        locked = False
-        try:
-            from tldw_chatbook.Backup_Recovery import raw_participants
-            operation = raw_participants._runtime_operation(config_path)
-            while True:
+        with _config_participants.operation(sys.modules[__name__], target=config_path):
+            lock_path = config_path.with_name(f"{config_path.name}.lock")
+            application_directory = application_owned_config_directory(config_path)
+            lock_opener = None
+            binding = globals().get("_LOCK_STREAM_SELECTOR_BINDING")
+            if binding is definition:
+                selector, selector_code, selector_globals, selector_closure = definition
+                if (
+                    globals().get("_lock_stream_for_callbacks") is selector
+                    and selector.__code__ is selector_code
+                    and selector.__globals__ is selector_globals
+                    and selector.__defaults__ is None
+                    and selector.__kwdefaults__ is None
+                    and selector.__closure__ is not None
+                    and len(selector.__closure__) == len(selector_closure)
+                    and all(cell.cell_contents is value for cell, value in zip(selector.__closure__, selector_closure, strict=True))
+                ):
+                    lock_opener = selector(
+                        create_private_text, open_private_text_append_stream, open_private_lock_stream, globals()
+                    )
+            if lock_opener is None:
+                try:
+                    create_private_text(
+                        lock_path,
+                        "",
+                        application_owned_directory=application_directory,
+                    )
+                except FileExistsError:
+                    pass
+                stream = open_private_text_append_stream(
+                    lock_path,
+                    application_owned_directory=application_directory,
+                )
+            else:
+                stream = lock_opener(
+                    lock_path, application_owned_directory=application_directory
+                )
+            locked = False
+            try:
+                from tldw_chatbook.Backup_Recovery import raw_participants
+
+                operation = raw_participants._runtime_operation(config_path)
+                while True:
+                    _config_participants.check_lock_wait(sys.modules[__name__], operation)
+                    try:
+                        portalocker.lock(
+                            stream,
+                            portalocker.LockFlags.EXCLUSIVE
+                            | portalocker.LockFlags.NON_BLOCKING,
+                        )
+                        locked = True
+                        break
+                    except portalocker.exceptions.AlreadyLocked:
+                        _threading.Event().wait(0.05)
                 _config_participants.check_lock_wait(sys.modules[__name__], operation)
+                yield
+            finally:
+                if locked:
+                    try:
+                        portalocker.unlock(stream)
+                    except Exception as error:
+                        logger.error(
+                            "Configuration write lock release failed (error_type={}).",
+                            type(error).__name__,
+                        )
                 try:
-                    portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING)
-                    locked = True
-                    break
-                except portalocker.exceptions.AlreadyLocked:
-                    _threading.Event().wait(0.05)
-            _config_participants.check_lock_wait(sys.modules[__name__], operation)
-            yield
-        finally:
-            if locked:
-                try:
-                    portalocker.unlock(stream)
+                    stream.close()
                 except Exception as error:
                     logger.error(
-                        "Configuration write lock release failed (error_type={}).",
+                        "Configuration write lock close failed (error_type={}).",
                         type(error).__name__,
                     )
-            try:
-                stream.close()
-            except Exception as error:
-                logger.error(
-                    "Configuration write lock close failed (error_type={}).",
-                    type(error).__name__,
-                )
+
+    return _config_interprocess_lock
+
+_config_interprocess_lock = _bind_config_interprocess_lock(_LOCK_STREAM_SELECTOR_BINDING)
+del _bind_config_interprocess_lock
+
+
+# The thread inside each config file's write transaction. The OS lock is taken
+# on a fresh descriptor every time, so unlike the RLocks beside it, it is not
+# reentrant: the holding thread can never get it a second time.
+_CONFIG_WRITE_LOCK_HOLDERS: dict[Path, _threading.Thread] = {}
+
+
+def _refuse_config_write_lock_reentry(config_path: Path) -> Path:
+    """Refuse the calling thread a write transaction it is already inside.
+
+    A caller that opens an operation of its own around the write lock calls
+    this first: a refusal raised inside an entered operation is recorded as a
+    failed config operation, which keeps the config participant from draining
+    until the next write that succeeds.
+
+    Returns:
+        The key the write lock records its holder under.
+
+    Raises:
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction, in an outer frame or in another asyncio task.
+            Waiting would block the holder for good (TASK-33641.6).
+    """
+
+    # Keyed as the operation compares its target with the selection.
+    holder_key = profile_paths.lexical_path(config_path)
+    if _CONFIG_WRITE_LOCK_HOLDERS.get(holder_key) is _threading.current_thread():
+        raise RecoveryRequired("raw_operation_provenance_invalid")
+    return holder_key
 
 
 @contextmanager
 def _config_write_lock(config_path: Path) -> Iterator[None]:
-    """Serialize one config write transaction within and across processes."""
+    """Serialize one config write transaction within and across processes.
 
+    Raises:
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction; refused before anything is entered.
+    """
+
+    holder_key = _refuse_config_write_lock_reentry(config_path)
     with _config_participants.operation(sys.modules[__name__], target=config_path):
         with (
             _settings_rebuild_lock(),
             _config_file_lock(),
             _config_interprocess_lock(config_path),
         ):
-            yield
+            _CONFIG_WRITE_LOCK_HOLDERS[holder_key] = _threading.current_thread()
+            try:
+                yield
+            finally:
+                _CONFIG_WRITE_LOCK_HOLDERS.pop(holder_key, None)
 
 
 def _current_config_file_stamp(config_path: Path) -> Optional[tuple[int, int]]:
@@ -7347,9 +7748,9 @@ def _write_raw_cli_config_unlocked(
         the post-round-trip view the next boot would see).
 
     TASK-13157: every config-rewrite pass (settings-screen edits, the
-    first-run wizard, and -- notably -- the full default+user re-merge every
-    process shutdown persists via ``persist_cli_config_for_shutdown``) ends
-    up here. The in-memory ``config_data`` is always a plain ``dict`` with
+    first-run wizard, and the quit's encryption pass in
+    ``persist_cli_config_for_shutdown``) ends up here. The in-memory
+    ``config_data`` is always a plain ``dict`` with
     inherently unique keys, so it cannot itself carry a duplicate key -- but
     ``toml.dumps`` (the third-party encoder) and ``tomllib`` (the stdlib
     reader the NEXT boot uses) are two independent implementations with no
@@ -7373,7 +7774,7 @@ def _write_raw_cli_config_unlocked(
     """
 
     application_directory = _prepare_config_parent(config_path)
-    serialized = toml.dumps(dict(config_data))
+    serialized = dumps_cli_config(dict(config_data))
     try:
         parsed_back = tomllib.loads(serialized)
     except tomllib.TOMLDecodeError as exc:
@@ -7386,9 +7787,31 @@ def _write_raw_cli_config_unlocked(
             f"Refusing to write {config_path}: the serialized configuration "
             f"does not parse back as valid TOML ({exc})"
         ) from exc
+    _commit_serialized_cli_config_unlocked(
+        config_path, serialized, application_directory
+    )
+    return parsed_back
+
+
+def _commit_serialized_cli_config_unlocked(
+    config_path: Path,
+    serialized: str,
+    application_directory: Path | None,
+) -> None:
+    """Atomically commit exact serialized config text while the lock is held.
+
+    Shared by `_write_raw_cli_config_unlocked` and the encryption lifecycle's
+    byte-exact rollback (TASK-34100.4), so a restore advances an owned
+    recovery binding exactly like an ordinary write does. Not itself
+    `_config_participants.guarded` (that allowlist is closed): every caller
+    already runs inside `_config_write_lock`'s participant operation.
+    """
+
     from .Backup_Recovery.config_binding import preserve_owned_binding
 
-    with preserve_owned_binding(sys.modules[__name__], config_path, serialized) as precondition:
+    with preserve_owned_binding(
+        sys.modules[__name__], config_path, serialized
+    ) as precondition:
         result = atomic_private_write_text(
             config_path,
             serialized,
@@ -7397,11 +7820,11 @@ def _write_raw_cli_config_unlocked(
         )
     _report_config_path_posture(result)
     _invalidate_config_caches()
-    return parsed_back
 
 
 def _install_bootstrap_cache_from_raw(
     raw_config: Mapping[str, Any],
+    config_path: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
     """Install the bootstrap cache from an already-parsed raw config mapping.
 
@@ -7411,6 +7834,14 @@ def _install_bootstrap_cache_from_raw(
     failure) without re-reading or re-parsing the file. Used by
     `_publish_runtime_config_unlocked` with the verify parse-back a write
     just produced. Must be called with `_config_file_lock` held.
+
+    TASK-21235: ``config_path`` is the path the CALLER's read/write used.
+    It used to be recomputed here via `_get_effective_config_path()` at
+    publish time, so a ``TLDW_CONFIG_PATH`` flip between the caller's read
+    and this publish would label path-A data as the path-B cache
+    (``_CONFIG_CACHE_SOURCE`` is exactly what the fast path's cache
+    identity re-check compares against). Callers that hold a path pass it;
+    the fallback recompute covers only callers with no path of their own.
 
     Returns:
         The installed merged+decrypted config, or ``None`` when strict
@@ -7422,8 +7853,9 @@ def _install_bootstrap_cache_from_raw(
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
     global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
 
-    config_path = _get_effective_config_path()
-    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(raw_config))
+    if config_path is None:
+        config_path = _get_effective_config_path()
+    merged = _merge_user_config_over_shipped_defaults(raw_config)
     decryption = _decrypt_config_section_with_status(merged, strict=True)
     if not decryption.succeeded:
         return None
@@ -7454,6 +7886,7 @@ def _install_bootstrap_cache_from_raw(
 @_config_participants.guarded
 def _publish_runtime_config_unlocked(
     raw_config: Mapping[str, Any] | None = None,
+    config_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Reload caches and publish one complete in-process config generation.
 
@@ -7465,6 +7898,11 @@ def _publish_runtime_config_unlocked(
             that just-primed cache (`reload_bootstrap=False`) -- TASK-21124
             takes one write from four TOML parses to two (the inherent
             read-modify-write read plus the TASK-13157 verify parse).
+        config_path: TASK-21235: the path the caller's read/write used, so
+            the bootstrap cache is published under the path its data was
+            actually read from even if ``TLDW_CONFIG_PATH`` flips mid-write.
+            Omitted by callers with no path of their own (the raw-less
+            reload path recomputes it under the same lock).
 
     The `_CONFIG_GENERATION` bump is kept last for consistency, but the
     ordering is not load-bearing: the fast path's soundness rests on its
@@ -7478,7 +7916,9 @@ def _publish_runtime_config_unlocked(
 
     loaded: Optional[Dict[str, Any]] = None
     if raw_config is not None:
-        loaded = _install_bootstrap_cache_from_raw(raw_config)
+        loaded = _install_bootstrap_cache_from_raw(
+            raw_config, config_path=config_path
+        )
     if loaded is None:
         bootstrap = _load_cli_config_bootstrap_unlocked(force_reload=True)
         if not bootstrap.succeeded:
@@ -7632,7 +8072,7 @@ def _atomic_config_values_from_raw(
 ) -> Dict[str, Any]:
     """Merge and decrypt the exact raw mapping already read under the write lock."""
 
-    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(config_data))
+    merged = _merge_user_config_over_shipped_defaults(config_data)
     decryption = _decrypt_config_section_with_status(merged, strict=True)
     if not decryption.succeeded:
         raise ValueError("Authoritative configuration could not be decrypted")
@@ -7863,6 +8303,7 @@ class ConfigPostCommitError(RuntimeError):
 def read_cli_config_snapshot() -> ConfigFileSnapshot:
     """Read exact serialized config without parsing or creating a missing file."""
 
+    _refuse_config_write_lock_reentry(get_cli_config_path())
     with _config_participants.operation(sys.modules[__name__]):
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
@@ -7885,12 +8326,18 @@ def _write_serialized_config_artifact_unlocked(
         route, target = "config", config_path
     else:
         prefix, suffix = "config_backup_", ".toml"
-        if path.parent != config_path.parent or not path.name.startswith(prefix) or not path.name.endswith(suffix):
+        if (
+            path.parent != config_path.parent
+            or not path.name.startswith(prefix)
+            or not path.name.endswith(suffix)
+        ):
             raise ValueError("invalid_config_snapshot_target")
-        route, target = "config_snapshot", path.name[len(prefix):-len(suffix)]
+        route, target = "config_snapshot", path.name[len(prefix) : -len(suffix)]
         if _config_snapshot_path(config_path, target) != path:
             raise ValueError("invalid_config_snapshot_target")
-    with _config_participants.operation(sys.modules[__name__], route=route, target=target):
+    with _config_participants.operation(
+        sys.modules[__name__], route=route, target=target
+    ):
         application_directory = _prepare_config_parent(config_path)
         result = atomic_private_write_text(
             path,
@@ -7913,7 +8360,6 @@ def read_cli_config_backup_serialized() -> str:
             return opened.stream.read().decode("utf-8")
 
 
-@_config_participants.guarded
 def replace_cli_config_serialized(
     serialized: str,
     *,
@@ -7923,7 +8369,23 @@ def replace_cli_config_serialized(
 
     Raises:
         ConfigPostCommitError: Replacement succeeded but post-save refresh failed.
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction; refused before the guarded body opens.
     """
+
+    _refuse_config_write_lock_reentry(get_cli_config_path())
+    return _replace_cli_config_serialized_guarded(
+        serialized, create_backup=create_backup
+    )
+
+
+@_config_participants.guarded
+def _replace_cli_config_serialized_guarded(
+    serialized: str,
+    *,
+    create_backup: bool,
+) -> tuple[dict[str, Any], Path | None]:
+    """Guarded body of :func:`replace_cli_config_serialized`."""
 
     loaded, backup_path, _ = _replace_cli_config_serialized(
         serialized, create_backup=create_backup
@@ -8007,22 +8469,69 @@ def _replace_cli_config_serialized(
             if saved_serialized is None:
                 raise OSError("The committed config snapshot is unavailable.")
             saved_snapshot = ConfigFileSnapshot(config_path, saved_serialized)
-            loaded = _publish_runtime_config_unlocked(raw_config=raw_written)
+            loaded = _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         except Exception:  # Post-commit errors must retain the successful disk outcome.
             raise ConfigPostCommitError(saved_snapshot, backup_path) from None
         return loaded, backup_path, saved_snapshot
 
 
+def _upgrade_legacy_ciphertext(
+    table: Mapping[str, Any], password: str
+) -> tuple[Dict[str, Any], bool]:
+    """Re-encrypt every v1 ``enc:`` value in place under ``password``.
+
+    Walks tables as decryption does (it never reads arrays). A value stays
+    encrypted whatever its key, so nothing is written back in plaintext.
+
+    Returns:
+        The upgraded copy, and whether any value changed.
+    """
+
+    enc_module = get_encryption_module()
+    upgraded = False
+    result: Dict[str, Any] = {}
+    for key, value in table.items():
+        if isinstance(value, Mapping):
+            result[key], nested = _upgrade_legacy_ciphertext(value, password)
+            upgraded = upgraded or nested
+        elif enc_module.is_legacy(value):
+            plaintext = enc_module.decrypt_value(value, password)
+            result[key] = enc_module.encrypt_value(plaintext, password)
+            upgraded = True
+        else:
+            result[key] = value
+    return result, upgraded
+
+
 def persist_cli_config_for_shutdown() -> bool:
-    """Re-persist the effective config through the normal encrypted owner."""
+    """Finish encryption at rest for an unlocked encrypted config at quit.
+
+    Every save has already written the file, and every load merges the
+    shipped template under it. Writing that merge back re-inserted template
+    keys a save had deleted, reordered the file and stripped its comments
+    (TASK-35835). What a quit still carries is encryption work that only an
+    unlocked session can do, on the file's own contents:
+
+    * a secret added in plaintext (a hand edit) is encrypted;
+    * values and the password check still in the v1 format are re-encrypted
+      as v2. A v1 value costs a 2^20 scrypt derivation (about 1 GiB, 3 s) at
+      every launch, and short of a password change nothing else upgrades it.
+
+    With neither, or with the session locked, nothing is written.
+
+    Returns:
+        False when the file cannot be loaded safely or the write fails.
+    """
 
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
             from .Backup_Recovery.profile_open import unchanged_selected_config
 
-            # Settings writes already persist. A defaults-only rewrite would
-            # invalidate the selected recovery generation's config fingerprint.
+            # Settings writes already persist. A rewrite would invalidate the
+            # selected recovery generation's config fingerprint.
             if unchanged_selected_config(config_path):
                 return True
             bootstrap = _load_cli_config_bootstrap_unlocked(force_reload=True)
@@ -8032,10 +8541,28 @@ def persist_cli_config_for_shutdown() -> bool:
                     "file could not be loaded safely."
                 )
                 return False
-            current = bootstrap.config
-            persisted = _config_data_for_persistence(current)
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+            current = tomllib.loads(serialized) if serialized is not None else {}
+            encryption = current.get("encryption", {})
+            password = get_encryption_password()
+            if not (
+                isinstance(encryption, Mapping)
+                and encryption.get("enabled", False)
+                and password
+            ):
+                return True
+            persisted, upgraded = _upgrade_legacy_ciphertext(current, password)
+            if _contains_unencrypted_sensitive_value(persisted):
+                persisted = _config_data_for_persistence(persisted)
+            elif not upgraded:
+                return True
+            # The file may have changed since the load above; check the exact
+            # document, so a value under another password is never stranded.
+            _validate_encrypted_document(persisted, password)
             raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         return True
     except (OSError, TypeError, ValueError, toml.TomlDecodeError) as exc:
         logger.warning(
@@ -8097,12 +8624,18 @@ def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
         _enforce_existing_encryption(current, replacement)
         persisted = _config_data_for_persistence(replacement)
         raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-        return _publish_runtime_config_unlocked(raw_config=raw_written)
+        return _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
 
 
 def _config_snapshot_path(config_path: Path, timestamp: str) -> Path:
     """Select one config-owned snapshot basename before any filesystem effect."""
-    if not isinstance(timestamp, str) or not timestamp or any(char in timestamp for char in ("/", "\\", "\x00")):
+    if (
+        not isinstance(timestamp, str)
+        or not timestamp
+        or any(char in timestamp for char in ("/", "\\", "\x00"))
+    ):
         raise ValueError("invalid_config_snapshot_target")
     return config_path.parent / f"config_backup_{timestamp}.toml"
 
@@ -8115,14 +8648,19 @@ def export_cli_config_snapshot(
     """Create an owner-only snapshot beside the effective config file."""
 
     snapshot_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-    with _config_participants.operation(sys.modules[__name__], route="config_snapshot", target=snapshot_timestamp), _config_file_lock():
+    with (
+        _config_participants.operation(
+            sys.modules[__name__], route="config_snapshot", target=snapshot_timestamp
+        ),
+        _config_file_lock(),
+    ):
         config_path = get_cli_config_path()
         snapshot_path = _config_snapshot_path(config_path, snapshot_timestamp)
         serialized = _try_read_cli_config_serialized_unlocked(config_path)
         if serialized is None:
             if config_data is None:
                 raise FileNotFoundError(config_path)
-            serialized = toml.dumps(_config_data_for_persistence(config_data))
+            serialized = dumps_cli_config(_config_data_for_persistence(config_data))
         result_path = _write_serialized_config_artifact_unlocked(
             snapshot_path,
             serialized,
@@ -8283,7 +8821,9 @@ def replace_revisioned_settings_section_to_cli_config(
             return ConfigMutationResult(False, False, "before_replace")
 
         try:
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         except Exception as error:
             logger.error(
                 "Revisioned configuration replacement failed "
@@ -8420,7 +8960,9 @@ def _validate_literal_config_mutation_targets(
             raise TypeError("Literal configuration delete keys must be collections")
         for key in keys:
             if type(key) is not str or not key:
-                raise TypeError("Literal configuration delete keys must be non-empty strings")
+                raise TypeError(
+                    "Literal configuration delete keys must be non-empty strings"
+                )
             delete_targets.add((path, key))
 
     if set_targets.intersection(delete_targets):
@@ -8584,9 +9126,7 @@ def _apply_literal_settings_transaction_locked(
                     "(phase=precondition, error_type={}).",
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(
-                    False, False, None, "before_replace"
-                )
+                return LiteralConfigMutationResult(False, False, None, "before_replace")
 
         try:
             effective_values = _atomic_config_values_from_raw(config_data)
@@ -8610,8 +9150,7 @@ def _apply_literal_settings_transaction_locked(
                 _validate_literal_config_mutation_targets(mutation)
             logged_sets, logged_deletes = _literal_mutation_log_shape(mutation)
             logger.info(
-                "Attempting to apply literal settings mutation: "
-                "sets={}, deletes={}",
+                "Attempting to apply literal settings mutation: sets={}, deletes={}",
                 logged_sets,
                 logged_deletes,
             )
@@ -8636,7 +9175,7 @@ def _apply_literal_settings_transaction_locked(
             expected_raw: Mapping[str, Any] | None = None
             try:
                 persisted = _config_data_for_persistence(config_data)
-                expected_raw = tomllib.loads(toml.dumps(dict(persisted)))
+                expected_raw = tomllib.loads(dumps_cli_config(dict(persisted)))
                 raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
             except Exception as error:
                 committed_content_visible = False
@@ -8664,9 +9203,7 @@ def _apply_literal_settings_transaction_locked(
                     config_path,
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(
-                    False, False, None, "before_replace"
-                )
+                return LiteralConfigMutationResult(False, False, None, "before_replace")
             logger.success(f"Successfully replaced settings file at {config_path}")
         else:
             _invalidate_config_caches()
@@ -8684,7 +9221,9 @@ def _apply_literal_settings_transaction_locked(
                 return LiteralConfigMutationResult(changed, False, None, "cache_reload")
 
         try:
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
             settings_view = _current_settings_view()
         except Exception as error:
             logger.error(
@@ -8732,7 +9271,7 @@ def refresh_runtime_config_from_cli_config() -> LiteralConfigMutationResult:
         with _config_write_lock(config_path):
             raw = _read_raw_cli_config_unlocked(config_path)
             _invalidate_config_caches()
-            _publish_runtime_config_unlocked(raw_config=raw)
+            _publish_runtime_config_unlocked(raw_config=raw, config_path=config_path)
             return LiteralConfigMutationResult(
                 False,
                 True,
@@ -9185,7 +9724,9 @@ def apply_console_capture_settings(
         if pii_redaction_enabled is None
         else pii_redaction_enabled
     )
-    resolved_viewer = current.viewer_profile if viewer_profile is None else viewer_profile
+    resolved_viewer = (
+        current.viewer_profile if viewer_profile is None else viewer_profile
+    )
 
     def generation_is_current(snapshot: AtomicConfigSnapshot) -> bool:
         return snapshot.generation == expected_generation
@@ -9224,10 +9765,7 @@ def apply_console_capture_settings(
 
     more_revealing = (
         (enabled and not current.enabled)
-        or (
-            detail is CaptureDetail.FULL
-            and current.detail is CaptureDetail.SAFE
-        )
+        or (detail is CaptureDetail.FULL and current.detail is CaptureDetail.SAFE)
         or (not resolved_pii and current.pii_redaction_enabled)
         or (resolved_viewer == "full" and current.viewer_profile == "safe")
     )
@@ -9481,51 +10019,26 @@ def get_chat_defaults_streaming(default: bool = True) -> bool:
 
 
 def get_chat_defaults_user_display_name(default: str = "User") -> str:
-    """Return the validated global human-facing Console chat name.
-
-    Args:
-        default: Fallback used when ``chat_defaults.user_display_name`` is
-            absent.
-
-    Returns:
-        The configured validated name, or the neutral ``"User"`` fallback
-        when the configured/default value is invalid.
-    """
-    # Import lazily because ``tldw_chatbook.Chat.__init__`` reaches runtime
-    # policy modules that import this configuration module during startup.
+    """Return the validated global human-facing Console chat name."""
     from tldw_chatbook.Chat.console_roleplay_identity import (
-        ChatDisplayNameError,
-        normalize_chat_display_name,
+        configured_chat_display_name,
     )
 
-    config = load_cli_config_and_ensure_existence()
-    chat_defaults = config.get("chat_defaults")
-    raw_value = (
-        chat_defaults.get("user_display_name", default)
-        if isinstance(chat_defaults, dict)
-        else default
-    )
-    try:
-        return normalize_chat_display_name(raw_value, blank_means_none=False) or "User"
-    except ChatDisplayNameError:
-        logger.warning(
-            "Invalid chat display name in [chat_defaults]; using the neutral default."
-        )
-        return "User"
+    return configured_chat_display_name(load_cli_config_and_ensure_existence(), default)
 
 
 def get_rag_citation_canonical_writes_enabled() -> bool:
-    """Return the typed, fail-closed canonical citation write switch.
+    """Return the canonical citation write switch (on by default, TASK-33620.8).
 
     Returns:
-        ``True`` when canonical citation writes are explicitly enabled.
+        ``True`` unless turned off; a malformed value fails closed (off).
     """
 
-    config = load_cli_config_and_ensure_existence()
-    section = config.get("rag_citations")
+    section = load_cli_config_and_ensure_existence().get("rag_citations")
     if not isinstance(section, dict):
         return False
-    return coerce_bool_setting(section.get("canonical_writes_enabled"), False)
+    value = section.get("canonical_writes_enabled", True)  # shipped default: on
+    return coerce_bool_setting(value, False)
 
 
 def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:
@@ -9566,32 +10079,6 @@ def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:
     )
 
 
-def get_ingest_ui_style() -> str:
-    """
-    Get the configured UI style for media ingestion.
-
-    Returns:
-        UI style string: "simplified", "grid", "wizard", or "split"
-    """
-    config = load_cli_config_and_ensure_existence()
-    media_ingestion_config = config.get("media_ingestion", {})
-
-    # Get UI style from config, fall back to default
-    ui_style = media_ingestion_config.get(
-        "ui_style", DEFAULT_MEDIA_INGESTION_CONFIG.get("ui_style", "default")
-    )
-
-    # Validate the UI style
-    valid_styles = ["default", "redesigned", "new", "grid", "wizard", "split"]
-    if ui_style not in valid_styles:
-        logger.warning(
-            f"Invalid ingest UI style '{ui_style}', falling back to 'default'"
-        )
-        return "default"
-
-    return ui_style
-
-
 def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
     """
     Get configuration for a specific OCR backend.
@@ -9621,7 +10108,31 @@ def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
 
 
 # --- CLI Providers and Models Getter ---
+#: TASK-35010 (OD-1 (a)): the sample ids older templates wrote into the vLLM,
+#: TabbyAPI, Aphrodite, Custom and Custom 2 lists. No server serves them, so
+#: the saved-list loader and Settings' default choice ignore them, and a
+#: Settings write drops them from the list it rewrites; nothing rewrites the
+#: file at startup. Frozen: the template no longer ships them.
+# ponytail: matched by value, so a server that really serves one of these
+# exact ids cannot have it listed; a template marker cannot reach files that
+# older versions wrote without one.
+SHIPPED_SAMPLE_MODEL_IDS: frozenset[str] = frozenset(
+    {
+        *("vllm-model-z", "vllm-model-x", "vllm-model-y", "vllm-model-a"),
+        *("tabby-model", "tabby-model-2", "tabby-model-3"),
+        *("aphrodite-engine", "aphrodite-engine-2"),
+        *("custom-model-alpha", "custom-model-beta"),
+        *("custom-model-gamma", "custom-model-delta"),
+    }
+)
+
+
 def get_cli_providers_and_models() -> Dict[str, List[str]]:
+    """Return each ``[providers]`` list, minus ``SHIPPED_SAMPLE_MODEL_IDS``.
+
+    Every key stays, an emptied list included, so discovery and list-key
+    resolution see the same keys as before.
+    """
     config = load_settings()
     providers_data = config.get(
         "providers", {}
@@ -9630,7 +10141,9 @@ def get_cli_providers_and_models() -> Dict[str, List[str]]:
     if isinstance(providers_data, dict):
         for provider, models in providers_data.items():
             if isinstance(models, list) and all(isinstance(m, str) for m in models):
-                valid_providers[provider] = models
+                valid_providers[provider] = [
+                    model for model in models if model not in SHIPPED_SAMPLE_MODEL_IDS
+                ]
             else:
                 logger.warning(
                     f"Invalid model list for provider '{provider}' in CLI config [providers]. Models: {models}. Skipping."
@@ -9715,36 +10228,424 @@ def get_detected_api_providers() -> List[str]:
     return providers
 
 
+# --- Config key-encryption lifecycle (TASK-34100.4) ---------------------------
+#
+# One owner for the four states (off / on / locked / unlocked). Every change
+# below follows the same contract, because a mistake here locks people out of
+# their own app (first-run review 2026-10-02, protect-summary-04):
+#
+# * validate BEFORE writing -- the replacement document must strict-decrypt
+#   with the password the session will hold afterwards, and must not leave a
+#   plaintext secret behind in an encrypted file;
+# * if anything fails after the write (the runtime publish, a binding check),
+#   restore the previous file bytes -- or remove a file this call created --
+#   and the previous in-process password, so a failure never leaves the disk
+#   changed while the caller is told nothing happened;
+# * never decrypt non-strictly: a file whose keys do not match its verifier is
+#   refused untouched instead of having its ciphertext written back as values.
+
+
+def _set_session_encryption_password(password: Optional[str]) -> None:
+    """Install (or clear) the in-process password and drop stale caches."""
+
+    global _SETTINGS_CACHE, _CONFIG_CACHE
+    if password is None:
+        clear_encryption_password()
+        _SETTINGS_CACHE = None
+        _CONFIG_CACHE = None
+        return
+    set_encryption_password(password)
+
+
+def _parse_raw_cli_config_text(serialized: Optional[str]) -> Dict[str, Any]:
+    if serialized is None:
+        return {}
+    loaded = tomllib.loads(serialized)
+    if not isinstance(loaded, dict):
+        raise TypeError("The CLI config must contain a top-level table")
+    return loaded
+
+
+def _password_verifier(config_data: Mapping[str, Any]) -> Optional[str]:
+    encryption = config_data.get("encryption", {})
+    if not isinstance(encryption, Mapping):
+        return None
+    verifier = encryption.get("password_verifier")
+    return verifier if isinstance(verifier, str) and verifier else None
+
+
+def _validate_encrypted_document(
+    document: Mapping[str, Any],
+    password: str,
+) -> None:
+    """Raise unless ``document`` is a safe encrypted config for ``password``.
+
+    The check mirrors what the next publish and the next startup do: the
+    merged view must strict-decrypt, and no sensitive value may stay plain.
+    """
+
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(document))
+    get_encryption_module().decrypt_config_strict(merged, password)
+    if _contains_unencrypted_sensitive_value(document):
+        raise ValueError("An encrypted config would keep a plaintext secret")
+
+
+def _strip_encrypted_values(config_data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return a copy with every ``enc:`` string value removed, in every table.
+
+    Arrays are walked too (Qodo round, PR #3000): an ``enc:`` element is
+    dropped from its array and a table inside an array is stripped like any
+    other, so a reset never leaves ciphertext behind in a TOML array.
+    """
+
+    stripped: Dict[str, Any] = {}
+    for key, value in config_data.items():
+        if is_encrypted_config_value(value):
+            continue
+        stripped[key] = _strip_encrypted_item(value)
+    return stripped
+
+
+def _strip_encrypted_item(value: Any) -> Any:
+    """Strip ``enc:`` strings from one table or array value (copied)."""
+
+    if isinstance(value, Mapping):
+        return _strip_encrypted_values(value)
+    if isinstance(value, list):
+        return [
+            _strip_encrypted_item(item)
+            for item in value
+            if not is_encrypted_config_value(item)
+        ]
+    return copy.deepcopy(value)
+
+
+def _encrypted_value_paths(
+    config_data: Mapping[str, Any], prefix: tuple[str, ...] = ()
+) -> list[str]:
+    """Dotted paths of every ``enc:`` value outside the ``[encryption]`` table."""
+
+    paths: list[str] = []
+    for key, value in config_data.items():
+        if not prefix and key == "encryption":
+            continue
+        if isinstance(value, Mapping):
+            paths.extend(_encrypted_value_paths(value, prefix + (str(key),)))
+        elif is_encrypted_config_value(value):
+            paths.append(".".join(prefix + (str(key),)))
+    return paths
+
+
+def _contains_encrypted_value(config_data: Mapping[str, Any]) -> bool:
+    return bool(_encrypted_value_paths(config_data))
+
+
+def _already_encrypted_with(config_data: Mapping[str, Any], password: str) -> bool:
+    """Whether an encryption-on file is already exactly what enabling with
+    ``password`` would produce: the verifier accepts it, every saved value
+    strict-decrypts with it, and no sensitive value is left in plain text."""
+
+    verifier = _password_verifier(config_data)
+    if verifier is None:
+        return False
+    if not get_encryption_module().verify_password(password, verifier):
+        return False
+    try:
+        _validate_encrypted_document(config_data, password)
+    except ValueError:
+        return False
+    return True
+
+
+def _restore_previous_config_unlocked(
+    config_path: Path,
+    previous_serialized: Optional[str],
+) -> None:
+    """Put the exact previous bytes back (or remove a file this call created).
+
+    Args:
+        config_path: The selected config file the failed change wrote.
+        previous_serialized: The file's exact text before the change, or
+            None when the change created the file.
+
+    Raises:
+        ValueError: The path fails ``validate_path_simple``; nothing is
+            removed.
+        OSError: Reading, removing or rewriting the file failed.
+    """
+
+    current = _try_read_cli_config_serialized_unlocked(config_path)
+    if current == previous_serialized:
+        return
+    if previous_serialized is None:
+        # The only raw filesystem call here; the restore write below goes
+        # through the private atomic writer. Same validation as the hooks
+        # snapshot's lock target: the path only reaches unlink(), never a
+        # shell, and unlink() removes a link itself, not what it points to.
+        removable = validate_path_simple(
+            config_path,
+            require_exists=False,
+            probe_existing=False,
+            reject_shell_metacharacters=False,
+        )
+        removable.unlink(missing_ok=True)
+        _invalidate_config_caches()
+        return
+    _commit_serialized_cli_config_unlocked(
+        config_path,
+        previous_serialized,
+        _prepare_config_parent(config_path),
+    )
+
+
+def _unlock_session_with_password_unlocked(config_path: Path, password: str) -> bool:
+    """Install ``password`` for an unchanged file and republish settings.
+
+    The same-password enable writes nothing, but a session that loaded the
+    file without the password published its ciphertext in ``settings``;
+    installing the password alone left every reader of that global on the
+    locked view (Qodo round, PR #3000). Callers hold the write lock and have
+    already checked that ``password`` reads the file.
+
+    Args:
+        config_path: The selected config file (used for log context only).
+        password: The master password the file is encrypted under.
+
+    Returns:
+        True when the session holds ``password`` and the published settings
+        are decrypted with it; False when the publish failed, in which case
+        the previous session password is put back.
+    """
+
+    previous_password = get_encryption_password()
+    _set_session_encryption_password(password)
+    try:
+        _publish_runtime_config_unlocked()
+        return True
+    except Exception as error:
+        logger.error(
+            "Publishing the unlocked config failed; the session was left as "
+            "it was (action=enable, config_path={}, error_type={}).",
+            redact_user_paths(str(config_path)),
+            type(error).__name__,
+        )
+    _set_session_encryption_password(previous_password)
+    return False
+
+
+def _session_password_for_file(
+    config_path: Path,
+    previous_serialized: Optional[str],
+    *,
+    previous_password: Optional[str],
+    written_password: Optional[str],
+) -> Optional[str]:
+    """The password that reads the file as it is after a rollback attempt."""
+
+    try:
+        current = _try_read_cli_config_serialized_unlocked(config_path)
+    except Exception:
+        return None
+    if current == previous_serialized:
+        return previous_password
+    return written_password
+
+
+def _commit_encryption_change_unlocked(
+    config_path: Path,
+    document: Mapping[str, Any],
+    previous_serialized: Optional[str],
+    *,
+    session_password: Optional[str],
+    action: str,
+) -> bool:
+    """Write ``document``, install ``session_password`` and publish -- or roll back.
+
+    Callers hold the write lock and have already validated ``document``.
+    """
+
+    previous_password = get_encryption_password()
+    try:
+        raw_written = _write_raw_cli_config_unlocked(config_path, document)
+        _set_session_encryption_password(session_password)
+        _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
+        return True
+    except Exception as error:
+        logger.error(
+            "Config encryption change failed; restoring the previous config "
+            "(action={}, error_type={}).",
+            action,
+            type(error).__name__,
+        )
+    try:
+        _restore_previous_config_unlocked(config_path, previous_serialized)
+    except Exception as restore_error:
+        logger.error(
+            "Restoring the previous config after a failed encryption change "
+            "failed (action={}, error_type={}).",
+            action,
+            type(restore_error).__name__,
+        )
+    # The session password must match what the file holds NOW (review round
+    # 1, F7): the previous one after a restore, the new one when the restore
+    # failed and the new document stayed. Reverting it then would encrypt the
+    # next save under the old password beside the new verifier -- the
+    # stranded state. An unreadable file locks the session rather than guess.
+    _set_session_encryption_password(
+        _session_password_for_file(
+            config_path,
+            previous_serialized,
+            previous_password=previous_password,
+            written_password=session_password,
+        )
+    )
+    try:
+        _publish_runtime_config_unlocked()
+    except Exception as publish_error:
+        logger.warning(
+            "Republishing the restored config failed (action={}, error_type={}).",
+            action,
+            type(publish_error).__name__,
+        )
+    return False
+
+
+def config_encryption_enabled_on_disk() -> Optional[bool]:
+    """Whether the selected config file currently has encryption turned on.
+
+    Returns:
+        True or False from the file, or None when it could not be read (the
+        caller keeps whatever state it already showed).
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        return _encryption_enabled(_parse_raw_cli_config_text(serialized))
+    except Exception as error:
+        logger.warning(
+            "Reading the config encryption state failed (error_type={}).",
+            type(error).__name__,
+        )
+        return None
+
+
+def encrypted_value_paths_on_disk() -> list[str]:
+    """Dotted paths of the ``enc:`` values in the selected config file.
+
+    Used to name a value that is still encrypted under an earlier password
+    when encrypting is refused over it. Empty when there are none or the file
+    cannot be read.
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        return _encrypted_value_paths(_parse_raw_cli_config_text(serialized))
+    except Exception as error:
+        logger.warning(
+            "Listing encrypted config values failed (error_type={}).",
+            type(error).__name__,
+        )
+        return []
+
+
+def verify_config_encryption_password(password: str) -> bool:
+    """Whether ``password`` matches the saved master-password verifier.
+
+    Returns False when encryption is off or the verifier is missing. Runs
+    scrypt, so call it off the UI thread.
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        config_data = _parse_raw_cli_config_text(serialized)
+        verifier = _password_verifier(config_data)
+        if not _encryption_enabled(config_data) or verifier is None:
+            return False
+        return bool(get_encryption_module().verify_password(password, verifier))
+    except Exception as error:
+        logger.warning(
+            "Checking the master password failed (error_type={}).",
+            type(error).__name__,
+        )
+        return False
+
+
 def enable_config_encryption(password: str) -> bool:
     """
     Enable encryption for the config file and encrypt existing API keys.
+
+    Refuses (returns False without writing) when encryption is already on
+    with a different password: re-running enable used to rewrite the
+    verifier over keys still encrypted under the first password. Use
+    `change_encryption_password` to rotate. Enabling again with the SAME
+    password, on a file that is already fully encrypted under it, writes
+    nothing and returns True (review round 2, R2-F4); when this session did
+    not hold that password it is installed and the runtime settings are
+    republished, so a locked session is fully unlocked (Qodo round).
 
     Args:
         password: The master password to use for encryption
 
     Returns:
-        True if encryption was enabled successfully
+        True if encryption was enabled successfully, or already was with
+        this password
     """
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if _encryption_enabled(config_data):
+                if _already_encrypted_with(config_data, password):
+                    if get_encryption_password() != password and not (
+                        _unlock_session_with_password_unlocked(config_path, password)
+                    ):
+                        return False
+                    logger.info(
+                        "Config encryption is already enabled with this "
+                        "password; nothing was changed."
+                    )
+                    return True
+                logger.warning(
+                    "Config encryption is already enabled; refusing to enable "
+                    "it again. Change the master password instead."
+                )
+                return False
             encrypted_config = encrypt_api_keys_in_config(config_data, password)
-            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
-            set_encryption_password(password)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _validate_encrypted_document(encrypted_config, password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=password,
+                action="enable",
+            ):
+                return False
 
         logger.success("Config encryption enabled successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to enable config encryption: {e}")
+        logger.error(
+            "Failed to enable config encryption (error_type={}).", type(e).__name__
+        )
         return False
 
 
 def disable_config_encryption(password: str) -> bool:
     """
     Disable encryption for the config file and decrypt all values.
+
+    Every saved value must decrypt with ``password`` (strict); otherwise the
+    file is left untouched and False is returned.
 
     Args:
         password: The master password to verify before disabling
@@ -9755,36 +10656,68 @@ def disable_config_encryption(password: str) -> bool:
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
-            encryption_config = config_data.get("encryption", {})
-            if encryption_config.get("enabled", False):
-                enc_module = get_encryption_module()
-                password_verifier = encryption_config.get("password_verifier", "")
-                if not password_verifier:
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if _encryption_enabled(config_data):
+                verifier = _password_verifier(config_data)
+                if verifier is None:
                     logger.error("No password verifier found in encryption config")
                     return False
-                if not enc_module.verify_password(password, password_verifier):
+                enc_module = get_encryption_module()
+                if not enc_module.verify_password(password, verifier):
                     logger.error("Invalid password provided")
                     return False
-
-            set_encryption_password(password)
-            decrypted_config = decrypt_config_section(config_data)
+                try:
+                    decrypted_config = enc_module.decrypt_config_strict(
+                        config_data, password
+                    )
+                except ValueError:
+                    logger.error(
+                        "Some saved values do not decrypt with this password; "
+                        "encryption was left on (action=disable, config_path={}).",
+                        redact_user_paths(str(config_path)),
+                    )
+                    return False
+            elif "encryption" in config_data:
+                decrypted_config = copy.deepcopy(config_data)
+            else:
+                _set_session_encryption_password(None)
+                logger.info("Config encryption is already disabled")
+                return True
             decrypted_config.pop("encryption", None)
-            raw_written = _write_raw_cli_config_unlocked(config_path, decrypted_config)
-            clear_encryption_password()
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            if _contains_encrypted_value(decrypted_config):
+                logger.error(
+                    "Encrypted values would remain after disabling encryption; "
+                    "encryption was left on (action=disable, config_path={}).",
+                    redact_user_paths(str(config_path)),
+                )
+                return False
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                decrypted_config,
+                previous,
+                session_password=None,
+                action="disable",
+            ):
+                return False
 
         logger.success("Config encryption disabled successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to disable config encryption: {e}")
+        logger.error(
+            "Failed to disable config encryption (error_type={}).", type(e).__name__
+        )
         return False
 
 
 def change_encryption_password(old_password: str, new_password: str) -> bool:
     """
     Change the encryption password.
+
+    Every saved value must decrypt with ``old_password`` (strict), and the
+    re-encrypted document must decrypt with ``new_password`` before it is
+    written; otherwise the file is left untouched.
 
     Args:
         old_password: The current password
@@ -9796,36 +10729,155 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
-            encryption_config = config_data.get("encryption", {})
-            if not encryption_config.get("enabled", False):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if not _encryption_enabled(config_data):
                 logger.error("Encryption is not enabled")
                 return False
 
             enc_module = get_encryption_module()
-            password_verifier = encryption_config.get("password_verifier", "")
-            if not password_verifier:
+            verifier = _password_verifier(config_data)
+            if verifier is None:
                 logger.error("No password verifier found in encryption config")
                 return False
-            if not enc_module.verify_password(old_password, password_verifier):
+            if not enc_module.verify_password(old_password, verifier):
                 logger.error("Invalid current password provided")
                 return False
-
-            set_encryption_password(old_password)
-            decrypted_config = decrypt_config_section(config_data)
+            try:
+                decrypted_config = enc_module.decrypt_config_strict(
+                    config_data, old_password
+                )
+            except ValueError:
+                logger.error(
+                    "Some saved values do not decrypt with the current password; "
+                    "the password was not changed (action=change, config_path={}).",
+                    redact_user_paths(str(config_path)),
+                )
+                return False
             encrypted_config = encrypt_api_keys_in_config(
                 decrypted_config,
                 new_password,
             )
-            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
-            set_encryption_password(new_password)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _validate_encrypted_document(encrypted_config, new_password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=new_password,
+                action="change",
+            ):
+                return False
 
         logger.success("Encryption password changed successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to change encryption password: {e}")
+        logger.error(
+            "Failed to change encryption password (error_type={}).",
+            type(e).__name__,
+        )
+        return False
+
+
+def rekey_encryption_verifier(password: str) -> bool:
+    """Make ``password`` the master password again when it reads every key.
+
+    For an encryption-on file whose verifier is missing, or was rewritten
+    for another password while the keys stayed under this one (the stranded
+    state an old second enable left behind). Without this the only way past
+    either was a reset that deleted keys this password still reads (TASK-
+    34100.4 review round 2, R2-F5). Every ``enc:`` value outside
+    ``[encryption]`` must strict-decrypt with ``password``, and there must be
+    at least one -- with none, any guess would "read every key". The file is
+    re-encrypted under ``password`` with a new verifier, through the same
+    validate-then-write and rollback as `change_encryption_password`.
+
+    Args:
+        password: The password the user typed at the startup prompt.
+
+    Returns:
+        True when the file now answers to ``password`` and the session holds
+        it; False (file untouched) otherwise.
+    """
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if not _encryption_enabled(config_data):
+                return False
+            values = {
+                key: value for key, value in config_data.items() if key != "encryption"
+            }
+            if not _contains_encrypted_value(values):
+                return False
+            try:
+                decrypted_config = get_encryption_module().decrypt_config_strict(
+                    values, password, log_failure=False
+                )
+            except ValueError:
+                return False
+            decrypted_config["encryption"] = copy.deepcopy(config_data["encryption"])
+            encrypted_config = encrypt_api_keys_in_config(decrypted_config, password)
+            _validate_encrypted_document(encrypted_config, password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=password,
+                action="rekey",
+            ):
+                return False
+
+        logger.success("The master-password check was repaired")
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Repairing the master-password check failed (error_type={}).",
+            type(e).__name__,
+        )
+        return False
+
+
+def reset_encrypted_config_values() -> bool:
+    """Forgot-password reset: drop every encrypted value and turn encryption off.
+
+    Strips every ``enc:`` value from every table and array (sensitive or
+    not -- none of them can be read without the password) and removes
+    ``[encryption]``. Chats, notes, documents and every plain setting are
+    untouched; the user re-enters API keys afterwards.
+
+    Returns:
+        True when the file now holds no encrypted value and encryption is off.
+    """
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            if previous is None:
+                _set_session_encryption_password(None)
+                return True
+            config_data = _parse_raw_cli_config_text(previous)
+            stripped = _strip_encrypted_values(config_data)
+            stripped.pop("encryption", None)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                stripped,
+                previous,
+                session_password=None,
+                action="reset",
+            ):
+                return False
+
+        logger.success("Encrypted config values were reset")
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Resetting encrypted config values failed (error_type={}).",
+            type(e).__name__,
+        )
         return False
 
 
@@ -9902,7 +10954,9 @@ def _default_data_root_lock() -> Iterator[None]:
                 _config_participants.check_lock_wait(sys.modules[__name__], operation)
                 try:
                     portalocker.lock(
-                        stream, portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING
+                        stream,
+                        portalocker.LockFlags.EXCLUSIVE
+                        | portalocker.LockFlags.NON_BLOCKING,
                     )
                     break
                 except portalocker.exceptions.AlreadyLocked:
@@ -10104,19 +11158,172 @@ def _user_data_dir_inputs() -> tuple[tuple, tuple[Path, ...]]:
     return key, tuple(dict.fromkeys(paths))
 
 
-def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple | None:
-    """Posture-stamp every path, or None if one cannot be observed.
+def _bind_user_data_dir_stamps():
+    """Keep one finite optional Windows source capture; acquire no native state."""
+    close_errors = ()
+    batch = source_current = None
+    if os.name == "nt":
+        import inspect
+        import stat
+        from pathlib import WindowsPath
+        from types import FunctionType, MethodType, ModuleType
 
-    A path that is not a directory, or sits under one the user cannot search,
-    raises here; the memo then steps aside so the resolution reports it as it
-    always has (``PrivatePathError``), rather than a raw ``OSError`` escaping.
-    """
-    from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+        from tldw_chatbook.Utils import platform_files, windows_files
 
-    try:
-        return tuple(_posture(path) for path in paths)
-    except OSError:
-        return None
+        facade, owner = platform_files.os, windows_files.WindowsOS
+        native = windows_files._Native
+        close_error = windows_files._AdmissionMetadataCloseError
+        close_errors = (close_error,)
+        original_posture = storage._posture
+        projection = (stat.S_IFMT, stat.S_IMODE)
+        modules = tuple(
+            (module, vars(module), module.__file__, module.__spec__, module.__spec__.origin)
+            for module in (storage, platform_files, windows_files)
+        )
+        bindings = (
+            (vars(storage), "_posture", original_posture),
+            (vars(storage), "os", facade),
+            (vars(storage), "stat", stat),
+            (vars(platform_files), "os", facade),
+            (vars(platform_files), "WindowsOS", owner),
+            (vars(windows_files), "WindowsOS", owner),
+            (vars(windows_files), "_Native", native),
+            (vars(windows_files), "_AdmissionMetadataCloseError", close_error),
+            *((vars(stat), name, value) for name, value in zip(("S_IFMT", "S_IMODE"), projection)),
+            *((vars(windows_files), name, vars(windows_files)[name]) for name in (
+                "_os", "_stat", "Path", "ntpath", "contextlib", "functools",
+                "_parent", "_component", "_native", "_acl_mode", "_AdmissionMetadataHandle",
+            )),
+            *((vars(owner), name, vars(owner)[name]) for name in (
+                "__getattr__", "stat", "_stat_handle", "stat_many_for_admission",
+            )),
+            *((vars(native), name, vars(native)[name]) for name in (
+                "__init__", "_user_sid", "reopen", "open_handle", "info", "ntfs",
+                "security", "_decoded_security", "_decode_security", "sid_string", "check", "ntcheck",
+            )),
+            (vars(close_error), "__init__", close_error.__init__),
+            (vars(windows_files._AdmissionMetadataHandle), "__init__", windows_files._AdmissionMetadataHandle.__init__),
+        )
+        wrappers = (
+            windows_files._parent, windows_files._native,
+            native.reopen, native._decoded_security,
+        )
+        functions = (
+            original_posture, owner.__getattr__, owner.stat, owner._stat_handle,
+            owner.stat_many_for_admission, windows_files._component, windows_files._acl_mode,
+            native.__init__, native._user_sid, native.open_handle, native.info, native.ntfs,
+            native.security, native._decode_security, native.sid_string, native.check, native.ntcheck,
+            close_error.__init__, windows_files._AdmissionMetadataHandle.__init__,
+            windows_files._parent, windows_files._parent.__wrapped__,
+            windows_files._native.__wrapped__, native.reopen, native.reopen.__wrapped__,
+            native._decoded_security.__wrapped__,
+        )
+        records = tuple(
+            (function, function.__code__, function.__globals__, function.__defaults__,
+             function.__kwdefaults__, tuple((function.__kwdefaults__ or {}).items()),
+             function.__closure__, tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+             vars(function).get("__wrapped__"))
+            for function in functions
+        )
+        wrapped = tuple((wrapper, vars(wrapper).get("__wrapped__")) for wrapper in wrappers)
+        lookup = tuple((cls, name, inspect.getattr_static(cls, name, None))
+                       for cls in (owner, native) for name in ("__getattribute__", "__getattr__", "__dict__"))
+        cached = tuple((name, vars(facade).get(name), vars(owner)[name])
+                       for name in ("stat", "_stat_handle", "stat_many_for_admission"))
+        batch = cached[-1][1]
+
+        def source_current(posture):
+            # Direct custom slots decline before any facade lookup or producer.
+            if posture is not original_posture or storage.os is not facade or storage.stat is not stat:
+                return False
+            if any(namespace.get(name) is not value for namespace, name, value in bindings):
+                return False
+            if (
+                type(facade) is not owner or type(owner) is not type or type(native) is not type
+                or owner.__bases__ != (object,) or native.__bases__ != (object,)
+                or inspect.getattr_static(owner, "__getattribute__") is not object.__getattribute__
+                or inspect.getattr_static(native, "__getattribute__") is not object.__getattribute__
+                or any(inspect.getattr_static(cls, name, None) is not value for cls, name, value in lookup)
+            ):
+                return False
+            for module, namespace, path, spec, origin in modules:
+                if (type(module) is not ModuleType or sys.modules.get(namespace["__name__"]) is not module
+                    or vars(module) is not namespace or namespace.get("__file__") != path
+                    or namespace.get("__spec__") is not spec or spec.origin != origin):
+                    return False
+            fields = vars(facade)
+            if any(type(bound) is not MethodType or fields.get(name) is not bound
+                   or bound.__self__ is not facade or bound.__func__ is not function
+                   for name, bound, function in cached):
+                return False
+            for function, code, namespace, defaults, keywords, items, closure, cells, body in records:
+                if (type(function) is not FunctionType or function.__code__ is not code
+                    or function.__globals__ is not namespace or function.__defaults__ is not defaults
+                    or function.__kwdefaults__ is not keywords
+                    or len(function.__kwdefaults__ or {}) != len(items)
+                    or any((function.__kwdefaults__ or {}).get(key) is not value for key, value in items)
+                    or function.__closure__ is not closure
+                    or vars(function).get("__wrapped__") is not body):
+                    return False
+                try:
+                    if any(cell.cell_contents is not value for cell, value in cells):
+                        return False
+                except ValueError:  # An emptied captured cell is nonstock too.
+                    return False
+            return all(vars(wrapper).get("__wrapped__") is body for wrapper, body in wrapped)
+
+    def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple | None:
+        """Observe ordered five-field postures; preserve retained-close custody.
+
+        The stock Windows route performs one fresh metadata batch. Customized
+        sources retain the original scalar calls, and ordinary OSError leaves
+        resolution to report the original private-path error.
+        """
+        from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+
+        try:
+            if type(paths) is tuple and not paths:
+                return ()
+            if (source_current is not None and source_current(_posture)
+                and type(paths) is tuple and all(type(path) is WindowsPath and path.is_absolute()
+                    and len(path.drive) == 2 and path.drive[1] == ":" and path.drive[0].isalpha()
+                    for path in paths) and source_current(_posture)):
+                try:
+                    observed = batch(paths)
+                except close_errors:
+                    raise
+                except OSError as error:
+                    # The call has unwound its native finally before selection.
+                    current = source_current(_posture)
+                    if not current or type(error) is not PermissionError or error.errno != 13 or error.strerror != "windows_admission_descriptor_unavailable":
+                        return None
+                else:
+                    # Any observed drift discards the whole sample permanently.
+                    current = source_current(_posture)
+                    if not current or type(observed) is not dict:
+                        return None
+                    result = []
+                    for path in paths:
+                        value = observed[path]
+                        if value is None:
+                            result.append(None)
+                        else:
+                            info = value[0]
+                            result.append((info.st_dev, info.st_ino, projection[0](info.st_mode),
+                                           projection[1](info.st_mode), info.st_uid))
+                    return tuple(result) if source_current(_posture) else None
+            return tuple(_posture(path) for path in paths)
+        except close_errors:
+            raise
+        except OSError:
+            return None
+
+    return _user_data_dir_stamps
+
+
+_user_data_dir_stamps = _bind_user_data_dir_stamps()
+del _bind_user_data_dir_stamps
 
 
 @_config_participants.guarded
@@ -10163,10 +11370,15 @@ def get_user_data_dir() -> Path:
     walked = set(_chain(result))
     # The result must be one of the stamped candidates: a working directory
     # changed mid-resolution makes a relative data dir resolve elsewhere.
-    if before is not None and before == after and walked <= set(stamped) and all(
-        stamp is not None and not stat.S_ISLNK(stamp[2])
-        for path, stamp in zip(stamped, after)
-        if path in walked
+    if (
+        before is not None
+        and before == after
+        and walked <= set(stamped)
+        and all(
+            stamp is not None and not stat.S_ISLNK(stamp[2])
+            for path, stamp in zip(stamped, after)
+            if path in walked
+        )
     ):
         with _USER_DATA_DIR_MEMO_LOCK:
             _USER_DATA_DIR_MEMO = (key, after, result)
@@ -10192,7 +11404,9 @@ def _resolve_user_data_dir() -> Path:
             if configured_data_dir:
                 verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
             return secure_private_directory(
-                user_dir, create=True, application_owned=True,
+                user_dir,
+                create=True,
+                application_owned=True,
             ).lexical_path
 
 
@@ -10242,10 +11456,9 @@ def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
-    return (
-        _get_custom_database_path("chachanotes_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
-    )
+    return _get_custom_database_path(
+        "chachanotes_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
 
 
 def get_tts_profiles_db_path() -> Path:
@@ -10308,7 +11521,7 @@ def get_notes_sync_recovery_capacity_bytes(
 
 
 NOTES_SYNC_WATCHER_INTERVAL_SECONDS_DEFAULT = 1.0
-NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT = 10.0
+NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT = 30.0
 _NOTES_SYNC_WATCHER_INTERVAL_CEILING_SECONDS = 3600.0
 
 
@@ -10320,7 +11533,7 @@ def get_notes_sync_watcher_intervals(
     TASK-21112: the lasting-sync watcher polls at the base interval and backs
     off toward the max while roots are quiet. Read from
     ``[notes] sync_watcher_interval_seconds`` (default 1.0) and
-    ``[notes] sync_watcher_max_interval_seconds`` (default 10.0; backed-off
+    ``[notes] sync_watcher_max_interval_seconds`` (default 30.0; backed-off
     sleeps are jittered by up to +/-50 percent around it).
 
     Args:
@@ -10406,10 +11619,9 @@ def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
-    return (
-        _get_custom_database_path("prompts_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
-    )
+    return _get_custom_database_path(
+        "prompts_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
 
 
 def get_media_db_path(*, ignore_override: bool = False) -> Path:
@@ -10428,16 +11640,16 @@ def get_media_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("media_db_path")
-    return (
-        _get_custom_database_path("media_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
-    )
+    return _get_custom_database_path(
+        "media_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
 
 
 def get_library_collections_db_path() -> Path:
-    return (
-        _get_custom_database_path("library_collections_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("library_collections_db_path")
+    return _get_custom_database_path(
+        "library_collections_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf(
+        "library_collections_db_path"
     )
 
 
@@ -10450,54 +11662,49 @@ def get_dreams_db_path() -> Path:
 
 
 def get_library_ingest_jobs_db_path() -> Path:
-    return (
-        _get_custom_database_path("library_ingest_jobs_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("library_ingest_jobs_db_path")
+    return _get_custom_database_path(
+        "library_ingest_jobs_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf(
+        "library_ingest_jobs_db_path"
     )
 
 
 def get_workspaces_db_path() -> Path:
-    return (
-        _get_custom_database_path("workspaces_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
-    )
+    return _get_custom_database_path(
+        "workspaces_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
 
 
 def get_subscriptions_db_path() -> Path:
-    return (
-        _get_custom_database_path("subscriptions_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
-    )
+    return _get_custom_database_path(
+        "subscriptions_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
 
 
 def get_evals_db_path() -> Path:
     """Return the canonical path for the Evals database."""
-    return (
-        _get_custom_database_path("evals_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
-    )
+    return _get_custom_database_path(
+        "evals_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
 
 
 def get_rag_indexing_db_path() -> Path:
     """Return the canonical path for the RAG indexing-state database."""
-    return (
-        _get_custom_database_path("rag_indexing_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
-    )
+    return _get_custom_database_path(
+        "rag_indexing_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
 
 
 def get_notifications_db_path() -> Path:
-    return (
-        _get_custom_database_path("notifications_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
-    )
+    return _get_custom_database_path(
+        "notifications_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
 
 
 def get_research_db_path() -> Path:
-    return (
-        _get_custom_database_path("research_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
-    )
+    return _get_custom_database_path(
+        "research_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
 
 
 def get_workflows_db_path() -> Path:
@@ -10509,20 +11716,16 @@ def get_workflows_db_path() -> Path:
 
 
 def get_writing_db_path() -> Path:
-    return (
-        _get_custom_database_path("writing_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
-    )
+    return _get_custom_database_path(
+        "writing_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
 
 
 def get_scheduled_tasks_db_path() -> Path:
-    return (
-        _get_custom_database_path(
-            "scheduled_tasks_db_path",
-            expand_before_validation=False,
-        )
-        or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
-    )
+    return _get_custom_database_path(
+        "scheduled_tasks_db_path",
+        expand_before_validation=False,
+    ) or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
 
 
 def get_cli_log_file_path() -> Path:
@@ -10592,7 +11795,9 @@ def get_model_cache_dir() -> Path:
     # an explicitly configured custom directory stays under the user's
     # ownership policy, so only the creation mode is pinned there.
     try:
-        with _config_participants.operation(sys.modules[__name__], route="config_models", target=cache_path):
+        with _config_participants.operation(
+            sys.modules[__name__], route="config_models", target=cache_path
+        ):
             if custom_cache_dir and custom_cache_dir != default_cache_dir:
                 cache_path.mkdir(parents=True, exist_ok=True, mode=0o700)
             else:
@@ -10890,3 +12095,191 @@ def create_mcp_credential_service(data_root: Path | None = None):
     return CredentialBindingService(
         KeyringCredentialBackend(data_root or get_user_data_dir())
     )
+
+
+# Definition-time originals for the finite stock run-log availability read.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "get_workspaces_db_path",
+                "_get_custom_database_path",
+                "get_user_data_dir",
+                "get_cli_setting",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "get_workspaces_db_path",
+                        "_get_custom_database_path",
+                    "get_user_data_dir",
+                    "get_cli_setting",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+# Defining callbacks for checked stock Console preparation; no IO.
+_COMPACT_MODEL_CONFIG_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (globals(), name, globals()[name])
+        for name in (
+            "get_cli_providers_and_models",
+            "load_settings",
+            "_load_settings_guarded",
+            "_load_settings_uncached",
+            "_settings_cache_hit",
+            "_get_effective_config_path",
+            "current_config_identity",
+            "resolve_provider_name",
+            "_normalize_provider_lookup_key",
+            "normalize_provider_config_key",
+            "_config_participants",
+        )
+    )
+    + tuple(
+        (vars(_config_participants), name, vars(_config_participants)[name])
+        for name in ("operation",)
+    )
+    + ((sys.modules, _config_participants.__name__, _config_participants),),
+    tuple(
+        (
+            namespace,
+            name,
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for namespace, name, function in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "get_cli_providers_and_models",
+                    "load_settings",
+                    "_load_settings_guarded",
+                    "_load_settings_uncached",
+                    "_settings_cache_hit",
+                    "_get_effective_config_path",
+                    "current_config_identity",
+                    "resolve_provider_name",
+                    "_normalize_provider_lookup_key",
+                    "normalize_provider_config_key",
+                )
+            ),
+            *(
+                (vars(function), "__wrapped__", function.__wrapped__)
+                for function in (_load_settings_guarded, _load_settings_uncached)
+            ),
+            (vars(_config_participants), "operation", _config_participants.operation),
+            (
+                vars(_config_participants.operation),
+                "__wrapped__",
+                _config_participants.operation.__wrapped__,
+            ),
+        )
+    ),
+)
+
+
+# Definition-time inputs for optional in-memory pending display.
+_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE = (
+    current_config_identity,
+    current_config_identity.__code__,
+    current_config_identity.__globals__,
+    current_config_identity.__defaults__,
+    current_config_identity.__kwdefaults__,
+    current_config_identity.__closure__,
+)
+
+
+
+# Original callbacks eligible for finite deferred Collections setup only.
+def _record_collections_setup_source(entries):
+    from types import FunctionType
+
+    rows = []
+    for owner, name in entries:
+        original = owner[name] if type(owner) is dict else getattr(owner, name)  # exact stock compatibility boundary
+        function = getattr(original, "__func__", original)
+        records = []
+        while type(function) is FunctionType:
+            records.append(
+                (
+                    function,
+                    function.__code__,
+                    function.__globals__,
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in function.__closure__ or ()
+                    ),
+                    vars(function).get("__wrapped__"),
+                )
+            )
+            function = vars(function).get("__wrapped__")
+        rows.append((owner, name, original, tuple(records)))
+    return globals(), tuple(rows)
+
+
+_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+    (
+        (globals(), "current_config_identity"),
+        (globals(), "get_library_collections_db_path"),
+        (globals(), "get_user_data_dir"),
+        (globals(), "_get_custom_database_path"),
+        (globals(), "_get_effective_config_path"),
+    )
+)
+del _record_collections_setup_source

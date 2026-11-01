@@ -106,9 +106,7 @@ def main() -> None:
             "reasoning_budget": 1024,
         },
     )
-    xhigh_reason = len(xhigh["reasoning"]) or len(
-        xhigh["content"].split("</think>")[0]
-    )
+    xhigh_reason = len(xhigh["reasoning"]) or len(xhigh["content"].split("</think>")[0])
     budget_reason = len(budget["reasoning"]) or len(
         budget["content"].split("</think>")[0]
     )
@@ -132,8 +130,14 @@ def main() -> None:
 
     # --- D: prefill + thinking controls must not 400 ---
     try:
-        pre = raw_probe("prefill+xhigh", {"chat_template_kwargs": {"reasoning_effort": "xhigh"}}, prefill="The sky appears blue")
-        record("D-prefill-no-400", True, f"status ok, content_len={len(pre['content'])}")
+        pre = raw_probe(
+            "prefill+xhigh",
+            {"chat_template_kwargs": {"reasoning_effort": "xhigh"}},
+            prefill="The sky appears blue",
+        )
+        record(
+            "D-prefill-no-400", True, f"status ok, content_len={len(pre['content'])}"
+        )
     except httpx.HTTPStatusError as exc:
         record("D-prefill-no-400", False, f"HTTP {exc.response.status_code}")
 
@@ -149,7 +153,12 @@ def main() -> None:
         payload.get("chat_template_kwargs") == {"reasoning_effort": "low"}
         and payload.get("reasoning_budget") == 1024
     )
-    record("E-builder-composes", ok, json.dumps(payload.get("chat_template_kwargs")) + f" reasoning_budget={payload.get('reasoning_budget')}")
+    record(
+        "E-builder-composes",
+        ok,
+        json.dumps(payload.get("chat_template_kwargs"))
+        + f" reasoning_budget={payload.get('reasoning_budget')}",
+    )
 
     # --- F: OUR gateway stream filters think text (unsplit) / stays clean (split) ---
     async def stream_check() -> tuple[str, str]:

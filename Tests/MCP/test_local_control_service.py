@@ -721,6 +721,61 @@ def test_local_manifest_helper_stays_aligned_with_registered_server_surface():
     )
 
 
+def test_local_manifest_reads_and_parses_source_once_per_inventory(monkeypatch):
+    from tldw_chatbook.MCP import server
+
+    reader = server._load_server_module_ast
+    reads = []
+
+    def observed_read():
+        result = reader()
+        reads.append(result)
+        return result
+
+    monkeypatch.setattr(server, "_load_server_module_ast", observed_read)
+    service = LocalMCPControlService(store=FakeLocalStore())
+    inventory = service.get_inventory()
+    assert len(reads) == 1
+    assert any(tool["name"] == "search_rag" for tool in inventory["tools"])
+    assert any(row["uri"] == "note://{note_id}" for row in inventory["resources"])
+    assert any(row["name"] == "summarize_conversation" for row in inventory["prompts"])
+
+
+def test_local_manifest_remains_fresh_and_detached_between_calls(tmp_path, monkeypatch):
+    from tldw_chatbook.MCP import server
+
+    source = Path(server.__file__).read_text(encoding="utf-8")
+    selected = tmp_path / "server.py"
+    selected.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(server, "__file__", str(selected))
+    original = server.describe_local_mcp_capabilities()
+    expected = json.loads(json.dumps(original))
+    original["tools"][0]["inputSchema"]["properties"].clear()
+    original["tools"][-1]["inputSchema"].clear()
+    original["resources"].clear()
+    original["prompts"].clear()
+    assert server.describe_local_mcp_capabilities() == expected
+    selected.write_text(
+        source.replace("async def search_rag(", "async def changed_search_rag("),
+        encoding="utf-8",
+    )
+    changed = server.describe_local_mcp_capabilities()
+    names = {tool["name"] for tool in changed["tools"]}
+    assert "changed_search_rag" in names and "search_rag" not in names
+    assert (
+        server._describe_local_tools()
+        == changed["tools"][: -len(server.LIBRARY_TOOL_DESCRIPTORS)]
+    )
+    assert server._describe_local_resources() == expected["resources"]
+    assert server._describe_local_prompts() == expected["prompts"]
+    selected.write_text("invalid python :", encoding="utf-8")
+    with pytest.raises(SyntaxError):
+        server.describe_local_mcp_capabilities()
+    selected.unlink()
+    with pytest.raises(FileNotFoundError):
+        server.describe_local_mcp_capabilities()
+
+
 def test_manifest_tools_carry_input_schema():
     manifest = describe_local_mcp_capabilities()
     tools = {t["name"]: t for t in manifest["tools"]}

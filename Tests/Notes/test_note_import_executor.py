@@ -306,9 +306,11 @@ def test_target_ensure_folder_is_deterministic_and_replay_safe(
 
     assert first.folder_id == _FOLDER_ID
     assert retry == first
-    folder_sync_id = _db.get_connection().execute(
-        "SELECT sync_id FROM note_folders WHERE id = ?", (_FOLDER_ID,)
-    ).fetchone()[0]
+    folder_sync_id = (
+        _db.get_connection()
+        .execute("SELECT sync_id FROM note_folders WHERE id = ?", (_FOLDER_ID,))
+        .fetchone()[0]
+    )
     assert str(UUID(folder_sync_id)) == folder_sync_id
     assert UUID(folder_sync_id).version == 4
 
@@ -4303,9 +4305,9 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
         "WHERE entity = 'notes' AND entity_id = ? ORDER BY change_id",
         (_NOTE_ID,),
     ).fetchall()
-    assert [
-        (row["operation"], row["version"]) for row in note_sync_on_create
-    ] == [("create", 1)]
+    assert [(row["operation"], row["version"]) for row in note_sync_on_create] == [
+        ("create", 1)
+    ]
 
     target.replace_note(
         note_id=_NOTE_ID,

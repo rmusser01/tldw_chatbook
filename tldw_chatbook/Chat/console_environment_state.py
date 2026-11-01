@@ -331,7 +331,7 @@ TASKS_SUMMARY_BUDGET = (
 #
 # Investigated whether the true cause can be told apart cheaply at the
 # seam this panel reads (`ChatScreen._console_environment_root` ->
-# `resolve_turn_execution_context(...).workspace_roots`): it cannot, for
+# `resolve_session_workspace_roots(...)`): it cannot, for
 # the common cases. `ChangeReviewConsentService.admit_turn` returns the
 # SAME empty `ChangeReviewAdmission()` -- no ready roots, no
 # `skipped_roots` entries -- whether consent is off, the capability is

@@ -74,6 +74,7 @@ from .agent_models import (
     failed_tool_record_projection,
 )
 from .run_context import current_run_id
+
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (tool_arg_coercion imports at the dispatch site.)
 from .run_log_search import (
     MAX_CROSS_RUN_RUNS,
@@ -81,6 +82,7 @@ from .run_log_search import (
     MAX_STATS_GROUPS,
     STATS_GROUP_BY_FIELDS,
 )
+
 # NOTE (boot budget, ADR-097): `run_tool_policy` is annotation-only here
 # (`from __future__ import annotations` above); the TYPE_CHECKING import
 # keeps the module off the UI-ready census path. The live policy object is
@@ -88,9 +90,18 @@ from .run_log_search import (
 if TYPE_CHECKING:
     from .fleet_message_tools import (
         READ_AGENT_MESSAGES_SCHEMA as READ_AGENT_MESSAGES_SCHEMA,
+        LIST_PEER_AGENTS_SCHEMA as LIST_PEER_AGENTS_SCHEMA,  # noqa: PLC0414
+        SEND_TO_PEER_SCHEMA as SEND_TO_PEER_SCHEMA,  # noqa: PLC0414
         REPORT_TO_SUPERVISOR_SCHEMA as REPORT_TO_SUPERVISOR_SCHEMA,
     )
     from .run_tool_policy import RunToolPolicy
+    from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
+SEARCH_ARCHIVED_CONVERSATIONS = "search_archived_conversations"
+REQUEST_CONVERSATION_RESTORE = "request_conversation_restore"
+RECOVERY_RESERVED_TOOL_NAMES = frozenset(
+    {SEARCH_ARCHIVED_CONVERSATIONS, REQUEST_CONVERSATION_RESTORE}
+)
 
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)
@@ -109,11 +120,17 @@ CANVAS_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 
+CODE_REVIEW_RESERVED_TOOL_NAMES = frozenset(
+    "code_review_" + name for name in ("guide", "prepare", "read", "submit", "release")
+)
+
+
 class ToolExecutionPolicy(StrEnum):
     """How the agent runtime may stop waiting after a tool starts."""
 
     BOUNDED_ABANDONABLE = "bounded_abandonable"
     DEFINITIVE_AFTER_START = "definitive_after_start"
+
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
     id="runtime:spawn_subagent",
@@ -145,6 +162,48 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
         "required": ["task"],
     },
 )
+
+
+def review_spawn_schema(schema: ToolSchema) -> ToolSchema:
+    """Add the mutually exclusive host-prepared slot form to ordinary spawn."""
+    parameters = dict(schema.parameters)
+    properties = dict(parameters["properties"])
+    properties.update(
+        review_id={"type": "string", "minLength": 1},
+        review_slot_id={"type": "string", "minLength": 1},
+    )
+    parameters.pop("required", None)
+    parameters.update(
+        properties=properties,
+        oneOf=[
+            {
+                "required": ["task"],
+                "not": {
+                    "anyOf": [
+                        {"required": ["review_id"]},
+                        {"required": ["review_slot_id"]},
+                    ]
+                },
+            },
+            {
+                "required": ["review_id", "review_slot_id"],
+                "not": {
+                    "anyOf": [
+                        {"required": [name]}
+                        for name in properties
+                        if name not in {"review_id", "review_slot_id"}
+                    ]
+                },
+            },
+        ],
+    )
+    return _dataclass_replace(
+        schema,
+        parameters=parameters,
+        description=schema.description
+        + " For an admitted review slot, supply only review_id and review_slot_id; "
+        "do not combine them with task, agent, provider, model or isolation.",
+    )
 
 
 def build_spawn_schema(
@@ -188,9 +247,7 @@ def build_spawn_schema(
     """
     if not definitions and not override_enabled:
         return SPAWN_TOOL_SCHEMA
-    roster = "\n".join(
-        _spawn_roster_line(d) for d in definitions
-    )
+    roster = "\n".join(_spawn_roster_line(d) for d in definitions)
     properties: dict[str, Any] = {
         # Shallow-copied so no future consumer of the built schema can
         # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
@@ -266,8 +323,7 @@ def build_chat_create_schema(
     if not routed and not override_enabled:
         return base
     properties: dict[str, Any] = {
-        name: dict(spec)
-        for name, spec in base.parameters["properties"].items()
+        name: dict(spec) for name, spec in base.parameters["properties"].items()
     }
     if routed:
         roster = "\n".join(
@@ -314,10 +370,7 @@ def _spawn_roster_line(d: AgentDefinition) -> str:
     """One roster line; ADR-147 routing suffix only when routed."""
     line = f"- {d.name} — {d.description}" if d.description else f"- {d.name}"
     if d.provider or d.model:
-        line += (
-            f" (runs on {d.provider or 'parent'}"
-            f" / {d.model or 'default model'})"
-        )
+        line += f" (runs on {d.provider or 'parent'} / {d.model or 'default model'})"
     return line
 
 
@@ -336,8 +389,7 @@ def _override_provider_description(
     if not override_targets:
         return header + "\n(none configured — any override will be refused)"
     lines = "\n".join(
-        f"- {provider} (models: {', '.join(models)})" if models
-        else f"- {provider}"
+        f"- {provider} (models: {', '.join(models)})" if models else f"- {provider}"
         for provider, models in override_targets
     )
     return header + "\n" + lines
@@ -524,8 +576,18 @@ _FIND_TOOLS_LISTING_CHAR_LIMIT = 700
 
 _FUZZY_STOPWORDS = frozenset(
     {
-        "a", "an", "and", "by", "for", "in", "of", "on", "or",
-        "the", "to", "with",
+        "a",
+        "an",
+        "and",
+        "by",
+        "for",
+        "in",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
     }
 )
 
@@ -572,10 +634,11 @@ def build_find_tools_schema(names: "Sequence[str]") -> ToolSchema:
         label = "Available tools"
     suffix = f" {label}: {listing}."
     if len(suffix) > _FIND_TOOLS_LISTING_CHAR_LIMIT:
-        suffix = suffix[: _FIND_TOOLS_LISTING_CHAR_LIMIT] + "…"
+        suffix = suffix[:_FIND_TOOLS_LISTING_CHAR_LIMIT] + "…"
     return _dataclass_replace(
         FIND_TOOLS_SCHEMA, description=FIND_TOOLS_SCHEMA.description + suffix
     )
+
 
 SKILL_FILE_TOOL_SCHEMA = ToolSchema(
     id="runtime:skill_file",
@@ -775,26 +838,43 @@ NEW_CHAT_TOOL_SCHEMA = ToolSchema(
     id="runtime:new_chat",
     name=NEW_CHAT_TOOL_NAME,
     description=(
-        "Create a brand-new, empty chat for a parallel workstream unrelated to "
-        "the current conversation's history. The user is asked to confirm every "
-        "creation. opening_prompt is placed in the new chat's input box as a "
-        "draft the user reviews and sends themselves; it is never sent "
-        "automatically. instructions, when given, become the new chat's standing "
-        "system prompt. The new chat opens in the same workspace, in the "
-        "background; the user switches to it when ready. Use sparingly — each "
-        "call shows the user an approval card, and do not retry after the user "
-        "declines."
+        "Create a fresh chat in same_workspace (default) or casual scope. "
+        "mode=draft (default) saves opening_prompt for review; mode=start "
+        "requires a nonblank opening_prompt and attempts one bounded background "
+        "agent turn. instructions optionally overrides the destination assistant's "
+        "standing prompt. Approval is required unless remembered for this exact "
+        "mode and destination. Keeps the current chat, composer and focus intact. "
+        "Returns draft, not_started, started (accepted, completion pending), or "
+        "review_required. A blocked/uncertain start still created the chat: do not "
+        "repeat creation to recover it. Use its normal review/retry controls. "
+        "Do not retry after denial."
     ),
     parameters={
         "type": "object",
         "properties": {
+            "destination": {
+                "type": "string",
+                "enum": ["same_workspace", "casual"],
+                "default": "same_workspace",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["draft", "start"],
+                "default": "draft",
+            },
             "title": {
                 "type": "string",
                 "description": "Short title for the new chat.",
             },
             "opening_prompt": {
                 "type": "string",
-                "description": "Draft first message placed in the new chat's input box.",
+                "description": (
+                    "First message for the new chat. With mode=draft (default), "
+                    "it is saved in the input box for review. With mode=start, "
+                    "it must be nonblank and is submitted as one bounded background "
+                    "agent turn after confirmation and runtime admission. Text is "
+                    "literal; slash commands and @ references are not expanded."
+                ),
             },
             "instructions": {
                 "type": "string",
@@ -1246,10 +1326,7 @@ def redact_root_locator(value: Any, root: "Path | RemoteRoot | None") -> Any:
                     value = value.replace(locator, ".")
             return value
         if isinstance(value, dict):
-            return {
-                key: redact_root_locator(item, root)
-                for key, item in value.items()
-            }
+            return {key: redact_root_locator(item, root) for key, item in value.items()}
         if isinstance(value, list):
             return [redact_root_locator(item, root) for item in value]
         if isinstance(value, tuple):
@@ -1264,10 +1341,7 @@ def redact_root_locator(value: Any, root: "Path | RemoteRoot | None") -> Any:
                 value = value.replace(locator, ".")
         return value
     if isinstance(value, dict):
-        return {
-            key: redact_root_locator(item, root)
-            for key, item in value.items()
-        }
+        return {key: redact_root_locator(item, root) for key, item in value.items()}
     if isinstance(value, list):
         return [redact_root_locator(item, root) for item in value]
     if isinstance(value, tuple):
@@ -1279,6 +1353,18 @@ class BuiltinToolProvider:
     """Wraps tool_executor's built-in tools behind the provider interface."""
 
     SOURCE = "builtin"
+
+    def hook_operation(self, tool_id: str) -> str | None:
+        name = tool_id.removeprefix("builtin:")
+        if name not in self._tools:
+            return None
+        return {
+            "read_file": "file.read",
+            "write_file": "file.write",
+            "list_directory": "directory.list",
+            "glob_files": "file.search",
+            "grep_files": "file.search",
+        }.get(name)
 
     def __init__(
         self,
@@ -1464,11 +1550,14 @@ class BuiltinToolProvider:
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
         from tldw_chatbook.Utils.path_validation import validate_path_multi
 
-        with self._file_authority(), run_workspace(
-            self._workspace_id,
-            read_binding_ids=self._workspace_read_binding_ids,
-            write_binding_ids=self._workspace_write_binding_ids,
-            binding_authority=self._workspace_binding_authority,
+        with (
+            self._file_authority(),
+            run_workspace(
+                self._workspace_id,
+                read_binding_ids=self._workspace_read_binding_ids,
+                write_binding_ids=self._workspace_write_binding_ids,
+                binding_authority=self._workspace_binding_authority,
+            ),
         ):
             roots = allowed_file_roots(write=write, sandbox_root=_tool_sandbox_root())
             path = validate_path_multi(value, roots)
@@ -1583,11 +1672,14 @@ class BuiltinToolProvider:
             # concurrent run's. `self._workspace_id=None` keeps the
             # ContextVar at `None`, which is `allowed_file_roots`' own
             # documented fallback to the active workspace.
-            with authority, run_workspace(
-                self._workspace_id,
-                read_binding_ids=self._workspace_read_binding_ids,
-                write_binding_ids=self._workspace_write_binding_ids,
-                binding_authority=self._workspace_binding_authority,
+            with (
+                authority,
+                run_workspace(
+                    self._workspace_id,
+                    read_binding_ids=self._workspace_read_binding_ids,
+                    write_binding_ids=self._workspace_write_binding_ids,
+                    binding_authority=self._workspace_binding_authority,
+                ),
             ):
                 execution_started = True
                 raw = asyncio.run(tool.execute(**args))
@@ -1789,9 +1881,12 @@ class ToolDefinitionSnapshot:
     parameters_json: str
     generation: int
     owner_generation: int
+    operation: str | None = None
 
     @classmethod
-    def from_schema(cls, schema, provider, generation, owner_generation):
+    def from_schema(
+        cls, schema, provider, generation, owner_generation, *, operation=None
+    ):
         return cls(
             schema.id,
             schema.name,
@@ -1804,6 +1899,7 @@ class ToolDefinitionSnapshot:
             ),
             generation,
             owner_generation,
+            operation,
         )
 
 
@@ -1814,6 +1910,8 @@ class ToolCatalogRegistry:
         self._providers: list[ToolProvider] = []
         self._builtin_library_provider: ToolProvider | None = None
         self._builtin_library_authority: BuiltinLibraryAuthority | None = None
+        self._archive_recovery_provider = None
+        self._archive_recovery_authority = None
         self._canvas_provider: ToolProvider | None = None
         self._canvas_authority: object | None = None
         # Whether the Console session owning THIS run is temporary ("not
@@ -1841,6 +1939,17 @@ class ToolCatalogRegistry:
         # registry was composed and its policy armed, and BEFORE dispatch.
         # Clearing there would disarm every run's caps.
         self._run_tool_policy: RunToolPolicy | None = None
+        self._review_service = None
+
+    def for_review_child(self, service) -> ToolCatalogRegistry:
+        """Give one authenticated child a private, closed review catalog."""
+        from .code_review_tool_provider import CodeReviewToolProvider
+
+        registry = ToolCatalogRegistry(ephemeral=self._ephemeral)
+        registry.set_run_tool_policy(self._run_tool_policy)
+        registry.register_provider(CodeReviewToolProvider(service))
+        registry._review_service = service
+        return registry
 
     def set_run_tool_policy(self, policy: RunToolPolicy | None) -> None:
         """Arm (or clear) this registry's per-run persona-policy call caps.
@@ -1899,9 +2008,8 @@ class ToolCatalogRegistry:
             entries = provider.list_catalog()
         except Exception:  # noqa: BLE001 - malformed provider fails closed
             return False
-        if (
-            frozenset(entry.name for entry in entries) != expected_names
-            or any(entry.source != "library" for entry in entries)
+        if frozenset(entry.name for entry in entries) != expected_names or any(
+            entry.source != "library" for entry in entries
         ):
             return False
         with self._catalog_lock:
@@ -1913,6 +2021,58 @@ class ToolCatalogRegistry:
             self._catalog_snapshot = None
             self._catalog_generation += 1
         return True
+
+    def register_archive_recovery_provider(
+        self, provider: ArchiveRecoveryToolProvider, authority: object
+    ) -> bool:
+        """Register exact app-issued turn authority; pending cannot execute."""
+        from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
+        if (
+            type(provider) is not ArchiveRecoveryToolProvider
+            or self._ephemeral
+            or not provider.authenticates_authority(authority)
+        ):
+            return False
+        entries = provider.list_catalog()
+        if frozenset(e.name for e in entries) != RECOVERY_RESERVED_TOOL_NAMES or any(
+            e.source != "archive_recovery" for e in entries
+        ):
+            return False
+        with self._catalog_lock:
+            if self._archive_recovery_provider is not None:
+                return False
+            self._archive_recovery_provider = provider
+            self._archive_recovery_authority = authority
+            self._providers.append(provider)
+            self._catalog_snapshot = None
+            self._catalog_generation += 1
+        return True
+
+    def _authenticated_recovery_name(self, provider: object, name: str) -> bool:
+        if (
+            name not in RECOVERY_RESERVED_TOOL_NAMES
+            or provider is None
+            or provider is not self._archive_recovery_provider
+        ):
+            return False
+        from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
+        return bool(
+            type(provider) is ArchiveRecoveryToolProvider
+            and provider.authenticates_authority(self._archive_recovery_authority)
+        )
+
+    def check_archive_recovery_call(self, name: str) -> ToolResult | None:
+        """Apply exact owner and persona caps to native in-loop dispatch."""
+        provider = self._archive_recovery_provider
+        if self._ephemeral or not self._authenticated_recovery_name(provider, name):
+            return ToolResult.blocked("Recovery authority is unavailable.")
+        if self._run_tool_policy is not None:
+            allowed, refusal = self._run_tool_policy.check(current_run_id(), name)
+            if not allowed:
+                return ToolResult.blocked(refusal)
+        return None
 
     def register_canvas_provider(self, provider: object, authority: object) -> bool:
         """Register only an exact live scoped Canvas provider and capability.
@@ -1933,8 +2093,7 @@ class ToolCatalogRegistry:
         assert isinstance(provider, CanvasToolProvider)
         if (
             type(authority) is not CanvasToolRegistrationAuthority
-            or authority.classification
-            is not CANVAS_MUTATION_APPROVAL_CLASSIFICATION
+            or authority.classification is not CANVAS_MUTATION_APPROVAL_CLASSIFICATION
             or not provider.authenticates_registration_authority(authority)
             or not provider.scope_is_current()
         ):
@@ -1943,9 +2102,10 @@ class ToolCatalogRegistry:
             entries = provider.list_catalog()
         except Exception:  # noqa: BLE001 - malformed provider fails closed
             return False
-        if (
-            frozenset(entry.name for entry in entries) != CANVAS_RESERVED_TOOL_NAMES
-            or any(entry.source != "canvas" for entry in entries)
+        if frozenset(
+            entry.name for entry in entries
+        ) != CANVAS_RESERVED_TOOL_NAMES or any(
+            entry.source != "canvas" for entry in entries
         ):
             return False
         with self._catalog_lock:
@@ -2009,8 +2169,19 @@ class ToolCatalogRegistry:
         return [
             entry
             for entry in entries
-            if entry.name not in CANVAS_RESERVED_TOOL_NAMES
-            or (provider is not None and self._authenticated_canvas_name(provider, entry.name))
+            if (
+                entry.name not in CANVAS_RESERVED_TOOL_NAMES
+                or (
+                    provider is not None
+                    and self._authenticated_canvas_name(provider, entry.name)
+                )
+            )
+            and (
+                entry.name not in RECOVERY_RESERVED_TOOL_NAMES
+                or self._authenticated_recovery_name(
+                    self._archive_recovery_provider, entry.name
+                )
+            )
         ]
 
     def find(
@@ -2056,9 +2227,7 @@ class ToolCatalogRegistry:
             elif needle in description:
                 rank = 3
             else:
-                matched = len(
-                    query_tokens & _fuzzy_tokens(f"{name} {description}")
-                )
+                matched = len(query_tokens & _fuzzy_tokens(f"{name} {description}"))
                 if not matched or not query_tokens:
                     continue
                 rank = 4
@@ -2066,6 +2235,24 @@ class ToolCatalogRegistry:
             ranked.append((rank, bias, name, entry.id, entry))
         ranked.sort(key=lambda item: item[:4])
         return [item[4] for item in ranked[: max(int(limit), 0)]]
+
+    def _authenticated_review_provider(self, provider) -> bool:
+        from .code_review_service import CodeReviewService, ReviewStageIssuer
+        from .code_review_tool_provider import CodeReviewToolProvider
+
+        if self._ephemeral or type(provider) is not CodeReviewToolProvider:
+            return False
+        service = provider.service
+        if (
+            type(service) is not CodeReviewService
+            or type(service.issuer) is not ReviewStageIssuer
+        ):
+            return False
+        try:
+            service.validate_authority()
+            return service.enabled
+        except ValueError:
+            return False
 
     def _build_owner_cache(
         self,
@@ -2075,6 +2262,16 @@ class ToolCatalogRegistry:
         accepted_entries: list[ToolCatalogEntry] = []
         for provider in self._providers:
             for entry in provider.list_catalog():
+                if (
+                    (
+                    entry.name in CODE_REVIEW_RESERVED_TOOL_NAMES
+                    and not self._authenticated_review_provider(provider)
+                    ) or (
+                    entry.name in RECOVERY_RESERVED_TOOL_NAMES
+                    and not self._authenticated_recovery_name(provider, entry.name)
+                    )
+                ):
+                    continue
                 if (
                     entry.name in CANVAS_RESERVED_TOOL_NAMES
                     and not self._authenticated_canvas_name(provider, entry.name)
@@ -2158,8 +2355,24 @@ class ToolCatalogRegistry:
             schema = record.provider.load_schema(record.tool_id)
             if schema.id != record.tool_id or schema.name != name:
                 raise ValueError("tool schema identity changed")
+            classify = getattr(record.provider, "hook_operation", None)
+            operation = classify(record.tool_id) if callable(classify) else None
+            if operation not in {
+                None,
+                "file.read",
+                "file.write",
+                "file.edit",
+                "directory.list",
+                "file.search",
+                "mcp.call",
+            }:
+                raise ValueError("tool operation unavailable")
             return ToolDefinitionSnapshot.from_schema(
-                schema, record.source, self._catalog_generation, id(record.provider)
+                schema,
+                record.source,
+                self._catalog_generation,
+                id(record.provider),
+                operation=operation,
             )
 
     def load_schema(self, tool_id: str) -> ToolSchema:
@@ -2261,9 +2474,13 @@ class ToolCatalogRegistry:
         """
         try:
             schema = provider.load_schema(tool_id)
-            from .tool_arg_coercion import coerce_tool_args  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+            from .tool_arg_coercion import (
+                coerce_tool_args,
+            )  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
 
-            repaired, coerced = coerce_tool_args(args, getattr(schema, "parameters", None))
+            repaired, coerced = coerce_tool_args(
+                args, getattr(schema, "parameters", None)
+            )
         except Exception:  # noqa: BLE001 -- repair is best-effort by design
             return args
         if coerced:
@@ -2276,6 +2493,26 @@ class ToolCatalogRegistry:
             )
         return repaired
 
+    def authorize_review_source(
+        self, name, args, *, allowed_names, expected_binding_id
+    ):
+        """Use the composed local owner and the same per-run policy counters."""
+        from .local_tool_provider import LocalToolProvider
+
+        if name not in allowed_names:
+            return "source_permission_denied"
+        with self._catalog_lock:
+            record = self._owner_record_for_name(name)
+        if record is None or not isinstance(record.provider, LocalToolProvider):
+            return "source_permission_unavailable"
+        if self._run_tool_policy is not None:
+            allowed, _ = self._run_tool_policy.check(current_run_id(), name)
+            if not allowed:
+                return "source_policy_call_cap_reached"
+        return record.provider.authorize_review_source(
+            name, args, expected_binding_id=expected_binding_id
+        )
+
     def invoke_by_name(
         self,
         name: str,
@@ -2283,6 +2520,11 @@ class ToolCatalogRegistry:
         *,
         expected_definition: ToolDefinitionSnapshot | None = None,
     ) -> ToolResult:
+        if self._review_service is not None and name not in {
+            "code_review_read",
+            "code_review_submit",
+        }:
+            return ToolResult(ok=False, error="role_denied", dispatch_state="not_started")
         with self._catalog_lock:
             if expected_definition is not None:
                 try:
@@ -2296,17 +2538,23 @@ class ToolCatalogRegistry:
                 ok=False, error=f"Unknown tool: {name}", dispatch_state="not_started"
             )
         tool_id, provider = record.tool_id, record.provider
+        if (
+            name in CODE_REVIEW_RESERVED_TOOL_NAMES
+            and not self._authenticated_review_provider(provider)
+        ):
+            return ToolResult.blocked("Review authority is unavailable.")
         if name in CANVAS_RESERVED_TOOL_NAMES:
             if not self._authenticated_canvas_name(provider, name):
                 from .canvas_tool_provider import CanvasToolProvider
 
-                if isinstance(provider, CanvasToolProvider) and not provider.canvas_enabled:
+                if (
+                    isinstance(provider, CanvasToolProvider)
+                    and not provider.canvas_enabled
+                ):
                     return ToolResult.blocked(
                         "Canvas is disabled. Restart Chatbook after re-enabling it."
                     )
-                return ToolResult.blocked(
-                    "Canvas authority is unavailable."
-                )
+                return ToolResult.blocked("Canvas authority is unavailable.")
             if name in {"canvas_create", "canvas_update"} and not (
                 self.is_canvas_reversible_conversation_local_mutation(name)
             ):
@@ -2349,6 +2597,13 @@ class ToolCatalogRegistry:
         # Returns a ToolResult rather than raising: the pure loop must never
         # see an exception out of tool invocation.
         def invoke_current() -> ToolResult:
+            from .automatic_work_runtime import current_automatic_work
+
+            automatic = current_automatic_work()
+            if automatic is not None and automatic.goal is not None:
+                automatic.check()
+                if tool_id not in automatic.goal.goal.request.tool_scope.catalog_tools:
+                    return ToolResult.blocked("Tool outside goal scope.")
             if expected_definition is not None:
                 try:
                     if self.snapshot_for_hook(name) != expected_definition:
@@ -2417,6 +2672,9 @@ def probe_initial_catalog(
     allowed_names: Iterable[str],
     max_schema_tokens: int,
     measure_schema_set: Callable[[tuple[ToolSchema, ...]], int],
+    *,
+    catalog_entries: tuple[ToolCatalogEntry, ...] | None = None,
+    schema_loader: Callable[[str], ToolSchema] | None = None,
 ) -> tuple[ToolSchema, ...] | None:
     """Return every allowed schema only when each cumulative set is proven fit.
 
@@ -2425,6 +2683,9 @@ def probe_initial_catalog(
         allowed_names: Tool names eligible for initial disclosure.
         max_schema_tokens: Maximum measured size for the full disclosed set.
         measure_schema_set: Callback that measures each cumulative schema set.
+        catalog_entries: Optional disposable catalog metadata, without authority.
+        schema_loader: Read-only loader for that metadata; called only inside
+            the guarded, incremental probe.
 
     Returns:
         Every allowed schema when all cumulative measurements fit; otherwise
@@ -2435,10 +2696,14 @@ def probe_initial_catalog(
     allowed = frozenset(allowed_names)
     schemas: list[ToolSchema] = []
     try:
-        for entry in registry.list_catalog():
+        load = schema_loader or registry.load_schema
+        entries = (
+            catalog_entries if catalog_entries is not None else registry.list_catalog()
+        )
+        for entry in entries:
             if entry.name not in allowed or entry.name in MESSAGE_TOOL_NAMES:
                 continue
-            schemas.append(registry.load_schema(entry.id))
+            schemas.append(load(entry.id))
             measured = measure_schema_set(tuple(schemas))
             if type(measured) is not int or measured <= 0:
                 return None
@@ -2451,7 +2716,10 @@ def probe_initial_catalog(
 
 def __getattr__(name: str):
     """Keep the public progress-schema exports lazy until explicitly requested."""
-    if name in {"READ_AGENT_MESSAGES_SCHEMA", "REPORT_TO_SUPERVISOR_SCHEMA"}:
+    if name in {
+        "READ_AGENT_MESSAGES_SCHEMA", "REPORT_TO_SUPERVISOR_SCHEMA",
+        "LIST_PEER_AGENTS_SCHEMA", "SEND_TO_PEER_SCHEMA",
+    }:
         from . import fleet_message_tools
 
         return getattr(fleet_message_tools, name)

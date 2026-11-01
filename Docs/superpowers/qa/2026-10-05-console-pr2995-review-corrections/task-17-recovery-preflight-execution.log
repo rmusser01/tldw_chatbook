@@ -1,0 +1,17 @@
+..........                                                               [100%]
+=============================== warnings summary ===============================
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/cacheprovider.py:475
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/cacheprovider.py:475: PytestCacheWarning: cache could not write path /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.pytest_cache/v/cache/nodeids: [Errno 1] Operation not permitted: '/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.pytest_cache/v/cache/nodeids'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+3.28s call     Tests/Chat/test_console_chat_start.py::test_live_machine_retry_starts_manual_work_without_reassigning_old_allowance
+2.34s call     Tests/Backup_Recovery/test_activation_agents.py::test_restored_agent_execution_is_inert[resume]
+2.25s call     Tests/Backup_Recovery/test_activation_agents.py::test_restored_agent_execution_is_inert[bridge]
+2.06s call     Tests/Chat/test_console_chat_start.py::test_reopened_machine_retry_is_explicit_and_retains_provenance
+1.78s call     Tests/Backup_Recovery/test_activation_agents.py::test_restored_agent_execution_is_inert[turn]
+1.69s call     Tests/Backup_Recovery/test_activation_agents.py::test_restored_agent_execution_is_inert[inspection]
+
+(19 durations < 1s hidden.)
+10 passed, 1 warning in 17.21s

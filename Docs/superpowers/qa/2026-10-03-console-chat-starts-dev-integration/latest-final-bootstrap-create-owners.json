@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-B",
+    "-m",
+    "pytest",
+    "-q",
+    "--basetemp=/private/tmp/console-latest-final-bootstrap-create-01a0fa6c",
+    "Tests/test_real_profile_guard.py",
+    "Tests/Chat/test_console_chat_create_confirm.py",
+    "Tests/Chat/test_console_chat_create_integration.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 107.16999197006226,
+  "output": ".................ss..................................................... [ 61%]\n.............................................                            [100%]\n============================= slowest 25 durations =============================\n6.18s call     Tests/test_real_profile_guard.py::test_an_xdist_workers_session_end_refusal_fails_the_run[both-conftests]\n4.76s call     Tests/test_real_profile_guard.py::test_an_xdist_workers_session_end_refusal_fails_the_run[ui-rooted]\n4.50s call     Tests/test_real_profile_guard.py::test_the_factory_app_keeps_every_database_in_its_own_user_data_dir\n4.18s call     Tests/test_real_profile_guard.py::test_an_xdist_workers_session_end_refusal_fails_the_run[root-conftest-only]\n2.91s call     Tests/Chat/test_console_chat_create_integration.py::test_chat_create_callbacks_reach_bridge_when_ui_sinks_wired\n2.64s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_approved_creation_revocation_closes_prepared_token\n2.26s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_new_chat_cancelled_during_confirmation_closes_authority\n2.25s setup    Tests/Chat/test_console_chat_create_confirm.py::test_new_chat_card_payload_gets_default_title\n2.14s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_declined_creation_releases_prepared_token\n2.08s setup    Tests/Chat/test_console_chat_create_confirm.py::test_fork_card_payload_keeps_explicit_title\n1.94s setup    Tests/Chat/test_console_chat_create_confirm.py::test_fork_card_payload_is_enriched_with_fork_facts\n1.89s setup    Tests/Chat/test_console_chat_create_confirm.py::test_survivor_child_confirm_does_not_bind_next_turn_stop\n1.88s setup    Tests/Chat/test_console_chat_create_confirm.py::test_fork_enrichment_degrades_when_tree_read_fails\n1.87s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_revocation_between_record_check_and_arm_does_not_show_card\n1.75s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_ephemeral_source_error\n1.70s setup    Tests/Chat/test_console_chat_create_integration.py::test_child_new_chat_prepares_confirms_executes_and_requires_fresh_approval\n1.61s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_prefers_provided_enriched_title\n1.58s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_new_chat_requires_live_prepared_approval\n1.53s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_empty_source_creates_no_conversation_row\n1.53s call     Tests/Chat/test_console_chat_create_integration.py::test_chat_create_callbacks_remain_available_for_remembered_grants\n1.52s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_copies_history_and_lineage\n1.50s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_refuses_instructions_on_character_chat\n1.48s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_merges_source_metadata\n1.45s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_empty_history_error\n1.41s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_read_failure_maps_to_execution_failed\n=========================== short test summary info ============================\nSKIPPED [1] Tests/test_real_profile_guard.py:108: no os.setxattr here\nSKIPPED [1] Tests/test_real_profile_guard.py:108: no os.removexattr here\n115 passed, 2 skipped in 103.52s (0:01:43)\n"
+}

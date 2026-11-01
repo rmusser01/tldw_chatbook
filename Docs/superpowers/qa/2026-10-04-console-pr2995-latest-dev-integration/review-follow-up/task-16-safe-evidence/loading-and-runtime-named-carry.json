@@ -1,0 +1,94 @@
+{
+  "historical35_loading_source": "a688 (historical source; no fresh35/census claim or replay)",
+  "input_validation_resident_in_boot_and_ready_snapshots": true,
+  "limits": {
+    "console_compaction_lines": 4185,
+    "console_controller_lines": 29301,
+    "console_interrupt_rounds_lines": 6479,
+    "console_store_lines": 22344,
+    "personas_screen_module_lines": 16528,
+    "preimport_modules": 557,
+    "preimport_single_route_loc": 135111,
+    "preimport_total_loc": 425347,
+    "screen_lines": 25218,
+    "screen_methods": 759,
+    "ui_ready_modules": 1033
+  },
+  "named_tests": [
+    "Tests/Packaging/test_console_interaction_boot_closure.py::test_console_defers_setup_and_environment_io_until_requested",
+    "Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size",
+    "Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site",
+    "Tests/UI/test_console_runtime_ownership.py::test_captured_attach_timer_overlap_rearms_real_sync_worker"
+  ],
+  "one_fresh_loading_case_only": [
+    "Tests/Performance/test_screen_preimport_payload_budget.py::test_preimport_pass_payload_stays_within_budget"
+  ],
+  "paths": [
+    {
+      "approved_composition": false,
+      "before_sha256": "27f92d64015b5d598ed5b204d6443820c2e0316c1ae2205db189060d3bddba4c",
+      "bytes": 14469,
+      "exact_unchanged": true,
+      "path": "Tests/Performance/test_screen_preimport_payload_budget.py",
+      "sha256": "27f92d64015b5d598ed5b204d6443820c2e0316c1ae2205db189060d3bddba4c"
+    },
+    {
+      "approved_composition": false,
+      "before_sha256": "08bb8725611f069fd42d87f11fed813969fa44ac154fedf803cbd04d66ff6117",
+      "bytes": 26569,
+      "exact_unchanged": true,
+      "path": "Tests/Performance/test_ui_ready_module_census.py",
+      "sha256": "08bb8725611f069fd42d87f11fed813969fa44ac154fedf803cbd04d66ff6117"
+    },
+    {
+      "approved_composition": false,
+      "before_sha256": "03e662bebd5351e77f68083ef9755da03c2075e6ca3be7033d5ac160ffe14ef4",
+      "bytes": 28805,
+      "exact_unchanged": true,
+      "path": "Tests/Performance/boot_budget_snapshots/boot_import_modules.txt",
+      "sha256": "03e662bebd5351e77f68083ef9755da03c2075e6ca3be7033d5ac160ffe14ef4"
+    },
+    {
+      "approved_composition": false,
+      "before_sha256": "f4a13d7eeeb49e78429418182027d770bd9bab0d389a3a464580a9ace4709d16",
+      "bytes": 45067,
+      "exact_unchanged": true,
+      "path": "Tests/Performance/boot_budget_snapshots/ui_ready_modules.txt",
+      "sha256": "f4a13d7eeeb49e78429418182027d770bd9bab0d389a3a464580a9ace4709d16"
+    },
+    {
+      "approved_composition": false,
+      "before_sha256": "6d370770566e75b2f00b2724175448420b63983a4aec15c124b19cd8ed218782",
+      "bytes": 3794,
+      "exact_unchanged": true,
+      "path": "Tests/Packaging/test_console_interaction_boot_closure.py",
+      "sha256": "6d370770566e75b2f00b2724175448420b63983a4aec15c124b19cd8ed218782"
+    },
+    {
+      "approved_composition": false,
+      "before_sha256": "48bfe2f95a6fad7b9be0920e210b894ba8ccb8264267fb08762867a81ca98932",
+      "bytes": 139121,
+      "exact_unchanged": true,
+      "path": "Tests/UI/test_console_runtime_ownership.py",
+      "sha256": "48bfe2f95a6fad7b9be0920e210b894ba8ccb8264267fb08762867a81ca98932"
+    },
+    {
+      "approved_composition": false,
+      "before_sha256": "3a5eab2d853c7e21a079fdb271f964d9ade977ec572f16219968a2a33d4b2bfb",
+      "bytes": 65615,
+      "exact_unchanged": true,
+      "path": "Tests/Architecture/test_screen_size_ratchet.py",
+      "sha256": "3a5eab2d853c7e21a079fdb271f964d9ade977ec572f16219968a2a33d4b2bfb"
+    },
+    {
+      "approved_composition": true,
+      "before_sha256": "c6edcb0356dcb454a2a35838e7ab9be72731cd40b4ec6090572a864019bdbd2e",
+      "bytes": 13464,
+      "exact_unchanged": false,
+      "path": "Tests/Architecture/test_module_size_ratchet.py",
+      "sha256": "3785fd302268080fb2f7e1e402140cf6f122c4b412646d7357e30d358bbd6041"
+    }
+  ],
+  "runtime_construction_Close_Task14_Task15_guards": "exact unchanged protected source/QA ownership; incoming admitted exceptions listed separately",
+  "strict_xfail_timer_ast_sha256": "fd12923b2c6c074c0981302bdfb4f3d302fa479376799a3d5f4cd6a6a2ea93dc"
+}

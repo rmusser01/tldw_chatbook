@@ -1,0 +1,54 @@
+[
+  {
+    "name": "diagnostic-statements-verify",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_persistent_diagnostic_inventory.py",
+      "--statements",
+      "tldw_chatbook/Chat/console_chat_start.py",
+      "--since",
+      "100fa9d819"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.16587400000000008,
+    "stdout": "diagnostic-statements-verify.stdout",
+    "stderr": "diagnostic-statements-verify.stderr"
+  },
+  {
+    "name": "inventory-write",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_persistent_diagnostic_inventory.py",
+      "--write"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 76.620020666,
+    "stdout": "inventory-write.stdout",
+    "stderr": "inventory-write.stderr"
+  },
+  {
+    "name": "inventory-whitespace",
+    "argv": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.04861237499999049,
+    "stdout": "inventory-whitespace.stdout",
+    "stderr": "inventory-whitespace.stderr"
+  },
+  {
+    "name": "inventory-diff",
+    "argv": [
+      "git",
+      "diff",
+      "--",
+      "Docs/security/production-diagnostic-inventory.json"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 0.02863212500000145,
+    "stdout": "inventory-diff.stdout",
+    "stderr": "inventory-diff.stderr"
+  }
+]

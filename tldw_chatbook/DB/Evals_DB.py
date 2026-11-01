@@ -28,7 +28,17 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, TYPE_CHECKING, List, Dict, Optional, Any, Union, Tuple, Sequence
+from typing import (
+    Iterator,
+    TYPE_CHECKING,
+    List,
+    Dict,
+    Optional,
+    Any,
+    Union,
+    Tuple,
+    Sequence,
+)
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -50,7 +60,16 @@ from tldw_chatbook.DB.sql_validation import validate_identifier
 from tldw_chatbook.Utils.fts5_match_forms import build_phrase_match_query
 
 # Database Schema Version
-SCHEMA_VERSION = 5
+#
+# v6 (TASK-19566 F8) dropped the inert ``version`` columns from the five
+# tables that carried them (see ``_VERSION_COLUMN_TABLES``); v5-and-older
+# databases are migrated with ``ALTER TABLE ... DROP COLUMN`` on open.
+#
+# v7 (task-34399) added the ``idx_eval_results_run_created`` composite
+# index on ``eval_results (run_id, created_at)`` so ``get_run_results``
+# stops re-sorting a run's rows on every page; v6-and-older databases are
+# migrated with ``CREATE INDEX IF NOT EXISTS`` on open.
+SCHEMA_VERSION = 7
 
 #: SQLite's own host-parameter limit varies by build -- as low as 999 on
 #: older versions, tens of thousands on newer ones -- so a single
@@ -75,6 +94,31 @@ _PROBE_ANNOTATION_CASCADE_BATCH_SIZE = 500
 _PROBE_ANNOTATION_CASCADE_TABLES: Tuple[str, str] = (
     "eval_probe_turn_annotations",
     "eval_probe_review_state",
+)
+
+#: The five tables that carried an ``version INTEGER NOT NULL DEFAULT 1``
+#: column from their creation through schema v5, dropped at v6
+#: (TASK-19566 F8). The column was inert optimistic-locking residue:
+#: ``expected_version`` appeared in zero callers, no UPDATE carried
+#: ``AND version = ?``, and four of the six update surfaces never even
+#: bumped it -- it had the shape of concurrency control and provided none.
+#: It was removed rather than made real because no caller of the six
+#: update methods can supply an expected version: the two that bumped it
+#: (``update_task``/``update_dataset``) are single-UI-thread edit paths,
+#: and the run/A-B status writers are lifecycle state transitions where a
+#: version guard would reject legitimate terminal writes (see the v6
+#: migration step below and the task's Implementation Notes for the
+#: caller map). Same literal-tuple identifier pattern as
+#: ``_PROBE_ANNOTATION_CASCADE_TABLES`` above: bare table names can never
+#: be bind parameters, so these trusted module-level literals are still
+#: run through ``sql_validation.validate_identifier`` before
+#: interpolation.
+_VERSION_COLUMN_TABLES: Tuple[str, str, str, str, str] = (
+    "eval_tasks",
+    "eval_datasets",
+    "eval_models",
+    "eval_runs",
+    "ab_tests",
 )
 
 
@@ -182,6 +226,11 @@ class EvalsDB:
 
         self.client_id = client_id
         self._local = threading.local()
+        # Protect memo publication from readers that overlap a committed
+        # result or run-group change. Never hold this lock during SQLite IO.
+        self._rg_failure_lock = threading.Lock()
+        self._rg_failure_generation = 0
+        self._rg_failure_counts: Dict[str, Tuple[int, int]] | None = None
 
         # Initialize database schema
         try:
@@ -218,7 +267,9 @@ class EvalsDB:
         _core_access(self)
         conn = _core_cached_connection(self, getattr(self._local, "connection", None))
         if conn is None:
-            conn = connect_private_sqlite("db.evals", self.db_path, check_same_thread=False)
+            conn = connect_private_sqlite(
+                "db.evals", self.db_path, check_same_thread=False
+            )
             try:
                 _register_core_connection(self, conn)
                 _core_access(self)
@@ -231,6 +282,8 @@ class EvalsDB:
                 conn.close()
                 raise
             self._local.connection = conn
+            # A retired connection may be reopening a recovered database.
+            self.invalidate_run_group_failure_cache()
         return conn
 
     @_core_transaction
@@ -280,7 +333,6 @@ class EvalsDB:
                 dataset_id TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
-                version INTEGER NOT NULL DEFAULT 1,
                 client_id TEXT NOT NULL,
                 deleted_at TEXT,
                 FOREIGN KEY (dataset_id) REFERENCES eval_datasets (id)
@@ -298,7 +350,6 @@ class EvalsDB:
                 metadata TEXT, -- JSON metadata
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
-                version INTEGER NOT NULL DEFAULT 1,
                 client_id TEXT NOT NULL,
                 deleted_at TEXT
             )
@@ -314,7 +365,6 @@ class EvalsDB:
                 config TEXT, -- JSON configuration for model parameters
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
-                version INTEGER NOT NULL DEFAULT 1,
                 client_id TEXT NOT NULL,
                 deleted_at TEXT,
                 UNIQUE(name, provider, model_id)
@@ -338,7 +388,6 @@ class EvalsDB:
                 error_message TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
-                version INTEGER NOT NULL DEFAULT 1,
                 client_id TEXT NOT NULL,
                 deleted_at TEXT,
                 FOREIGN KEY (task_id) REFERENCES eval_tasks (id),
@@ -424,6 +473,13 @@ class EvalsDB:
         conn.execute("CREATE INDEX idx_eval_runs_model ON eval_runs (model_id)")
         conn.execute("CREATE INDEX idx_eval_runs_group ON eval_runs (run_group_id)")
         conn.execute("CREATE INDEX idx_eval_results_run ON eval_results (run_id)")
+        # task-34399: get_run_results pages `WHERE run_id = ? ORDER BY
+        # created_at ASC`; without the composite index every page re-sorted
+        # the run's rows.
+        conn.execute(
+            "CREATE INDEX idx_eval_results_run_created "
+            "ON eval_results (run_id, created_at)"
+        )
         conn.execute(
             "CREATE INDEX idx_eval_run_metrics_run ON eval_run_metrics (run_id)"
         )
@@ -522,7 +578,6 @@ class EvalsDB:
                 completed_at TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
-                version INTEGER NOT NULL DEFAULT 1,
                 client_id TEXT NOT NULL,
                 deleted_at TEXT,
                 FOREIGN KEY (task_id) REFERENCES eval_tasks (id),
@@ -745,6 +800,44 @@ class EvalsDB:
                 "ON eval_probe_review_state (run_group_id)"
             )
 
+        if current_version < 6 and SCHEMA_VERSION >= 6:
+            logger.info(
+                "Migrating to version 6: dropping the inert Evals version "
+                "columns (TASK-19566 F8)"
+            )
+
+            # v5-and-older databases carry an inert `version` column on the
+            # five tables below. It was never an optimistic-lock token --
+            # `expected_version` existed in zero callers and no UPDATE ever
+            # carried `AND version = ?` -- so it is dropped outright rather
+            # than repurposed. `ALTER TABLE ... DROP COLUMN` requires SQLite
+            # >= 3.35; the app floor of Python 3.12 bundles a newer SQLite
+            # than that on every supported platform. The PRAGMA table_info
+            # guard keeps the step idempotent (a database at v5 whose tables
+            # already lack the column -- e.g. restored from a v6 snapshot
+            # with a stale user_version -- still migrates cleanly).
+            for table in _VERSION_COLUMN_TABLES:
+                if not validate_identifier(table, "table name"):
+                    raise SchemaError(
+                        f"Refusing to drop the inert version column: {table!r} "
+                        f"failed SQL identifier validation."
+                    )
+                existing = {
+                    row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+                }
+                if "version" in existing:
+                    conn.execute(f"ALTER TABLE {table} DROP COLUMN version")
+
+        if current_version < 7 and SCHEMA_VERSION >= 7:
+            logger.info(
+                "Migrating to version 7: Adding eval_results (run_id, created_at) index"
+            )
+
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_eval_results_run_created "
+                "ON eval_results (run_id, created_at)"
+            )
+
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     # --- Task Management ---
@@ -899,8 +992,11 @@ class EvalsDB:
         if not updates:
             return True  # Nothing to update
 
+        # No `version` bump: the column was inert optimistic-locking residue
+        # and was removed at schema v6 (TASK-19566 F8) -- nothing ever
+        # checked it, so bumping it only maintained the appearance of
+        # concurrency protection that did not exist.
         updates.append("updated_at = datetime('now', 'utc')")
-        updates.append("version = version + 1")
 
         query = f"UPDATE eval_tasks SET {', '.join(updates)} WHERE id = ? AND deleted_at IS NULL"
         params.append(task_id)
@@ -916,7 +1012,9 @@ class EvalsDB:
 
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
-                    raise ConflictError("Task name already exists", "eval_tasks", task_id)
+                    raise ConflictError(
+                        "Task name already exists", "eval_tasks", task_id
+                    )
                 raise EvalsDBError(f"Failed to update task: {e}")
 
     def delete_task(self, task_id: str) -> bool:
@@ -943,7 +1041,6 @@ class EvalsDB:
                 matching row".
         """
         with self.connection() as conn:
-
             try:
                 with conn:
                     # Resolve the task's run groups BEFORE the soft-delete below.
@@ -1052,7 +1149,9 @@ class EvalsDB:
                     for start in range(
                         0, len(ids), _PROBE_ANNOTATION_CASCADE_BATCH_SIZE
                     ):
-                        batch = ids[start : start + _PROBE_ANNOTATION_CASCADE_BATCH_SIZE]
+                        batch = ids[
+                            start : start + _PROBE_ANNOTATION_CASCADE_BATCH_SIZE
+                        ]
                         placeholders = ",".join("?" for _ in batch)
                         cursor = conn.execute(
                             f"DELETE FROM {table} WHERE run_group_id IN ({placeholders})",
@@ -1074,7 +1173,6 @@ class EvalsDB:
         )
 
         with self.connection() as conn:
-
             query = "SELECT * FROM eval_tasks WHERE id = ?"
             if not include_deleted:
                 query += " AND deleted_at IS NULL"
@@ -1089,11 +1187,19 @@ class EvalsDB:
             log_histogram(
                 "eval_db_operation_duration",
                 duration,
-                labels={"operation": "get_task", "table": "eval_tasks", "status": status},
+                labels={
+                    "operation": "get_task",
+                    "table": "eval_tasks",
+                    "status": status,
+                },
             )
             log_counter(
                 "eval_db_operation_success",
-                labels={"operation": "get_task", "table": "eval_tasks", "status": status},
+                labels={
+                    "operation": "get_task",
+                    "table": "eval_tasks",
+                    "status": status,
+                },
             )
 
             if row:
@@ -1107,7 +1213,6 @@ class EvalsDB:
     ) -> List[Dict[str, Any]]:
         """List evaluation tasks with optional filtering."""
         with self.connection() as conn:
-
             query = "SELECT * FROM eval_tasks WHERE deleted_at IS NULL"
             params = []
 
@@ -1148,7 +1253,6 @@ class EvalsDB:
             # last seam in this family that still had it.
             return []
         with self.connection() as conn:
-
             # Remove null bytes and other control characters
             query = "".join(c for c in query if c.isprintable() and ord(c) != 0)
 
@@ -1246,7 +1350,9 @@ class EvalsDB:
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
                     raise ConflictError(
-                        f"Dataset with name '{name}' already exists", "eval_datasets", name
+                        f"Dataset with name '{name}' already exists",
+                        "eval_datasets",
+                        name,
                     )
                 raise EvalsDBError(f"Failed to create dataset: {e}")
 
@@ -1269,13 +1375,25 @@ class EvalsDB:
             return None
 
     def list_datasets(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
-        """List evaluation datasets."""
+        """List evaluation datasets.
+
+        ``id DESC`` is a deterministic tiebreak on top of ``created_at
+        DESC``: ``created_at`` is written by SQLite's ``datetime('now')``
+        at one-second granularity, so two datasets created in the same
+        second (e.g. two probe-set imports back to back) tie, and SQLite's
+        order for tied rows is unspecified -- which made "the newest
+        dataset" (``list_datasets``'s first row) a coin flip between them.
+        ``id`` is a ``uuid4`` string, so the tiebreak order is arbitrary
+        but STABLE, which is the property callers actually need (see
+        ``EvalsScreen._on_new_character_bench_requested``'s "the first
+        entry IS the newest probe set" note, task-1913 AC4).
+        """
         with self.connection() as conn:
             cursor = conn.execute(
                 """
-            SELECT * FROM eval_datasets 
+            SELECT * FROM eval_datasets
             WHERE deleted_at IS NULL
-            ORDER BY created_at DESC LIMIT ? OFFSET ?
+            ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
         """,
                 (limit, offset),
             )
@@ -1333,12 +1451,9 @@ class EvalsDB:
         if not updates:
             return self.get_dataset(dataset_id) is not None
 
-        updates.extend(
-            [
-                "updated_at = datetime('now', 'utc')",
-                "version = version + 1",
-            ]
-        )
+        # No `version` bump -- same v6 rationale as `update_task` above
+        # (TASK-19566 F8): the column was never read by anyone.
+        updates.append("updated_at = datetime('now', 'utc')")
         params.append(dataset_id)
 
         with self.connection() as conn:
@@ -1356,7 +1471,9 @@ class EvalsDB:
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
                     raise ConflictError(
-                        f"Dataset with name '{name}' already exists", "eval_datasets", name
+                        f"Dataset with name '{name}' already exists",
+                        "eval_datasets",
+                        name,
                     )
                 raise EvalsDBError(f"Failed to update dataset: {e}")
 
@@ -1478,9 +1595,7 @@ class EvalsDB:
         try:
             return json.loads(value)
         except (TypeError, ValueError) as exc:
-            raise EvalsDBError(
-                f"Corrupt JSON in {column}: {exc!r}"
-            ) from exc
+            raise EvalsDBError(f"Corrupt JSON in {column}: {exc!r}") from exc
 
     def get_model(self, model_id: str) -> Optional[Dict[str, Any]]:
         """Get model by ID."""
@@ -1507,7 +1622,6 @@ class EvalsDB:
     ) -> List[Dict[str, Any]]:
         """List evaluation models with optional provider filtering."""
         with self.connection() as conn:
-
             query = "SELECT * FROM eval_models WHERE deleted_at IS NULL"
             params = []
 
@@ -1687,9 +1801,10 @@ class EvalsDB:
                 for field, value in updates.items():
                     if field in allowed_fields:
                         fields_to_update.append(f"{field} = ?")
-                        if field in ["metrics_summary", "config_overrides"] and isinstance(
-                            value, dict
-                        ):
+                        if field in [
+                            "metrics_summary",
+                            "config_overrides",
+                        ] and isinstance(value, dict):
                             values.append(json.dumps(value))
                         else:
                             values.append(value)
@@ -1706,6 +1821,8 @@ class EvalsDB:
 
                     with conn:
                         conn.execute(query, values)
+                    if "run_group_id" in updates:
+                        self.invalidate_run_group_failure_cache()
 
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Get evaluation run by ID."""
@@ -1758,7 +1875,6 @@ class EvalsDB:
             parsed from JSON.
         """
         with self.connection() as conn:
-
             query = """
             SELECT r.*, t.name as task_name, m.name as model_name
             FROM eval_runs r
@@ -1890,7 +2006,10 @@ class EvalsDB:
                         labels={"table": "eval_results"},
                     )
 
-                    return result_id
+                # Invalidate after the result and completed-samples update
+                # commit together, including any rail read during the write.
+                self.invalidate_run_group_failure_cache()
+                return result_id
 
             except Exception as e:
                 duration = time.time() - start_time
@@ -1962,10 +2081,19 @@ class EvalsDB:
         Returns:
             ``{run_group_id: (total_cells, errored_cells)}``. A run group
             with zero stored cells (nothing captured yet) has no entry
-            here at all -- callers should treat a missing key as
-            ``(0, 0)``, never as "all failed".
+        here at all -- callers should treat a missing key as
+        ``(0, 0)``, never as "all failed".
+
+        The instance memo is invalidated after result and run-group
+        mutations commit. A reader overlapping a commit can return its
+        snapshot, but cannot publish it as the memo for subsequent calls.
         """
         with self.connection() as conn:
+            # Even a cache hit retains the repository's admission fence.
+            with self._rg_failure_lock:
+                if self._rg_failure_counts is not None:
+                    return self._rg_failure_counts
+                generation = self._rg_failure_generation
             cursor = conn.execute(
                 """
             SELECT
@@ -1981,10 +2109,25 @@ class EvalsDB:
             GROUP BY r.run_group_id
             """
             )
-            return {
+            counts = {
                 row["group_id"]: (row["total_cells"], row["errored_cells"])
                 for row in cursor.fetchall()
             }
+            with self._rg_failure_lock:
+                if generation == self._rg_failure_generation:
+                    self._rg_failure_counts = counts
+            return counts
+
+    def invalidate_run_group_failure_cache(self) -> None:
+        """Drop the memoized ``run_group_cell_failure_counts`` result.
+
+        Call after committing changes to ``eval_results`` or its joined
+        ``eval_runs.run_group_id`` / ``deleted_at`` fields. The generation
+        also prevents an older reader from restoring the invalidated memo.
+        """
+        with self._rg_failure_lock:
+            self._rg_failure_generation += 1
+            self._rg_failure_counts = None
 
     def get_run_results(
         self, run_id: str, limit: int = 1000, offset: int = 0
@@ -2304,7 +2447,9 @@ class EvalsDB:
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
                     raise ConflictError(
-                        f"A/B test with ID '{test_id}' already exists", "ab_tests", test_id
+                        f"A/B test with ID '{test_id}' already exists",
+                        "ab_tests",
+                        test_id,
                     )
                 raise EvalsDBError(f"Failed to create A/B test: {e}")
 
@@ -2423,7 +2568,6 @@ class EvalsDB:
     ) -> List[Dict[str, Any]]:
         """List A/B tests with optional filtering."""
         with self.connection() as conn:
-
             query = """
             SELECT a.*, 
                    t.name as task_name,

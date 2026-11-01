@@ -1,0 +1,54 @@
+# Budgets, re-measured 2026-10-04 (finding 5)
+
+Each side ran the budget tests serially with -s under env -i (scratch HOME/XDG/TLDW_CONFIG_PATH, null keyring),
+PYTHONPATH=<that tree> so the venv's editable install (which points at the main checkout) is not measured.
+
+## head
+tree=88e08f2f74 dirty=0
+ui-ready-census: 1033/1033 modules (headroom 0); snapshot drift +5/-2
+PREIMPORT PAYLOAD CENSUS: 557 modules / 414430 LOC added by the registry walk
+preimport-payload: 557/557 modules (headroom 0); 414430/425347 LOC (headroom 10917); 127526/135111 LOC fattest-route (library) (headroom 7585)
+Tests/Performance/test_boot_css_byte_budget.py .
+2.79s call     Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+======================== 3 passed, 2 warnings in 24.04s ========================
+rc=0
+
+## base
+tree=337dd68692 dirty=0
+ui-ready-census: 1033/1033 modules (headroom 0); snapshot drift +5/-2
+PREIMPORT PAYLOAD CENSUS: 557 modules / 414451 LOC added by the registry walk
+preimport-payload: 557/557 modules (headroom 0); 414451/425347 LOC (headroom 10896); 127526/135111 LOC fattest-route (library) (headroom 7585)
+Tests/Performance/test_boot_css_byte_budget.py .
+2.83s call     Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+======================== 3 passed, 2 warnings in 21.97s ========================
+rc=0
+
+## dev merge base 5e0341d1ec (ui-ready + payload only)
+ui-ready-census: 1033/1033 modules (headroom 0); snapshot drift +5/-2
+PREIMPORT PAYLOAD CENSUS: 557 modules / 415297 LOC added by the registry walk
+======================== 2 passed, 2 warnings in 25.05s ========================
+rc=0
+
+## Limits in each tree (git show <rev>:<file>)
+MAX_PASS_ADDED_MODULES: 9b28ce1479 (branch's pre-rebase base) 556; 5e0341d1ec (dev) 557; 337dd68692 557; 88e08f2f74 557.
+dev raised it in 0ac71b6d8e ("refactor(library): adaptive reader shell becomes thin subclasses of the
+shared shell (B0)"). dev itself measures 557, so the branch adds no payload module. R22's "<= 556"
+predates the rebase.
+MAX_TLDW_MODULES_AT_UI_READY: 1033 in all four trees.
+
+## Boot-parsed CSS total (the census function the boot CSS test asserts on)
+head 88e08f2f74: 607326 B (limit 608090)
+base 337dd68692: 607326 B (limit 608090)
+The commit's CSS lines are only in features/_settings.tcss and the lazily parsed screen_agentic_settings.tcss:
+ tldw_chatbook/css/features/_settings.tcss      | 71 ++++++++++++++++++++++++++
+ tldw_chatbook/css/screen_agentic_settings.tcss | 71 ++++++++++++++++++++++++++
+ 2 files changed, 142 insertions(+)
+git diff --stat 337dd68692 88e08f2f74 -- tldw_chatbook/css/tldw_cli_modular.tcss console_settings_modal.py: empty.
+
+## Line counts (git show <rev>:<path> | wc -l)
+337dd68692: settings_screen.py 33558, console_settings_modal.py 6193, providers_models_card.py 1889
+88e08f2f74: settings_screen.py 33537, console_settings_modal.py 6193, providers_models_card.py 1629
+5e0341d1ec: settings_screen.py 34518, console_settings_modal.py 6193
+
+The "2 warnings" on each side are the ratchet's own headroom report (UserWarning carrying the
+ui-ready-census: and preimport-payload: lines above), identical on both sides.

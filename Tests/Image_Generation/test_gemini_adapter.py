@@ -14,6 +14,7 @@ Pinned behaviors (see .superpowers/sdd/2026-07-26-imagegen-fal-gemini-fireworks/
 - 400/404 enrichment names the model id and the config key to check.
 - trusted_origins is the self-built URL's own origin only.
 """
+
 import base64
 import io
 
@@ -32,7 +33,11 @@ def _gemini_response(mime_type="image/png", data=None, key="inlineData"):
     return {
         "candidates": [
             {
-                "content": {"parts": [{key: {"mimeType": mime_type, "data": data or _b64_png()}}]},
+                "content": {
+                    "parts": [
+                        {key: {"mimeType": mime_type, "data": data or _b64_png()}}
+                    ]
+                },
                 "finishReason": "STOP",
             }
         ]
@@ -80,8 +85,24 @@ def test_gemini_url_and_headers_key_only_in_header(monkeypatch):
 
     seen = {}
 
-    def _capture(method, url, *, headers=None, json=None, params=None, timeout=None, trusted_origins=frozenset()):
-        seen.update(method=method, url=url, headers=headers, json=json, params=params, trusted_origins=trusted_origins)
+    def _capture(
+        method,
+        url,
+        *,
+        headers=None,
+        json=None,
+        params=None,
+        timeout=None,
+        trusted_origins=frozenset(),
+    ):
+        seen.update(
+            method=method,
+            url=url,
+            headers=headers,
+            json=json,
+            params=params,
+            trusted_origins=trusted_origins,
+        )
         return _gemini_response()
 
     monkeypatch.setattr(m, "fetch_json", _capture)
@@ -89,7 +110,10 @@ def test_gemini_url_and_headers_key_only_in_header(monkeypatch):
     m.GeminiImageAdapter().generate(req)
 
     assert seen["method"] == "POST"
-    assert seen["url"] == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent"
+    assert (
+        seen["url"]
+        == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent"
+    )
     assert "test-key" not in seen["url"]
     assert not seen["params"]
     assert seen["headers"]["x-goog-api-key"] == "test-key"
@@ -103,7 +127,16 @@ def test_gemini_trusted_origins_is_self_built_url_origin(monkeypatch):
 
     seen = {}
 
-    def _capture(method, url, *, headers=None, json=None, params=None, timeout=None, trusted_origins=frozenset()):
+    def _capture(
+        method,
+        url,
+        *,
+        headers=None,
+        json=None,
+        params=None,
+        timeout=None,
+        trusted_origins=frozenset(),
+    ):
         seen["trusted_origins"] = trusted_origins
         seen["url"] = url
         return _gemini_response()
@@ -178,7 +211,9 @@ def test_gemini_cross_origin_redirect_strips_api_key(monkeypatch):
 
         def request(self, method, url, *, headers=None, **k):
             seen.append((url, dict(headers or {})))
-            return FinalResp() if url == "https://attacker.example/steal" else RedirResp()
+            return (
+                FinalResp() if url == "https://attacker.example/steal" else RedirResp()
+            )
 
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     req = _req(model="gemini-2.5-flash-image")
@@ -207,7 +242,9 @@ def test_gemini_same_origin_redirect_keeps_api_key(monkeypatch):
 
     seen = []
     start_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent"
-    same_origin_url = "https://generativelanguage.googleapis.com/v1beta/models/other:generateContent"
+    same_origin_url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/other:generateContent"
+    )
 
     class RedirResp:
         is_redirect = True
@@ -260,7 +297,16 @@ def test_gemini_response_modalities_pinned(monkeypatch):
 
     seen = {}
 
-    def _capture(method, url, *, headers=None, json=None, params=None, timeout=None, trusted_origins=frozenset()):
+    def _capture(
+        method,
+        url,
+        *,
+        headers=None,
+        json=None,
+        params=None,
+        timeout=None,
+        trusted_origins=frozenset(),
+    ):
         seen["json"] = json
         return _gemini_response()
 
@@ -276,7 +322,16 @@ def test_gemini_negative_prompt_appended(monkeypatch):
 
     seen = {}
 
-    def _capture(method, url, *, headers=None, json=None, params=None, timeout=None, trusted_origins=frozenset()):
+    def _capture(
+        method,
+        url,
+        *,
+        headers=None,
+        json=None,
+        params=None,
+        timeout=None,
+        trusted_origins=frozenset(),
+    ):
         seen["json"] = json
         return _gemini_response()
 
@@ -295,7 +350,16 @@ def test_gemini_body_shape_no_reference(monkeypatch):
 
     seen = {}
 
-    def _capture(method, url, *, headers=None, json=None, params=None, timeout=None, trusted_origins=frozenset()):
+    def _capture(
+        method,
+        url,
+        *,
+        headers=None,
+        json=None,
+        params=None,
+        timeout=None,
+        trusted_origins=frozenset(),
+    ):
         seen["json"] = json
         return _gemini_response()
 
@@ -320,7 +384,16 @@ def test_gemini_reference_image_part_before_text(monkeypatch):
 
     seen = {}
 
-    def _capture(method, url, *, headers=None, json=None, params=None, timeout=None, trusted_origins=frozenset()):
+    def _capture(
+        method,
+        url,
+        *,
+        headers=None,
+        json=None,
+        params=None,
+        timeout=None,
+        trusted_origins=frozenset(),
+    ):
         seen["json"] = json
         return _gemini_response()
 
@@ -349,7 +422,9 @@ def test_gemini_reference_image_part_before_text(monkeypatch):
     assert "text" in parts[1]
 
 
-def test_gemini_reference_image_content_none_raises_contract_violation(monkeypatch, tmp_path):
+def test_gemini_reference_image_content_none_raises_contract_violation(
+    monkeypatch, tmp_path
+):
     # Qodo PR #915 FIX 1: the engine's choke-point contract is bytes-in-memory
     # ONLY -- file_id/temp_path variants are never accepted by the engine, and
     # the validator refuses content=None before any adapter runs. So a
@@ -366,7 +441,9 @@ def test_gemini_reference_image_content_none_raises_contract_violation(monkeypat
     ref_file.write_bytes(b"should never be read")
 
     def _boom(*a, **kw):
-        raise AssertionError("fetch_json must not be called when the reference image violates the contract")
+        raise AssertionError(
+            "fetch_json must not be called when the reference image violates the contract"
+        )
 
     monkeypatch.setattr(m, "fetch_json", _boom)
     ref = ResolvedReferenceImage(
@@ -420,7 +497,11 @@ def test_gemini_extracts_image_from_second_candidate(monkeypatch):
         "candidates": [
             {"content": {"parts": [{"text": "no image here"}]}, "finishReason": "STOP"},
             {
-                "content": {"parts": [{"inline_data": {"mime_type": "image/png", "data": _b64_png()}}]},
+                "content": {
+                    "parts": [
+                        {"inline_data": {"mime_type": "image/png", "data": _b64_png()}}
+                    ]
+                },
                 "finishReason": "STOP",
             },
         ]
@@ -449,11 +530,24 @@ def test_gemini_malformed_base64_in_first_candidate_does_not_abort_scan(monkeypa
     response = {
         "candidates": [
             {
-                "content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "not-valid-base64!!!"}}]},
+                "content": {
+                    "parts": [
+                        {
+                            "inlineData": {
+                                "mimeType": "image/png",
+                                "data": "not-valid-base64!!!",
+                            }
+                        }
+                    ]
+                },
                 "finishReason": "STOP",
             },
             {
-                "content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": _b64_png()}}]},
+                "content": {
+                    "parts": [
+                        {"inlineData": {"mimeType": "image/png", "data": _b64_png()}}
+                    ]
+                },
                 "finishReason": "STOP",
             },
         ]
@@ -472,7 +566,16 @@ def test_gemini_all_parts_undecodable_raises_dedicated_error(monkeypatch):
     response = {
         "candidates": [
             {
-                "content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "not-valid-base64!!!"}}]},
+                "content": {
+                    "parts": [
+                        {
+                            "inlineData": {
+                                "mimeType": "image/png",
+                                "data": "not-valid-base64!!!",
+                            }
+                        }
+                    ]
+                },
                 "finishReason": "STOP",
             }
         ]
@@ -539,7 +642,9 @@ def test_gemini_no_image_error_never_leaks_response_text_or_prompt(monkeypatch):
         ]
     }
     monkeypatch.setattr(m, "fetch_json", lambda *a, **kw: response)
-    req = _req(model="gemini-2.5-flash-image", prompt="a very unique prompt marker XYZ987")
+    req = _req(
+        model="gemini-2.5-flash-image", prompt="a very unique prompt marker XYZ987"
+    )
     with pytest.raises(ImageGenerationError) as exc_info:
         m.GeminiImageAdapter().generate(req)
     message = str(exc_info.value)
@@ -610,7 +715,9 @@ def test_gemini_404_names_model_and_config_path(monkeypatch):
         request = httpx.Request(method, url)
         response = httpx.Response(404, request=request, text="Not Found")
         raise httpx.HTTPStatusError(
-            "Client error '404 Not Found' for url '{}'".format(url), request=request, response=response
+            "Client error '404 Not Found' for url '{}'".format(url),
+            request=request,
+            response=response,
         )
 
     monkeypatch.setattr(m, "fetch_json", _raise_404)
@@ -632,7 +739,9 @@ def test_gemini_400_names_model_and_config_path(monkeypatch):
         request = httpx.Request(method, url)
         response = httpx.Response(400, request=request, text="Bad Request")
         raise httpx.HTTPStatusError(
-            "Client error '400 Bad Request' for url '{}'".format(url), request=request, response=response
+            "Client error '400 Bad Request' for url '{}'".format(url),
+            request=request,
+            response=response,
         )
 
     monkeypatch.setattr(m, "fetch_json", _raise_400)
@@ -658,7 +767,9 @@ def test_gemini_429_names_model_and_quota_message(monkeypatch):
             429, request=request, text="quota exceeded: internal-detail-marker-42"
         )
         raise httpx.HTTPStatusError(
-            "Client error '429 Too Many Requests' for url '{}'".format(url), request=request, response=response
+            "Client error '429 Too Many Requests' for url '{}'".format(url),
+            request=request,
+            response=response,
         )
 
     monkeypatch.setattr(m, "fetch_json", _raise_429)
@@ -680,7 +791,9 @@ def test_gemini_non_404_400_status_keeps_generic_message(monkeypatch):
         request = httpx.Request(method, url)
         response = httpx.Response(500, request=request, text="Internal Server Error")
         raise httpx.HTTPStatusError(
-            "Server error '500 Internal Server Error' for url '{}'".format(url), request=request, response=response
+            "Server error '500 Internal Server Error' for url '{}'".format(url),
+            request=request,
+            response=response,
         )
 
     monkeypatch.setattr(m, "fetch_json", _raise_500)

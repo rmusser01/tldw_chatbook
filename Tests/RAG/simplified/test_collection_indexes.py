@@ -1,7 +1,10 @@
 import pytest
 
 from tldw_chatbook.RAG_Search.simplified.config import (
-    RAGConfig, EmbeddingConfig, ChunkingConfig, VectorStoreConfig,
+    RAGConfig,
+    EmbeddingConfig,
+    ChunkingConfig,
+    VectorStoreConfig,
 )
 from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import (
     fingerprinted_collection_name,
@@ -17,20 +20,30 @@ def _cfg(persist_dir, distance_metric="cosine"):
         embedding=EmbeddingConfig(model="mock", device="cpu"),
         chunking=ChunkingConfig(chunk_size=400, chunk_overlap=100),
         vector_store=VectorStoreConfig(
-            type="chroma", persist_directory=persist_dir,
-            collection_name="default", distance_metric=distance_metric),
+            type="chroma",
+            persist_directory=persist_dir,
+            collection_name="default",
+            distance_metric=distance_metric,
+        ),
     )
 
 
 def _seed_legacy(persist_dir, name="default", n=3, hnsw_space="cosine"):
     import chromadb
     from chromadb.config import Settings
-    client = chromadb.PersistentClient(path=str(persist_dir),
-                                       settings=Settings(anonymized_telemetry=False, allow_reset=True))
-    col = client.get_or_create_collection(name=name, metadata={"hnsw:space": hnsw_space})
-    col.add(ids=[f"id{i}" for i in range(n)],
-            embeddings=[[float(i)] * 8 for i in range(n)],
-            documents=[f"doc {i}" for i in range(n)])
+
+    client = chromadb.PersistentClient(
+        path=str(persist_dir),
+        settings=Settings(anonymized_telemetry=False, allow_reset=True),
+    )
+    col = client.get_or_create_collection(
+        name=name, metadata={"hnsw:space": hnsw_space}
+    )
+    col.add(
+        ids=[f"id{i}" for i in range(n)],
+        embeddings=[[float(i)] * 8 for i in range(n)],
+        documents=[f"doc {i}" for i in range(n)],
+    )
     return client
 
 
@@ -43,8 +56,11 @@ def test_adopt_moves_docs_and_removes_legacy(chroma_persist_dir):
 
     import chromadb
     from chromadb.config import Settings
-    client = chromadb.PersistentClient(path=str(chroma_persist_dir),
-                                       settings=Settings(anonymized_telemetry=False, allow_reset=True))
+
+    client = chromadb.PersistentClient(
+        path=str(chroma_persist_dir),
+        settings=Settings(anonymized_telemetry=False, allow_reset=True),
+    )
     names = [c.name for c in client.list_collections()]
     assert target in names and "default" not in names
     assert client.get_collection(target).count() == 3
@@ -60,8 +76,11 @@ def test_adopt_is_idempotent(chroma_persist_dir):
     maybe_adopt_legacy_collection(cfg)  # second run must not raise or duplicate
     import chromadb
     from chromadb.config import Settings
-    client = chromadb.PersistentClient(path=str(chroma_persist_dir),
-                                       settings=Settings(anonymized_telemetry=False, allow_reset=True))
+
+    client = chromadb.PersistentClient(
+        path=str(chroma_persist_dir),
+        settings=Settings(anonymized_telemetry=False, allow_reset=True),
+    )
     assert client.get_collection(fingerprinted_collection_name(cfg)).count() == 3
 
 
@@ -69,9 +88,12 @@ def test_adopt_is_idempotent(chroma_persist_dir):
 def test_no_legacy_is_noop(chroma_persist_dir):
     cfg = _cfg(chroma_persist_dir)
     maybe_adopt_legacy_collection(cfg)  # nothing to adopt
-    assert adopt_legacy_collection(
-        chroma_persist_dir, "default", fingerprinted_collection_name(cfg), {}
-    ) is False
+    assert (
+        adopt_legacy_collection(
+            chroma_persist_dir, "default", fingerprinted_collection_name(cfg), {}
+        )
+        is False
+    )
 
 
 @pytest.mark.requires_chromadb
@@ -85,7 +107,9 @@ def test_no_legacy_database_does_not_initialize_chroma(chroma_persist_dir):
 
 
 def test_memory_type_is_noop():
-    cfg = RAGConfig(vector_store=VectorStoreConfig(type="memory", collection_name="default"))
+    cfg = RAGConfig(
+        vector_store=VectorStoreConfig(type="memory", collection_name="default")
+    )
     maybe_adopt_legacy_collection(cfg)  # must not touch disk / raise
 
 
@@ -99,12 +123,18 @@ def test_target_exists_is_noop(chroma_persist_dir):
 
     import chromadb
     from chromadb.config import Settings
-    client = chromadb.PersistentClient(path=str(chroma_persist_dir),
-                                       settings=Settings(anonymized_telemetry=False, allow_reset=True))
+
+    client = chromadb.PersistentClient(
+        path=str(chroma_persist_dir),
+        settings=Settings(anonymized_telemetry=False, allow_reset=True),
+    )
     client.get_or_create_collection(name=target, metadata={"source": "built"})
 
     result = adopt_legacy_collection(
-        chroma_persist_dir, "default", target, {"source": "legacy-adopted", "verified": False}
+        chroma_persist_dir,
+        "default",
+        target,
+        {"source": "legacy-adopted", "verified": False},
     )
     assert result is False
     names = [c.name for c in client.list_collections()]
@@ -146,8 +176,11 @@ def test_create_rag_service_adopts_legacy_collection_e2e(chroma_persist_dir):
 
     import chromadb
     from chromadb.config import Settings
-    client = chromadb.PersistentClient(path=str(chroma_persist_dir),
-                                       settings=Settings(anonymized_telemetry=False, allow_reset=True))
+
+    client = chromadb.PersistentClient(
+        path=str(chroma_persist_dir),
+        settings=Settings(anonymized_telemetry=False, allow_reset=True),
+    )
     names = [c.name for c in client.list_collections()]
     assert target in names and "default" not in names
     assert client.get_collection(target).count() == N
@@ -172,8 +205,11 @@ def test_adopt_preserves_legacy_distance_metric(chroma_persist_dir):
 
     import chromadb
     from chromadb.config import Settings
-    client = chromadb.PersistentClient(path=str(chroma_persist_dir),
-                                       settings=Settings(anonymized_telemetry=False, allow_reset=True))
+
+    client = chromadb.PersistentClient(
+        path=str(chroma_persist_dir),
+        settings=Settings(anonymized_telemetry=False, allow_reset=True),
+    )
     adopted = client.get_collection(target)
     assert adopted.count() == 3
     # The authoritative record of the collection's real distance metric in
@@ -188,13 +224,15 @@ def test_adopt_preserves_legacy_distance_metric(chroma_persist_dir):
 def test_list_and_delete_indexes(chroma_persist_dir):
     from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
     from tldw_chatbook.RAG_Search.simplified.collection_indexes import (
-        list_indexes, delete_index,
+        list_indexes,
+        delete_index,
     )
+
     a = _cfg(chroma_persist_dir)
     b = _cfg(chroma_persist_dir)
     b.chunking.chunk_size = 512  # different fingerprint
-    RAGService(a).vector_store.collection            # force-create collection a
-    RAGService(b).vector_store.collection            # force-create collection b
+    RAGService(a).vector_store.collection  # force-create collection a
+    RAGService(b).vector_store.collection  # force-create collection b
 
     idx = list_indexes(chroma_persist_dir)
     names = {i["name"] for i in idx}
@@ -212,10 +250,11 @@ def test_list_and_delete_indexes(chroma_persist_dir):
 def test_index_status_absent_then_empty_then_built(chroma_persist_dir):
     from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
     from tldw_chatbook.RAG_Search.simplified.collection_indexes import index_status
+
     cfg = _cfg(chroma_persist_dir)
     assert index_status(cfg)["state"] == "absent"
     svc = RAGService(cfg)
-    svc.vector_store.collection                       # create, still empty
+    svc.vector_store.collection  # create, still empty
     assert index_status(cfg)["state"] == "empty"
 
     svc.vector_store.add(

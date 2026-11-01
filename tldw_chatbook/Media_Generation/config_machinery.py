@@ -345,14 +345,18 @@ def resolve_secret(
         v = os.getenv(ev)
         if v:
             return spec.flat_field, v, f"env:{ev}"
+    from tldw_chatbook.config import without_ciphertext
+
     sub = sub or {}
-    cfg_val = sub.get(spec.config_key)        # 2. config (per-backend key)
+    # TASK-34100.4 AC #10: a value still `enc:` reads as absent, so the
+    # keyring is tried and ciphertext is never resolved as the secret.
+    cfg_val = without_ciphertext(sub.get(spec.config_key))  # 2. config
     if not cfg_val and spec.config_key != "api_key":
         # Back-compat fallback (see the image _SECRETS comment) -- e.g. a
         # swarmui section hand-written (or saved before this fix) with
         # `api_key` instead of its real `swarm_token` key. A no-op for
         # backends whose config key already is ``api_key``.
-        cfg_val = sub.get("api_key")
+        cfg_val = without_ciphertext(sub.get("api_key"))
     if cfg_val and cfg_val != "<API_KEY_HERE>":
         return spec.flat_field, cfg_val, "config"
     if sub.get("auth_reference") == "recovery:setup_required":

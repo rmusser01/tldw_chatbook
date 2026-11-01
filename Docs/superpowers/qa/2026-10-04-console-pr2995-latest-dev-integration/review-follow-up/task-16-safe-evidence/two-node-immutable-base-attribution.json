@@ -1,0 +1,72 @@
+{
+  "direct_fixed_reason": "RecoveryRequired: raw_source_selection_changed",
+  "exact_failure_type_message_and_trace_reason_equal": true,
+  "immutable_base": "6cd44c72ffef6d19fca21eab3a05bdcade7c1811",
+  "no_source_or_fixture_repair_selected": true,
+  "rebased_HEAD": "749e7540affab2b543f472fcf6fae6bff34d8122",
+  "remaining_runtime23_not_replayed": true,
+  "results": {
+    "immutable-base-two-nodes": {
+      "Tests.UI.test_console_ask_user_typed_answers::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer": {
+        "message": "textual.css.query.NoMatches: No nodes match '#chat-question-card' on ChatTaskCards(id='chat-task-cards')",
+        "raw_source_selection_changed_in_trace": false,
+        "type": null
+      },
+      "Tests.UI.test_personas_workbench.TestPreviewIntegration::test_open_in_console_stages_preview_transcript": {
+        "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+        "raw_source_selection_changed_in_trace": true,
+        "type": null
+      }
+    },
+    "runtime_intersection": {
+      "Tests.UI.test_console_ask_user_typed_answers::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer": {
+        "message": "textual.css.query.NoMatches: No nodes match '#chat-question-card' on ChatTaskCards(id='chat-task-cards')",
+        "raw_source_selection_changed_in_trace": false,
+        "type": null
+      },
+      "Tests.UI.test_personas_workbench.TestPreviewIntegration::test_open_in_console_stages_preview_transcript": {
+        "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+        "raw_source_selection_changed_in_trace": true,
+        "type": null
+      }
+    }
+  },
+  "unchanged_fixture_test_config_participant_and_interrupt_sources": {
+    "Tests/UI/conftest.py": {
+      "after_sha256": "200c8be77e4b91fa44b1d73502341fdffee9c6fa8c19e67e884a78d418920d9d",
+      "before_sha256": "200c8be77e4b91fa44b1d73502341fdffee9c6fa8c19e67e884a78d418920d9d"
+    },
+    "Tests/UI/test_console_ask_user_typed_answers.py": {
+      "after_sha256": "55f07bda160164bd8bebe25c8378b49bdae3b787ef7305768a1e4c9a746cd999",
+      "before_sha256": "55f07bda160164bd8bebe25c8378b49bdae3b787ef7305768a1e4c9a746cd999"
+    },
+    "Tests/UI/test_personas_workbench.py": {
+      "after_sha256": "97f66aae0e241f26eaeea5debd5ae007f85f7362c1a04de7e6c28fab5ab7c9c3",
+      "before_sha256": "97f66aae0e241f26eaeea5debd5ae007f85f7362c1a04de7e6c28fab5ab7c9c3"
+    },
+    "Tests/conftest.py": {
+      "after_sha256": "a065da11e2d3d6b6a5bda42f52e537c7619dc0bee509bf2d5669491c143fa148",
+      "before_sha256": "a065da11e2d3d6b6a5bda42f52e537c7619dc0bee509bf2d5669491c143fa148"
+    },
+    "Tests/console_provider_doubles.py": {
+      "after_sha256": "5ab885e3fffa652d263a0ab20b474d315b70edb3deed6b23a7997533f7793fc6",
+      "before_sha256": "5ab885e3fffa652d263a0ab20b474d315b70edb3deed6b23a7997533f7793fc6"
+    },
+    "tldw_chatbook/Backup_Recovery/config_participants.py": {
+      "after_sha256": "012bbdd69725a63d3632803a8882777048c9cb2f48328bca2ad373e77d18610a",
+      "before_sha256": "012bbdd69725a63d3632803a8882777048c9cb2f48328bca2ad373e77d18610a"
+    },
+    "tldw_chatbook/Backup_Recovery/raw_participants.py": {
+      "after_sha256": "be2f10dddd9f372d4ca97bcfacd581c9b52590eec7fc59131057cc8cbbc81431",
+      "before_sha256": "be2f10dddd9f372d4ca97bcfacd581c9b52590eec7fc59131057cc8cbbc81431"
+    },
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": {
+      "after_sha256": "d9d391123e31a409e000293acb1b335b423ddec0c0bd2ba9b81cc679def63487",
+      "before_sha256": "d9d391123e31a409e000293acb1b335b423ddec0c0bd2ba9b81cc679def63487"
+    },
+    "tldw_chatbook/config.py": {
+      "after_sha256": "f0a3e152dc150ce88861e368be701be1cffd93a61fb7c56d2291587d474b8cd5",
+      "before_sha256": "f0a3e152dc150ce88861e368be701be1cffd93a61fb7c56d2291587d474b8cd5"
+    }
+  }
+}

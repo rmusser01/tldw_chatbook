@@ -1,0 +1,10 @@
+# v-full-track-steps-1: fresh profile, Full setup, ALL 8 Built-in tools switches left OFF; Summary said "– Tools — all off".
+# First Console message ("Reply with just: hi") to logging fake llama.cpp server on 127.0.0.1:19401; request body captured.
+# request has no native tools field (fenced protocol); tools are in the system prompt:
+directly-listed tools: ['spawn_subagent', 'wait_agents', 'check_agents', 'send_to_agent', 'merge_agent_worktree', 'discard_agent_worktree', 'read_agent_messages', 'find_tools', 'load_tools', 'install_skill', 'run_skill_script', 'fork_chat', 'new_chat', 'search_run_log', 'run_log_stats', 'run_log_slice']
+Additional tools (file, web, and more) are available but not shown; use find_tools to search the catalog and load_tools to load their schemas before calling them.
+
+Offer 
+"name": "find_tools",
+  "description": "Search the tool catalog by keyword; returns ids + one-liners. Available tool groups: ask_* (1), calculator (1), canvas_* (5), character-creator (1), character_* (3), get_* (1), mcp_* (6), todo_* (4), watchlists_* (14), web_* (3).",
+  

@@ -1,0 +1,7 @@
+{
+  "script_sha256": "5007fac907a1ba680572547208700ee1967363f9c7df76b0f0f1e0926df0a8c7",
+  "exit_code": 1,
+  "error": "KeyError: 'system_message'",
+  "line": 33,
+  "meaning": "Controller receipt validator used wrong read-only conversation column; this is not an app failure."
+}

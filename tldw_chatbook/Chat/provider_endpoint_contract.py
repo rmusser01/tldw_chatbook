@@ -5,12 +5,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import lru_cache
 from ipaddress import ip_address
 from typing import Literal
 from unicodedata import category
 from urllib.parse import urlsplit, urlunsplit
 
 from ..provider_registry import ALL_RECORDS, ProviderRecord
+from .provider_setup_facts import ROUTE_SUFFIXES
 
 EndpointForm = Literal[
     "origin",
@@ -30,6 +32,8 @@ URL_BASED_PROVIDER_KEYS = frozenset(
         "custom_2",
         "koboldcpp",
         "llama_cpp",
+        "strata",
+        "polystrata",
         "local_llamacpp",
         "local_llamafile",
         "local_ollama",
@@ -77,6 +81,26 @@ _ENGINE_PRESETS = {
     for record in ALL_RECORDS
     if record.engine_driven and record.key != "custom-hosted"
 }
+#: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
+#: already carries its API version owns its route suffix, so it resolves like
+#: an engine preset (``<base>/chat/completions``). Z.ai's ``/api/paas/v4``
+#: base previewed and saved ``…/v4/v1/chat/completions`` under the generic rule.
+#: The setup facts' ``ROUTE_SUFFIXES`` is the one owner (review round 1, F11).
+_ROUTE_OWNING_PRESETS = {
+    record.key: record for record in ALL_RECORDS if record.key in ROUTE_SUFFIXES
+}
+#: Cloudflare Workers AI's OpenAI-compatible base is ``…/accounts/<id>/ai/v1``
+#: (record ``CLOUDFLARE``, which carries no suffix). The account URL alone has
+#: no chat route, and Workers AI has no listing to catch it before the first
+#: chat 404s, so a URL that stops at the account gets the route (TASK-34100.6
+#: pre-merge review 2026-10-29).
+_CLOUDFLARE_ACCOUNT_ROUTE = ("ai", "v1")
+#: ``htp:/x`` or ``http:/x``: a scheme-like word and a colon not followed by a
+#: port, typed without "//" (review provider-15).
+_SCHEME_TYPO = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:(?!\d)")
+_SCHEME_HINT = (
+    "Start the address with http:// or https:// (for example http://127.0.0.1:8080)."
+)
 _REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
 _UNSAFE_UNICODE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
@@ -86,6 +110,10 @@ _UNRESERVED_ASCII = frozenset(
 )
 _MAX_PROVIDER_LENGTH = 128
 _MAX_ENDPOINT_LENGTH = 4096
+#: KoboldAI's native generate route, koboldcpp's template endpoint. It lists
+#: nothing itself; koboldcpp serves its OpenAI-compatible ``/v1/models`` at
+#: the same root (TASK-35010, owner ruling 2026-10-20).
+_KOBOLD_NATIVE_GENERATE = ("api", "v1", "generate")
 _SUFFIXES: tuple[tuple[tuple[str, ...], EndpointForm], ...] = (
     (("v1", "chat", "completions"), "chat_url"),
     (("v1", "models"), "models_url"),
@@ -144,8 +172,31 @@ def connection_probe_availability(
 def resolve_provider_endpoint(
     provider: str, value: object
 ) -> ProviderEndpointResolution:
-    """Interpret one endpoint value without reading config or performing I/O."""
+    """Interpret one endpoint value without reading config or performing I/O.
 
+    TASK-33005.10: memoized. With shared evidence present, every Console
+    readiness build keys its connection, which parsed the endpoint three more
+    times: a warm build went from 10 to 34 us (llama.cpp) and 25 to 53 us
+    (OpenAI), on a path TASK-18909 counted ~400 builds per warm switch. With
+    the memo it is 15 and 31 us. The result is a frozen pure function of two
+    strings. A value that could carry a secret (user info, a query, a
+    fragment) is refused anyway and never kept as a cache key.
+    """
+
+    if (
+        type(provider) is str
+        and type(value) is str
+        and "@" not in value
+        and "?" not in value
+        and "#" not in value
+    ):
+        return _memoized_resolution(provider, value)
+    return _resolve_provider_endpoint(provider, value)
+
+
+def _resolve_provider_endpoint(
+    provider: str, value: object
+) -> ProviderEndpointResolution:
     if not isinstance(provider, str) or len(provider) > _MAX_PROVIDER_LENGTH:
         return _invalid_resolution("", "Provider name is invalid or too long.")
     provider_key = normalize_provider_key_for_contract(provider)
@@ -177,6 +228,8 @@ def resolve_provider_endpoint(
         )
 
     has_explicit_scheme = "://" in raw_value
+    if not has_explicit_scheme and _SCHEME_TYPO.match(raw_value):
+        return _invalid_resolution(provider_key, _SCHEME_HINT)
     candidate = raw_value if has_explicit_scheme else f"http://{raw_value}"
     try:
         parsed = urlsplit(candidate)
@@ -187,7 +240,7 @@ def resolve_provider_endpoint(
 
     scheme = parsed.scheme.lower()
     if scheme not in {"http", "https"}:
-        return _invalid_resolution(provider_key, "Endpoint URL must use HTTP or HTTPS.")
+        return _invalid_resolution(provider_key, _SCHEME_HINT)
     if (
         parsed.username is not None
         or parsed.password is not None
@@ -234,15 +287,22 @@ def resolve_provider_endpoint(
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
 
     netloc = _normalized_netloc(canonical_host, port)
-    preset = _ENGINE_PRESETS.get(provider_key)
+    preset = _ENGINE_PRESETS.get(provider_key) or _ROUTE_OWNING_PRESETS.get(
+        provider_key
+    )
     if preset is not None:
         return _engine_preset_resolution(
             preset, provider_key, scheme, netloc, canonical_host, segments
         )
 
+    native = _is_kobold_native_generate(provider_key, segments)
     suffix = _terminal_suffix(
-        segments, allow_legacy_local=provider_key in _LLAMA_PROVIDER_KEYS
+        segments[:-3] if native else segments,
+        allow_legacy_local=provider_key in _LLAMA_PROVIDER_KEYS,
     )
+    if native:
+        # Only from a plain root: an API suffix before the route is ambiguous.
+        suffix = (suffix[0], "chat_url") if suffix and suffix[1] == "origin" else None
     if suffix is None:
         return _invalid_resolution(
             provider_key, "Endpoint path has ambiguous API suffixes."
@@ -253,7 +313,8 @@ def resolve_provider_endpoint(
     root = urlunsplit((scheme, netloc, prefix_path, "", ""))
     normalized_path = f"/{'/'.join(segments)}" if segments else ""
     normalized_input = urlunsplit((scheme, netloc, normalized_path, "", ""))
-    chat_url = f"{root}/v1/chat/completions"
+    # A koboldcpp native endpoint is the URL its send posts to: kept whole.
+    chat_url = normalized_input if native else f"{root}/v1/chat/completions"
     models_url = f"{root}/v1/models"
     persisted_endpoint = root if provider_key in _LLAMA_PROVIDER_KEYS else chat_url
     warnings = (
@@ -292,7 +353,8 @@ def _engine_preset_resolution(
     The entered path IS the base, minus a pasted ``/chat/completions`` or
     ``/models``; a bare host gets the record's suffix (Azure/Databricks
     ``/openai/v1``), the documented path when it is the preset's own host,
-    or ``/v1``.
+    or ``/v1``; a Cloudflare URL that stops at ``/accounts/<id>`` gets
+    ``/ai/v1``.
 
     Args:
         preset: The provider's registry record.
@@ -310,6 +372,8 @@ def _engine_preset_resolution(
         segments, form = segments[:-2], "chat_url"
     elif segments[-1:] == ("models",):
         segments, form = segments[:-1], "models_url"
+    if provider_key == "cloudflare" and segments[-2:-1] == ("accounts",):
+        segments = (*segments, *_CLOUDFLARE_ACCOUNT_ROUTE)
     if not segments:
         form = "origin"
         default = urlsplit(preset.default_base_url or "")
@@ -339,6 +403,14 @@ def _engine_preset_resolution(
             else ()
         ),
     )
+
+
+#: ponytail: 256 entries bounds it; the strings are endpoints, short and few.
+_memoized_resolution = lru_cache(maxsize=256)(_resolve_provider_endpoint)
+
+
+def _is_kobold_native_generate(provider_key: str, segments: tuple[str, ...]) -> bool:
+    return provider_key == "koboldcpp" and segments[-3:] == _KOBOLD_NATIVE_GENERATE
 
 
 def canonical_connection_identity(

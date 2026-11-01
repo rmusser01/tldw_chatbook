@@ -122,7 +122,10 @@ MIGRATION_TARGETS = [
         "tldw_chatbook.UI.Screens.scheduling.forms.new_task_choice_modal",
         "NewTaskChoiceModal",
     ),
-    ("tldw_chatbook.UI.Screens.skills_screen", "SkillRecoveryReviewModal"),
+    (
+        "tldw_chatbook.UI.Library_Modules.skills_trust_modals",
+        "SkillRecoveryReviewModal",
+    ),
     (
         "tldw_chatbook.Widgets.Console.console_appearance_picker_modal",
         "ConsoleAppearancePickerModal",
@@ -135,7 +138,6 @@ MIGRATION_TARGETS = [
         "tldw_chatbook.Widgets.Console.console_endpoint_template_modal",
         "ConsoleEndpointTemplateModal",
     ),
-    ("tldw_chatbook.Widgets.Console.console_provider_picker", "ConsoleProviderPicker"),
     (
         "tldw_chatbook.Widgets.Console.console_save_markdown_modal",
         "ConsoleSaveMarkdownModal",

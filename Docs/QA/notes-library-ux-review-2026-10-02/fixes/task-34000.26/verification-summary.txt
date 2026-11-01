@@ -1,0 +1,21 @@
+TASK-34000.26 live verification, 2026-10-24, worktree task-34000-p1c (branch fix/task-34000-p1c), Textual 8.2.8.
+Isolated profiles under $HARNESS/runs/p1c-t3-{1,2} (own HOME/XDG, TLDW_CONFIG_PATH, null keyring, provider keys unset),
+seeded with seed_library.py (notes=122 folders=9 media=23, --check read). Focus instrumentation: focus-probe-sitecustomize.py
+on PYTHONPATH wraps the BASE textual Screen.set_focus and appends one line per write onto a _pruning or detached widget
+(proven alive first: one line "field pruning=True attached=True" when the pure guard test ran with FOCUS_PROBE_LOG set).
+
+Socket p1c-t3-1 (80x24), j5 replay: Library tab -> Search / RAG -> Tab x21 to the Sources checkbox "Notes (122)"
+  -> Shift+Tab x25 (two bursts of 9, then singles) to the rail row "Notes (122)" (focus confirmed by style diff: "█  Notes (122)")
+  -> Enter (Notes route) -> Tab x5 -> F1: capture 01 (Library Shortcuts — Notes) -> Esc -> Ctrl+P: capture 02 (palette) -> Esc.
+  20 rapid rail switches Media <-> Notes (Nav strip click, row click, 0.2 s apart) -> F1: capture 03 -> Esc -> Ctrl+P opened -> Esc.
+  focus-probe-80x24-p1c-t3-1.log: 0 lines (the review's run recorded 7).
+  app log: "Keyboard focus was on a removed widget" x0; Traceback x0.
+
+Socket p1c-t3-2 (120x36 -> 80x24): Library tab -> Search / RAG -> Tab x24 to the Sources checkbox at 120x36
+  -> tmux resize-window -x 80 -y 24 with focus on the checkbox -> Shift+Tab x25 to the rail row "Notes (122)" -> Enter -> Tab -> F1:
+  capture 04 (Library Shortcuts — Notes) -> Esc. 21 rapid rail switches -> F1: capture 05 -> Esc -> Ctrl+P opened -> Esc.
+  focus-probe-120x36-resized-p1c-t3-2.log: 0 lines.
+  app log: "Keyboard focus was on a removed widget" x0; Traceback x0.
+
+Note: the file sink runs at INFO, so the screen refusal's DEBUG line is not in these logs; the probe (base method) is the measure.
+The keyboard never stopped responding on either socket (every F1, Ctrl+P and Tab after the sequences above produced a visible change).

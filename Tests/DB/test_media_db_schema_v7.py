@@ -73,9 +73,8 @@ V7_COLUMNS = {
     "updated_at",
 }
 
-SEED_TEXT = (
-    "# Introduction\n\n"
-    + " ".join(f"Sentence {i} carries enough words to be chunked." for i in range(40))
+SEED_TEXT = "# Introduction\n\n" + " ".join(
+    f"Sentence {i} carries enough words to be chunked." for i in range(40)
 )
 
 
@@ -207,17 +206,24 @@ def test_v7_column_shape_and_constraints(tmp_path):
     conn = db.get_connection()
 
     info = {
-        row["name"]: row
-        for row in conn.execute("PRAGMA table_info(ChunkingTemplates)")
+        row["name"]: row for row in conn.execute("PRAGMA table_info(ChunkingTemplates)")
     }
     assert set(info) == V7_COLUMNS
-    assert V6_COLUMNS - {"id", "name", "description", "template_json",
-                         "created_at", "updated_at"} == {"is_system"}
+    assert V6_COLUMNS - {
+        "id",
+        "name",
+        "description",
+        "template_json",
+        "created_at",
+        "updated_at",
+    } == {"is_system"}
     assert "is_system" not in info
     assert info["uuid"]["notnull"] == 1
     assert info["name"]["notnull"] == 1
     assert info["template_json"]["notnull"] == 1
-    assert info["is_builtin"]["notnull"] == 1 and info["is_builtin"]["dflt_value"] == "0"
+    assert (
+        info["is_builtin"]["notnull"] == 1 and info["is_builtin"]["dflt_value"] == "0"
+    )
     assert info["version"]["notnull"] == 1 and info["version"]["dflt_value"] == "1"
     assert info["deleted"]["notnull"] == 1 and info["deleted"]["dflt_value"] == "0"
 
@@ -230,7 +236,10 @@ def test_v7_column_shape_and_constraints(tmp_path):
     )
     # the supporting indexes from §5.2
     index_names = {row["name"] for row in indexes}
-    assert {"idx_chunking_templates_is_builtin", "idx_chunking_templates_deleted"} <= index_names
+    assert {
+        "idx_chunking_templates_is_builtin",
+        "idx_chunking_templates_deleted",
+    } <= index_names
 
     # the partial unique live-name index, by behavior AND by shape
     live = next(
@@ -270,9 +279,7 @@ def test_no_foreign_keys_reference_chunking_templates(tmp_path):
     conn = db.get_connection()
     tables = [
         row["name"]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        )
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     ]
     offenders = []
     for table in tables:
@@ -311,19 +318,21 @@ def test_historical_v6_fixture_is_genuine(tmp_path):
     path = tmp_path / "v6.db"
     with media_db_at_v6(path) as db:
         conn = db.get_connection()
-        assert conn.execute(
-            "SELECT version FROM schema_version"
-        ).fetchone()["version"] == 6
+        assert (
+            conn.execute("SELECT version FROM schema_version").fetchone()["version"]
+            == 6
+        )
         assert _table_columns(conn, "ChunkingTemplates") == V6_COLUMNS
-        seeds = conn.execute(
-            "SELECT name, is_system FROM ChunkingTemplates"
-        ).fetchall()
+        seeds = conn.execute("SELECT name, is_system FROM ChunkingTemplates").fetchall()
         assert {row["name"] for row in seeds} == OLD_SEEDS
         assert all(row["is_system"] == 1 for row in seeds)
-        assert conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'trigger' "
-            "AND name = 'update_chunking_templates_timestamp'"
-        ).fetchone() is not None
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'trigger' "
+                "AND name = 'update_chunking_templates_timestamp'"
+            ).fetchone()
+            is not None
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -339,17 +348,18 @@ def _upgraded_v6(tmp_path: Path) -> MediaDatabase:
 def test_genuine_v6_upgrades_to_v7(tmp_path):
     db = _upgraded_v6(tmp_path)
     conn = db.get_connection()
-    assert conn.execute(
-        "SELECT version FROM schema_version"
-    ).fetchone()["version"] == MediaDatabase._CURRENT_SCHEMA_VERSION
+    assert (
+        conn.execute("SELECT version FROM schema_version").fetchone()["version"]
+        == MediaDatabase._CURRENT_SCHEMA_VERSION
+    )
     assert _table_columns(conn, "ChunkingTemplates") == V7_COLUMNS
-    assert conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE name = 'ChunkingTemplates_v7'"
-    ).fetchone() is None
-    names = {
-        row["name"]
-        for row in conn.execute("SELECT name FROM ChunkingTemplates")
-    }
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'ChunkingTemplates_v7'"
+        ).fetchone()
+        is None
+    )
+    names = {row["name"] for row in conn.execute("SELECT name FROM ChunkingTemplates")}
     assert SIX_BUILTINS <= names
     assert {"general", "conversational", "contextual", "custom_pipeline"} <= names
     db.close_connection()
@@ -358,11 +368,14 @@ def test_genuine_v6_upgrades_to_v7(tmp_path):
 def test_update_timestamp_trigger_survives_rebuild(tmp_path):
     db = _upgraded_v6(tmp_path)
     conn = db.get_connection()
-    assert conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'trigger' "
-        "AND tbl_name = 'ChunkingTemplates' "
-        "AND name = 'update_chunking_templates_timestamp'"
-    ).fetchone() is not None
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'trigger' "
+            "AND tbl_name = 'ChunkingTemplates' "
+            "AND name = 'update_chunking_templates_timestamp'"
+        ).fetchone()
+        is not None
+    )
 
     before = _row_by_name(conn, "general")["updated_at"]
     time.sleep(1.1)  # CURRENT_TIMESTAMP has 1-second resolution
@@ -398,26 +411,29 @@ def test_seeded_mid_rebuild_failure_leaves_v6_intact(tmp_path, monkeypatch):
     check = sqlite3.connect(str(path))
     check.row_factory = sqlite3.Row
     try:
-        assert check.execute(
-            "SELECT version FROM schema_version"
-        ).fetchone()[0] == 6
+        assert check.execute("SELECT version FROM schema_version").fetchone()[0] == 6
         # the original v6 table and every original row survive
         assert _table_columns(check, "ChunkingTemplates") == V6_COLUMNS
         names = {
-            row["name"]
-            for row in check.execute("SELECT name FROM ChunkingTemplates")
+            row["name"] for row in check.execute("SELECT name FROM ChunkingTemplates")
         }
         assert OLD_SEEDS <= names
         assert {"custom_pipeline", "garbage_json", "garbage_shape"} <= names
         # nothing from the rebuild survived — not even the temp table
-        assert check.execute(
-            "SELECT 1 FROM sqlite_master WHERE name = 'ChunkingTemplates_v7'"
-        ).fetchone() is None
+        assert (
+            check.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'ChunkingTemplates_v7'"
+            ).fetchone()
+            is None
+        )
         # and the v6 trigger is still in place on the untouched table
-        assert check.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'trigger' "
-            "AND name = 'update_chunking_templates_timestamp'"
-        ).fetchone() is not None
+        assert (
+            check.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'trigger' "
+                "AND name = 'update_chunking_templates_timestamp'"
+            ).fetchone()
+            is not None
+        )
     finally:
         check.close()
 
@@ -534,16 +550,17 @@ def test_unconvertible_rows_are_quarantined(tmp_path):
         # repairable: a chunking block exists so the row can be edited back
         assert body["chunking"]["method"] == DEFAULT_METHOD
         # the original live name is gone from the live set
-        assert conn.execute(
-            "SELECT 1 FROM ChunkingTemplates WHERE name = ? AND deleted = 0",
-            (original_name,),
-        ).fetchone() is None
+        assert (
+            conn.execute(
+                "SELECT 1 FROM ChunkingTemplates WHERE name = ? AND deleted = 0",
+                (original_name,),
+            ).fetchone()
+            is None
+        )
 
     quarantined = {
         row["name"]
-        for row in conn.execute(
-            "SELECT name FROM ChunkingTemplates WHERE deleted = 1"
-        )
+        for row in conn.execute("SELECT name FROM ChunkingTemplates WHERE deleted = 1")
     }
     assert quarantined == {
         "garbage_json" + QUARANTINE_SUFFIX,
@@ -559,13 +576,12 @@ def test_dropped_operations_recorded_and_section_detection_mapped(tmp_path):
     body = _body(row)
 
     # section_detection maps where the intent matches; params become config
-    assert {
-        op["operation"] for op in body.get("preprocessing", [])
-    } == {"normalize_whitespace", "extract_sections"}
+    assert {op["operation"] for op in body.get("preprocessing", [])} == {
+        "normalize_whitespace",
+        "extract_sections",
+    }
     mapped = next(
-        op
-        for op in body["preprocessing"]
-        if op["operation"] == "extract_sections"
+        op for op in body["preprocessing"] if op["operation"] == "extract_sections"
     )
     assert mapped["config"] == {"headers": ["Abstract", "Methods"]}
 
@@ -715,7 +731,9 @@ class TestConvertTemplateRow:
                 }
             )
         )
-        assert json.loads(converted["template_json"])["chunking"]["method"] == "sentences"
+        assert (
+            json.loads(converted["template_json"])["chunking"]["method"] == "sentences"
+        )
 
     def test_base_method_used_when_no_chunk_stage(self):
         converted = convert_template_row(

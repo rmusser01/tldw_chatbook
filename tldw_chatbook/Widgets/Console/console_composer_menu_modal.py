@@ -17,7 +17,12 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
-from tldw_chatbook.Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
+from tldw_chatbook.Chat.console_ephemeral import (
+    ACTION_SAVE_CHAT,
+    SAVE_CHAT_ENABLES_CAPTURE_LABEL,
+    SAVE_CHAT_LABEL,
+    blocked_reason,
+)
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 #: Action ids returned by the menu. Stable strings, not indexes: the
@@ -35,6 +40,10 @@ ACTION_BUDDY = "buddy"
 #: `@on(Button.Pressed, "#console-<id>")` handlers stay the one
 #: implementation and the menu just becomes a second way in.
 ACTION_ATTACH_CONTEXT = "attach-context"
+#: TASK-35160 follow-up: the status line's Library policy readout moved
+#: here; the entry opens the same two-axis policy editor the line's
+#: segment click used to open.
+ACTION_LIBRARY_ACCESS = "library-access"
 #: Matches the `EPHEMERAL_BLOCKED_ACTIONS` registry key, so the
 #: temporary-chat block needs no translation layer.
 ACTION_SAVE_CHATBOOK = "save-chatbook"
@@ -61,6 +70,8 @@ def build_composer_menu_entries(
     can_save_chatbook: bool = False,
     draft_available: bool = False,
     improvement_undo_available: bool = False,
+    save_enables_capture: bool | None = None,
+    next_send_capture: bool | None = None,
 ) -> tuple[ComposerMenuEntry, ...]:
     """Build the menu rows for the current composer state.
 
@@ -68,7 +79,7 @@ def build_composer_menu_entries(
     the row says which case applies: nothing staged, or a staged file that
     is not an image. Explicit unavailable states beat vanishing entries.
 
-    "Save this chat" is the exception: it is ABSENT outside a temporary
+    The Save chat row is the exception: it is ABSENT outside a temporary
     chat rather than disabled, because a disabled save on an already-saved
     conversation reads as a failure rather than as "already done".
 
@@ -84,6 +95,14 @@ def build_composer_menu_entries(
         ephemeral: Whether the active session is temporary.
         can_save_chatbook: Whether a Chatbook artifact is available to save.
         draft_available: Whether a nonblank unsent message can be improved or saved.
+        improvement_undo_available: Whether a Prompt change can be undone.
+        save_enables_capture: Whether saving the temporary chat turns capture
+            on (``console_exchange_capture.saved_chat_capture``). Only then
+            does the Save chat row say so (TASK-37811); None (unknown) makes
+            no capture claim either way.
+        next_send_capture: The chat's one-time Next send Capture choice, or
+            None. Promotion keeps it and it outranks the chat's setting for
+            one send, so when it differs the hint names that send.
 
     Returns:
         The menu entries in display order.
@@ -141,6 +160,11 @@ def build_composer_menu_entries(
             "Attach a file to the draft",
         ),
         ComposerMenuEntry(
+            ACTION_LIBRARY_ACCESS,
+            "Library access…",
+            "View and edit this conversation's Library policy",
+        ),
+        ComposerMenuEntry(
             ACTION_SAVE_CHATBOOK,
             "Save as Chatbook",
             chatbook_reason,
@@ -185,11 +209,44 @@ def build_composer_menu_entries(
     return (
         ComposerMenuEntry(
             ACTION_SAVE_CHAT,
-            "Save this chat",
-            "This chat is not saved locally — save it now",
+            *_save_chat_copy(save_enables_capture, next_send_capture),
         ),
         *entries,
     )
+
+
+def _save_chat_copy(
+    save_enables_capture: bool | None, next_send_capture: bool | None
+) -> tuple[str, str]:
+    """Return the Save chat row's label and hint: what saving will do.
+
+    TASK-37811 (owner decision 2026-10-29): '(enables capture)' only when
+    the saved chat captures. Review of TASK-37811: a one-time Next send
+    choice survives promotion and outranks that for one send, so a hint
+    that ignored it said traces stay off right before a captured send.
+
+    Args:
+        save_enables_capture: The Capture the saved chat follows, or None
+            when it could not be read.
+        next_send_capture: The one-time Next send Capture choice, or None.
+
+    Returns:
+        The row's label and its hint.
+    """
+    if save_enables_capture is None:
+        return SAVE_CHAT_LABEL, "Not saved locally"
+    label = SAVE_CHAT_ENABLES_CAPTURE_LABEL if save_enables_capture else SAVE_CHAT_LABEL
+    if next_send_capture is None or next_send_capture == save_enables_capture:
+        hint = (
+            "Not saved locally; records no traces until saved"
+            if save_enables_capture
+            else "Not saved locally; saving keeps traces off"
+        )
+    elif next_send_capture:
+        hint = "Not saved locally; once saved, only your next send is traced"
+    else:
+        hint = "Not saved locally; once saved, traces start after your next send"
+    return label, hint
 
 
 class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"]):
@@ -203,8 +260,9 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
     #console-composer-menu {
         width: 56;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
@@ -225,7 +283,7 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
        contrast at ~1.1:1, so muting the explanation too would make the
        reason as unreadable as the state it explains. */
     .console-composer-menu-reason {
-        color: $warning;
+        color: $text-warning;
         margin: 0 0 1 2;
         width: 100%;
     }
@@ -242,6 +300,8 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
         can_save_chatbook: bool = False,
         draft_available: bool = False,
         improvement_undo_available: bool = False,
+        save_enables_capture: bool | None = None,
+        next_send_capture: bool | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the menu.
@@ -251,10 +311,16 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
                 decides whether Generate Caption is actionable and what its
                 disabled row explains.
             ephemeral: Whether the active session is temporary, which
-                decides whether "Save this chat" is offered at all.
+                decides whether the Save chat row is offered at all.
             can_save_chatbook: Whether a Chatbook artifact is available,
                 which decides whether the Save as Chatbook row is actionable.
             draft_available: Whether the active composer has a nonblank draft.
+            improvement_undo_available: Whether a Prompt change can be undone.
+            save_enables_capture: Whether saving the temporary chat turns
+                capture on, which decides the Save chat row's wording; None
+                when unknown.
+            next_send_capture: The one-time Next send Capture choice, which
+                the Save chat hint names when it differs.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -264,6 +330,8 @@ class ConsoleComposerMenuModal(SafeModalDismissMixin, ModalScreen["str | None"])
             can_save_chatbook=can_save_chatbook,
             draft_available=draft_available,
             improvement_undo_available=improvement_undo_available,
+            save_enables_capture=save_enables_capture,
+            next_send_capture=next_send_capture,
         )
 
     def compose(self) -> ComposeResult:

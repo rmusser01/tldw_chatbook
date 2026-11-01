@@ -33,6 +33,8 @@ async def _noop_async(*_args: object, **_kwargs: object) -> None:
     return None
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
 class _FakeImageCache:
     """Minimal stand-in for the console image cache used by the paint path."""
 
@@ -48,6 +50,7 @@ def _operational_resolution() -> SimpleNamespace:
 
     return SimpleNamespace(
         image_bytes=b"fake-png-bytes",
+        is_animated=False,
         asset_id=11,
         resolved_expression_key="speaking",
         resolution_source="pack_operational",
@@ -78,9 +81,7 @@ def _streaming_store() -> tuple[ConsoleChatStore, str]:
 
     store = ConsoleChatStore()
     session = store.ensure_session(title="Chat 1")
-    store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="hello"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
     message = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
@@ -134,6 +135,7 @@ def _avatar_controller(
         "ensure_chat_store": ConsoleChatStore,
         "provider_readiness_config_accessor": lambda: {},
         "default_session_settings": lambda: ConsoleSessionSettings(),
+        "set_active_workspace_for_session": lambda _session_id: None,
         "swap_session_character": lambda *_args, **_kwargs: False,
         "sync_temporary_chip": lambda: None,
         "sync_native_chat_ui": _noop_async,
@@ -302,3 +304,30 @@ async def test_storeless_teardown_tick_is_a_safe_noop() -> None:
     await controller._refresh_active_character_avatar_if_scope_changed()
 
     assert painted == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", ["actor", "session", "motion"])
+async def test_mounted_fence_rechecks_cheap_context_without_copying_transcript(changed):
+    store, session_id = _streaming_store()
+    scope = [(session_id, "character", "7")]
+    config = {}
+    controller = _avatar_controller(
+        store,
+        session_id,
+        painted=[],
+        actor_scope_accessor=lambda: scope[0],
+        app_config_accessor=lambda: config,
+    )
+    await controller._refresh_active_character_avatar_if_scope_changed()
+    request = controller._latest_built_request
+    assert controller._request_is_current(request)
+    counter = _count_transcript_copies(store)
+    if changed == "actor":
+        scope[0] = (session_id, "character", "8")
+    elif changed == "session":
+        store.create_session()
+    else:
+        config["appearance"] = {"reduce_motion": True}
+    assert not controller._request_is_current(request)
+    assert counter["copies"] == 0

@@ -176,9 +176,7 @@ async def _assert_card_paints_answerable(app, pilot, chat_screen, box) -> None:
     assert await _settle(lambda: "decisions" in box, seconds=10.0), (
         "pressing the painted card's Approve never resolved the round"
     )
-    assert box["decisions"] == {"builtin__write_file": "approve_once"}, box[
-        "decisions"
-    ]
+    assert box["decisions"] == {"builtin__write_file": "approve_once"}, box["decisions"]
 
 
 # ---------------------------------------------------------------------------
@@ -400,8 +398,7 @@ def test_a_constructed_card_shows_nothing_until_a_batch_is_set():
         "a sync and unrender it"
     )
     assert ChatTaskCards().display is False, (
-        "a freshly constructed task surface is visible before its mount "
-        "handler runs"
+        "a freshly constructed task surface is visible before its mount handler runs"
     )
 
 
@@ -436,9 +433,7 @@ def test_set_batch_does_not_half_apply_when_the_body_is_missing():
     """
     card = ChatApprovalCard()
     with pytest.raises(NoMatches):
-        card.set_batch(
-            _approval_payload()["calls"], timeout_seconds=0.0, round_id="r"
-        )
+        card.set_batch(_approval_payload()["calls"], timeout_seconds=0.0, round_id="r")
     assert card.display is False, (
         "a set_batch that could not reach its containers left the card "
         "visible and empty -- title-only, unanswerable"

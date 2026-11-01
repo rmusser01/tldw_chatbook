@@ -39,10 +39,21 @@ from textual import events
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.background_signals import await_background_task, wait_for_background_signal
+from Tests.UI.background_signals import (
+    await_background_task,
+    wait_for_background_signal,
+)
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp, app_css_text
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static, TextArea
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Collapsible,
+    Input,
+    Select,
+    Static,
+    TextArea,
+)
 
 from tldw_chatbook.DB.Prompts_DB import (
     ConflictError,
@@ -494,9 +505,7 @@ async def test_prompt_basic_and_advanced_share_one_mounted_draft_without_recompo
         canvas = app.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
         basic = canvas.query_one("#library-prompt-basic-region", Vertical)
         advanced = canvas.query_one("#library-prompt-advanced-region", Vertical)
-        advanced_extras = canvas.query_one(
-            "#library-prompt-advanced-extras", Vertical
-        )
+        advanced_extras = canvas.query_one("#library-prompt-advanced-extras", Vertical)
         system = canvas.query_one("#library-prompt-system", TextArea)
         user = canvas.query_one("#library-prompt-user", TextArea)
         block_editor = canvas.query_one(
@@ -510,8 +519,14 @@ async def test_prompt_basic_and_advanced_share_one_mounted_draft_without_recompo
         assert user.read_only is False
         assert system.text == "Be exact."
         assert user.text == "Ship it."
-        assert str(canvas.query_one("#library-prompt-basic-instructions-label").renderable) == "Instructions"
-        assert str(canvas.query_one("#library-prompt-basic-message-label").renderable) == "Message template"
+        assert (
+            str(canvas.query_one("#library-prompt-basic-instructions-label").renderable)
+            == "Instructions"
+        )
+        assert (
+            str(canvas.query_one("#library-prompt-basic-message-label").renderable)
+            == "Message template"
+        )
         assert canvas.query_one("#library-prompt-keywords").display is False
         assert canvas.query_one("#library-prompt-author").display is False
 
@@ -763,8 +778,14 @@ async def test_prompt_editor_lifecycle_actions_are_exact(
 
         assert visible == expected
         if editor_state.prompt_id is None:
-            assert str(canvas.query_one("#library-prompt-save", Button).label) == "Save prompt"
-            assert str(canvas.query_one("#library-prompt-discard", Button).label) == "Cancel"
+            assert (
+                str(canvas.query_one("#library-prompt-save", Button).label)
+                == "Save prompt"
+            )
+            assert (
+                str(canvas.query_one("#library-prompt-discard", Button).label)
+                == "Cancel"
+            )
         if mutation:
             assert canvas.query_one("#library-prompts-mutation-progress", Static)
             assert all(
@@ -798,7 +819,9 @@ async def test_prompt_editor_lifecycle_sync_preserves_fields_and_action_validity
         canvas.can_update_original = True
         canvas.sync_lifecycle_actions(dirty=False)
         assert canvas.query_one("#library-prompt-name", Input) is name
-        assert canvas.query_one("#library-prompt-insert-console", Button).display is True
+        assert (
+            canvas.query_one("#library-prompt-insert-console", Button).display is True
+        )
         assert canvas.query_one("#library-prompt-more-actions", Button).display is True
         assert canvas.query_one("#library-prompt-save", Button).display is False
 
@@ -823,10 +846,14 @@ async def test_prompt_more_actions_is_inline_and_escape_restores_opener_focus():
         await pilot.click("#library-prompt-more-actions")
         await pilot.pause()
         assert region.display is True
-        assert {
-            str(button.label)
-            for button in region.query(Button)
-        } == {"Export…", "Copy Markdown", "Duplicate", "Collections", "History", "Delete"}
+        assert {str(button.label) for button in region.query(Button)} == {
+            "Export…",
+            "Copy Markdown",
+            "Duplicate",
+            "Collections",
+            "History",
+            "Delete",
+        }
 
         region.query_one("#library-prompt-copy", Button).focus()
         await pilot.press("escape")
@@ -1414,9 +1441,7 @@ async def test_prompts_canvas_select_mode_uses_the_bounded_list_scroll_owner():
     app = _CanvasHost(_selection_state())
 
     async with app.run_test() as pilot:
-        list_owner = pilot.app.query_one(
-            "#library-prompts-list", VerticalScroll
-        )
+        list_owner = pilot.app.query_one("#library-prompts-list", VerticalScroll)
         assert list_owner.parent.id == "library-prompts-canvas"
 
 
@@ -2128,8 +2153,12 @@ async def test_prompts_empty_new_uses_existing_create_destination():
         ),
         (
             "handle_library_prompts_empty_all_prompts",
-            PromptBrowseScope(collection_id=9, sort_by="name", sort_order="asc", page=2),
-            PromptBrowseScope(collection_id=None, sort_by="name", sort_order="asc", page=1),
+            PromptBrowseScope(
+                collection_id=9, sort_by="name", sort_order="asc", page=2
+            ),
+            PromptBrowseScope(
+                collection_id=None, sort_by="name", sort_order="asc", page=1
+            ),
             "library-prompts-empty-all-prompts",
         ),
     ],
@@ -2266,7 +2295,9 @@ async def test_prompts_canvas_editor_mutation_interlock_disables_every_editor_co
 @pytest.mark.asyncio
 async def test_prompts_canvas_list_mutation_status_is_literal_and_precedes_empty_reason():
     """A bounded screen-owned failure remains visible beside the basket."""
-    copy = "Selection changed; nothing was deleted. Clear all and select the items again."
+    copy = (
+        "Selection changed; nothing was deleted. Clear all and select the items again."
+    )
     app = _CanvasHost(
         _selection_state(total_selected=2, selected_on_page=0, rows=()),
         mutation_status=copy,
@@ -3262,14 +3293,16 @@ async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> No
             assert await asyncio.to_thread(service.started.wait, 10.0)
             await _wait_for_condition(
                 pilot,
-                lambda: controller.result.status == "loading"
-                and canvas.pager == controller.pager
-                and len(screen.query(".library-prompt-row")) == 20
-                and all(
-                    screen.query_one(selector, Button).disabled
-                    for selector in (
-                        "#library-prompts-page-previous",
-                        "#library-prompts-page-next",
+                lambda: (
+                    controller.result.status == "loading"
+                    and canvas.pager == controller.pager
+                    and len(screen.query(".library-prompt-row")) == 20
+                    and all(
+                        screen.query_one(selector, Button).disabled
+                        for selector in (
+                            "#library-prompts-page-previous",
+                            "#library-prompts-page-next",
+                        )
                     )
                 ),
                 message="Prompt canvas never received the loading pager.",
@@ -3298,11 +3331,13 @@ async def test_library_prompt_canvas_receives_retained_pager_on_sync(size) -> No
             service.release.set()
             await _wait_for_condition(
                 pilot,
-                lambda: controller.result.status == "error"
-                and controller.pager.retry_visible
-                and canvas.pager == controller.pager
-                and len(screen.query(".library-prompt-row")) == 20
-                and len(screen.query("#library-prompts-retry")) == 1,
+                lambda: (
+                    controller.result.status == "error"
+                    and controller.pager.retry_visible
+                    and canvas.pager == controller.pager
+                    and len(screen.query(".library-prompt-row")) == 20
+                    and len(screen.query("#library-prompts-retry")) == 1
+                ),
                 message="Prompt canvas never received the failed pager.",
             )
             await _wait_for_condition(
@@ -3373,18 +3408,22 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
         screen.query_one("#library-row-browse-prompts", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_browse_controller.result.status == "error"
-            and len(screen.query("#library-prompts-retry")) == 1,
+            lambda: (
+                screen._library_prompt_browse_controller.result.status == "error"
+                and len(screen.query("#library-prompts-retry")) == 1
+            ),
             message="Initial Prompt failure never reached the mounted pager.",
         )
 
         controller = screen._library_prompt_browse_controller
-        assert str(
-            screen.query_one("#library-prompts-header", Static).renderable
-        ) == "Prompts"
-        assert str(
-            screen.query_one("#library-prompts-page-label", Static).renderable
-        ) == "No page loaded · Total unavailable"
+        assert (
+            str(screen.query_one("#library-prompts-header", Static).renderable)
+            == "Prompts"
+        )
+        assert (
+            str(screen.query_one("#library-prompts-page-label", Static).renderable)
+            == "No page loaded · Total unavailable"
+        )
         assert len(screen.query(".library-prompt-row")) == 0
         assert len(screen.query("#library-prompts-retry")) == 1
         assert "Couldn't load prompts." in str(
@@ -3413,9 +3452,11 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
         screen.query_one("#library-prompts-retry", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_result is not None
-            and controller.applied_result.total_items == 45
-            and len(screen.query(".library-prompt-row")) == 20,
+            lambda: (
+                controller.applied_result is not None
+                and controller.applied_result.total_items == 45
+                and len(screen.query(".library-prompt-row")) == 20
+            ),
             message="Initial Prompt retry never applied.",
         )
         service._browse_failures = 1
@@ -3426,27 +3467,32 @@ async def test_library_prompt_pager_first_and_filter_failure_states(size) -> Non
         await pilot.press("enter")
         await _wait_for_condition(
             pilot,
-            lambda: controller.result.status == "error"
-            and controller.pager.status_copy
-            == "Filter wasn't applied; showing previous results."
-            and len(screen.query(".library-prompt-row")) == 20
-            and len(screen.query("#library-prompts-retry")) == 1
-            and screen.query_one("#library-prompts-filter", Input).has_focus,
+            lambda: (
+                controller.result.status == "error"
+                and controller.pager.status_copy
+                == "Filter wasn't applied; showing previous results."
+                and len(screen.query(".library-prompt-row")) == 20
+                and len(screen.query("#library-prompts-retry")) == 1
+                and screen.query_one("#library-prompts-filter", Input).has_focus
+            ),
             message="Failed Prompt filter never retained its applied page.",
         )
 
         restored_filter = screen.query_one("#library-prompts-filter", Input)
         assert restored_filter.value == "requested filter"
         assert restored_filter.has_focus
-        assert str(
-            screen.query_one("#library-prompts-header", Static).renderable
-        ) == "Prompts (45)"
-        assert str(
-            screen.query_one("#library-prompts-page-label", Static).renderable
-        ) == "1-20 of 45 · Page 1 of 3"
-        assert str(
-            screen.query_one("#library-prompts-page-status", Static).renderable
-        ) == "Filter wasn't applied; showing previous results. · Already on the first page."
+        assert (
+            str(screen.query_one("#library-prompts-header", Static).renderable)
+            == "Prompts (45)"
+        )
+        assert (
+            str(screen.query_one("#library-prompts-page-label", Static).renderable)
+            == "1-20 of 45 · Page 1 of 3"
+        )
+        assert (
+            str(screen.query_one("#library-prompts-page-status", Static).renderable)
+            == "Filter wasn't applied; showing previous results. · Already on the first page."
+        )
         for selector in (
             "#library-prompts-header",
             "#library-prompts-page-label",
@@ -3493,10 +3539,13 @@ async def test_library_prompt_clamped_next_focuses_filter_when_both_pages_disabl
         next_page.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_browse_controller.applied_result is not None
-            and screen._library_prompt_browse_controller.applied_result.page == 1
-            and screen._library_prompt_browse_controller.applied_result.total_items == 5
-            and len(screen.query(".library-prompt-row")) == 5,
+            lambda: (
+                screen._library_prompt_browse_controller.applied_result is not None
+                and screen._library_prompt_browse_controller.applied_result.page == 1
+                and screen._library_prompt_browse_controller.applied_result.total_items
+                == 5
+                and len(screen.query(".library-prompt-row")) == 5
+            ),
             message="Shrinking Prompt response never clamped to page 1.",
         )
         await _wait_for_condition(
@@ -3603,16 +3652,16 @@ async def test_library_prompt_pager_geometry_pages_and_focus(size) -> None:
         await _wait_for_selector(screen, pilot, "#library-prompt-row-26")
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_browse_controller.pager.range_copy
-            == "1-20 of 45"
-            and len(screen.query(".library-prompt-row")) == 20,
+            lambda: (
+                screen._library_prompt_browse_controller.pager.range_copy
+                == "1-20 of 45"
+                and len(screen.query(".library-prompt-row")) == 20
+            ),
             message="Initial Prompt page never completed its mounted projection.",
         )
 
         pane = screen.query_one("#library-canvas")
-        canvas = screen.query_one(
-            "#library-prompts-canvas", LibraryPromptsListCanvas
-        )
+        canvas = screen.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
         rows = screen.query_one("#library-prompts-list", VerticalScroll)
         pager = screen.query_one("#library-prompts-pager", Vertical)
         status = screen.query_one("#library-prompts-page-label", Static)
@@ -3640,8 +3689,10 @@ async def test_library_prompt_pager_geometry_pages_and_focus(size) -> None:
         last_row.scroll_visible(animate=False, force=True, immediate=True)
         await _wait_for_condition(
             pilot,
-            lambda: rows.scroll_y > 0
-            and last_row in host.screen._compositor.visible_widgets,
+            lambda: (
+                rows.scroll_y > 0
+                and last_row in host.screen._compositor.visible_widgets
+            ),
             message="Prompt row 20 never became compositor-visible.",
         )
         assert screen.query_one("#library-prompts-pager") is pager_identity
@@ -3651,35 +3702,37 @@ async def test_library_prompt_pager_geometry_pages_and_focus(size) -> None:
         next_page.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_browse_controller.applied_result is not None
-            and screen._library_prompt_browse_controller.applied_result.page == 2
-            and len(screen.query(".library-prompt-row")) == 20
-            and screen.query_one(
-                "#library-prompts-page-next", Button
-            ).has_focus,
+            lambda: (
+                screen._library_prompt_browse_controller.applied_result is not None
+                and screen._library_prompt_browse_controller.applied_result.page == 2
+                and len(screen.query(".library-prompt-row")) == 20
+                and screen.query_one("#library-prompts-page-next", Button).has_focus
+            ),
             message="Prompt page 2 never applied.",
         )
         rows = screen.query_one("#library-prompts-list", VerticalScroll)
         assert rows.scroll_y == 0
-        assert str(
-            screen.query_one("#library-prompts-page-label", Static).renderable
-        ) == "21-40 of 45 · Page 2 of 3"
+        assert (
+            str(screen.query_one("#library-prompts-page-label", Static).renderable)
+            == "21-40 of 45 · Page 2 of 3"
+        )
         assert screen.query_one("#library-prompts-page-next", Button).has_focus
 
         screen.query_one("#library-prompts-page-next", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_browse_controller.applied_result is not None
-            and screen._library_prompt_browse_controller.applied_result.page == 3
-            and len(screen.query(".library-prompt-row")) == 5
-            and screen.query_one(
-                "#library-prompts-page-previous", Button
-            ).has_focus,
+            lambda: (
+                screen._library_prompt_browse_controller.applied_result is not None
+                and screen._library_prompt_browse_controller.applied_result.page == 3
+                and len(screen.query(".library-prompt-row")) == 5
+                and screen.query_one("#library-prompts-page-previous", Button).has_focus
+            ),
             message="Final Prompt page never applied.",
         )
-        assert str(
-            screen.query_one("#library-prompts-page-label", Static).renderable
-        ) == "41-45 of 45 · Page 3 of 3"
+        assert (
+            str(screen.query_one("#library-prompts-page-label", Static).renderable)
+            == "41-45 of 45 · Page 3 of 3"
+        )
         final_next = screen.query_one("#library-prompts-page-next", Button)
         final_previous = screen.query_one("#library-prompts-page-previous", Button)
         assert final_next.disabled is True
@@ -3693,19 +3746,21 @@ async def test_library_prompt_pager_geometry_pages_and_focus(size) -> None:
         final_previous.press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_browse_controller.applied_result is not None
-            and screen._library_prompt_browse_controller.applied_result.page == 2
-            and screen.query_one(
-                "#library-prompts-page-previous", Button
-            ).has_focus,
+            lambda: (
+                screen._library_prompt_browse_controller.applied_result is not None
+                and screen._library_prompt_browse_controller.applied_result.page == 2
+                and screen.query_one("#library-prompts-page-previous", Button).has_focus
+            ),
             message="Returning to Prompt page 2 did not restore Previous focus.",
         )
         screen.query_one("#library-prompts-page-previous", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: screen._library_prompt_browse_controller.applied_result is not None
-            and screen._library_prompt_browse_controller.applied_result.page == 1
-            and screen.query_one("#library-prompts-page-next", Button).has_focus,
+            lambda: (
+                screen._library_prompt_browse_controller.applied_result is not None
+                and screen._library_prompt_browse_controller.applied_result.page == 1
+                and screen.query_one("#library-prompts-page-next", Button).has_focus
+            ),
             message="First Prompt page did not fall focus forward to Next.",
         )
 
@@ -4501,9 +4556,10 @@ async def test_library_prompts_failed_filter_keeps_requested_input_and_applied_p
         assert screen.query_one("#library-prompts-filter", Input).value == (
             "requested filter"
         )
-        assert str(
-            screen.query_one("#library-prompts-header", Static).renderable
-        ) == "Prompts (25)"
+        assert (
+            str(screen.query_one("#library-prompts-header", Static).renderable)
+            == "Prompts (25)"
+        )
         assert screen.query_one("#library-prompt-row-25", Button)
         canvas = screen.query_one("#library-prompts-canvas", LibraryPromptsListCanvas)
         assert canvas.filter_value == "requested filter"
@@ -5714,9 +5770,7 @@ def _choose_shared_save_action(screen: Any, action: str) -> None:
     """Choose one valid action from the embedded editor's native Save menu."""
 
     menu = screen.query_one("#prompt-editor-save-menu", Select)
-    offered = [
-        value for _label, value in menu._options if value is not Select.NULL
-    ]
+    offered = [value for _label, value in menu._options if value is not Select.NULL]
     assert action in offered
     menu.value = action
 
@@ -5752,9 +5806,7 @@ async def test_library_prompt_mode_switch_is_targeted_and_remembered(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
-        canvas = screen.query_one(
-            "#library-prompt-work-pane", LibraryPromptWorkPane
-        )
+        canvas = screen.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
         name = canvas.query_one("#library-prompt-name", Input)
         system = canvas.query_one("#library-prompt-system", TextArea)
 
@@ -6337,15 +6389,15 @@ async def test_library_prompt_undo_refreshes_applied_page_and_preserves_basket(
         retry.press()
         await _wait_for_condition(
             pilot,
-            lambda: controller.freshness == "fresh"
-            and len(screen.query(f"#library-prompt-row-{restored_id}")) == 1,
+            lambda: (
+                controller.freshness == "fresh"
+                and len(screen.query(f"#library-prompt-row-{restored_id}")) == 1
+            ),
             message="Prompt undo Retry never applied the restored row.",
         )
         assert refresh_pages == [2, 2]
         assert screen._prompts_state.selection == captured_basket
-        restored_row = screen.query_one(
-            f"#library-prompt-row-{restored_id}", Button
-        )
+        restored_row = screen.query_one(f"#library-prompt-row-{restored_id}", Button)
         assert restored_row.prompt_version == 3
 
 
@@ -6443,9 +6495,10 @@ async def test_library_prompt_bulk_delete_missing_capability_is_visible_and_pres
         assert screen._prompts_state.selection is captured
         assert screen._prompts_state.select_mode is True
         assert db.fetch_prompt_details(prompt_id) is not None
-        assert str(
-            screen.query_one("#library-prompts-mutation-status", Static).renderable
-        ) == "Bulk Prompt actions are unavailable."
+        assert (
+            str(screen.query_one("#library-prompts-mutation-status", Static).renderable)
+            == "Bulk Prompt actions are unavailable."
+        )
 
 
 @pytest.mark.asyncio
@@ -6525,7 +6578,9 @@ async def test_library_prompt_editor_delete_uses_shared_batch_family_and_typed_r
         assert isinstance(modal, PromptDeleteConfirmationModal)
         assert modal.request.items == (modal.request.items[0],)
         assert modal.request.items[0].name == "Editor batch"
-        assert modal.request.fingerprint == str(screen._prompts_state.mutation_generation)
+        assert modal.request.fingerprint == str(
+            screen._prompts_state.mutation_generation
+        )
 
         modal.query_one("#prompt-delete-confirm", Button).press()
         await _wait_for_prompt_mutation_settlement(screen, pilot)
@@ -6580,9 +6635,7 @@ async def test_library_prompt_editor_delete_failure_restores_native_controls_and
         name_input = screen.query_one("#library-prompt-name", Input)
         author_input = screen.query_one("#library-prompt-author", Input)
         delete_button = screen.query_one("#library-prompt-delete", Button)
-        native_disabled = screen.query_one(
-            "#prompt-editor-apply-system", Checkbox
-        )
+        native_disabled = screen.query_one("#prompt-editor-apply-system", Checkbox)
         assert native_disabled.disabled is True
         block_state = screen._prompts_state.block_state
         name_input.cursor_position = 2
@@ -6672,9 +6725,7 @@ async def test_library_prompt_batch_undo_restores_mixed_receipt_atomically(tmp_p
         await _open_prompts_list(screen, pilot)
         screen._prompts_state.delete_receipt = receipt
         screen.refresh(recompose=True)
-        undo = await _wait_for_selector(
-            screen, pilot, "#library-prompts-delete-undo"
-        )
+        undo = await _wait_for_selector(screen, pilot, "#library-prompts-delete-undo")
         undo.press()
         await _wait_for_prompt_mutation_settlement(screen, pilot)
 
@@ -6687,9 +6738,7 @@ async def test_library_prompt_batch_undo_restores_mixed_receipt_atomically(tmp_p
         assert screen._prompts_state.delete_receipt is None
         assert db.fetch_prompt_details(prompt_id)["version"] == 3
         assert db.fetch_prompt_details(recipe_id)["version"] == 3
-        assert {
-            row["id"] for row in db.search_prompts('"undo-shared-body"')[0]
-        } == {
+        assert {row["id"] for row in db.search_prompts('"undo-shared-body"')[0]} == {
             prompt_id,
             recipe_id,
         }
@@ -6768,12 +6817,8 @@ async def test_library_prompt_batch_undo_conflict_restores_none_and_keeps_receip
 async def test_library_prompt_batch_undo_late_success_preserves_new_receipt(tmp_path):
     """A late success clears only the identical receipt that admitted it."""
     db, service = _real_prompt_scope_service(tmp_path)
-    old_id, _uuid, _message = db.add_prompt(
-        name="Old undo", author="A", details="old"
-    )
-    new_id, _uuid, _message = db.add_prompt(
-        name="New undo", author="B", details="new"
-    )
+    old_id, _uuid, _message = db.add_prompt(name="Old undo", author="A", details="old")
+    new_id, _uuid, _message = db.add_prompt(name="New undo", author="B", details="new")
     old_receipt = db.soft_delete_prompts((PromptBatchTarget(old_id, 1),))
     new_receipt = db.soft_delete_prompts((PromptBatchTarget(new_id, 1),))
     started = threading.Event()
@@ -6874,13 +6919,16 @@ async def test_library_prompt_batch_undo_cancel_drains_durable_settlement(
         assert finished.is_set()
         if conflict:
             assert screen._prompts_state.delete_receipt is receipt
-            assert db.fetch_prompt_details(prompt_id, include_deleted=True)["deleted"] == 1
+            assert (
+                db.fetch_prompt_details(prompt_id, include_deleted=True)["deleted"] == 1
+            )
             status = await _wait_for_selector(
                 screen, pilot, "#library-prompts-mutation-status"
             )
-            assert str(
-                status.renderable
-            ) == "Could not restore the deleted items; Undo is still available."
+            assert (
+                str(status.renderable)
+                == "Could not restore the deleted items; Undo is still available."
+            )
         else:
             assert screen._prompts_state.delete_receipt is None
             assert db.fetch_prompt_details(prompt_id)["deleted"] == 0
@@ -7157,9 +7205,7 @@ async def test_library_prompt_conflict_overwrite_blocks_delete_admission(tmp_pat
             admitted_prompt_id = screen._prompts_state.selected_prompt_id
             admitted_receipt = screen._prompts_state.delete_receipt
             admitted_status = screen._prompts_state.status
-            admitted_notifications = [
-                notice.message for notice in host._notifications
-            ]
+            admitted_notifications = [notice.message for notice in host._notifications]
         finally:
             save_release.set()
 
@@ -7353,9 +7399,7 @@ async def test_cancelled_prompt_save_retains_writer_ownership_until_commit(
         await _open_prompt_editor(screen, pilot, prompt_id)
         screen._prompts_state.block_state = None
         screen.query_one("#library-prompt-author", Input).value = "Settled author"
-        screen.query_one("#library-prompt-details", Input).value = (
-            "settled overwrite"
-        )
+        screen.query_one("#library-prompt-details", Input).value = "settled overwrite"
         screen.handle_library_prompt_save(Button.Pressed(Button()))
         worker = next(
             worker
@@ -7370,9 +7414,7 @@ async def test_cancelled_prompt_save_retains_writer_ownership_until_commit(
 
         worker.cancel()
         await pilot.pause(0.2)
-        writer_owned_while_held = (
-            worker in screen.workers and not worker.is_finished
-        )
+        writer_owned_while_held = worker in screen.workers and not worker.is_finished
         try:
             screen.handle_library_prompt_delete(Button.Pressed(Button()))
             await pilot.pause()
@@ -8713,9 +8755,7 @@ async def test_library_prompt_history_collapse_during_restore_detail_fetch_stays
 
             # The service has finished, but its region may still be replacing
             # the busy controls. Act on the disclosure mounted with the outcome.
-            await _wait_for_selector(
-                screen, pilot, "#library-prompt-history-outcome"
-            )
+            await _wait_for_selector(screen, pilot, "#library-prompt-history-outcome")
             disclosure = screen.query_one(
                 "#library-prompt-history-collapsible", Collapsible
             )
@@ -9557,9 +9597,7 @@ async def test_library_prompt_save_stale_version_shows_conflict_bar(tmp_path):
         screen.query_one("#library-prompt-save", Button).press()
         await pilot.pause()
         for _ in range(150):
-            if screen.query_one(
-                "#library-prompt-conflict-save-new", Button
-            ).display:
+            if screen.query_one("#library-prompt-conflict-save-new", Button).display:
                 break
             await pilot.pause(0.02)
 
@@ -10047,9 +10085,7 @@ async def test_library_prompt_delete_receipt_undo_restores_row_and_count(tmp_pat
             ),
             message="Prompt Undo never restored its row, receipt, and rail count.",
         )
-        rail_label = str(
-            screen.query_one("#library-row-browse-prompts", Button).label
-        )
+        rail_label = str(screen.query_one("#library-row-browse-prompts", Button).label)
 
         assert "(2)" in rail_label
         assert len(screen.query(f"#library-prompt-row-{eta_id}")) == 1
@@ -10574,9 +10610,7 @@ async def test_library_prompt_compatibility_editor_discard_returns_to_current_li
                 break
 
         assert screen._prompts_state.view == "list"
-        assert browse_calls == [
-            (scope_before, f"library-prompt-row-{prompt_id}")
-        ]
+        assert browse_calls == [(scope_before, f"library-prompt-row-{prompt_id}")]
         assert refresh_calls == 1
         row_id = f"library-prompt-row-{prompt_id}"
         for _ in range(500):
@@ -10758,8 +10792,11 @@ async def test_library_prompts_export_refuses_server_mode_before_prompt_count(
     # empty CTA (3aef9bcd1) with no action row -- seed one prompt so the
     # list (and its Export action) composes in server mode.
     _db.add_prompt(
-        name="Placeholder", author="A", details="d",
-        system_prompt="", user_prompt="",
+        name="Placeholder",
+        author="A",
+        details="d",
+        system_prompt="",
+        user_prompt="",
     )
     prompt_ids = Mock(side_effect=AssertionError("Prompt DB must not be touched"))
     app = _build_test_app()
@@ -11411,9 +11448,7 @@ async def test_library_prompt_basic_and_advanced_geometry_uses_production_css(
         await _wait_for_library_shell(screen, pilot)
         await _open_prompt_editor(screen, pilot, prompt_id)
 
-        canvas = screen.query_one(
-            "#library-prompt-work-pane", LibraryPromptWorkPane
-        )
+        canvas = screen.query_one("#library-prompt-work-pane", LibraryPromptWorkPane)
         shell = canvas.query_one("#library-prompt-editor-shell")
         content = canvas.query_one("#library-prompt-editor-content", VerticalScroll)
         actions = canvas.query_one("#library-prompt-editor-actions")
@@ -11547,9 +11582,7 @@ async def test_library_prompt_editor_geometry_keeps_actions_visible_without_cove
         if not conflict:
             content.scroll_home(animate=False)
             await pilot.pause()
-            use_console = screen.query_one(
-                "#library-prompt-insert-console", Button
-            )
+            use_console = screen.query_one("#library-prompt-insert-console", Button)
             assert use_console.region.width > 0
             assert use_console.region.height > 0
             assert screen.region.contains_region(use_console.region)
@@ -12467,9 +12500,12 @@ async def test_library_prompt_delete_allows_only_one_in_flight_service_call(tmp_
             progress = screen.query_one("#library-prompts-mutation-progress", Static)
             assert str(progress.renderable) == "Updating selected items…"
             assert screen.query_one("#library-prompt-name", Input).disabled is True
-            assert screen.query_one(
-                "#library-prompt-block-editor", PromptBlockEditor
-            ).disabled is True
+            assert (
+                screen.query_one(
+                    "#library-prompt-block-editor", PromptBlockEditor
+                ).disabled
+                is True
+            )
 
             delete_button = screen.query_one("#library-prompt-delete", Button)
             duplicate_button = screen.query_one("#library-prompt-duplicate", Button)
@@ -13914,9 +13950,11 @@ async def test_prompts_selection_action_labels_hold_their_column_when_enabled():
         screen.query_one("#library-prompt-row-17", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen.query_one(
-                "#library-prompts-export-selected", Button
-            ).disabled,
+            lambda: (
+                not screen.query_one(
+                    "#library-prompts-export-selected", Button
+                ).disabled
+            ),
             message="The row press never enabled the selection actions.",
         )
         await pilot.pause()

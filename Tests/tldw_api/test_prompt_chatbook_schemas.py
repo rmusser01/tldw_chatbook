@@ -108,9 +108,7 @@ class TestPromptChatbookSchemas:
             "artifact_type": "prompt",
             "prompt_format": "legacy",
         }
-        assert serialize_prompt_request(request, for_update=True) == {
-            "name": "Prompt"
-        }
+        assert serialize_prompt_request(request, for_update=True) == {"name": "Prompt"}
 
     def test_chatbook_export_request_preserves_content_selections(self):
         request = ChatbookExportRequest(

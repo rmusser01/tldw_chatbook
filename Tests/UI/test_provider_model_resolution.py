@@ -10,7 +10,9 @@ import pytest
 
 from tldw_chatbook.UI.Screens import provider_model_resolution
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import SELECTOR_MERGE_CAP
-from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    MergedModelEntry,
+)
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_provider_model_options,
 )

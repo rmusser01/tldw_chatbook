@@ -229,6 +229,7 @@ def _fake_windows_kernel(
             kernel.process_exited = True
 
     kernel.terminate_job = terminate_job
+
     def active_processes(handle: int) -> int:
         assert handle == 100
         trace.append("query_job")
@@ -289,13 +290,9 @@ async def test_windows_containment_assigns_suspended_child_before_resume(
         "assign"
     )
     assert trace.index("assign") < trace.index("resume")
-    assert trace.index("wrapper_started_while_suspended") < trace.index(
-        "resume"
-    )
+    assert trace.index("wrapper_started_while_suspended") < trace.index("resume")
     assert trace.index("resume") < trace.index("close_primary_thread")
-    assert trace.index("close_primary_thread") < trace.index(
-        "spawn_callback_boundary"
-    )
+    assert trace.index("close_primary_thread") < trace.index("spawn_callback_boundary")
     close_counts = collections.Counter(controller._kernel.closed_handles)
     assert close_counts[200] == 1
     assert close_counts[201] == 1
@@ -468,8 +465,9 @@ async def test_windows_post_create_failure_is_retained_until_process_signals(
 
 
 @pytest.mark.asyncio
-async def test_windows_pre_create_exception_does_not_retain_empty_process_info(
-) -> None:
+async def test_windows_pre_create_exception_does_not_retain_empty_process_info() -> (
+    None
+):
     kernel, calls = _ctypes_windows_kernel_for_create_process(
         create_process_raises=True,
     )
@@ -575,9 +573,7 @@ async def test_windows_containment_invalid_resume_is_retained_without_callback(
     assert result.owned_process_tree
     assert result.containment_proved
     assert result.termination_uncertain
-    assert trace.index("wrapper_started_while_suspended") < trace.index(
-        "resume"
-    )
+    assert trace.index("wrapper_started_while_suspended") < trace.index("resume")
     assert trace.index("resume") < trace.index("runner_terminate_job")
     assert "runner_terminate_job" in trace
     assert max(collections.Counter(controller._kernel.closed_handles).values()) == 1
@@ -891,9 +887,7 @@ class _FakeCreateProcessCalls:
             value,
             self.kernel.ctypes.POINTER(handle_array_type),
         ).contents
-        self.created["handle_list"] = tuple(
-            int(handle or 0) for handle in handles
-        )
+        self.created["handle_list"] = tuple(int(handle or 0) for handle in handles)
         assert size == self.kernel.ctypes.sizeof(handle_array_type)
         self.trace.append("install_exact_handle_list")
         return True
@@ -1010,9 +1004,7 @@ def test_windows_containment_createprocess_uses_exact_abi_contract() -> None:
     assert identity.pid == 4242
     assert identity.thread_handle == 501
     assert calls.created["application_name"] == executable
-    assert calls.created["command_line"] == (
-        'C:/Git/bin/git.exe push "arg with space"'
-    )
+    assert calls.created["command_line"] == ('C:/Git/bin/git.exe push "arg with space"')
     assert calls.created["inherit_handles"] is True
     assert calls.created["handle_list"] == (201, 301, 401)
     assert calls.created["std_handles"] == (201, 301, 401)
@@ -1023,9 +1015,7 @@ def test_windows_containment_createprocess_uses_exact_abi_contract() -> None:
         | kernel._CREATE_UNICODE_ENVIRONMENT
         | kernel._EXTENDED_STARTUPINFO_PRESENT
     )
-    assert calls.created["environment_block"] == (
-        "PATH=C:/Git/bin\0TEMP=C:/Temp\0\0"
-    )
+    assert calls.created["environment_block"] == ("PATH=C:/Git/bin\0TEMP=C:/Temp\0\0")
     assert calls.trace == [
         "size_attribute_list",
         "initialize_attribute_list",
@@ -1085,8 +1075,9 @@ async def test_windows_containment_rejects_unresolved_or_nul_argv(argv) -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_tree_child_spawn_callback_follows_containment_admission(
-) -> None:
+async def test_process_tree_child_spawn_callback_follows_containment_admission() -> (
+    None
+):
     child = _ControlledProcess()
     controller = _FakeProcessTreeController(child, settle_on="terminate")
     runner = AsyncGitProcessRunner(process_tree_controller=controller)
@@ -1113,8 +1104,9 @@ async def test_process_tree_child_spawn_callback_follows_containment_admission(
 
 
 @pytest.mark.asyncio
-async def test_process_tree_timeout_uses_graceful_termination_and_drains_pipes(
-) -> None:
+async def test_process_tree_timeout_uses_graceful_termination_and_drains_pipes() -> (
+    None
+):
     child = _ControlledProcess()
     controller = _FakeProcessTreeController(child, settle_on="terminate")
     runner = AsyncGitProcessRunner(
@@ -1141,8 +1133,7 @@ async def test_process_tree_timeout_uses_graceful_termination_and_drains_pipes(
 
 
 @pytest.mark.asyncio
-async def test_process_tree_timeout_force_kills_after_one_bounded_grace_wait(
-) -> None:
+async def test_process_tree_timeout_force_kills_after_one_bounded_grace_wait() -> None:
     child = _ControlledProcess()
     controller = _FakeProcessTreeController(child, settle_on="kill")
     runner = AsyncGitProcessRunner(
@@ -1167,8 +1158,7 @@ async def test_process_tree_timeout_force_kills_after_one_bounded_grace_wait(
 
 
 @pytest.mark.asyncio
-async def test_process_tree_unproved_descendant_retains_uncertain_settlement(
-) -> None:
+async def test_process_tree_unproved_descendant_retains_uncertain_settlement() -> None:
     child = _ControlledProcess()
     controller = _FakeProcessTreeController(child, settle_on="child_only")
     runner = AsyncGitProcessRunner(
@@ -1296,8 +1286,7 @@ class _FailedAdmissionBarrierController(_AdmissionBarrierController):
 
 
 @pytest.mark.asyncio
-async def test_process_tree_pre_admission_cancellation_never_starts_child(
-) -> None:
+async def test_process_tree_pre_admission_cancellation_never_starts_child() -> None:
     child = _ControlledProcess()
     controller = _FakeProcessTreeController(child, settle_on="kill")
     runner = _PreAdmissionBarrierRunner(
@@ -1330,8 +1319,9 @@ async def test_process_tree_pre_admission_cancellation_never_starts_child(
 
 
 @pytest.mark.asyncio
-async def test_process_tree_pending_admission_rejects_cancellation_and_continues(
-) -> None:
+async def test_process_tree_pending_admission_rejects_cancellation_and_continues() -> (
+    None
+):
     child = _ControlledProcess()
     controller = _AdmissionBarrierController(child)
     runner = AsyncGitProcessRunner(
@@ -1378,8 +1368,9 @@ async def test_process_tree_pending_admission_rejects_cancellation_and_continues
 
 
 @pytest.mark.asyncio
-async def test_process_tree_repeated_cancellation_cannot_cancel_pending_admission(
-) -> None:
+async def test_process_tree_repeated_cancellation_cannot_cancel_pending_admission() -> (
+    None
+):
     child = _ControlledProcess()
     controller = _AdmissionBarrierController(child)
     runner = _CancellationWaitBarrierRunner(
@@ -1430,8 +1421,7 @@ async def test_process_tree_repeated_cancellation_cannot_cancel_pending_admissio
 
 
 @pytest.mark.asyncio
-async def test_process_tree_failed_admission_is_not_active_cancellation(
-) -> None:
+async def test_process_tree_failed_admission_is_not_active_cancellation() -> None:
     child = _ControlledProcess()
     controller = _FailedAdmissionBarrierController(child)
     runner = AsyncGitProcessRunner(
@@ -1528,8 +1518,9 @@ async def test_process_tree_zero_timeout_refreshes_native_containment_proof() ->
 
 
 @pytest.mark.asyncio
-async def test_process_tree_callback_failure_returns_token_when_cleanup_unproved(
-) -> None:
+async def test_process_tree_callback_failure_returns_token_when_cleanup_unproved() -> (
+    None
+):
     child = _ControlledProcess()
     controller = _FakeProcessTreeController(child, settle_on="child_only")
     runner = AsyncGitProcessRunner(
@@ -1605,8 +1596,9 @@ async def test_process_tree_controller_errors_return_explicit_uncertainty() -> N
 
 
 @pytest.mark.asyncio
-async def test_process_tree_shutdown_rescans_children_admitted_during_shutdown(
-) -> None:
+async def test_process_tree_shutdown_rescans_children_admitted_during_shutdown() -> (
+    None
+):
     class LateProofController(_AdmissionBarrierController):
         async def wait(self, tree: _FakeTree, *, timeout: float) -> bool:
             self.trace.append("wait")
@@ -1854,11 +1846,7 @@ async def test_process_tree_posix_session_kills_and_drains_stubborn_descendant(
         try:
             shutdown_proved = await shutdown
         finally:
-            if (
-                not shutdown_proved
-                or result is None
-                or not result.containment_proved
-            ):
+            if not shutdown_proved or result is None or not result.containment_proved:
                 _cleanup_captured_posix_group(readiness)
             await _finish_native_command_bounded(command)
     assert result is not None
@@ -1933,11 +1921,7 @@ async def test_process_tree_posix_stops_descendant_after_parent_exit(
         try:
             shutdown_proved = await shutdown
         finally:
-            if (
-                not shutdown_proved
-                or result is None
-                or not result.containment_proved
-            ):
+            if not shutdown_proved or result is None or not result.containment_proved:
                 _cleanup_captured_posix_group(readiness)
             await _finish_native_command_bounded(command)
     assert result is not None
@@ -1995,11 +1979,7 @@ async def test_process_tree_windows_job_contains_immediate_descendant_spawn(
         try:
             shutdown_proved = await shutdown
         finally:
-            if (
-                not shutdown_proved
-                or result is None
-                or not result.containment_proved
-            ):
+            if not shutdown_proved or result is None or not result.containment_proved:
                 _cleanup_captured_windows_processes(readiness)
             await _finish_native_command_bounded(command)
     assert result is not None

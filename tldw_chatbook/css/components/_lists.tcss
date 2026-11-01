@@ -109,9 +109,12 @@ DataTable:focus > .datatable--header {
     text-style: bold underline;
 }
 
+/* TASK-33003.17: `.selection-list--button-highlighted` is not in this rule.
+   It is the UNCHECKED box under the cursor, not a selected state: listed
+   here, its X painted like a checked one. Textual's own unchecked-box
+   default now paints it. */
 OptionList > .option-list--option-highlighted,
 OptionList:focus > .option-list--option-highlighted,
-SelectionList > .selection-list--button-highlighted,
 SelectionList > .selection-list--button-selected,
 SelectionList > .selection-list--button-selected-highlighted,
 Tree > .tree--cursor,
@@ -140,9 +143,11 @@ LibraryFileNotesWorkspace Tree:focus > .tree--cursor {
    checked/unchecked distinction and rendering the ▐▌ caps fg==bg (invisible).
    Scope a distinct toggle to THIS list only (id specificity). The CHECKED states
    are a sanctioned high-contrast override (the $ds-focus contract); the base
-   unchecked glyph renders as an empty box (no inner X). `-button-highlighted`
-   (an unchecked row under the cursor) is left to the shared contract above. */
-#settings-discovered-models-list .selection-list--button {
+   unchecked glyph renders as an empty box (no inner X). TASK-33003.17:
+   `-button-highlighted` (an unchecked row under the cursor) is that same
+   empty box, so the cursor never shows an X the row does not have. */
+#settings-discovered-models-list .selection-list--button,
+#settings-discovered-models-list .selection-list--button-highlighted {
     color: $ds-grid-line;
     background: $ds-grid-line;
 }

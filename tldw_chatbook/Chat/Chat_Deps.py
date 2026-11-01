@@ -11,6 +11,8 @@ class ChatAPIError(Exception):
         self.message = message
         self.status_code = status_code  # Suggested HTTP status code for the endpoint
         self.provider = provider
+        # Sanitized Console presentation is separate from diagnostic str/message.
+        self.console_copy: str | None = None
         super().__init__(self.message)
 
 
@@ -37,6 +39,7 @@ class ChatConfigurationError(ChatAPIError):
         message: str = "Chat provider configuration error.",
         provider: str | None = None,
         status_code: int | None = 500,
+        field: str | None = None,
     ) -> None:
         """Build a configuration failure, with or without a provider status.
 
@@ -48,8 +51,12 @@ class ChatConfigurationError(ChatAPIError):
                 configuration or data error raised during request
                 preparation. Callers that classify by status must treat
                 ``None`` as "no provider verdict", not as a server error.
+            field: For a request stopped by a local check, the request field
+                that failed it (``"messages"``), so the user copy can name it
+                without showing the message (TASK-32369).
         """
         super().__init__(message, status_code=status_code, provider=provider)
+        self.field = field
 
 
 class ChatBadRequestError(ChatAPIError):
@@ -106,6 +113,80 @@ class ChatProviderError(ChatAPIError):
         # 502 Bad Gateway often suitable for upstream errors
         self.details = details  # Store original error if available
         super().__init__(message, status_code=status_code, provider=provider)
+
+
+class ChatModelUnavailableError(ChatProviderError):
+    """Provider explicitly classified this model as unavailable."""
+
+    def __init__(
+        self,
+        message: str = "The requested model is unavailable.",
+        provider: str | None = None,
+        status_code: int | None = 404,
+    ) -> None:
+        """Initialize the provider's explicit model-unavailable classification.
+
+        Args:
+            message: Content-free diagnostic description.
+            provider: Provider identity, when known.
+            status_code: Original HTTP status, or None before HTTP dispatch.
+        """
+        super().__init__(message, status_code=status_code, provider=provider)
+
+
+def project_provider_error(exc: BaseException, provider: str) -> ChatAPIError | None:
+    """Preserve known retry semantics with content-free diagnostic bodies."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(exc, ChatModelUnavailableError):
+        return ChatModelUnavailableError(provider=provider, status_code=status)
+    if isinstance(exc, ChatAuthenticationError):
+        return ChatAuthenticationError(provider=provider)
+    if isinstance(exc, ChatBadRequestError):
+        return ChatBadRequestError(provider=provider, status_code=status)
+    if isinstance(exc, ChatConfigurationError):
+        return ChatConfigurationError(provider=provider, status_code=status)
+    if isinstance(exc, ChatRateLimitError):
+        return ChatRateLimitError(provider=provider, retry_after=exc.retry_after)
+    return None
+
+
+def model_unavailable_error(
+    provider: str, status: int, payload: object
+) -> ChatModelUnavailableError | None:
+    """Map documented machine codes only; status and prose never suffice.
+
+    Args:
+        provider: Provider or execution identity for the response.
+        status: Original HTTP response status.
+        payload: Decoded provider response to classify without copying its body.
+
+    Returns:
+        A content-free model-unavailable error for an explicit supported code,
+        otherwise None.
+    """
+    if status not in {400, 404} or not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    # The OpenAI-compatible model_not_found code is explicit. Providers with
+    # ambiguous not_found_error envelopes remain terminal until a distinct
+    # machine-code contract is available.
+    if (
+        str(provider).lower()
+        in {
+            "openai",
+            "groq",
+            "deepseek",
+            "moonshot",
+            "custom-openai-api",
+            "custom-openai-api-2",
+            "custom-hosted",
+        }
+        and error.get("code") == "model_not_found"
+    ):
+        return ChatModelUnavailableError(provider=provider, status_code=status)
+    return None
 
 
 # ---------------- End of Exceptions ----------------------------

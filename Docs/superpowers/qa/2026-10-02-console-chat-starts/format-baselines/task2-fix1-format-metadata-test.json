@@ -1,0 +1,35 @@
+{
+  "base_ref": "c9b3738434b9a1f95a37e0930491b47aa96a779f",
+  "base_sha": "c9b3738434b9a1f95a37e0930491b47aa96a779f",
+  "baseline_red_paths": [
+    "Tests/Chat/test_message_metadata.py"
+  ],
+  "files": {
+    "Tests/Chat/test_message_metadata.py": {
+      "debt_units": 26,
+      "formatter_required": true,
+      "normalized_diff_sha256": "941af34b0ea2d150cfd4a47b3a0c5b7eac44211b334620bbf1389a3f6b770c88",
+      "source_hunks": [
+        [
+          303,
+          310
+        ],
+        [
+          346,
+          356
+        ],
+        [
+          385,
+          391
+        ]
+      ],
+      "source_sha256": "5b43e80148e6ed84bbed11050801eb6249cc81cfb8532a2f9e1a91661c099136"
+    }
+  },
+  "generated_at_utc": "2026-10-03T04:25:05.177308+00:00",
+  "paths": [
+    "Tests/Chat/test_message_metadata.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

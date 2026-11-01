@@ -1,0 +1,45 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                                                                     │
+│ Author the pieces that shape a chat                                                                                                                          │
+│  Ready                                                                                                                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Personas — who you play in the chat · 4
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ ╭─────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────┐ │
+│ │  Library                         <  ││                     ▸ Try a test chat (nothing saved)                      ││                                     │ │
+│ │  Search...                          ││                                                                            ││  Inspector                       >  │ │
+│ │                 New                 ││ Persona Profile                                                          ▁ ││ Selected: Default Narrator          │ │
+│ │           New Actor Pack            ││  Name: Default Narrator                                                    ││ Type: persona                       │ │
+│ │          Import Actor Pack          ││                                                                            ││ Validation: OK                      │ │
+│ │             Sort: Name              ││  Description: Neutral third-person narrator for any roleplay.              ││ Tool policy: no rules               │ │
+│ │  Cozy Storyteller                   ││                                                                            ││ Readiness                           │ │
+│ │  Default Narrator                   ││  System prompt: Narrate in third person, present tense. Never speak for    ││ Ready to chat in Console.           │ │
+│ │  Isolde's Bridge Officer (linked)   ││  the user.                                                                 ││              Chat now               │ │
+│ │  Terse Code Reviewer                ││                                                                            ││        Send to Console draft        │ │
+│ │                                     ││                                                                            ││             Export JSON             │ │
+│ │                                     ││                                                                            ││          Export Actor Pack          │ │
+│ │                                     ││                                                                            ││               Delete                │ │
+│ │                                     ││                                                                            ││            Manage Buddy             │ │
+│ │                                     ││                                                                            ││             Show Buddy              │ │
+│ │                                     ││                                                                            ││             Close Buddy             │ │
+│ │                                     ││                                                                            ││            Disable Buddy            │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ ╰─────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────┘ │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | [ ] mode | s sort | F1 help · Ctrl+P palette · Ctrl+Q quit

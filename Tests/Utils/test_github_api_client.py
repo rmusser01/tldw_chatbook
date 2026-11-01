@@ -677,9 +677,7 @@ class TestGitHubAPIClientCrossEventLoop:
             assert app_client.is_closed is False
 
             def run_worker() -> None:
-                holder["worker_client"] = asyncio.run(
-                    self._touch_client(api_client)
-                )
+                holder["worker_client"] = asyncio.run(self._touch_client(api_client))
 
             worker_thread = threading.Thread(target=run_worker)
             worker_thread.start()
@@ -717,9 +715,7 @@ class TestGitHubAPIClientCrossEventLoop:
         """
         api_client = GitHubAPIClient(token="t")
         mock_logger = MagicMock()
-        monkeypatch.setattr(
-            "tldw_chatbook.Utils.github_api_client.logger", mock_logger
-        )
+        monkeypatch.setattr("tldw_chatbook.Utils.github_api_client.logger", mock_logger)
 
         captured: dict = {}
 

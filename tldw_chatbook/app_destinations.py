@@ -177,8 +177,14 @@ def open_chat_with_handoff(
     payload: ChatHandoffPayload,
     *,
     action_label: str = "Use in Chat",
-) -> None:
+) -> bool:
     """Stage a handoff payload for Chat and navigate there.
+
+    Returns:
+        Whether the payload was staged (TASK-34000.24 fix round 1: a caller
+        that linked the item on the way needs to know, so it can take its
+        own membership back and not claim "staged" after a refusal). The
+        refusal itself is already notified by ``_stage_handoff``.
 
     Args:
         payload: The handoff payload to stage as pending Chat context.
@@ -195,8 +201,9 @@ def open_chat_with_handoff(
         payload,
         recovery="Chat context could not be staged. Try again.",
     ):
-        return
+        return False
     app.post_message(NavigateToScreen(TAB_CHAT))
+    return True
 
 
 def stage_console_prompt_insert(
@@ -230,8 +237,13 @@ def open_console_for_live_work(
     status: str | None = None,
     recovery: str | None = None,
     action_label: str | None = None,
-) -> None:
-    """Open Console for live work launched from another destination."""
+) -> bool:
+    """Open Console for live work launched from another destination.
+
+    Returns:
+        Whether the work was staged (see ``open_chat_with_handoff``); the
+        refusal is already notified.
+    """
     if not app._stage_handoff(
         HandoffChannel.CONSOLE_LIVE_WORK,
         {
@@ -244,8 +256,9 @@ def open_console_for_live_work(
         },
         recovery="Console live work could not be staged. Try again.",
     ):
-        return
+        return False
     app.post_message(NavigateToScreen(TAB_CHAT))
+    return True
 
 
 def _stage_handoff(
@@ -767,6 +780,9 @@ async def _complete_character_conversation_post_commit(
     prior_resume_gate = getattr(
         candidate, "_resume_navigation_startup_in_progress", False
     )
+    retire_resume = getattr(candidate, "_retire_resume_navigation_startup", None)
+    if callable(retire_resume) and await retire_resume():
+        prior_resume_gate = False
     candidate._resume_navigation_startup_in_progress = True
     try:
         await app.push_screen(candidate)

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import PurePath
 from typing import Any
 from urllib.parse import urlparse
+
+from rich.cells import cell_len, set_cell_size
 
 from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
 from tldw_chatbook.Chat.console_session_settings import (
@@ -16,14 +20,26 @@ from tldw_chatbook.Chat.provider_catalog import provider_display_name
 CONSOLE_SETUP_CARD_TITLE = "Get started"
 #: TASK-2154.8 (FR-10): one plain-language sentence under the card title so a
 #: first-time user knows what a "provider" even is before the steps ask them
-#: to connect one. Kept provider-agnostic (no settings jargon).
+#: to connect one. Kept provider-agnostic (no settings jargon). TASK-33008.4:
+#: its second line says where cloud setup goes, and Enter is the only key it
+#: names, matching the blocked footer's Enter hint (ADR-031 rule 5).
+#: TASK-33008.2: the line promises no return for a custom endpoint, because
+#: Settings offers none there (no return can name a ``custom-ep:`` id).
 CONSOLE_SETUP_CARD_SUBTITLE = (
     "A provider is the AI service that answers your messages — "
-    "for example OpenAI, Anthropic, or a server running on this computer."
+    "for example OpenAI, Anthropic, or a server running on this computer.\n"
+    "Cloud setup opens Settings and comes back here, except for custom "
+    "endpoints. Press Enter to use the highlighted action."
 )
 CONSOLE_READY_EMPTY_COPY = "Ready — type a message to begin."
 CONSOLE_QUIET_EMPTY_COPY = "No messages yet."
 CONSOLE_SETUP_STEP_GLYPHS = {"done": "✓", "active": "●", "pending": "○"}
+#: The card's content cells: .console-setup-modal-card (features/_console.tcss)
+#: is 66 wide, padding 1 2, solid border. test_console_setup_card_fit.py
+#: measures the step lines against that rule.
+CONSOLE_SETUP_CARD_CONTENT_CELLS = 60
+#: An active step's readiness word sits on its own line, this far in.
+CONSOLE_SETUP_STEP_DETAIL_INDENT = "     "
 
 # TASK-2154.8 (FR-10): endpoint variants name the thing in plain terms first
 # ("server address") with the jargon glossed after it; "send-capable" becomes
@@ -40,6 +56,8 @@ _STEP_ONE_LABELS = {
     "readiness_unknown": "Finish provider setup",
 }
 CONSOLE_SETUP_STEP_THREE_DETAIL = "Composer unlocks after setup"
+#: TASK-34100.6: a local server answered, so 'no key' would point the wrong way.
+CONSOLE_SETUP_NO_MODEL_CONNECTED = "No model connected"
 # task-32140: the numbered steps above are all provider setup -- a
 # local-first user who came for notes was told the only available action
 # needed an API key. This secondary action needs no provider and routes
@@ -115,8 +133,9 @@ def build_console_detected_server_action(
             exists while the blocking ``card`` is showing.
 
     Returns:
-        The action (label, tooltip, and the values to persist) or ``None``
-        when no detected server should be offered.
+        The action (label, tooltip, and the detected provider, endpoint and
+        first listed model) or ``None`` when no detected server should be
+        offered.
     """
     if server is None or card_mode != "card":
         return None
@@ -142,15 +161,14 @@ def build_console_detected_server_action(
         if isinstance(model_id, str) and model_id.strip()
     )
     model_id = model_ids[0].strip() if model_ids else None
-    if model_id:
-        tooltip = f"Sets provider to {display_name} at {host_display} and model to {model_id}."
-    else:
-        tooltip = (
-            f"Sets provider to {display_name} at {host_display}. Pick a model next."
-        )
     return ConsoleDetectedServerAction(
         label=f"Use detected {display_name} ({host_display})",
-        tooltip=tooltip,
+        # TASK-33008.3: the action opens Switch model on this provider; it no
+        # longer adopts the first listed model, so the tooltip names none.
+        tooltip=(
+            f"Opens Switch model on {display_name} at {host_display}. "
+            "The model you pick becomes the default for new chats."
+        ),
         provider_key=provider_key,
         base_url=base_url,
         model_id=model_id,
@@ -183,6 +201,78 @@ def coerce_console_first_send_completed(raw: Any) -> bool:
     return False
 
 
+def _ready_line_copy(
+    provider_label: str, model: str, readiness: ConsoleSettingsReadiness
+) -> str:
+    """The one arrival line: what setup connected, then the ready prompt.
+
+    TASK-34100.5 AC#11 (E10): first-run arrival raised a stack of toasts;
+    the empty transcript now names the provider and model instead. A model
+    saved as a file path (llama.cpp) shows its file name. TASK-33005.7: the
+    prompt leads with the qualified readiness word every surface shows
+    ("Ready · not tested", "Ready · reachable HH:MM", ...).
+    """
+    ready = CONSOLE_READY_EMPTY_COPY
+    if readiness.operability == "ready_to_send":
+        ready = ready.replace("Ready", readiness_words(readiness), 1)
+    provider = str(provider_label or "").strip()
+    name = str(model or "").strip()
+    if name.startswith(("/", "~")):
+        name = PurePath(name).name
+    if not provider or not name:
+        return ready
+    return f"Setup complete — {provider} · {name}. {ready}"
+
+
+def env_keyed_provider_for_recovery(
+    app_config: Mapping[str, object],
+    current_provider: str,
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """A provider whose key is exported, when the current one still needs one.
+
+    TASK-34100.6 (review new-coverage-power-03): with only ANTHROPIC_API_KEY
+    exported, 'Set up provider' opened Settings on the template OpenAI with
+    'API key source: missing'. Settings now opens on the provider whose key
+    is there. Only the variable's presence is read; nothing is written.
+
+    Args:
+        app_config: The loaded configuration.
+        current_provider: The Console's provider, in any saved spelling.
+        environ: The environment to read (the process environment by default).
+
+    Returns:
+        That provider's readiness key, or None when the current provider is
+        ready, needs no key, or no other provider's key is exported.
+    """
+    import os
+
+    from tldw_chatbook.Chat.console_provider_support import (
+        resolve_console_provider_identity,
+    )
+    from tldw_chatbook.Chat.console_session_settings import settings_provider_catalog
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.config import is_valid_provider_api_key
+
+    environ = os.environ if environ is None else environ
+    try:
+        current = resolve_console_provider_identity(current_provider).readiness_key
+        readiness = get_provider_readiness(  # review F8: never a sync Keychain read
+            current, app_config, environ=environ, background_credentials=True
+        )
+    except (TypeError, ValueError):
+        return None
+    if readiness.ready or not readiness.requires_api_key:
+        return None
+    for entry in settings_provider_catalog():
+        facts = entry.setup_facts
+        if entry.readiness_key == current or facts.legacy or not entry.requires_api_key:
+            continue
+        if facts.env_var and is_valid_provider_api_key(environ.get(facts.env_var)):
+            return entry.readiness_key
+    return None
+
+
 def build_console_setup_card_state(
     *,
     readiness: ConsoleSettingsReadiness,
@@ -191,6 +281,9 @@ def build_console_setup_card_state(
     first_send_completed: bool,
     has_messages: bool,
     guidance_dismissed: bool,
+    model: str = "",
+    local_server_found: bool = False,
+    held_copy: str = "",
 ) -> ConsoleSetupCardState:
     """Derive the onboarding surface state from the readiness single source.
 
@@ -203,30 +296,57 @@ def build_console_setup_card_state(
             returns, including new tabs and workspaces.
         has_messages: Whether the active transcript has any messages.
         guidance_dismissed: In-session dismissal (user started composing).
+        model: The selected model, named in the ready line (TASK-34100.5).
+        local_server_found: A local server answered the card's scan, so the
+            missing piece is connecting it, not a key (TASK-34100.6).
+        held_copy: The emergency stop's copy while it holds new runs, else ""
+            (TASK-33620.1). Once setup is done the empty transcript says the
+            hold instead of "Ready — type a message to begin.".
 
     Returns:
         Card state: full ``card`` while setup is incomplete, one ``ready_line``
         when setup is complete but nothing was ever sent, ``quiet`` otherwise.
     """
-    if has_messages or first_send_completed:
-        return ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
-
     provider_done = readiness.operability == "ready_to_send" or readiness.blocker in {
         "model_missing",
         "active_run",
     }
+    held = str(held_copy or "").strip()
+    if held and (has_messages or first_send_completed or (provider_done and has_model)):
+        return ConsoleSetupCardState(mode="quiet", body_copy=held)
+    if has_messages or first_send_completed:
+        return ConsoleSetupCardState(mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY)
+
     if provider_done and has_model:
         if guidance_dismissed:
             return ConsoleSetupCardState(
                 mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
             )
         return ConsoleSetupCardState(
-            mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY
+            mode="ready_line",
+            body_copy=_ready_line_copy(provider_label, model, readiness),
         )
 
     provider_name = str(provider_label or "Provider").strip() or "Provider"
     # TASK-33005.3: the active step carries the one readiness word.
     word = readiness_words(readiness)
+    if local_server_found and readiness.blocker == "credential_missing":
+        word = CONSOLE_SETUP_NO_MODEL_CONNECTED  # entry-exit-handoff-21
+    # Capture finding 12: the word is this chat's provider's, so the step
+    # names it; beside "Use detected <server>" an unnamed "Not ready · no
+    # key" read as the server's. "Provider" is the callers' fallback, no name.
+    # The card prints this on its own line (console_setup_modal._step_text):
+    # a long name is cut so the word is never split by a wrap (TASK-33005.3).
+    budget = (
+        CONSOLE_SETUP_CARD_CONTENT_CELLS
+        - len(CONSOLE_SETUP_STEP_DETAIL_INDENT)
+        - 2
+        - cell_len(word)
+    )
+    name = provider_name
+    if cell_len(name) > budget:
+        name = set_cell_size(name, budget - 1).rstrip() + "…"
+    named_word = word if provider_name == "Provider" else f"{name}: {word}"
     step_one = ConsoleSetupStep(
         state="done" if provider_done else "active",
         label=(
@@ -234,7 +354,7 @@ def build_console_setup_card_state(
             if provider_done
             else _STEP_ONE_LABELS.get(readiness.blocker, "Finish provider setup")
         ),
-        detail=provider_name if provider_done else word,
+        detail=provider_name if provider_done else named_word,
     )
     # Step two only counts as done once the provider is actually ready AND a
     # model is set: template defaults (e.g. gpt-4o) must not pre-check the

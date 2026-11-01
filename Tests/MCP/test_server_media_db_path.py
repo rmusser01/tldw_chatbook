@@ -125,7 +125,11 @@ def test_no_other_undeclared_database_config_keys():
             source = py_file.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        if "get_cli_setting" not in source or '"database"' not in source and "'database'" not in source:
+        if (
+            "get_cli_setting" not in source
+            or '"database"' not in source
+            and "'database'" not in source
+        ):
             continue
         try:
             tree = ast.parse(source)
@@ -149,7 +153,9 @@ def test_no_other_undeclared_database_config_keys():
                 # Dynamic key (e.g. an f-string or variable) -- can't
                 # statically classify; skip rather than false-flag.
                 continue
-            is_declared_db_path_key = bool(re.fullmatch(r"[a-z0-9_]+_db_path", key_value))
+            is_declared_db_path_key = bool(
+                re.fullmatch(r"[a-z0-9_]+_db_path", key_value)
+            )
             if is_declared_db_path_key or key_value in known_non_path_database_keys:
                 continue
             offenders.append(f"{py_file.relative_to(package_root)}: {key_value!r}")

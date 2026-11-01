@@ -38,6 +38,7 @@ import os
 import posixpath
 import re
 import tempfile
+import threading
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -116,9 +117,7 @@ _MAX_EPUB_MARKUP_BYTES = 16 * 1024 * 1024
 _MAX_EPUB_TOTAL_BYTES = 128 * 1024 * 1024
 _MAX_EPUB_COMPRESSION_RATIO = 200
 _EPUB_ARCHIVE_LIMIT_ERROR = "EPUB archive exceeds safety limits."
-_EPUB_MARKUP_SUFFIXES = frozenset(
-    {".htm", ".html", ".ncx", ".opf", ".xhtml", ".xml"}
-)
+_EPUB_MARKUP_SUFFIXES = frozenset({".htm", ".html", ".ncx", ".opf", ".xhtml", ".xml"})
 
 
 def _normalize_epub_member_name(name: str) -> Optional[str]:
@@ -173,9 +172,7 @@ def _manifest_declared_markup_members(
             or media_type.endswith("+xml")
         ):
             continue
-        href = unquote(urlsplit(element.attrib.get("href", "")).path).replace(
-            "\\", "/"
-        )
+        href = unquote(urlsplit(element.attrib.get("href", "")).path).replace("\\", "/")
         if not href:
             raise ValueError(_EPUB_ARCHIVE_LIMIT_ERROR)
         resolved = _normalize_epub_member_name(posixpath.join(package_directory, href))
@@ -268,7 +265,7 @@ def process_ebook(
     api_key: Optional[str] = None,
     keyless_ok: bool = False,
     summarize_recursively: bool = False,
-    extraction_method: str = 'filtered',
+    extraction_method: str = "filtered",
     method: Optional[str] = None,  # Per-type option alias for ``extraction_method``.
     split_chapters: bool = True,  # Per-type option (not yet implemented).
     include_toc: bool = True,  # Per-type option for EPUB TOC extraction.
@@ -291,7 +288,9 @@ def process_ebook(
         Same as process_epub
     """
     if not EBOOK_PROCESSING_AVAILABLE:
-        raise ImportError("E-book processing libraries not available. Install with: pip install tldw_chatbook[ebook]")
+        raise ImportError(
+            "E-book processing libraries not available. Install with: pip install tldw_chatbook[ebook]"
+        )
 
     # Resolve per-type option aliases, preserving backward compatibility for
     # the legacy ``extraction_method`` parameter name.
@@ -328,7 +327,7 @@ def process_ebook(
             include_toc=include_toc,
             unsupported_options=unsupported_options,
         )
-    elif file_extension in ['.mobi', '.azw', '.azw3']:
+    elif file_extension in [".mobi", ".azw", ".azw3"]:
         result = process_mobi(
             file_path=file_path,
             title_override=title_override,
@@ -353,7 +352,7 @@ def process_ebook(
                 + ", ".join(unsupported_options)
             )
         return result
-    elif file_extension == '.fb2':
+    elif file_extension == ".fb2":
         result = process_fb2(
             file_path=file_path,
             title_override=title_override,
@@ -397,7 +396,7 @@ def process_ebook(
             "analysis": None,
             "keywords": keywords or [],
             "warnings": warnings_list or None,
-            "analysis_details": None
+            "analysis_details": None,
         }
 
 
@@ -487,10 +486,11 @@ def slugify(text: str) -> str:
 #
 # File Conversion Functions
 
+
 def epub_to_markdown(
     epub_path: str,
     include_toc: bool = True,
-) -> Tuple[str, Optional['epub.EpubBook']]:
+) -> Tuple[str, Optional["epub.EpubBook"]]:
     """
     Converts an EPUB file to Markdown format.
 
@@ -514,7 +514,9 @@ def epub_to_markdown(
                    is corrupted or parsing fails).
     """
     if not EBOOKLIB_AVAILABLE:
-        raise ImportError("ebooklib not available. Install with: pip install tldw_chatbook[ebook]")
+        raise ImportError(
+            "ebooklib not available. Install with: pip install tldw_chatbook[ebook]"
+        )
 
     book = None  # Initialize book
     try:
@@ -684,11 +686,20 @@ def read_epub_filtered(epub_path) -> Tuple[str, Optional["epub.EpubBook"]]:
 
         all_text_segments = []
 
+        # B27: ebooklib's ``get_item_with_id`` is a LINEAR scan over
+        # ``book.get_items()``, so resolving every spine entry through it cost
+        # O(spine x items) per extraction. Build the ``{id: item}`` map once
+        # instead; ``setdefault`` preserves the helper's first-match-wins
+        # contract (and a missing id still yields ``None`` downstream).
+        items_by_id: Dict[str, Any] = {}
+        for _item in book.get_items():
+            items_by_id.setdefault(_item.id, _item)
+
         # The spine is the main reading order of the EPUB.
         for itemref in book.spine:
             # itemref is typically ('idref', {})
             item_id = itemref[0]
-            item = book.get_item_with_id(item_id)
+            item = items_by_id.get(item_id)
 
             if item.get_type() != ebooklib.ITEM_DOCUMENT:
                 # Not an HTML/xHTML document, skip
@@ -958,7 +969,7 @@ def process_epub(
     api_key: Optional[str] = None,
     keyless_ok: bool = False,
     summarize_recursively: bool = False,
-    extraction_method: str = 'filtered',  # 'markdown', 'filtered', 'basic'
+    extraction_method: str = "filtered",  # 'markdown', 'filtered', 'basic'
     include_toc: bool = True,
     unsupported_options: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
@@ -1094,9 +1105,11 @@ def process_epub(
         ebook_obj = None
         extractor_func: Optional[callable] = None
 
-        if extraction_method == 'markdown':
-            extractor_func = lambda path: epub_to_markdown(path, include_toc=include_toc)
-        elif extraction_method == 'filtered':
+        if extraction_method == "markdown":
+            extractor_func = lambda path: epub_to_markdown(
+                path, include_toc=include_toc
+            )
+        elif extraction_method == "filtered":
             extractor_func = read_epub_filtered
         else:
             extractor_func = read_epub  # Default fallback
@@ -1342,42 +1355,90 @@ def process_epub(
             chunk_summaries = []
             summarized_chunks_for_result = []  # Keep track of chunks with summaries added
 
+            # --- B14: bounded-concurrency per-chunk analysis ---
+            # The LLM calls fan out under a small thread pool; every piece of
+            # observable state (``chunk_summaries``, per-chunk metadata,
+            # ``result["warnings"]``) is assembled back serially in chunk
+            # order below, so the result is identical to the historical serial
+            # loop -- only wall time changes. The per-chunk error isolation
+            # (marker metadata + warning, never an abort) lives inside
+            # ``_analyze_chunk`` exactly where the serial loop's try/except
+            # used to be.
+            from .analysis_concurrency import analyze_chunks_concurrently
+
+            _epub_chunk_texts = [
+                chunk_dict.get("text", "") for chunk_dict in processed_chunks
+            ]
+            _batch_error_pairs: List[Any] = []  # (marker id, exception), worker-thread appends
+            _batch_error_lock = threading.Lock()
+
+            def _analyze_chunk(text: str) -> str:
+                # Mirrors the serial loop's per-chunk isolation: a failing
+                # chunk becomes the same ``[Summarization Error: ...]``
+                # marker instead of aborting the batch. The assembly step
+                # recovers the exact exception (for the warning text) via the
+                # marker's object identity, so a genuine analysis can never be
+                # mistaken for an error slot.
+                try:
+                    # Match expected args for summarize function
+                    return analyze(
+                        api_name=api_name,
+                        input_data=text,
+                        custom_prompt_arg=custom_prompt,
+                        api_key=api_key,
+                        system_message=system_prompt,
+                        streaming=False,
+                    )
+                except Exception as summ_err:
+                    marker = f"[Summarization Error: {str(summ_err)}]"
+                    with _batch_error_lock:
+                        _batch_error_pairs.append((id(marker), summ_err))
+                    return marker
+
+            # Indices of chunks with text (empty chunks are never analyzed).
+            _nonempty_indices = [i for i, t in enumerate(_epub_chunk_texts) if t]
+            _analyses: Dict[int, Any] = {}
+            if _nonempty_indices:
+                _nonempty_results = analyze_chunks_concurrently(
+                    [_epub_chunk_texts[i] for i in _nonempty_indices],
+                    _analyze_chunk,
+                )
+                _analyses = dict(zip(_nonempty_indices, _nonempty_results))
+            _error_exc_by_marker_id = dict(_batch_error_pairs)
+
+            # Serial assembly in chunk order (warnings/summaries keep the
+            # exact order the serial loop produced).
             for i, chunk_dict in enumerate(
                 processed_chunks
             ):  # Iterate over list of dictionaries
-                chunk_text = chunk_dict.get("text", "")
+                chunk_text = _epub_chunk_texts[i]
                 # Preserve existing metadata from chunking, add analysis to it
                 chunk_metadata = chunk_dict.get("metadata", {}).copy()  # Work on a copy
+                analysis_text = _analyses.get(i) if chunk_text else None
+
                 if chunk_text:
-                    try:
-                        # Match expected args for summarize function
-                        analysis_text = analyze(
-                            api_name=api_name,
-                            input_data=chunk_text,
-                            custom_prompt_arg=custom_prompt,
-                            api_key=api_key,
-                            system_message=system_prompt,
-                            streaming=False,
-                        )
-                        if analysis_text and analysis_text.strip():
-                            chunk_summaries.append(analysis_text)
-                            chunk_metadata["analysis"] = (
-                                analysis_text  # Add analysis to chunk metadata
-                            )
-                        else:
-                            chunk_metadata["analysis"] = None
-                            logger.debug(
-                                f"Summarization yielded empty result for chunk {i + 1}/{len(processed_chunks)} of {file_path}."
-                            )
-                    except Exception as summ_err:
+                    summ_err = (
+                        _error_exc_by_marker_id.get(id(analysis_text))
+                        if analysis_text is not None
+                        else None
+                    )
+                    if summ_err is not None:
                         logger.opt(exception=True).warning(
                             f"Summarization failed for chunk {i + 1}/{len(processed_chunks)} of {file_path}: {summ_err}"
                         )
-                        chunk_metadata["analysis"] = (
-                            f"[Summarization Error: {str(summ_err)}]"
-                        )
+                        chunk_metadata["analysis"] = analysis_text
                         result["warnings"].append(
                             f"Summarization failed for chunk {i + 1}: {str(summ_err)}"
+                        )
+                    elif analysis_text and analysis_text.strip():
+                        chunk_summaries.append(analysis_text)
+                        chunk_metadata["analysis"] = (
+                            analysis_text  # Add analysis to chunk metadata
+                        )
+                    else:
+                        chunk_metadata["analysis"] = None
+                        logger.debug(
+                            f"Summarization yielded empty result for chunk {i + 1}/{len(processed_chunks)} of {file_path}."
                         )
 
                 # Update the chunk dictionary with new/updated metadata
@@ -2005,8 +2066,10 @@ def _process_markup_or_plain_text(
         # path's note.
         from .analysis_gate import analysis_credentials_ok
 
-        if perform_analysis and api_name and analysis_credentials_ok(
-            api_key, keyless_ok
+        if (
+            perform_analysis
+            and api_name
+            and analysis_credentials_ok(api_key, keyless_ok)
         ):
             from ..LLM_Calls.Summarization_General_Lib import analyze
 
@@ -2021,34 +2084,76 @@ def _process_markup_or_plain_text(
             chunk_summaries = []
             summarized_chunks_for_result = []
 
+            # --- B14: bounded-concurrency per-chunk analysis ---
+            # Same shape as the EPUB loop above: LLM calls fan out under a
+            # small thread pool; assembly below is serial and in chunk order
+            # so results/warnings match the historical serial loop exactly.
+            from .analysis_concurrency import analyze_chunks_concurrently
+
+            _plain_chunk_texts = [chunk.get("text", "") for chunk in processed_chunks]
+            _batch_error_pairs: List[Any] = []  # (marker id, exception), worker-thread appends
+            _batch_error_lock = threading.Lock()
+
+            def _analyze_chunk(text: str) -> str:
+                # Mirrors the serial loop's per-chunk isolation: a failing
+                # chunk becomes the same ``[Summarization Error: ...]``
+                # marker instead of aborting the batch. The assembly step
+                # recovers the exact exception (for the warning text) via the
+                # marker's object identity, so a genuine analysis can never be
+                # mistaken for an error slot.
+                try:
+                    return analyze(
+                        api_name=api_name,
+                        input_data=text,
+                        custom_prompt_arg=custom_prompt,
+                        api_key=api_key,
+                        system_message=system_prompt,
+                        streaming=False,
+                    )
+                except Exception as summ_err:
+                    marker = f"[Summarization Error: {summ_err}]"
+                    with _batch_error_lock:
+                        _batch_error_pairs.append((id(marker), summ_err))
+                    return marker
+
+            # Indices of chunks with text (empty chunks are never analyzed).
+            _nonempty_indices = [i for i, t in enumerate(_plain_chunk_texts) if t]
+            _analyses: Dict[int, Any] = {}
+            if _nonempty_indices:
+                _nonempty_results = analyze_chunks_concurrently(
+                    [_plain_chunk_texts[i] for i in _nonempty_indices],
+                    _analyze_chunk,
+                )
+                _analyses = dict(zip(_nonempty_indices, _nonempty_results))
+            _error_exc_by_marker_id = dict(_batch_error_pairs)
+
+            # Serial assembly in chunk order (warnings/summaries keep the
+            # exact order the serial loop produced).
             for i, chunk in enumerate(processed_chunks):
-                chunk_text = chunk.get("text", "")
+                chunk_text = _plain_chunk_texts[i]
                 chunk_metadata = chunk.get("metadata", {})
+                analysis_text = _analyses.get(i) if chunk_text else None
                 if chunk_text:
-                    try:
-                        summary_text = analyze(
-                            api_name=api_name,
-                            input_data=chunk_text,
-                            custom_prompt_arg=custom_prompt,
-                            api_key=api_key,
-                            system_message=system_prompt,
-                            streaming=False,
-                        )
-                        if summary_text and summary_text.strip():
-                            chunk_summaries.append(summary_text)
-                            chunk_metadata["summary"] = summary_text
-                        else:
-                            chunk_metadata["summary"] = None
-                            logger.debug(
-                                f"Summarization yielded empty result for chunk {i} of {file_path}."
-                            )
-                    except Exception as summ_err:
+                    summ_err = (
+                        _error_exc_by_marker_id.get(id(analysis_text))
+                        if analysis_text is not None
+                        else None
+                    )
+                    if summ_err is not None:
                         logger.warning(
                             f"Summarization failed for chunk {i} of {file_path}: {summ_err}"
                         )
-                        chunk_metadata["summary"] = f"[Summarization Error: {summ_err}]"
+                        chunk_metadata["summary"] = analysis_text
                         result["warnings"].append(
                             f"Summarization failed for chunk {i}: {summ_err}"
+                        )
+                    elif analysis_text and analysis_text.strip():
+                        chunk_summaries.append(analysis_text)
+                        chunk_metadata["summary"] = analysis_text
+                    else:
+                        chunk_metadata["summary"] = None
+                        logger.debug(
+                            f"Summarization yielded empty result for chunk {i} of {file_path}."
                         )
 
                 chunk["metadata"] = chunk_metadata

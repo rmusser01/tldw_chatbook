@@ -199,6 +199,18 @@ def _read_bounded_stream(stream, max_output_bytes: int) -> tuple[bytes, bool]:
     return bytes(output[:max_output_bytes]), True
 
 
+@dataclass(frozen=True, slots=True)
+class GitBytesResult:
+    """Internal bounded bytes; a failed stream is never successful empty output."""
+
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    truncated: bool = False
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+
+
 def run_git(
     argv: list[str],
     *,
@@ -208,45 +220,75 @@ def run_git(
     timeout: float = GIT_TIMEOUT_SECONDS,
     max_output_bytes: int = GIT_MAX_OUTPUT_BYTES,
 ) -> GitCommandResult:
-    """Run an allowlisted git command with bounded output and a timeout.
-
-    Fixed argv only: ``argv[0]`` must be logical ``git``, the only permitted
-    global option is ``--no-pager`` (``--version`` must stand alone), and the
-    subcommand must be in ``_ALLOWED_GIT_SUBCOMMANDS``. The absolute executable
-    replaces logical argv zero only at launch. The environment is sanitized
-    (PATH + git safety vars only) and stdin is
-    DEVNULL. Output per stream is capped at ``max_output_bytes`` — the
-    process is killed when the cap is exceeded (never fully buffered) and a
-    truncation marker is appended. Timeout kills the process and raises.
-
-    NOTE: validation stops at the subcommand. Everything AFTER the
-    subcommand is caller-constructed and NOT validated at this layer — e.g.
-    ``["git", "diff", "--output=/tmp/pwn"]`` passes ``_validate_argv``.
-    Callers (the tool cores below) must therefore build argv only from
-    fixed literals plus values they have validated themselves (see the
-    ``commit_range`` leading-dash/regex checks in :func:`git_diff`) and
-    must never splice raw model-controlled strings into flag positions.
-
-    Raises:
-        LocalToolError: argv validation failure, git unavailable, or timeout.
-    """
+    """Preserve the allowlisted public text API over the bounded byte runner."""
     _validate_argv(argv)
+    result = _run_git_bytes(
+        argv,
+        cwd=cwd,
+        executable=executable,
+        own_process_group=own_process_group,
+        timeout=timeout,
+        max_output_bytes=max_output_bytes,
+    )
+    return GitCommandResult(
+        argv=list(argv),
+        returncode=result.returncode,
+        stdout=result.stdout.decode("utf-8", errors="replace")
+        + (
+            GIT_TRUNCATED_MARKER if result.truncated and result.stdout_truncated else ""
+        ),
+        stderr=result.stderr.decode("utf-8", errors="replace")
+        + (
+            GIT_TRUNCATED_MARKER if result.truncated and result.stderr_truncated else ""
+        ),
+        truncated=result.truncated,
+    )
+
+
+def _run_git_bytes(
+    argv: list[str],
+    *,
+    cwd: Path | None = None,
+    executable: Path | None = None,
+    own_process_group: bool = True,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+    max_output_bytes: int = GIT_MAX_OUTPUT_BYTES,
+    immutable_objects: bool = False,
+) -> GitBytesResult:
+    """Run host-built fixed argv, preserving bytes and bounded failure signals.
+
+    Public callers enter through run_git's allowlist. Internal object readers
+    construct every flag here themselves and validate their OIDs and paths.
+    """
     resolved_executable = executable or (
         Path(found) if (found := shutil.which("git")) is not None else None
     )
     if resolved_executable is None:
         raise LocalToolError("git is not available on this system")
     resolved_executable = resolved_executable.resolve()
-    if not isinstance(max_output_bytes, int) or isinstance(max_output_bytes, bool) or max_output_bytes <= 0:
+    if (
+        not isinstance(max_output_bytes, int)
+        or isinstance(max_output_bytes, bool)
+        or max_output_bytes <= 0
+    ):
         max_output_bytes = GIT_MAX_OUTPUT_BYTES
 
+    environment = _git_environment()
+    if immutable_objects:
+        environment.update(
+            {
+                "GIT_NO_REPLACE_OBJECTS": "1",
+                "GIT_NO_LAZY_FETCH": "1",
+                "GIT_GRAFT_FILE": os.devnull,
+            }
+        )
     process = subprocess.Popen(
         [str(resolved_executable), *argv[1:]],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=cwd,
-        env=_git_environment(),
+        env=environment,
         # Own process group so the timeout/cap kills can reap grandchildren
         # too (a bare process.kill() leaves e.g. a textconv child alive —
         # and a live grandchild holding the pipe write end would stall the
@@ -255,13 +297,15 @@ def run_git(
     )
 
     results: dict[str, tuple[bytes, bool]] = {}
+    read_errors: list[Exception] = []
     done: queue.Queue[tuple[str, tuple[bytes, bool]]] = queue.Queue()
 
     def _reader(name: str, stream) -> None:  # noqa: ANN001 - pipe reader
         try:
             done.put((name, _read_bounded_stream(stream, max_output_bytes)))
-        except Exception:  # defensive: a broken pipe must not hang the join loop
-            done.put((name, (b"", False)))
+        except Exception as exc:  # a broken pipe must not become an empty tree
+            read_errors.append(exc)
+            done.put((name, (b"", True)))
 
     for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
         threading.Thread(target=_reader, args=(name, stream), daemon=True).start()
@@ -273,7 +317,9 @@ def run_git(
             _kill_process(process, own_process_group=own_process_group)
             with contextlib.suppress(Exception):
                 process.wait()
-            raise LocalToolError(f"git command timed out after {timeout} seconds: {list(argv)}")
+            raise LocalToolError(
+                f"git command timed out after {timeout} seconds: {list(argv)}"
+            )
         try:
             name, data = done.get(timeout=min(remaining, 0.05))
         except queue.Empty:
@@ -289,25 +335,19 @@ def run_git(
 
     stdout_bytes, stdout_truncated = results.get("stdout", (b"", False))
     stderr_bytes, stderr_truncated = results.get("stderr", (b"", False))
-    stdout = stdout_bytes.decode("utf-8", errors="replace")
-    stderr = stderr_bytes.decode("utf-8", errors="replace")
-    if stdout_truncated:
-        stdout += GIT_TRUNCATED_MARKER
-    if stderr_truncated:
-        stderr += GIT_TRUNCATED_MARKER
-    return GitCommandResult(
-        argv=list(argv),
+    if read_errors:
+        raise LocalToolError("git output read failed") from read_errors[0]
+    return GitBytesResult(
         returncode=int(process.returncode if process.returncode is not None else -1),
-        stdout=stdout,
-        stderr=stderr,
-        timed_out=False,
+        stdout=stdout_bytes,
+        stderr=stderr_bytes,
         truncated=stdout_truncated or stderr_truncated,
+        stdout_truncated=stdout_truncated,
+        stderr_truncated=stderr_truncated,
     )
 
 
-def _kill_process(
-    process: subprocess.Popen, *, own_process_group: bool = True
-) -> None:
+def _kill_process(process: subprocess.Popen, *, own_process_group: bool = True) -> None:
     """Kill the whole process group on POSIX; fall back to the direct child."""
     if own_process_group and os.name == "posix":
         # process was started with start_new_session=True, so its pid is
@@ -451,9 +491,7 @@ def _denylist_pathspecs(
         elif kind == "name":
             specs.append(f":(exclude,glob,icase)**/{_glob_escape(value)}")
         else:  # pragma: no cover - defensive; see the docstring
-            raise LocalToolError(
-                f"unsupported sensitive-path exclusion kind: {kind!r}"
-            )
+            raise LocalToolError(f"unsupported sensitive-path exclusion kind: {kind!r}")
     return tuple(specs)
 
 
@@ -464,8 +502,7 @@ def _repo_relative_exclusions(
 ) -> tuple[SensitiveExclusion, ...]:
     """Translate parent-admitted workspace exclusions to repository-relative."""
     repo_parts = tuple(
-        part.casefold()
-        for part in repo_root.relative_to(workspace_root).parts
+        part.casefold() for part in repo_root.relative_to(workspace_root).parts
     )
     translated: list[SensitiveExclusion] = []
     for exclusion in exclusions:
@@ -487,7 +524,9 @@ def _repo_relative_exclusions(
             continue
         if exclusion.kind in {"subtree", "file"}:
             translated.append(SensitiveExclusion(exclusion.kind, ""))
-        elif exclusion.kind == "direct_children" and len(repo_parts) == len(folded_value):
+        elif exclusion.kind == "direct_children" and len(repo_parts) == len(
+            folded_value
+        ):
             translated.append(SensitiveExclusion("direct_children", ""))
     return tuple(translated)
 
@@ -785,14 +824,17 @@ def git_status(
 
     Args:
         workspace_root: The confinement root ``path`` must resolve inside.
-        path: Used ONLY to discover which repository to report on (a file
-            or directory anywhere inside the target repo works, since
-            discovery walks up to the repo root). It is NOT applied as a
-            scoping pathspec: unlike ``git_diff``/``git_log``, this
-            function's argv carries no positive pathspec for ``path``, so
-            the status returned always covers the WHOLE repository —
-            asking for a subdirectory's status still returns every
-            changed file in the repo, not just that subdirectory's.
+        path: Scopes the reported entries to this path (a file or
+            directory), relative to the workspace root, exactly as
+            ``git_diff``/``git_log`` apply theirs. The path ALSO discovers
+            which repository to report on (discovery walks up to the repo
+            root from it). TASK-19874: this used to be discovery-only --
+            a model narrowing to a subdirectory silently received every
+            changed file in the whole repository; the argv now carries
+            the path as a ``:(literal)`` positive pathspec ahead of the
+            denylist exclusions, so a magic-shaped filename cannot invert
+            the scope and the exclusions still apply on top (both pinned
+            by tests).
 
     Returns:
         The branch header line, one ``category: XY path`` (or
@@ -810,6 +852,32 @@ def git_status(
         executable=executable,
         own_process_group=own_process_group,
     )
+    pathspecs: list[str] = []
+    if path not in (None, "."):
+        # TASK-19874: the positive scoping pathspec, spelled exactly like
+        # git_diff/git_log's (``_literal_pathspec`` -- ``:(literal)`` kills
+        # pathspec magic, so a repository file named like a magic prefix
+        # cannot invert the scope; TASK-19632's tripwire covers this call
+        # site like the other two).
+        pathspecs.append(
+            _literal_pathspec(
+                _repo_relative_path(
+                    workspace_root,
+                    repo_root,
+                    path,
+                    context=context,
+                    sensitive_exclusions=sensitive_exclusions,
+                )
+            )
+        )
+    pathspecs.extend(
+        _denylist_pathspecs(
+            repo_root,
+            context=context,
+            workspace_root=workspace_root,
+            sensitive_exclusions=sensitive_exclusions,
+        )
+    )
     result = _run_git_checked(
         [
             "git",
@@ -820,17 +888,10 @@ def git_status(
             "--branch",
             "--untracked-files=all",
             "--",
-            *_denylist_pathspecs(
-                repo_root,
-                context=context,
-                workspace_root=workspace_root,
-                sensitive_exclusions=sensitive_exclusions,
-            ),
+            *pathspecs,
         ],
         subcommand="status",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -980,9 +1041,7 @@ def git_branches(
             "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)%00%(objectname)",
         ],
         subcommand="branch",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -1080,9 +1139,7 @@ def git_log(
     result = _run_git_checked(
         argv,
         subcommand="log",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -1158,7 +1215,9 @@ def git_diff(
         # machine-safe --no-textconv/--no-ext-diff already present —
         # verified as a command-execution escape via a hostile repo's
         # .gitattributes diff driver. Refuse outright.
-        if commit_range.startswith("-") or not _COMMIT_RANGE_PATTERN.match(commit_range):
+        if commit_range.startswith("-") or not _COMMIT_RANGE_PATTERN.match(
+            commit_range
+        ):
             raise LocalToolError(
                 f"invalid commit_range {commit_range!r}: "
                 "must be a ref/range matching [A-Za-z0-9._/~^-] and not start with '-'"
@@ -1219,9 +1278,7 @@ def git_diff(
     result = _run_git_checked(
         argv,
         subcommand="diff",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -1299,13 +1356,13 @@ def git_blame(
     result = _run_git_checked(
         argv,
         subcommand="blame",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
-    lines = [f"{ln}: {author}: {text}" for ln, author, text in _parse_blame(result.stdout)]
+    lines = [
+        f"{ln}: {author}: {text}" for ln, author, text in _parse_blame(result.stdout)
+    ]
     return "\n".join(lines) if lines else "(no blame output)"
 
 
@@ -1334,7 +1391,9 @@ def _parse_blame(stdout: str) -> list[tuple[int, str, str]]:
         if raw_line.startswith("author "):
             author_name = raw_line.removeprefix("author ")
             current["author_name"] = author_name
-            commit_metadata.setdefault(str(current["commit"]), {})["author_name"] = author_name
+            commit_metadata.setdefault(str(current["commit"]), {})["author_name"] = (
+                author_name
+            )
     return lines
 
 

@@ -1,0 +1,291 @@
+{
+  "server": "commandcode",
+  "base_url": "https://api.commandcode.ai/provider/v1",
+  "probe_model": "claude-haiku-4-5-20251001",
+  "listing": {
+    "status": 200,
+    "entries": [
+      {
+        "id": "claude-sonnet-5-5"
+      },
+      {
+        "id": "claude-sonnet-5"
+      },
+      {
+        "id": "claude-sonnet-4-6"
+      },
+      {
+        "id": "claude-fable-5-1"
+      },
+      {
+        "id": "claude-fable-5"
+      },
+      {
+        "id": "claude-opus-5-5"
+      },
+      {
+        "id": "claude-opus-5"
+      },
+      {
+        "id": "claude-opus-4-8"
+      },
+      {
+        "id": "claude-opus-4-7"
+      },
+      {
+        "id": "claude-haiku-4-5-20251001"
+      },
+      {
+        "id": "gpt-6-astra"
+      },
+      {
+        "id": "gpt-6.1-sol"
+      },
+      {
+        "id": "gpt-6-sol"
+      },
+      {
+        "id": "gpt-6-luna"
+      },
+      {
+        "id": "gpt-5.6-sol"
+      },
+      {
+        "id": "gpt-5.6-terra"
+      },
+      {
+        "id": "gpt-5.6-luna"
+      },
+      {
+        "id": "gpt-5.5"
+      },
+      {
+        "id": "gpt-5.4"
+      },
+      {
+        "id": "gpt-5.3-codex"
+      },
+      {
+        "id": "gpt-5.4-mini"
+      },
+      {
+        "id": "deepseek/deepseek-v4-pro"
+      },
+      {
+        "id": "deepseek/deepseek-v4-flash"
+      },
+      {
+        "id": "deepseek/deepseek-v4-flash-vision-exp"
+      },
+      {
+        "id": "deepseek/deepseek-v4-flash-fast"
+      },
+      {
+        "id": "deepseek/deepseek-v4.1-flash"
+      },
+      {
+        "id": "deepseek/deepseek-v4.1-flash-fast"
+      },
+      {
+        "id": "moonshotai/Kimi-K3"
+      },
+      {
+        "id": "moonshotai/Kimi-K2.7-Code"
+      },
+      {
+        "id": "moonshotai/Kimi-K2.7-Code-Highspeed"
+      },
+      {
+        "id": "moonshotai/Kimi-K2.6"
+      },
+      {
+        "id": "moonshotai/Kimi-K2.5"
+      },
+      {
+        "id": "z-ai/glm-5.3-flash"
+      },
+      {
+        "id": "z-ai/glm-5.3-flashx"
+      },
+      {
+        "id": "zai-org/GLM-5.3"
+      },
+      {
+        "id": "zai-org/GLM-5.2"
+      },
+      {
+        "id": "zai-org/GLM-5.2-Fast"
+      },
+      {
+        "id": "zai-org/GLM-5.1"
+      },
+      {
+        "id": "zai-org/GLM-5"
+      },
+      {
+        "id": "MiniMaxAI/MiniMax-M3"
+      },
+      {
+        "id": "MiniMaxAI/MiniMax-M2.7"
+      },
+      {
+        "id": "MiniMaxAI/MiniMax-M2.5"
+      },
+      {
+        "id": "xiaomi/mimo-v2.6-pro"
+      },
+      {
+        "id": "xiaomi/mimo-v2.6-pro-ultraspeed"
+      },
+      {
+        "id": "xiaomi/mimo-v2.6-flash"
+      },
+      {
+        "id": "xiaomi/mimo-v2.5-pro"
+      },
+      {
+        "id": "xiaomi/mimo-v2.5"
+      },
+      {
+        "id": "Qwen/Qwen3.8-Omni-Flash"
+      },
+      {
+        "id": "Qwen/Qwen3.8-Max-0902"
+      },
+      {
+        "id": "Qwen/Qwen3.8-Max"
+      },
+      {
+        "id": "Qwen/Qwen3.8-27B"
+      },
+      {
+        "id": "Qwen/Qwen3.8-Flash"
+      },
+      {
+        "id": "Qwen/Qwen3.7-Max"
+      },
+      {
+        "id": "Qwen/Qwen3.7-Plus"
+      },
+      {
+        "id": "Qwen/Qwen3.7-Flash"
+      },
+      {
+        "id": "Qwen/Qwen3.6-Max-Preview"
+      },
+      {
+        "id": "Qwen/Qwen3.6-Plus"
+      },
+      {
+        "id": "meituan/LongCat-2.0"
+      },
+      {
+        "id": "stepfun/Step-5-Preview"
+      },
+      {
+        "id": "stepfun/Step-3.7-Flash"
+      },
+      {
+        "id": "stepfun/Step-3.5-Flash"
+      },
+      {
+        "id": "tencent/hy3-paid"
+      },
+      {
+        "id": "tencent/hy4-preview"
+      },
+      {
+        "id": "google/gemini-3.8-flash"
+      },
+      {
+        "id": "google/gemini-3.7-flash"
+      },
+      {
+        "id": "google/gemini-3.6-flash"
+      },
+      {
+        "id": "google/gemini-3.5-flash"
+      },
+      {
+        "id": "google/gemini-3.5-flash-lite"
+      },
+      {
+        "id": "google/gemini-3.1-flash-lite"
+      },
+      {
+        "id": "sakana/fugu-ultra"
+      },
+      {
+        "id": "nvidia/nemotron-3-ultra-550b-a55b"
+      },
+      {
+        "id": "thinkingmachines/inkling"
+      },
+      {
+        "id": "thinkingmachines/inkling-small"
+      },
+      {
+        "id": "stealth/space-bunny-alpha"
+      },
+      {
+        "id": "stealth/pixel-canary"
+      },
+      {
+        "id": "poolside/laguna-s-2.1-free"
+      },
+      {
+        "id": "inclusionai/ling-3.0-flash-sante:free"
+      },
+      {
+        "id": "inclusionai/ling-3.1-flash:free"
+      },
+      {
+        "id": "meta/muse-spark-1.1"
+      },
+      {
+        "id": "meta/muse-spark-1.2"
+      },
+      {
+        "id": "meta/muse-spark-1.2-contributor"
+      },
+      {
+        "id": "meta/muse-spark-1.3"
+      },
+      {
+        "id": "meta/muse-spark-1.3-contributor"
+      },
+      {
+        "id": "xai/grok-4.5"
+      },
+      {
+        "id": "xai/grok-4.6"
+      },
+      {
+        "id": "xai/grok-4.7"
+      }
+    ]
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "success": false,
+      "error": {
+        "code": "UNAUTHORIZED",
+        "status": 401,
+        "message": "Invalid 'Authorization' header or token.",
+        "docs": "https://commandcode.ai/docs/reference/errors/unauthorized"
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "Invalid 'Authorization' header or token.",
+        "type": "authentication_error",
+        "code": "UNAUTHORIZED"
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:20:04+00:00"
+}

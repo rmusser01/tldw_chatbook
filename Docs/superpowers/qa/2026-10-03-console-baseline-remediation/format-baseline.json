@@ -1,0 +1,28 @@
+{
+  "base_ref": "bc2be106f1cc0409ef283c60c6778ff12c972d7a",
+  "base_sha": "bc2be106f1cc0409ef283c60c6778ff12c972d7a",
+  "baseline_red_paths": [],
+  "files": {
+    "Tests/Chat/test_console_agent_project_instructions.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "1218caacad38ddc521e83b63f2d89fb82eeb14059eef58239145acd185fbcc29"
+    },
+    "Tests/Chat/test_console_chat_fork.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "783d321bc852e87af99dba0bb71210514f89074a8b7bd93a1f3c40b0292c45b7"
+    }
+  },
+  "generated_at_utc": "2026-10-03T14:20:39.204865+00:00",
+  "paths": [
+    "Tests/Chat/test_console_agent_project_instructions.py",
+    "Tests/Chat/test_console_chat_fork.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

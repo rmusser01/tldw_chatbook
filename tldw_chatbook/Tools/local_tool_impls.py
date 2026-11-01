@@ -57,7 +57,7 @@ import stat as stat_module
 import threading
 import uuid
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 
 from tldw_chatbook.Tools.worker_watchdog import register_temp, unregister_temp
 from tldw_chatbook.Utils.path_validation import validate_path
@@ -91,6 +91,80 @@ _MAX_GREP_FILE_BYTES = 2 * 1024 * 1024  # skip huge files
 _MAX_WRITE_DIFF_CHARS = 12 * 1024
 _WRITE_LOCKS_GUARD = threading.Lock()
 _WRITE_LOCKS: dict[str, threading.Lock] = {}
+
+# --- TASK-18927: self-recovery hints -------------------------------------
+#
+# Recovery messages are bounded, clearly machine-generated hints -- never
+# instructions the model must obey. Every hint line is prefixed with
+# ``HINT_LABEL`` so a transcript reader can always tell a tool-authored
+# suggestion apart from a tool's factual result.
+
+HINT_LABEL = "hint (tool-generated)"
+#: Hard cap on any single hint block. Diagnoses are advisory scaffolding
+#: around a failure, never a channel for replaying file content back.
+_MAX_HINT_CHARS = 600
+#: Cap on near-miss candidates offered in one hint.
+_MAX_HINT_CANDIDATES = 3
+#: difflib similarity cutoff for a line/name to qualify as a near miss.
+_HINT_SIMILARITY_CUTOFF = 0.6
+#: Cap on characters of one candidate line shown in a hint.
+_MAX_HINT_LINE_CHARS = 100
+#: Cap on workspace names collected during a glob walk for near-miss
+#: probing (memory bound independent of workspace size).
+_MAX_HINT_NAME_POOL = 2_000
+
+
+def _visualize_whitespace(text: str) -> str:
+    """Render a snippet with visible whitespace (TASK-18927 AC#2)."""
+    return (
+        text.replace("\t", "\\t")
+        .replace("\r", "\\r")
+        .replace(" ", "·")
+    )
+
+
+def _bound_hint(text: str) -> str:
+    """Clamp a hint block to ``_MAX_HINT_CHARS``."""
+    if len(text) <= _MAX_HINT_CHARS:
+        return text
+    return text[: _MAX_HINT_CHARS - 1] + "…"
+
+
+def _closest_lines(
+    needle: str, haystack: list[str], limit: int = _MAX_HINT_CANDIDATES
+) -> list[tuple[int, str]]:
+    """Return up to ``limit`` ``(index, line)`` near misses for ``needle``.
+
+    Exact bodies first (the text exists, just not where expected), then
+    difflib-similar bodies above ``_HINT_SIMILARITY_CUTOFF``.
+    """
+    import difflib
+
+    stripped = needle.strip()
+    if not stripped:
+        return []
+    found: list[tuple[int, str]] = []
+    for index, line in enumerate(haystack):
+        if line.strip() == stripped:
+            found.append((index, line))
+            if len(found) >= limit:
+                return found
+    if found:
+        return found
+    # Needle pinned as seq2 so its b-side match cache survives the loop;
+    # each candidate line swaps in as seq1 only.
+    matcher = difflib.SequenceMatcher(b=stripped)
+    scored: list[tuple[float, int, str]] = []
+    for index, line in enumerate(haystack):
+        body = line.strip()
+        if not body:
+            continue
+        matcher.set_seq1(body)
+        ratio = matcher.ratio()
+        if ratio >= _HINT_SIMILARITY_CUTOFF:
+            scored.append((ratio, index, line))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [(index, line) for _, index, line in scored[:limit]]
 
 
 class LocalToolError(ValueError):
@@ -213,7 +287,11 @@ def resolve_workspace_path(
 
 
 def list_directory(
-    path: str, *, workspace_root: Path, max_entries: int = MAX_LIST_ENTRIES
+    path: str,
+    *,
+    workspace_root: Path,
+    max_entries: int = MAX_LIST_ENTRIES,
+    long_format: bool = False,
 ) -> str:
     """One-level listing of ``path``: ``name/`` for dirs, ``name`` for files.
 
@@ -237,6 +315,7 @@ def list_directory(
         workspace_root: The confinement root ``path`` must resolve within.
         max_entries: Maximum number of entries included in the output
             before a truncation notice is appended.
+        long_format: Prefix each admitted entry with type/permissions and byte size.
 
     Returns:
         The newline-joined listing, with a truncation and/or scan-cap
@@ -258,6 +337,7 @@ def list_directory(
             Path(workspace_root).resolve(), sensitive_ctx
         ),
         display_path=path,
+        long_format=long_format,
     )
 
 
@@ -268,12 +348,31 @@ def _list_relative_directory(
     max_entries: int,
     sensitive_exclusions: tuple[SensitiveExclusion, ...],
     display_path: str | None = None,
+    long_format: bool = False,
 ) -> str:
     """List a pinned-root-relative directory without opening an absolute path."""
     target = workspace / relative
-    if not _relative_target_is_safe(
-        relative, workspace, sensitive_exclusions, is_directory=True
-    ) or not target.is_dir():
+    # review-B B27: one workspace resolution per listing (the target check
+    # and every entry check share it; None falls back to per-entry
+    # resolution when even this fails).
+    try:
+        resolved_workspace: Path | None = workspace.resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved_workspace = None
+    # Loop-invariant check input: denylist entries case-folded once for the
+    # whole scan instead of once per candidate.
+    folded = _folded_exclusions(sensitive_exclusions)
+    if (
+        not _relative_target_is_safe(
+            relative,
+            workspace,
+            sensitive_exclusions,
+            is_directory=True,
+            resolved_workspace=resolved_workspace,
+            folded_exclusions=folded,
+        )
+        or not target.is_dir()
+    ):
         raise LocalToolError(f"not a directory: {display_path or relative}")
     scanned: list[Path] = []
     scan_capped = False
@@ -285,14 +384,23 @@ def _list_relative_directory(
         # the WORK done, and a denied entry was still scanned.
         entry_relative = _workspace_relative_path(entry, workspace)
         if not _relative_target_is_safe(
-            entry_relative, workspace, sensitive_exclusions, is_directory=entry.is_dir()
+            entry_relative,
+            workspace,
+            sensitive_exclusions,
+            is_directory=entry.is_dir(),
+            resolved_workspace=resolved_workspace,
+            folded_exclusions=folded,
         ):
             continue
         scanned.append(entry)
     entries = sorted(scanned, key=lambda p: (p.is_file(), p.name.lower()))
-    lines = [
-        f"{p.name}/" if p.is_dir() else p.name for p in entries[:max_entries]
-    ]
+    lines = []
+    for entry in entries[:max_entries]:
+        name = f"{entry.name}/" if entry.is_dir() else entry.name
+        if long_format:
+            metadata = entry.lstat()
+            name = f"{stat_module.filemode(metadata.st_mode)} {metadata.st_size} {name}"
+        lines.append(name)
     remaining = len(entries) - max_entries
     if remaining > 0:
         lines.append(f"… ({remaining} more entries, truncated)")
@@ -371,9 +479,12 @@ def _read_relative_file(
             or binary.
     """
     target = workspace / relative
-    if not _relative_target_is_safe(
-        relative, workspace, sensitive_exclusions, is_directory=False
-    ) or not target.is_file():
+    if (
+        not _relative_target_is_safe(
+            relative, workspace, sensitive_exclusions, is_directory=False
+        )
+        or not target.is_file()
+    ):
         raise LocalToolError(f"file not found: {display_path or relative}")
     file_size = target.stat().st_size
     if file_size > MAX_READ_FILE_BYTES:
@@ -394,8 +505,12 @@ def _read_relative_file(
         if start >= len(lines):
             body = f"(offset {offset} is past end of file; {len(lines)} lines total)"
         else:
-            window = lines[start:] if limit is None else lines[start:start + max(limit, 0)]
-            body = "\n".join(f"{i}\t{line}" for i, line in enumerate(window, start=start + 1))
+            window = (
+                lines[start:] if limit is None else lines[start : start + max(limit, 0)]
+            )
+            body = "\n".join(
+                f"{i}\t{line}" for i, line in enumerate(window, start=start + 1)
+            )
             if len(body) > MAX_READ_CHARS:
                 body = body[:MAX_READ_CHARS] + "\n… [truncated]"
     if content_stamps:
@@ -448,6 +563,106 @@ def _format_stat_result(relative: Path, info: os.stat_result) -> str:
             f"mode: {info.st_mode & 0o7777:04o}",
         )
     )
+
+
+def create_directory(path: str, *, workspace_root: Path) -> str:
+    """Create directory ``path`` (and missing parents) inside the root.
+
+    TASK-35081: the fs_* family had no directory-creation capability --
+    every writer requires an existing parent (spec 2026-08-04 §2's
+    deliberate typo-catching divergence), so a model asked to "create a
+    folder" had no honest path to success and confabulated instead.
+    ``fs_mkdir`` keeps every write-intent guard: confinement, the
+    sensitive-path denylist (the target itself included), the
+    ``.git``-metadata write refusal, and the
+    ``refuses_new_directory_chain`` shadow-directory guard applied to the
+    target and each not-yet-existing ancestor — the exact chain
+    ``mkdir(parents=True)`` is about to create.
+
+    Creating a directory that already exists is a success no-op (a retried
+    mkdir must not burn an approval cycle); a non-directory at the target
+    is refused.
+
+    Args:
+        path: Directory to create, absolute or relative to
+            ``workspace_root``.
+        workspace_root: The confinement root ``path`` must resolve within.
+
+    Returns:
+        ``created directory <path>`` or ``directory already exists:
+        <path>``.
+
+    Raises:
+        LocalToolError: If ``path`` resolves outside ``workspace_root``,
+            is a protected path, would collide with one, or creation
+            fails.
+    """
+    sensitive_ctx = resolve_sensitive_context()
+    workspace = Path(workspace_root).resolve()
+    root = resolve_workspace_path(
+        path, workspace, intent="write", context=sensitive_ctx
+    )
+    if refuses_new_directory_chain(root, context=sensitive_ctx):
+        raise LocalToolError(
+            f"Refused: creating '{path}' would collide with a protected path"
+        )
+    return _mkdir_relative_directory(
+        root.relative_to(workspace),
+        workspace=workspace,
+        sensitive_exclusions=sensitive_exclusions_under(workspace, sensitive_ctx),
+        display_path=path,
+    )
+
+
+def _mkdir_relative_directory(
+    relative: Path,
+    *,
+    workspace: Path,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...],
+    display_path: str | None = None,
+) -> str:
+    """Create one already-admitted directory (with parents) relative to an I/O root.
+
+    The parent-side admission (executor ``_build_request``/remote builder)
+    has already run the absolute denylist and the new-directory-chain
+    guard; this core re-checks the request-carried exclusions with a
+    DIRECTORY classification so a binding-excluded or remote-home-denied
+    subtree cannot be planted, and refuses a symlinked chain whose
+    resolution escapes the root (``_relative_target_is_safe`` resolves
+    existing ancestors before anything is created).
+
+    Args:
+        relative: Root-relative target, already confined.
+        workspace: The confinement root ``relative`` resolves against.
+        sensitive_exclusions: Deny rules applied to the target chain.
+        display_path: Caller-facing path for messages.
+
+    Returns:
+        The creation (or already-exists) summary.
+
+    Raises:
+        LocalToolError: If the target is protected, resolves outside the
+            root, a non-directory exists at the target, or creation fails.
+    """
+    shown = display_path or str(relative)
+    target = workspace / relative
+    if not _relative_target_is_safe(
+        relative, workspace, sensitive_exclusions, is_directory=True
+    ):
+        raise LocalToolError(
+            f"Refused: '{shown}' is a protected path and cannot be created"
+        )
+    if target.exists() and not target.is_dir():
+        raise LocalToolError(f"a non-directory already exists at: {shown}")
+    if target.is_dir():
+        return f"directory already exists: {shown}"
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise LocalToolError(
+            f"could not create directory {shown}: {exc.strerror or exc}"
+        ) from exc
+    return f"created directory {shown}"
 
 
 def write_file(
@@ -554,11 +769,22 @@ def _write_relative_file(
             expected_sha256=expected_sha256,
             expected_absent=expected_absent,
         )
+        # TASK-18927 AC#3: verify on-disk bytes against the intended
+        # content and report any mismatch honestly. Still under the write
+        # lock, so a concurrent writer through this process cannot slip in
+        # between write and verification.
+        verified = _read_write_target(target, shown)
+        if verified != data:
+            raise LocalToolError(
+                f"write verification failed for {shown}: on-disk bytes "
+                f"differ from the intended content (read back "
+                f"{len(verified) if verified is not None else 0} of "
+                f"{len(data)} bytes) — the file may be torn or modified "
+                "concurrently; re-read it before retrying"
+            )
     summary = f"wrote {len(content)} characters to {shown}"
     if content_stamps and not dry_run:
-        summary += (
-            f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
-        )
+        summary += f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
     return summary
 
 
@@ -567,33 +793,41 @@ def _write_lock_for(key: str) -> threading.Lock:
         return _WRITE_LOCKS.setdefault(key, threading.Lock())
 
 
+def _write_file_os():
+    """Select retained-directory operations without importing native code remotely."""
+    if os.name == "nt":
+        from tldw_chatbook.Utils.platform_files import os as native_file_os
+
+        return native_file_os
+    return os
+
+
+def _read_write_descriptor_bytes(descriptor: int, file_os: Any) -> bytes:
+    return b"".join(iter(lambda: file_os.read(descriptor, 1024 * 1024), b""))
+
+
 def _read_write_target(target: Path, shown: str) -> bytes | None:
+    file_os = _write_file_os()
     try:
-        before = os.lstat(target)
+        before = file_os.stat(target, follow_symlinks=False)
     except FileNotFoundError:
         return None
-    if (
-        not stat_module.S_ISREG(before.st_mode)
-        or stat_module.S_ISLNK(before.st_mode)
-    ):
+    if not stat_module.S_ISREG(before.st_mode) or stat_module.S_ISLNK(before.st_mode):
         raise LocalToolError(f"write target is not a regular file: {shown}")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    flags = (
+        file_os.O_RDONLY
+        | getattr(file_os, "O_CLOEXEC", 0)
+        | getattr(file_os, "O_NOFOLLOW", 0)
+    )
     try:
-        descriptor = os.open(target, flags)
+        descriptor = file_os.open(target, flags)
         try:
-            opened = os.fstat(descriptor)
-            chunks: list[bytes] = []
-            while True:
-                chunk = os.read(descriptor, 1024 * 1024)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            finished = os.fstat(descriptor)
+            opened = file_os.fstat(descriptor)
+            data = _read_write_descriptor_bytes(descriptor, file_os)
+            finished = file_os.fstat(descriptor)
         finally:
-            os.close(descriptor)
-        after = os.lstat(target)
+            file_os.close(descriptor)
+        after = file_os.stat(target, follow_symlinks=False)
     except OSError:
         raise LocalToolError(f"write target changed while reading: {shown}") from None
     identities = tuple(
@@ -608,7 +842,7 @@ def _read_write_target(target: Path, shown: str) -> bytes | None:
     )
     if len(set(identities)) != 1:
         raise LocalToolError(f"write target changed while reading: {shown}")
-    return b"".join(chunks)
+    return data
 
 
 def _write_preview_json(
@@ -660,13 +894,15 @@ def _atomic_write_target(
     parent ``dir_fd`` (TOCTOU-safe rename), ``O_NOFOLLOW``, an sha256/absent
     precondition and a target lock, none of which the shared helper offers.
     """
-    directory_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_DIRECTORY"):
-        directory_flags |= os.O_DIRECTORY
-    if hasattr(os, "O_NOFOLLOW"):
-        directory_flags |= os.O_NOFOLLOW
+    file_os = _write_file_os()
+    directory_flags = (
+        file_os.O_RDONLY
+        | getattr(file_os, "O_CLOEXEC", 0)
+        | getattr(file_os, "O_DIRECTORY", 0)
+        | getattr(file_os, "O_NOFOLLOW", 0)
+    )
     try:
-        parent_fd = os.open(target.parent, directory_flags)
+        parent_fd = file_os.open(target.parent, directory_flags)
     except OSError:
         raise LocalToolError(f"write parent changed: {shown}") from None
     temp_name = f".chatbook-write-{uuid.uuid4().hex}.tmp"
@@ -676,7 +912,7 @@ def _atomic_write_target(
     # death must not leave the partial temp behind. Absolute because
     # the sweep unlinks by path from another thread while this one
     # holds only the parent descriptor.
-    temp_path = os.path.abspath(os.path.join(str(target.parent), temp_name))
+    temp_path = file_os.path.abspath(file_os.path.join(str(target.parent), temp_name))
     temp_created = False
     target_lock = None
     try:
@@ -689,40 +925,48 @@ def _atomic_write_target(
             )
         # Recheck after acquiring the retained directory descriptor.  This is
         # the mutation boundary; no later path traversal is used.
-        live, live_mode = _read_relative_descriptor(parent_fd, target.name, shown)
+        if target_lock is not None and os.name == "nt":
+            # Windows byte locks also exclude this process's other handles.
+            target_lock.seek(0)
+            live, live_mode = target_lock.read(), None
+        else:
+            live, live_mode = _read_relative_descriptor(parent_fd, target.name, shown)
         live_digest = None if live is None else hashlib.sha256(live).hexdigest()
         if expected_absent and live is not None:
             raise LocalToolError("write precondition failed: target is present")
         if expected_sha256 is not None and live_digest != expected_sha256:
             raise LocalToolError("write precondition failed: target digest changed")
 
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        temp_fd = os.open(temp_name, flags, 0o666, dir_fd=parent_fd)
+        flags = (
+            file_os.O_WRONLY
+            | file_os.O_CREAT
+            | file_os.O_EXCL
+            | getattr(file_os, "O_CLOEXEC", 0)
+            | getattr(file_os, "O_NOFOLLOW", 0)
+        )
+        temp_fd = file_os.open(temp_name, flags, 0o666, dir_fd=parent_fd)
         temp_created = True
         register_temp(temp_path)
         try:
-            if live_mode is not None:
-                os.fchmod(temp_fd, live_mode)
+            if live_mode is not None and os.name != "nt":
+                file_os.fchmod(temp_fd, live_mode)
+            # Native Windows creates private files; POSIX modes are not ACLs.
             view = memoryview(data)
             while view:
-                written = os.write(temp_fd, view)
+                written = file_os.write(temp_fd, view)
                 view = view[written:]
-            os.fsync(temp_fd)
+            file_os.fsync(temp_fd)
         finally:
-            os.close(temp_fd)
+            file_os.close(temp_fd)
         if expected_absent:
-            os.link(
+            file_os.link(
                 temp_name,
                 target.name,
                 src_dir_fd=parent_fd,
                 dst_dir_fd=parent_fd,
                 follow_symlinks=False,
             )
-            os.unlink(temp_name, dir_fd=parent_fd)
-            temp_created = False
-            unregister_temp(temp_path)
+            file_os.unlink(temp_name, dir_fd=parent_fd)
         else:
             if target_lock is not None:
                 _assert_expected_target_is_current(
@@ -732,15 +976,20 @@ def _atomic_write_target(
                     expected_sha256,
                     target_lock,
                 )
-            os.replace(
+            replace = (
+                file_os.replace_open_target
+                if target_lock is not None and os.name == "nt"
+                else file_os.replace
+            )
+            replace(
                 temp_name,
                 target.name,
                 src_dir_fd=parent_fd,
                 dst_dir_fd=parent_fd,
             )
-            temp_created = False
-            unregister_temp(temp_path)
-        os.fsync(parent_fd)
+        temp_created = False
+        unregister_temp(temp_path)
+        file_os.fsync(parent_fd)
     except FileExistsError:
         raise LocalToolError("write precondition failed: target is present") from None
     except LocalToolError:
@@ -750,14 +999,14 @@ def _atomic_write_target(
     finally:
         if temp_created:
             try:
-                os.unlink(temp_name, dir_fd=parent_fd)
+                file_os.unlink(temp_name, dir_fd=parent_fd)
             except OSError:
                 pass
             unregister_temp(temp_path)
         if target_lock is not None:
             _unlock_target_handle(target_lock)
             target_lock.close()
-        os.close(parent_fd)
+        file_os.close(parent_fd)
 
 
 def _portalocker_module():
@@ -829,14 +1078,19 @@ def _acquire_expected_target_lock(
     expected_sha256: str,
 ) -> BinaryIO:
     """Acquire a non-blocking process lock on the expected target inode."""
-    flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    file_os = _write_file_os()
+    flags = (
+        file_os.O_RDWR
+        | getattr(file_os, "O_CLOEXEC", 0)
+        | getattr(file_os, "O_NOFOLLOW", 0)
+    )
     try:
-        descriptor = os.open(filename, flags, dir_fd=parent_fd)
-        handle = os.fdopen(descriptor, "r+b", buffering=0)
+        descriptor = file_os.open(filename, flags, dir_fd=parent_fd)
+        handle = file_os.fdopen(descriptor, "r+b", buffering=0)
     except OSError:
-        raise LocalToolError("write precondition failed: target digest changed") from None
+        raise LocalToolError(
+            "write precondition failed: target digest changed"
+        ) from None
     _lock_expected_target(handle)
     try:
         _assert_expected_target_is_current(
@@ -861,57 +1115,58 @@ def _assert_expected_target_is_current(
     locked_handle: BinaryIO,
 ) -> None:
     """Verify the locked inode is still the named path with the expected bytes."""
+    file_os = _write_file_os()
     if expected_sha256 is None:
         raise LocalToolError("write precondition failed: target digest changed")
-    locked_info = os.fstat(locked_handle.fileno())
+    locked_info = file_os.fstat(locked_handle.fileno())
     if not stat_module.S_ISREG(locked_info.st_mode):
         raise LocalToolError(f"write target is not a regular file: {shown}")
     locked_handle.seek(0)
     locked_digest = hashlib.sha256(locked_handle.read()).hexdigest()
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    flags = (
+        file_os.O_RDONLY
+        | getattr(file_os, "O_CLOEXEC", 0)
+        | getattr(file_os, "O_NOFOLLOW", 0)
+    )
     try:
-        current_fd = os.open(filename, flags, dir_fd=parent_fd)
+        current_fd = file_os.open(filename, flags, dir_fd=parent_fd)
     except OSError:
-        raise LocalToolError("write precondition failed: target digest changed") from None
+        raise LocalToolError(
+            "write precondition failed: target digest changed"
+        ) from None
     try:
-        current_info = os.fstat(current_fd)
+        current_info = file_os.fstat(current_fd)
     finally:
-        os.close(current_fd)
-    if (
-        (locked_info.st_dev, locked_info.st_ino)
-        != (current_info.st_dev, current_info.st_ino)
-        or locked_digest != expected_sha256
-    ):
+        file_os.close(current_fd)
+    if (locked_info.st_dev, locked_info.st_ino) != (
+        current_info.st_dev,
+        current_info.st_ino,
+    ) or locked_digest != expected_sha256:
         raise LocalToolError("write precondition failed: target digest changed")
 
 
 def _read_relative_descriptor(
     parent_fd: int, filename: str, shown: str
 ) -> tuple[bytes | None, int | None]:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    file_os = _write_file_os()
+    flags = (
+        file_os.O_RDONLY
+        | getattr(file_os, "O_CLOEXEC", 0)
+        | getattr(file_os, "O_NOFOLLOW", 0)
+    )
     try:
-        descriptor = os.open(filename, flags, dir_fd=parent_fd)
+        descriptor = file_os.open(filename, flags, dir_fd=parent_fd)
     except FileNotFoundError:
         return None, None
     except OSError:
         raise LocalToolError(f"write target changed: {shown}") from None
     try:
-        info = os.fstat(descriptor)
+        info = file_os.fstat(descriptor)
         if not stat_module.S_ISREG(info.st_mode):
             raise LocalToolError(f"write target is not a regular file: {shown}")
-        chunks: list[bytes] = []
-        while True:
-            chunk = os.read(descriptor, 1024 * 1024)
-            if not chunk:
-                break
-            chunks.append(chunk)
-        return b"".join(chunks), info.st_mode & 0o7777
+        return _read_write_descriptor_bytes(descriptor, file_os), info.st_mode & 0o7777
     finally:
-        os.close(descriptor)
+        file_os.close(descriptor)
 
 
 def edit_file(
@@ -988,7 +1243,51 @@ def _edit_relative_file(
         ) from exc
     count = content.count(old_string)
     if count == 0:
-        raise LocalToolError(f"old_string not found in {shown}")
+        # TASK-18927 AC#1: an edit whose change is already present is a
+        # success no-op, not a match error — the model retrying an already
+        # applied edit (a common re-run after a lost race or a re-sent
+        # turn) no longer burns an approval cycle on it. Evidence must be
+        # strong, though: a new_string that appears exactly once (the
+        # signature of a completed single replace), or any presence under
+        # replace_all (whose retry leaves N occurrences). A short or
+        # coincidentally-present new_string stays an error, with the
+        # ambiguity said out loud.
+        if new_string:
+            occurrences = content.count(new_string)
+            # Review fix (PR #3086): presence alone is NOT proof the edit
+            # landed — a coincidental short new_string ("x" inside "item_x")
+            # produced false successes. Require distinctive evidence: a
+            # stripped length of at least 8, or any presence under
+            # replace_all (whose completed retry leaves N occurrences of a
+            # distinctive-enough string). Weaker evidence falls through to
+            # the ambiguity note below.
+            distinctive = len(new_string.strip()) >= 8
+            if distinctive and (
+                occurrences == 1 or (replace_all and occurrences)
+            ):
+                return (
+                    f"edit already applied to {shown}: the replacement text "
+                    f"is present ({occurrences} occurrence"
+                    f"{'s' if occurrences != 1 else ''}) and the old text is "
+                    "absent (0 replacements, no change made)"
+                )
+        # TASK-18927 AC#2: diagnose the near miss instead of a bare error.
+        parts: list[str] = []
+        if new_string:
+            occurrences = content.count(new_string)
+            if occurrences:
+                parts.append(
+                    f"new_string is already present {occurrences} time(s) — "
+                    "ambiguous evidence the edit was already applied; "
+                    "refine old_string or verify the current file state"
+                )
+        hint = _edit_no_match_hint(content, old_string)
+        if hint:
+            parts.append(hint)
+        message = f"old_string not found in {shown}"
+        if parts:
+            message += f"\n{HINT_LABEL}: " + _bound_hint(" | ".join(parts))
+        raise LocalToolError(message)
     if count > 1 and not replace_all:
         raise LocalToolError(
             f"old_string appears {count} times in {shown}; "
@@ -1016,10 +1315,52 @@ def _edit_relative_file(
     n = count if replace_all else 1
     summary = f"made {n} replacement{'s' if n != 1 else ''} in {shown}"
     if content_stamps:
-        summary += (
-            f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
-        )
+        summary += f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
     return summary
+
+
+def _edit_no_match_hint(content: str, old_string: str) -> str | None:
+    """Diagnose an unmatched ``old_string`` (TASK-18927 AC#2), or ``None``.
+
+    Two probes, cheapest first:
+
+    1. Whitespace-insensitive containment — if collapsing all whitespace
+       runs makes ``old_string`` appear in the file, the text IS there and
+       only indentation, spacing, or line endings differ; say so.
+    2. Nearest line — the closest body lines to ``old_string``'s first
+       line (exact bodies first, then difflib similarity), shown with
+       visible whitespace so the difference is readable at a glance.
+
+    Bounded to ``_MAX_HINT_CHARS``; adversarial inputs (huge files, odd
+    content) can only shrink the hint, never grow it, and any internal
+    failure yields ``None`` (the plain error survives).
+    """
+    try:
+        collapsed_content = " ".join(content.split())
+        collapsed_old = " ".join(old_string.split())
+        if collapsed_old and collapsed_old in collapsed_content:
+            return _bound_hint(
+                "the same text IS present with different whitespace "
+                "(indentation, spacing, or line endings) — re-read the "
+                "exact region and copy its literal whitespace"
+            )
+        content_lines = content.splitlines()
+        old_lines = [line for line in old_string.splitlines() if line.strip()]
+        if not old_lines:
+            return None
+        near = _closest_lines(old_lines[0], content_lines)
+        if not near:
+            return None
+        rendered = "; ".join(
+            f"line {index + 1}: {_visualize_whitespace(line.strip())[:_MAX_HINT_LINE_CHARS]}"
+            for index, line in near
+        )
+        return _bound_hint(
+            "closest candidate lines (whitespace shown as · for space, "
+            f"\\t for tab): {rendered}"
+        )
+    except Exception:
+        return None
 
 
 def glob_files(
@@ -1066,6 +1407,20 @@ def _glob_relative_files(
     """Glob from the pinned working directory using only relative I/O paths."""
     heap: list[tuple[float, Path]] = []  # min-heap of (mtime, normpath)
     total = 0
+    # TASK-18927 AC#4: bounded pool of admissible names collected during
+    # the SAME filtered walk, for near-miss probing on a zero-match
+    # result. Only names this walk was already willing to disclose can
+    # enter a hint — the probe can never surface a sensitive path.
+    name_pool: list[str] = []
+    # review-B B27: one workspace resolution per walk (None falls back to the
+    # old per-entry resolution when even this fails).
+    try:
+        resolved_workspace: Path | None = workspace.resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved_workspace = None
+    # Loop-invariant check input: denylist entries case-folded once for the
+    # whole glob instead of once per candidate.
+    folded = _folded_exclusions(sensitive_exclusions)
     for p in workspace.glob(pattern):
         try:
             if not p.is_file():
@@ -1078,17 +1433,27 @@ def _glob_relative_files(
                 # The pinned worker validates a live link target immediately
                 # before disclosure, but keeps ``rendered`` for all I/O/output.
                 if not _relative_target_is_safe(
-                    rendered, workspace, sensitive_exclusions, is_directory=False
+                    rendered,
+                    workspace,
+                    sensitive_exclusions,
+                    is_directory=False,
+                    resolved_workspace=resolved_workspace,
+                    folded_exclusions=folded,
                 ):
                     continue
             elif _is_relative_sensitive_path(
-                rendered, sensitive_exclusions, is_directory=False
+                rendered,
+                sensitive_exclusions,
+                is_directory=False,
+                folded_exclusions=folded,
             ):
                 continue
             mtime = p.stat().st_mtime
         except OSError:
             continue  # racy/unreadable entry — skip it, not the whole search
         total += 1
+        if len(name_pool) < _MAX_HINT_NAME_POOL:
+            name_pool.append(rendered.as_posix())
         if len(heap) < max_results:
             heapq.heappush(heap, (mtime, rendered))
         elif mtime > heap[0][0]:
@@ -1097,7 +1462,115 @@ def _glob_relative_files(
     lines = [str(relative) for _, relative in best]
     if total > max_results:
         lines.append(f"… ({total - max_results} more, truncated)")
-    return "\n".join(lines) if lines else f"(no files matching {pattern!r})"
+    if lines:
+        return "\n".join(lines)
+    # Zero matches: ``Path.glob`` yields only matches, so the pool collected
+    # during the walk is empty here — take ONE bounded supplementary walk
+    # (entry-capped, same admissibility checks) for near-miss probing.
+    if not name_pool:
+        name_pool = _bounded_admissible_name_pool(
+            workspace, sensitive_exclusions, resolved_workspace, validate_targets
+        )
+    empty = f"(no files matching {pattern!r})"
+    hint = _glob_near_miss_hint(pattern, name_pool)
+    if hint:
+        return f"{empty}\n{HINT_LABEL}: {hint}"
+    return empty
+
+
+def _bounded_admissible_name_pool(
+    workspace: Path,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...],
+    resolved_workspace: Path | None,
+    validate_targets: bool,
+) -> list[str]:
+    """Collect a bounded pool of admissible names for near-miss hints.
+
+    Considers at most ``_MAX_HINT_NAME_POOL`` entries and stops; the probe
+    is best-effort, never a second full walk. Applies the exact
+    admissibility checks the glob walk uses, so a name a match would have
+    been refused on (sensitive, escaping) can never enter a hint.
+    """
+    pool: list[str] = []
+    examined = 0
+    try:
+        for p in workspace.rglob("*"):
+            examined += 1
+            if examined > MAX_SCAN_ENTRIES or len(pool) >= _MAX_HINT_NAME_POOL:
+                break
+            try:
+                if not p.is_file():
+                    continue
+                rendered = p.relative_to(workspace)
+                if validate_targets:
+                    if not _relative_target_is_safe(
+                        rendered,
+                        workspace,
+                        sensitive_exclusions,
+                        is_directory=False,
+                        resolved_workspace=resolved_workspace,
+                    ):
+                        continue
+                elif _is_relative_sensitive_path(
+                    rendered, sensitive_exclusions, is_directory=False
+                ):
+                    continue
+                pool.append(rendered.as_posix())
+            except (OSError, ValueError):
+                continue
+    except (OSError, RuntimeError):
+        return pool
+    return pool
+
+
+def _glob_near_miss_hint(pattern: str, name_pool: list[str]) -> str | None:
+    """Suggest close existing names for a zero-match pattern (TASK-18927).
+
+    Extracts the longest literal (wildcard-free) segment of the pattern and
+    difflib-matches it against the pool's segments and full paths. Purely
+    advisory and bounded; ``None`` when there is nothing close or nothing
+    literal to probe (e.g. ``**/*``).
+    """
+    import difflib
+
+    try:
+        literals: list[str] = []
+        for segment in pattern.split("/"):
+            if not segment or any(ch in segment for ch in "*?["):
+                continue
+            literals.append(segment)
+        if not literals:
+            return None
+        needle = max(literals, key=len)
+        if len(needle) < 3:
+            return None
+        segment_example: dict[str, str] = {}
+        for name in name_pool:
+            for segment in name.split("/"):
+                if segment not in segment_example:
+                    segment_example[segment] = name
+        close_segments = difflib.get_close_matches(
+            needle,
+            list(segment_example),
+            n=_MAX_HINT_CANDIDATES,
+            cutoff=_HINT_SIMILARITY_CUTOFF,
+        )
+        if close_segments:
+            rendered = "; ".join(
+                f'"{segment}" (e.g. {segment_example[segment]})'
+                for segment in close_segments
+            )
+            return _bound_hint(f"closest existing names: {rendered}")
+        close_paths = difflib.get_close_matches(
+            needle, name_pool, n=_MAX_HINT_CANDIDATES, cutoff=_HINT_SIMILARITY_CUTOFF
+        )
+        if close_paths:
+            return _bound_hint(
+                "closest existing paths: " + "; ".join(f'"{p}"' for p in close_paths)
+            )
+        return None
+    except Exception:
+        return None
 
 
 def grep_files(
@@ -1126,7 +1599,7 @@ def grep_files(
     import re
 
     try:
-        re.compile(pattern)
+        compiled = re.compile(pattern)
     except re.error as exc:
         raise LocalToolError(f"invalid regex: {exc}") from exc
     if mode not in {"content", "files", "count"}:
@@ -1138,7 +1611,7 @@ def grep_files(
         ".", workspace_root, intent="list", context=sensitive_ctx
     )
     return _grep_relative_files(
-        pattern,
+        compiled,  # validated once here; the relative core must not recompile
         workspace=Path(workspace_root).resolve(),
         mode=mode,
         max_results=max_results,
@@ -1147,7 +1620,7 @@ def grep_files(
 
 
 def _grep_relative_files(
-    pattern: str,
+    pattern: str | re.Pattern[str],
     *,
     workspace: Path,
     mode: str,
@@ -1157,10 +1630,15 @@ def _grep_relative_files(
     """Grep pinned-root-relative files while refusing escaping symlink content."""
     import re
 
-    try:
-        rx = re.compile(pattern)
-    except re.error as exc:
-        raise LocalToolError(f"invalid regex: {exc}") from exc
+    if isinstance(pattern, re.Pattern):
+        rx = pattern
+        display_pattern = pattern.pattern
+    else:
+        display_pattern = pattern
+        try:
+            rx = re.compile(pattern)
+        except re.error as exc:
+            raise LocalToolError(f"invalid regex: {exc}") from exc
     if mode not in ("content", "files", "count"):
         raise LocalToolError(f"unknown mode: {mode}")
     if max_results < 1:
@@ -1170,13 +1648,47 @@ def _grep_relative_files(
     # skip the entry rather than failing the whole search.
     shown: list[str] = []
     total = 0
+    # TASK-18927 AC#4: single-pass near-miss probe. Any line an exact
+    # case-sensitive search matches is also a case-insensitive match (for
+    # ordinary patterns), so counting the ci-only lines during the same
+    # walk costs one extra `search` per line and never needs a second
+    # walk. Only used when the exact search found nothing.
+    ci_near_total = 0
+    ci_near_example: str | None = None
+    try:
+        rx_ci = re.compile(display_pattern, re.IGNORECASE)
+    except re.error:
+        rx_ci = rx  # unreachable (validated above); keep the type narrow
+    # review-B B27: resolve the workspace once for the whole walk instead of
+    # once per entry. If even the workspace resolution fails (pathological
+    # ancestry), None falls back to the old per-entry behavior exactly.
+    try:
+        resolved_workspace: Path | None = workspace.resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved_workspace = None
+    # Loop-invariant check input: denylist entries case-folded once for the
+    # whole search instead of once per candidate.
+    folded = _folded_exclusions(sensitive_exclusions)
     for p in workspace.rglob("*"):
         try:
             if not p.is_file() or p.stat().st_size > _MAX_GREP_FILE_BYTES:
                 continue
             relative = _workspace_relative_path(p, workspace)
             if not _relative_target_is_safe(
-                relative, workspace, sensitive_exclusions, is_directory=False
+                relative,
+                workspace,
+                sensitive_exclusions,
+                is_directory=False,
+                resolved_workspace=resolved_workspace,
+                folded_exclusions=folded,
+                # rglob never descends INTO symlinked directories, so a
+                # candidate that is not itself a symlink has only real
+                # directories between the (already resolved) workspace root
+                # and its lexical path — its realpath equals that lexical
+                # path and the two checks below already decided. Symlinks
+                # still get the full resolved-target check, so escaping or
+                # sensitive link targets are refused exactly as before.
+                resolve_regular_targets=False,
             ):
                 continue  # protected path — skipped BEFORE it is read
         except OSError:
@@ -1186,7 +1698,14 @@ def _grep_relative_files(
         except (UnicodeDecodeError, OSError):
             continue  # binary/unreadable — skip
         rel = str(relative)
-        hits = [f"{i}:{line}" for i, line in enumerate(text.splitlines(), 1) if rx.search(line)]
+        hits = []
+        for i, line in enumerate(text.splitlines(), 1):
+            if rx.search(line):
+                hits.append(f"{i}:{line}")
+            elif rx_ci.search(line):
+                ci_near_total += 1
+                if ci_near_example is None:
+                    ci_near_example = f"{rel}:{i}"
         if not hits:
             continue
         if mode == "content":
@@ -1200,7 +1719,42 @@ def _grep_relative_files(
                 shown.append(rel if mode == "files" else f"{rel}:{len(hits)}")
     if total > max_results:
         shown.append(f"… ({total - max_results} more, truncated)")
-    return "\n".join(shown) if shown else f"(no matches for {pattern!r})"
+    if shown:
+        return "\n".join(shown)
+    empty = f"(no matches for {display_pattern!r})"
+    if ci_near_total:
+        # Review fix (PR #3086 Minor-2): route through _bound_hint so the
+        # path-bearing example respects the same cap as every other hint
+        # (AC#5's blanket bound claim).
+        return f"{empty}\n{HINT_LABEL}: " + _bound_hint(
+            f"{ci_near_total} line(s) match case-insensitively "
+            f"(e.g. {ci_near_example}) \u2014 prefix the pattern with "
+            "(?i) if that is intended"
+        )
+    return empty
+
+
+
+#: One denylist entry with its path parts case-folded once, ready for the
+#: per-candidate comparisons in :func:`_is_relative_sensitive_path`:
+#: ``(kind, folded value parts, raw value)``. The raw value is kept because
+#: the ``"name"`` rule compares against it verbatim.
+_FoldedExclusion = tuple[str, tuple[str, ...], str]
+
+
+def _folded_exclusions(
+    exclusions: tuple[SensitiveExclusion, ...],
+) -> tuple[_FoldedExclusion, ...]:
+    """Case-fold every exclusion's path parts ONCE per call.
+
+    ``_is_relative_sensitive_path`` used to re-fold ``Path(value).parts`` for
+    every exclusion entry for every candidate — O(candidates x exclusions)
+    tuple builds that are loop-invariant for one tool invocation.
+    """
+    return tuple(
+        (kind, tuple(part.casefold() for part in Path(value).parts), value)
+        for kind, value in exclusions
+    )
 
 
 def _relative_target_is_safe(
@@ -1209,20 +1763,53 @@ def _relative_target_is_safe(
     exclusions: tuple[SensitiveExclusion, ...],
     *,
     is_directory: bool,
+    resolved_workspace: Path | None = None,
+    folded_exclusions: tuple[_FoldedExclusion, ...] | None = None,
+    resolve_regular_targets: bool = True,
 ) -> bool:
-    """Require both lexical and resolved targets to be admissible for I/O."""
+    """Require both lexical and resolved targets to be admissible for I/O.
+
+    ``resolved_workspace`` accepts a precomputed ``workspace.resolve()``
+    (review-B B27) so per-entry callers -- grep/glob/list walks -- resolve
+    the workspace once per operation instead of once per entry. Omitted, the
+    workspace is resolved here as before; the decision is identical either
+    way.
+
+    ``folded_exclusions`` is :func:`_folded_exclusions`' once-per-call
+    output; ``None`` folds here, which decides identically.
+
+    ``resolve_regular_targets=False`` (grep only) skips the realpath walk for
+    candidates that pass the lexical check and are not themselves symlinks:
+    grep enumerates with ``rglob``, which never descends INTO symlinked
+    directories, so a non-symlink candidate's ancestors below the (resolved)
+    workspace are all real directories and its resolved form equals its
+    lexical form — the same two checks then decide identically. Candidates
+    that ARE symlinks still get the full resolved-target check, so the
+    escaping-symlink and symlinked-sensitive-path refusals are unchanged;
+    see ``test_fs_grep_skips_symlinks_escaping_workspace``.
+    """
     try:
         if _is_relative_sensitive_path(
-            relative, exclusions, is_directory=is_directory
+            relative,
+            exclusions,
+            is_directory=is_directory,
+            folded_exclusions=folded_exclusions,
         ):
             return False
-        resolved_workspace = workspace.resolve()
-        resolved = (workspace / relative).resolve()
-        if not resolved.is_relative_to(resolved_workspace):
-            return False
-        return not _is_relative_sensitive_path(
-            resolved.relative_to(resolved_workspace), exclusions, is_directory=is_directory
-        )
+        target = workspace / relative
+        if resolved_workspace is None:
+            resolved_workspace = workspace.resolve()
+        if resolve_regular_targets or target.is_symlink():
+            resolved = target.resolve()
+            if not resolved.is_relative_to(resolved_workspace):
+                return False
+            return not _is_relative_sensitive_path(
+                resolved.relative_to(resolved_workspace),
+                exclusions,
+                is_directory=is_directory,
+                folded_exclusions=folded_exclusions,
+            )
+        return True
     except (OSError, RuntimeError, ValueError):
         # Python <= 3.12 raises RuntimeError for a symlink loop (3.13+:
         # OSError); ValueError covers an embedded NUL. Any unresolvable
@@ -1240,18 +1827,23 @@ def _is_relative_sensitive_path(
     exclusions: tuple[SensitiveExclusion, ...],
     *,
     is_directory: bool,
+    folded_exclusions: tuple[_FoldedExclusion, ...] | None = None,
 ) -> bool:
-    """Apply parent-derived sensitive exclusions to one relative candidate."""
+    """Apply parent-derived sensitive exclusions to one relative candidate.
+
+    ``folded_exclusions`` is :func:`_folded_exclusions`' once-per-call output;
+    ``None`` folds here, which decides identically.
+    """
+    if folded_exclusions is None:
+        folded_exclusions = _folded_exclusions(exclusions)
     parts = tuple(part.casefold() for part in relative.parts)
-    for kind, value in exclusions:
-        value_parts = tuple(part.casefold() for part in Path(value).parts)
+    for kind, value_parts, value in folded_exclusions:
         if kind == "subtree" and parts[: len(value_parts)] == value_parts:
             return True
         if kind == "file" and parts == value_parts:
             return True
         if kind == "direct_children" and (
-            not is_directory
-            and parts[:-1] == value_parts
+            not is_directory and parts[:-1] == value_parts
         ):
             return True
         if kind == "name" and not is_directory and relative.name.casefold() == value:

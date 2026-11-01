@@ -124,7 +124,7 @@ class SkillEvalPanel(Widget):
     control; the owning screen persists it onto the bench config.
     """
 
-    DEFAULT_CSS = """
+    BUNDLED_CSS = """
     SkillEvalPanel { padding: 1; }
     """
 

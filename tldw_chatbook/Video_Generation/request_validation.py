@@ -57,7 +57,6 @@ class VideoGenerationValidationIssue:
     path: str
 
 
-
 def validate_video_generation_request(
     structured: dict[str, Any],
     *,
@@ -70,12 +69,21 @@ def validate_video_generation_request(
 
     issues: list[VideoGenerationValidationIssue] = []
     prompt = structured.get("prompt")
-    max_prompt_length = _positive_int_attr(config, "max_prompt_length", DEFAULT_MAX_PROMPT_LENGTH)
+    max_prompt_length = _positive_int_attr(
+        config, "max_prompt_length", DEFAULT_MAX_PROMPT_LENGTH
+    )
     if isinstance(prompt, str) and len(prompt) > max_prompt_length:
         issues.append(_issue("prompt exceeds max length", "prompt"))
 
-    max_duration = _positive_int_attr(config, "max_duration_seconds", DEFAULT_MAX_DURATION_SECONDS)
-    _validate_int_bound(issues, structured.get("duration_seconds"), path="duration_seconds", max_value=max_duration)
+    max_duration = _positive_int_attr(
+        config, "max_duration_seconds", DEFAULT_MAX_DURATION_SECONDS
+    )
+    _validate_int_bound(
+        issues,
+        structured.get("duration_seconds"),
+        path="duration_seconds",
+        max_value=max_duration,
+    )
 
     max_fps = _positive_int_attr(config, "max_fps", DEFAULT_MAX_FPS)
     _validate_int_bound(issues, structured.get("fps"), path="fps", max_value=max_fps)
@@ -88,18 +96,30 @@ def validate_video_generation_request(
 
     width_ok = _validate_int_bound(issues, width, path="width", max_value=max_width)
     height_ok = _validate_int_bound(issues, height, path="height", max_value=max_height)
-    if width_ok and height_ok and isinstance(width, int) and isinstance(height, int) and width * height > max_pixels:
+    if (
+        width_ok
+        and height_ok
+        and isinstance(width, int)
+        and isinstance(height, int)
+        and width * height > max_pixels
+    ):
         issues.append(_issue("video dimensions exceed max pixels", "width,height"))
 
     ratio = structured.get("ratio")
     if ratio is not None:
-        if not isinstance(ratio, str) or not _RATIO_PATTERN.match(ratio.strip().lower()):
+        if not isinstance(ratio, str) or not _RATIO_PATTERN.match(
+            ratio.strip().lower()
+        ):
             issues.append(_issue("ratio must look like '16:9' or 'adaptive'", "ratio"))
 
     max_steps = _positive_int_attr(config, "max_steps", DEFAULT_MAX_STEPS)
-    _validate_int_bound(issues, structured.get("steps"), path="steps", max_value=max_steps)
+    _validate_int_bound(
+        issues, structured.get("steps"), path="steps", max_value=max_steps
+    )
 
-    _validate_positive_finite_float(issues, structured.get("cfg_scale"), path="cfg_scale")
+    _validate_positive_finite_float(
+        issues, structured.get("cfg_scale"), path="cfg_scale"
+    )
     _validate_extra_params(structured, config, issues)
     _validate_reference_assets(structured, config, issues)
     return issues
@@ -111,9 +131,6 @@ def _issue(message: str, path: str) -> VideoGenerationValidationIssue:
         message=message,
         path=path,
     )
-
-
-
 
 
 def _validate_extra_params(
@@ -132,7 +149,9 @@ def _validate_extra_params(
     allowlist = allowed_extra_params_for_backend(backend, config)
     for key in extra_params:
         if key not in allowlist:
-            issues.append(_issue("extra_params key not allowlisted", f"extra_params.{key}"))
+            issues.append(
+                _issue("extra_params key not allowlisted", f"extra_params.{key}")
+            )
 
     if "cli_args" in extra_params and "cli_args" in allowlist:
         cli_args = extra_params.get("cli_args")
@@ -156,16 +175,25 @@ def _validate_reference_assets(
     if not assets:
         return
 
-    max_assets = _positive_int_attr(config, "max_reference_assets", DEFAULT_MAX_REFERENCE_ASSETS)
+    max_assets = _positive_int_attr(
+        config, "max_reference_assets", DEFAULT_MAX_REFERENCE_ASSETS
+    )
     if len(assets) > max_assets:
-        issues.append(_issue(f"reference assets exceed the {max_assets}-asset limit", "reference_assets"))
+        issues.append(
+            _issue(
+                f"reference assets exceed the {max_assets}-asset limit",
+                "reference_assets",
+            )
+        )
 
     kind_counts: dict[str, int] = {}
     for index, asset in enumerate(assets):
         path = f"reference_assets[{index}]"
         kind = getattr(asset, "kind", None)
         if kind not in REFERENCE_KIND_MAX_COUNTS:
-            issues.append(_issue(f"unknown reference asset kind {kind!r}", f"{path}.kind"))
+            issues.append(
+                _issue(f"unknown reference asset kind {kind!r}", f"{path}.kind")
+            )
             continue
         kind_counts[kind] = kind_counts.get(kind, 0) + 1
 
@@ -184,7 +212,10 @@ def _validate_reference_assets(
             label = "audio"
         if mime_type not in allowed_mimes:
             issues.append(
-                _issue(f"reference {label} mime {mime_type!r} is not supported", f"{path}.mime_type")
+                _issue(
+                    f"reference {label} mime {mime_type!r} is not supported",
+                    f"{path}.mime_type",
+                )
             )
 
         # Validate the ACTUAL content bytes, never a caller-supplied length
@@ -193,12 +224,22 @@ def _validate_reference_assets(
         if content is None or content == b"":
             issues.append(_issue("reference asset has no content bytes", path))
         elif len(content) > max_bytes:
-            issues.append(_issue(f"reference {label} exceeds the {max_bytes // (1024 * 1024)}MB limit", path))
+            issues.append(
+                _issue(
+                    f"reference {label} exceeds the {max_bytes // (1024 * 1024)}MB limit",
+                    path,
+                )
+            )
 
     for kind, count in kind_counts.items():
         cap = REFERENCE_KIND_MAX_COUNTS[kind]
         if count > cap:
-            issues.append(_issue(f"too many {kind} assets ({count} > {cap})", f"reference_assets.{kind}"))
+            issues.append(
+                _issue(
+                    f"too many {kind} assets ({count} > {cap})",
+                    f"reference_assets.{kind}",
+                )
+            )
 
 
 # ADR-176: the shared bound/allowlist helpers live in
@@ -214,13 +255,19 @@ _positive_int_attr = shared_helpers.positive_int_attr
 
 
 def _validate_int_bound(issues, value, *, path, max_value):
-    return shared_helpers.validate_int_bound(issues, value, path=path, max_value=max_value, issue=_issue)
+    return shared_helpers.validate_int_bound(
+        issues, value, path=path, max_value=max_value, issue=_issue
+    )
 
 
 def _validate_positive_finite_float(issues, value, *, path):
-    shared_helpers.validate_positive_finite_float(issues, value, path=path, issue=_issue)
+    shared_helpers.validate_positive_finite_float(
+        issues, value, path=path, issue=_issue
+    )
 
 
 def allowed_extra_params_for_backend(backend: str, config: Any) -> set[str]:
     """Return configured passthrough allowlist keys for a video backend."""
-    return shared_helpers.allowed_extra_params_for_backend(backend, config, _EXTRA_PARAM_ATTRS)
+    return shared_helpers.allowed_extra_params_for_backend(
+        backend, config, _EXTRA_PARAM_ATTRS
+    )

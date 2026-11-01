@@ -1,0 +1,40 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control ac… Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Reply with just: hi                                            │
+                  Context ◂  │   Reply with just: hi  ✕    New tab     Temporary                             │
+   Terminal                  │                                                                               │
+ ──────────────────────────  │                                                                               │
+ Workspaces             ▸    │                                                                               │
+ ──────────────────────────  │                                                                               │
+ Conversations          ▾    │                                                                               │
+     Archive this chat       │                                                                               │
+      Archived chats         │                                                                               │
+     Search all chats…       │                                                                               │
+   Reply with just: hi       │                                                                               │
+                             │                                                                               │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                               │
+  ▊  Filter      ▎           │                                                                               │◂ Inspect
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ───────────────────────────────────────────────────────────────────────────  │
+                             │   User                                                                        │
+  Chats                 ▾    │   Reply with just: hi                                                         │
+   Reply with just: …  💬    │  ───────────────────────────────────────────────────────────────────────────  │
+                             │  ▊ Assistant  Stopped                                                         │
+ ──────────────────────────  │  ▊   ▸ mcp__tldw_chatbook__chat_with_llm              · Awaiting approval     │
+ Character · No chats   ▸    │  ▊     Review approval                                                        │
+ ──────────────────────────  │  ▊                                                                            │
+ Model                  ▸    │  ▊                                                                            │
+ ──────────────────────────  │  ▊                                                                            │
+ Agent                  ▸    │  ───────────────────────────────────────────────────────────────────────────  │
+ ──────────────────────────  │   System                                                                      │
+ Details                ▸    │   Response stopped by user.                                                   │
+                             │  ───────────────────────────────────────────────────────────────────────────  │  1 appr
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-4.1-nano     System Prompt: off
+
+█  Composer ▾  Menu   Ask, command, or paste task...   Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+P · Ctrl+Q

@@ -314,7 +314,11 @@ def test_update_dataset_preserves_inline_samples_when_metadata_changes_against_e
     assert updated["samples"] == [{"input": "Question", "expected": "Answer"}]
     assert updated["sample_count"] == 1
     assert updated["metadata"] == {"project": "server-sync"}
-    assert updated["version"] == 2
+    # TASK-19566 F8: this used to assert ``updated["version"] == 2`` -- the
+    # row's version counter incrementing on edit. That column was inert
+    # optimistic-locking residue (nothing ever read or checked it) and was
+    # dropped at Evals schema v6; the service record no longer carries it.
+    assert "version" not in updated
 
 
 def test_local_evaluations_service_deletes_dataset_against_evals_db(tmp_path):

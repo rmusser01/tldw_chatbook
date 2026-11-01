@@ -1,0 +1,34 @@
+diff --git a/Docs/User_Guide/console/agent-runs-and-tools.md b/Docs/User_Guide/console/agent-runs-and-tools.md
+index d757ee62bc..d210a6b2d6 100644
+--- a/Docs/User_Guide/console/agent-runs-and-tools.md
++++ b/Docs/User_Guide/console/agent-runs-and-tools.md
+@@ -1988,10 +1988,12 @@ source ▸ Tool gates ▸ **Character cards (character_\*)**.
+ 
+ ### Chat creation tools (fork_chat / new_chat)
+ 
+-A primary Console agent can propose a fresh chat with `new_chat`, or copy the
++A Console agent can propose a fresh chat with `new_chat`, or copy the
+ current active message branch with `fork_chat`. Both accept a `title`, an
+-`opening_prompt`, and optional standing `instructions`. Sub-agents cannot use
+-these tools. Your current chat, workspace, composer and focus stay in place.
++`opening_prompt`, and optional standing `instructions`. Sub-agents can fork a
++chat or create a draft in the same workspace; each request needs fresh
++confirmation. Casual destinations and bounded starts are available only to
++primary agents. Your current chat, workspace, composer and focus stay in place.
+ 
+ `new_chat` has two independent options:
+ 
+diff --git a/tldw_chatbook/Chat/console_chat_controller.py b/tldw_chatbook/Chat/console_chat_controller.py
+index 5ecf36d7e0..817dcc0c4a 100644
+--- a/tldw_chatbook/Chat/console_chat_controller.py
++++ b/tldw_chatbook/Chat/console_chat_controller.py
+@@ -15068,9 +15068,6 @@ class ConsoleChatController:
+     ) -> ConsoleChatSession | None:
+         """Delete a session only after its runtime-owned work was drained."""
+ 
+-        # ADR-150: session-scoped chat-create remember grants die with the session.
+-        self._chat_create_session_grants.pop(ticket.session_id, None)
+-
+         state = self._session_close_states.pop(ticket.close_id, None)
+         if state is None or state[0] != ticket:
+             raise RuntimeError("Console session close ticket is stale.")

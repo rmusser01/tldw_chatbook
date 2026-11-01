@@ -107,6 +107,27 @@ class AdaptiveReaderLayoutPreferences:
     library_width: int = LIBRARY_TARGET_WIDTH
     items_width: int = ITEMS_TARGET_WIDTH
 
+    @property
+    def nav_open(self) -> bool:
+        """Neutral read-only name for ``library_open`` (Roleplay frame B0).
+
+        A property, never a field: fields drive equality, ``astuple`` and
+        ``replace``, which the golden grid pins.
+
+        Returns:
+            The ``library_open`` value, under a destination-neutral name.
+        """
+        return self.library_open
+
+    @property
+    def nav_width(self) -> int:
+        """Neutral read-only name for ``library_width`` (Roleplay frame B0).
+
+        Returns:
+            The ``library_width`` value, under a destination-neutral name.
+        """
+        return self.library_width
+
 
 @dataclass(frozen=True)
 class AdaptiveReaderEffectiveLayout:
@@ -149,6 +170,24 @@ class AdaptiveReaderEffectiveLayout:
     reader_width: int
     priority_pane: PaneName | None
     grip_width: int = PANE_GRIP_WIDTH
+
+    @property
+    def nav_open(self) -> bool:
+        """Neutral read-only name for ``library_open`` (Roleplay frame B0).
+
+        Returns:
+            The ``library_open`` value, under a destination-neutral name.
+        """
+        return self.library_open
+
+    @property
+    def nav_width(self) -> int:
+        """Neutral read-only name for ``library_width`` (Roleplay frame B0).
+
+        Returns:
+            The ``library_width`` value, under a destination-neutral name.
+        """
+        return self.library_width
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -535,3 +574,17 @@ def resolve_adaptive_reader_layout(
         priority_pane=priority,
         grip_width=profile.grip_width,
     )
+
+
+# Neutral names for destinations that are not the Library (Roleplay frame B0;
+# the shared adaptive-pane-shell ADR). The SAME objects, not subclasses, so behaviour is byte-identical
+# by construction; the golden grid in
+# Tests/Library/test_library_adaptive_reader_state.py pins it against a digest
+# captured before these lines existed. No new import: this module stays a
+# config-safe stdlib leaf (TASK-22223). The pane ids stay "library"/"items"
+# (PaneName) for every destination; Roleplay's navigation rail is the
+# "library" pane.
+AdaptivePaneProfile = AdaptiveReaderLayoutProfile
+AdaptivePanePreferences = AdaptiveReaderLayoutPreferences
+AdaptivePaneLayout = AdaptiveReaderEffectiveLayout
+resolve_adaptive_pane_layout = resolve_adaptive_reader_layout

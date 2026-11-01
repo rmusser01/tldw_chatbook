@@ -13,14 +13,14 @@ persist through the atomic config writer; presets persist through the DB.
 
 from __future__ import annotations
 
-import math
-import re
+import asyncio
 import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
@@ -61,10 +61,12 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.sampling_params import (
     params_to_tuple,
+    parse_params_text,
     validate_sampling_params,
 )
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 from tldw_chatbook.Widgets.status_line import set_status_line
 
 #: Soft ceiling before the status line warns about spawn-schema bloat
@@ -74,48 +76,12 @@ ENABLED_DEFINITIONS_SOFT_CAP = 20
 #: Prompt shown by the routing provider Selects for the empty (inherit) value.
 INHERIT_PARENT_PROMPT = "(inherit parent)"
 
-_INT_LITERAL = re.compile(r"[+-]?\d+")
 
+def get_code_review_team():
+    """Saved review team; imported lazily to keep review models out of boot."""
+    from tldw_chatbook.Agents.code_review_models import get_code_review_team as load
 
-def parse_params_text(text: str) -> tuple[dict[str, object], list[str]]:
-    """Parse a ``key = value``-per-line sampling-params draft.
-
-    Numeric literals become ``int``/``float``; anything else stays a string.
-    Non-finite float literals (``inf``/``nan``) stay strings so validation
-    rejects them as non-numbers rather than smuggling an un-JSON-able float
-    into the DB or the config file.
-
-    Args:
-        text: The raw TextArea draft.
-
-    Returns:
-        ``(params, errors)``: the parsed mapping (insertion-ordered by line)
-        and grammar errors only — validate the mapping itself with
-        ``validate_sampling_params``. Empty ``errors`` means every non-blank
-        line parsed.
-    """
-    params: dict[str, object] = {}
-    errors: list[str] = []
-    for lineno, raw_line in enumerate(text.splitlines(), start=1):
-        line = raw_line.strip()
-        if not line:
-            continue
-        key, sep, raw_value = line.partition("=")
-        key = key.strip()
-        value = raw_value.strip()
-        if not sep or not key:
-            errors.append(f"params line {lineno}: expected 'key = value'")
-            continue
-        if _INT_LITERAL.fullmatch(value):
-            params[key] = int(value)
-            continue
-        try:
-            number = float(value)
-        except ValueError:
-            params[key] = value
-        else:
-            params[key] = number if math.isfinite(number) else value
-    return params, errors
+    return load()
 
 
 def _parse_requested_tools(raw: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -185,6 +151,9 @@ class AgentsSettingsPanel(Vertical):
         self._selected_id: str | None = None
         self._rows: list[dict] = []
         self._routing_readiness = routing_readiness
+        from tldw_chatbook.Agents.code_review_models import ReviewTeam
+
+        self._review_team = ReviewTeam()
 
     def compose(self) -> ComposeResult:
         if self._runs_db is None:
@@ -221,7 +190,7 @@ class AgentsSettingsPanel(Vertical):
                 "Instructions (appended to the sub-agent prompt)",
                 classes="settings-input-label",
             )
-            yield TextArea(id="agents-instructions-area")
+            yield TextArea(id="agents-instructions-area", classes="agents-area")
             with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Model override", classes="settings-input-label")
                 yield Input(
@@ -241,11 +210,16 @@ class AgentsSettingsPanel(Vertical):
                     classes="settings-compact-select",
                 )
             yield Static(
-                "Params (one key = value per line; empty = inherit the "
-                "resolved stack)",
+                "Params (one key = value per line; empty = inherit the resolved stack)",
                 classes="settings-input-label",
             )
             yield TextArea(id="agents-params-area")
+            yield Static(
+                "Fallback models (one provider/model per line, at most 8; empty = off). "
+                "Used only before any proposed tool activity; continued children keep their active target.",
+                classes="settings-input-label",
+            )
+            yield TextArea(id="agents-fallback-models-area", classes="agents-area")
             with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Child time cap (seconds)", classes="settings-input-label")
                 yield Input(
@@ -306,10 +280,9 @@ class AgentsSettingsPanel(Vertical):
                 yield Static(
                     "Allow ad-hoc spawn overrides", classes="settings-input-label"
                 )
-                yield Checkbox(value=False, id="agents-override-enabled-checkbox")
+                yield StateCheckbox(value=False, id="agents-override-enabled-checkbox")
             yield Static(
-                "Override allowlist (one per line: provider or "
-                "provider/model-glob)",
+                "Override allowlist (one per line: provider or provider/model-glob)",
                 classes="settings-input-label",
             )
             yield TextArea(id="agents-override-allowlist-area")
@@ -318,9 +291,47 @@ class AgentsSettingsPanel(Vertical):
             )
             with Horizontal(classes="settings-input-row"):
                 yield Button("Test routing", id="agents-test-routing-button")
+            yield Static("", id="agents-routing-report", classes="settings-detail-row")
+            yield Static("Code review team", classes="form-section-title")
             yield Static(
-                "", id="agents-routing-report", classes="settings-detail-row"
+                "Ordered reviewers and optional focuses; destinations belong to presets. "
+                "Save team applies on the next review. Run-only overrides never change these defaults.",
+                classes="settings-detail-row",
             )
+            yield ListView(id="agents-review-team-list", classes="h-5")
+            yield Static("Reviewer preset", classes="form-label")
+            yield Select(
+                [],
+                id="agents-review-preset",
+                compact=True,
+                classes="settings-compact-select",
+            )
+            yield Static("Additional focus (optional)", classes="form-label")
+            yield Input(id="agents-review-focus", classes="settings-compact-input")
+            with Horizontal(classes="settings-input-row"):
+                yield Button("Add", id="agents-review-add")
+                yield Button("Apply", id="agents-review-apply")
+                yield Button("Remove", id="agents-review-remove")
+            with Horizontal(classes="settings-input-row"):
+                yield Button("Up", id="agents-review-up")
+                yield Button("Down", id="agents-review-down")
+            yield Static("Verifier preset (optional)", classes="form-label")
+            yield Select(
+                [],
+                id="agents-review-verifier",
+                compact=True,
+                classes="settings-compact-select",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Button("Save team", id="agents-review-save", variant="primary")
+                yield Button("Cancel edits", id="agents-review-cancel")
+            yield Static(
+                "",
+                id="agents-review-team-status",
+                classes="settings-detail-row",
+                markup=False,
+            )
+
         yield Static(
             "", id="agents-status", classes="settings-detail-row", markup=False
         )
@@ -328,6 +339,7 @@ class AgentsSettingsPanel(Vertical):
     async def on_mount(self) -> None:
         await self._reload_list()
         self._load_routing_controls()
+        await self._load_review_team()
         # TASK-32804.10 AC#3: run the deferred orphan-reconcile sweep off the
         # event loop (it was skipped at construction). Idempotent per file
         # per process, and AgentRunsDB uses thread-local connections.
@@ -379,12 +391,23 @@ class AgentsSettingsPanel(Vertical):
         # for up to a tick, so a click/select right after reload can miss it
         # (review finding, task-6 fix round 1).
         await lv.clear()
-        self._rows = self._runs_db.list_agent_definitions()
-        for row in self._rows:
-            marker = "" if row["enabled"] else " (disabled)"
-            await lv.append(
-                ListItem(Static(f"{row['name']}{marker}", markup=False), name=row["id"])
+        # task-34932: the definition read is a sync file-backed SQLite call
+        # and this coroutine runs on the event loop -- read it off the loop
+        # (AgentRunsDB uses thread-local connections), and batch the row
+        # appends into one extend instead of one await per row.
+        self._rows = await asyncio.to_thread(self._runs_db.list_agent_definitions)
+        items = [
+            ListItem(
+                Static(
+                    f"{row['name']}{'' if row['enabled'] else ' (disabled)'}",
+                    markup=False,
+                ),
+                name=row["id"],
             )
+            for row in self._rows
+        ]
+        if items:
+            await lv.extend(items)
         warning = self._enabled_count_warning()
         if warning:
             self._set_status(warning)
@@ -408,6 +431,13 @@ class AgentsSettingsPanel(Vertical):
         )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id == "agents-review-team-list":
+            index = event.list_view.index
+            if index is not None and index < len(self._review_team.reviewers):
+                choice = self._review_team.reviewers[index]
+                self.query_one("#agents-review-preset", Select).value = choice.preset_id
+                self.query_one("#agents-review-focus", Input).value = choice.focus
+            return
         definition_id = event.item.name
         row = next((r for r in self._rows if r["id"] == definition_id), None)
         if row is None:
@@ -422,8 +452,11 @@ class AgentsSettingsPanel(Vertical):
             row.get("provider", ""),
         )
         self.query_one("#agents-params-area", TextArea).text = "\n".join(
-            f"{key} = {value}"
-            for key, value in definition_from_row(row).params
+            f"{key} = {value}" for key, value in definition_from_row(row).params
+        )
+        self.query_one("#agents-fallback-models-area", TextArea).text = "\n".join(
+            f"{provider}/{model}"
+            for provider, model in definition_from_row(row).fallback_models
         )
         wall_seconds = row.get("max_wall_seconds")
         self.query_one("#agents-wall-seconds-input", Input).value = (
@@ -450,6 +483,12 @@ class AgentsSettingsPanel(Vertical):
             await self._delete()
         elif event.button.id == "agents-test-routing-button":
             self._test_routing()
+        elif event.button.id == "agents-review-save":
+            await self._save_review_team()
+        elif event.button.id == "agents-review-cancel":
+            await self._load_review_team()
+        elif event.button.id and event.button.id.startswith("agents-review-"):
+            await self._edit_review_team(event.button.id.removeprefix("agents-review-"))
 
     def _clear_form(self) -> None:
         self._selected_id = None
@@ -459,6 +498,7 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-model-input", Input).value = ""
         self.query_one("#agents-provider-select", Select).value = Select.NULL
         self.query_one("#agents-params-area", TextArea).text = ""
+        self.query_one("#agents-fallback-models-area", TextArea).text = ""
         self.query_one("#agents-wall-seconds-input", Input).value = ""
         self.query_one("#agents-tools-input", Input).value = ""
         self.query_one("#agents-enabled-switch", Switch).value = True
@@ -473,9 +513,14 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-instructions-area", TextArea).text = preset.instructions
         model_input = self.query_one("#agents-model-input", Input)
         model_input.value = preset.model
-        self._set_select_provider(self.query_one("#agents-provider-select", Select), preset.provider)
+        self._set_select_provider(
+            self.query_one("#agents-provider-select", Select), preset.provider
+        )
         self.query_one("#agents-params-area", TextArea).text = "\n".join(
             f"{key} = {value}" for key, value in preset.params
+        )
+        self.query_one("#agents-fallback-models-area", TextArea).text = "\n".join(
+            f"{provider}/{model}" for provider, model in preset.fallback_models
         )
         self.query_one("#agents-wall-seconds-input", Input).value = ""
         tools_input = self.query_one("#agents-tools-input", Input)
@@ -522,10 +567,15 @@ class AgentsSettingsPanel(Vertical):
             tool_allowlist=stored_tools,
             model=self.query_one("#agents-model-input", Input).value.strip(),
             enabled=self.query_one("#agents-enabled-switch", Switch).value,
-            provider=(
-                "" if provider_value is Select.NULL else str(provider_value)
-            ),
+            provider=("" if provider_value is Select.NULL else str(provider_value)),
             params=params_to_tuple(params),
+            fallback_models=tuple(
+                tuple(line.strip().split("/", 1))
+                for line in self.query_one(
+                    "#agents-fallback-models-area", TextArea
+                ).text.splitlines()
+                if line.strip()
+            ),
             max_wall_seconds=max_wall_seconds,
         )
 
@@ -558,8 +608,210 @@ class AgentsSettingsPanel(Vertical):
         if routing_note:
             notice += f" {routing_note}"
         await self._reload_list()
+        await self._render_review_team()
         warning = self._enabled_count_warning()
         self._set_status(" ".join(part for part in (notice, warning) if part))
+
+    # -- saved code-review preferences ------------------------------------
+    async def _load_review_team(self) -> None:
+        from tldw_chatbook.Agents.code_review_models import ReviewRefused, ReviewTeam
+
+        if self._runs_db is None or not self.is_attached or self._pruning:
+            return
+        status = self.query_one("#agents-review-team-status", Static)
+        save = self.query_one("#agents-review-save", Button)
+        preset = self.query_one("#agents-review-preset", Select)
+        focus = self.query_one("#agents-review-focus", Input)
+        controls = (status, save, preset, focus)
+        try:
+            team = (
+                await asyncio.to_thread(get_code_review_team)
+                if self._app_config()
+                else ReviewTeam()
+            )
+        except ReviewRefused as exc:
+            if any(not control.is_attached or control._pruning for control in controls):
+                return
+            status.update(f"{exc.reason}: repair [agents.code_review] before saving.")
+            save.disabled = True
+            return
+        if any(not control.is_attached or control._pruning for control in controls):
+            return
+        self._review_team = team
+        save.disabled = False
+        await self._render_review_team()
+        if any(not control.is_attached or control._pruning for control in controls):
+            return
+        first = team.reviewers[0] if team.reviewers else None
+        preset.value = first.preset_id if first else Select.NULL
+        focus.value = first.focus if first else ""
+
+    def _review_preset_label(self, preset_id: str) -> str:
+        row = next((row for row in self._rows if row["id"] == preset_id), None)
+        if row is None:
+            return f"{preset_id} (missing)"
+        return row["name"] + ("" if row["enabled"] else " (disabled)")
+
+    async def _render_review_team(self, index: int | None = None) -> None:
+        if not self.is_attached or self._pruning:
+            return
+        status = self.query_one("#agents-review-team-status", Static)
+        referenced = [choice.preset_id for choice in self._review_team.reviewers]
+        if self._review_team.verifier_preset_id:
+            referenced.append(self._review_team.verifier_preset_id)
+        ids = list(dict.fromkeys([row["id"] for row in self._rows] + referenced))
+        # Ids come straight from config; Text keeps Select from parsing markup.
+        options = [(Text(self._review_preset_label(pid)), pid) for pid in ids]
+        select = self.query_one("#agents-review-preset", Select)
+        current = select.value
+        select.set_options(options)
+        select.value = current if current in ids else Select.NULL
+        verifier = self.query_one("#agents-review-verifier", Select)
+        verifier_value = self._review_team.verifier_preset_id
+        verifier.set_options(options)
+        verifier.value = verifier_value or Select.NULL
+        lv = self.query_one("#agents-review-team-list", ListView)
+        await lv.clear()
+        if not lv.is_attached or lv._pruning:
+            return
+        items = [
+            ListItem(
+                Static(
+                    f"{position + 1}. {self._review_preset_label(choice.preset_id)}"
+                    + (f" — {choice.focus}" if choice.focus else ""),
+                    markup=False,
+                )
+            )
+            for position, choice in enumerate(self._review_team.reviewers)
+        ]
+        if items:
+            await lv.extend(items)
+            if not lv.is_attached or lv._pruning:
+                return
+            lv.index = min(index if index is not None else 0, len(items) - 1)
+        diagnostics = []
+        destinations = []
+        routing = (
+            await asyncio.to_thread(load_agents_routing_config)
+            if self._app_config()
+            else AgentsRoutingConfig()
+        )
+        for pid in referenced:
+            row = next((row for row in self._rows if row["id"] == pid), None)
+            if row is None or not row["enabled"]:
+                diagnostics.append(self._review_preset_label(pid))
+            if row is not None:
+                try:
+                    target = resolve_spawn_target(
+                        self._app_config(),
+                        parent_provider="",
+                        parent_model="",
+                        preset=definition_from_row(row),
+                        routing=routing,
+                        readiness=lambda _config, _provider: None,
+                    )
+                    if target.provider and target.model:
+                        destinations.append((target.provider, target.model))
+                except RoutingError as exc:
+                    diagnostics.append(f"{self._review_preset_label(pid)}: {exc.code}")
+        if len(destinations) != len(set(destinations)):
+            diagnostics.append(
+                "Duplicate destinations; reviews may use the same model."
+            )
+        if len(self._review_team.reviewers) < 2:
+            diagnostics.append(
+                "Choose at least two reviewer presets; no destinations are selected automatically."
+            )
+        if not status.is_attached or status._pruning:
+            return
+        status.update(
+            " ".join(diagnostics)
+            or "Team ready for preparation; routing and permissions are checked per run."
+        )
+
+    async def _edit_review_team(self, action: str) -> None:
+        from tldw_chatbook.Agents.code_review_models import (
+            ReviewRefused,
+            parse_review_team,
+        )
+
+        rows = [choice.model_dump() for choice in self._review_team.reviewers]
+        lv = self.query_one("#agents-review-team-list", ListView)
+        index = lv.index
+        selected = self.query_one("#agents-review-preset", Select).value
+        if action in {"add", "apply"}:
+            if selected is Select.NULL:
+                self.query_one("#agents-review-team-status", Static).update(
+                    "Choose a reviewer preset first."
+                )
+                return
+            choice = {
+                "preset_id": str(selected),
+                "focus": self.query_one("#agents-review-focus", Input).value,
+            }
+            if action == "add":
+                rows.append(choice)
+                index = len(rows) - 1
+            elif index is not None and index < len(rows):
+                rows[index] = choice
+        elif index is not None and index < len(rows):
+            if action == "remove":
+                rows.pop(index)
+            elif action in {"up", "down"}:
+                other = index + (-1 if action == "up" else 1)
+                if 0 <= other < len(rows):
+                    rows[index], rows[other] = rows[other], rows[index]
+                    index = other
+        verifier = self.query_one("#agents-review-verifier", Select).value
+        try:
+            self._review_team = parse_review_team(
+                {
+                    "reviewers": rows,
+                    "verifier_preset_id": None if verifier is Select.NULL else verifier,
+                }
+            )
+        except ReviewRefused as exc:
+            self.query_one("#agents-review-team-status", Static).update(exc.reason)
+            return
+        await self._render_review_team(index)
+
+    async def _save_review_team(self) -> None:
+        from tldw_chatbook.Agents.code_review_models import parse_review_team
+
+        if not self.is_attached or self._pruning:
+            return
+        status = self.query_one("#agents-review-team-status", Static)
+        if not self._app_config():
+            status.update("Team saving needs an app configuration.")
+            return
+        verifier = self.query_one("#agents-review-verifier", Select).value
+        team = parse_review_team(
+            {
+                "reviewers": [
+                    choice.model_dump() for choice in self._review_team.reviewers
+                ],
+                "verifier_preset_id": None if verifier is Select.NULL else verifier,
+            }
+        )
+        values = team.model_dump(mode="json", exclude_none=True)
+        saved = await asyncio.to_thread(
+            save_settings_to_cli_config,
+            {"agents.code_review": values},
+            delete_keys={
+                "agents.code_review": ("verifier_preset_id",)
+                if team.verifier_preset_id is None
+                else ()
+            },
+        )
+        if saved:
+            self._review_team = team
+        if not status.is_attached or status._pruning:
+            return
+        status.update(
+            "Saved review team. Applies to the next review."
+            if saved
+            else "Could not save review team; edits retained."
+        )
 
     # -- routing config (the four [agents] keys) ---------------------------
     def _load_routing_controls(self) -> None:
@@ -577,9 +829,9 @@ class AgentsSettingsPanel(Vertical):
         self.query_one(
             "#agents-override-enabled-checkbox", Checkbox
         ).value = routing.spawn_override_enabled
-        self.query_one(
-            "#agents-override-allowlist-area", TextArea
-        ).text = "\n".join(routing.spawn_override_allowlist)
+        self.query_one("#agents-override-allowlist-area", TextArea).text = "\n".join(
+            routing.spawn_override_allowlist
+        )
 
     def _parse_allowlist(self, text: str) -> tuple[list[str], list[str]]:
         """Split the allowlist draft into ``(entries, problems)``.
@@ -654,8 +906,7 @@ class AgentsSettingsPanel(Vertical):
             note = "Could not write the [agents] routing keys to config.toml."
         if problems:
             warning.update(
-                "Override allowlist NOT saved — fix or remove: "
-                + "; ".join(problems)
+                "Override allowlist NOT saved — fix or remove: " + "; ".join(problems)
             )
         return note
 
@@ -697,8 +948,8 @@ class AgentsSettingsPanel(Vertical):
             )
         except RoutingError as exc:
             if exc.level == "inherit":
-                return f"{label} -> inherit parent's endpoint at spawn"
-            return f"{label} -> [{exc.code}] {exc}"
+                return f"{label} -> (inherit) parent's endpoint is resolved at spawn"
+            return f"{label} -> [{exc.code}] ({exc.level}) {exc}"
         return f"{label} -> {target.provider} / {target.model} — ready"
 
     async def _delete(self) -> None:
@@ -713,6 +964,7 @@ class AgentsSettingsPanel(Vertical):
         self._clear_form()
         self._set_status("Deleted.")
         await self._reload_list()
+        await self._render_review_team()
 
     def _set_status(self, text: str) -> None:
         set_status_line(self, "#agents-status", text)

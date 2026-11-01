@@ -1,0 +1,18 @@
+{
+  "head": "e4a2717b4158d178d2ec1616d9a8ebd983982c08",
+  "runtime_sha256": "3cd6e642f5b8e9bec25329af6d7cac2d9d0d2fc26a2d02be2efce2beb9ec8cf2",
+  "capture": true,
+  "direct_library_tools": true,
+  "shared_total_attempt_cap": 10,
+  "used_before_run": 6,
+  "setup_results": [
+    {
+      "phase": "seed",
+      "exit_code": 0
+    },
+    {
+      "phase": "guard-check",
+      "exit_code": 0
+    }
+  ]
+}

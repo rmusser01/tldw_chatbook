@@ -1,0 +1,593 @@
+"""Rule editor tests use the public runtime and real private SQLite owner."""
+
+from dataclasses import replace
+from io import StringIO
+from typing import ClassVar
+
+import pytest
+from rich.console import Console
+from textual.widgets import Button, Input
+
+from Tests.Chat.test_response_rules_runtime import activate, seed
+from Tests.Chat.test_response_rules_runtime import native as _native_fixture
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from tldw_chatbook.Widgets.Console.response_rules_modal import ResponseRulesModal
+
+native = _native_fixture
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
+
+class ManagerHost(ConsolidatedCSSApp):
+    CSS_PATH: ClassVar[list[str]] = [str(p) for p in APP_STYLESHEETS]
+
+    def __init__(self, modal):
+        super().__init__()
+        self.modal = modal
+
+    async def on_mount(self):
+        await self.push_screen(self.modal)
+
+
+@pytest.mark.asyncio
+async def test_global_manager_can_disable_after_last_chat_closes(native):
+    _owner, rules, chats, session, _gateway, _controller = native
+    activate(native)
+    destination = rules.scopes(session.id)[2]
+    rules.store.promote("rule", 1, destination, expected_binding_revision=0)
+    chats.close_session(session.id)
+    modal = ResponseRulesModal(destination, rules.store, rules)
+    async with ManagerHost(modal).run_test(size=(80, 24)) as pilot:
+        for _ in range(10):
+            await pilot.pause()
+        modal.query_one("#rr-disable", Button).press()
+        for _ in range(10):
+            await pilot.pause()
+        assert rules.store.list_bindings(destination)[0].state == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_global_manager_does_not_inherit_chat_only_rules(native):
+    from textual.widgets import OptionList
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    global_scope = rules.scopes(session.id)[2]
+    modal = ResponseRulesModal(global_scope, rules.store, rules)
+    host = ManagerHost(modal)
+    async with host.run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        assert modal.query_one("#rr-rules", OptionList).option_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_editor_testing_uses_public_runtime_and_never_autoactivates(native, size):
+    _owner, rules, _chats, session, _gateway, _controller = native
+    seed(native)
+    _gateway.reply = "Evidence: corrected answer"
+    learned = await rules.learn(session.id, "The answer omitted evidence")
+    assert learned.state == "active", learned.reason
+    scope = rules.scopes(session.id)[0]
+    binding = rules.store.list_bindings(scope)[0]
+    tested = []
+    actual = rules.test_edit
+
+    async def public(*args, **kwargs):
+        tested.append((args, kwargs))
+        return await actual(*args, **kwargs)
+
+    rules.test_edit = public
+    modal = ResponseRulesModal(scope, rules.store, rules)
+    host = ManagerHost(modal)
+    async with host.run_test(size=size) as pilot:
+        for _ in range(5):
+            await pilot.pause()
+        assert "Missing proof" in str(modal.query_one("#rr-examples").render())
+        modal.query_one("#rr-title", Input).value = "Evidence required"
+        modal.query_one("#rr-test", Button).press()
+        for _ in range(50):
+            await pilot.pause()
+            if modal.tested is not None:
+                break
+        assert tested and modal.tested.reason in {"tested", "validation_reused"}
+        assert rules.store.list_bindings(scope)[0] == binding
+        assert rules.store.list_drafts(scope)[-1].rule.revision > binding.revision
+        console = Console(record=True, width=size[0], file=StringIO())
+        console.print(modal._compositor.render_full_update())
+        painted = console.export_text()
+        assert "Test" in painted and "Save" in painted and "Close" in painted
+        save = modal.query_one("#rr-save", Button)
+        for _ in range(35):
+            if host.focused is save:
+                break
+            await pilot.press("tab")
+        assert host.focused is save
+        await pilot.press("enter")
+        for _ in range(10):
+            await pilot.pause()
+        assert (
+            rules.store.list_bindings(scope)[0].revision == modal.tested.rule.revision
+        )
+
+
+@pytest.mark.asyncio
+async def test_inherited_exclusion_masks_and_exact_promotion_preview(native):
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    chat, _workspace, global_scope = rules.scopes(session.id)
+    rules.store.promote("rule", 1, global_scope, expected_binding_revision=0)
+    rules.store.delete_binding(chat, "rule", expected_binding_revision=1)
+    modal = ResponseRulesModal(chat, rules.store, rules)
+    host = ManagerHost(modal)
+    async with host.run_test(size=(80, 24)) as pilot:
+        for _ in range(20):
+            await pilot.pause()
+            if modal._selected is not None:
+                break
+        assert modal._selected is not None
+        modal.query_one("#rr-exclude", Button).press()
+        for _ in range(6):
+            await pilot.pause()
+        assert rules.effective_rules(session.id) == (), (
+            modal._current_scope(),
+            modal._busy,
+            str(modal.query_one("#rr-status").render()),
+        )
+        assert rules.store.list_bindings(global_scope)[0].state == "enabled"
+
+
+@pytest.mark.asyncio
+async def test_missing_original_requires_selected_replacement_and_fresh_examples(
+    native,
+):
+    from textual.widgets import Select
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    _owner, rules, chats, session, _gateway, _controller = native
+    old = activate(native)
+    chats.delete_message(old.id)
+    user = chats.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="Explain result again",
+        persist=True,
+    )
+    replacement = chats.append_message(
+        session.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="Missing proof again",
+        persist=True,
+    )
+    chats.persist_message_if_needed(user.id)
+    chats.persist_message_if_needed(replacement.id)
+    modal = ResponseRulesModal(rules.scopes(session.id)[0], rules.store, rules)
+    host = ManagerHost(modal)
+    async with host.run_test(size=(80, 24)) as pilot:
+        for _ in range(10):
+            await pilot.pause()
+        modal.query_one("#rr-test", Button).press()
+        for _ in range(12):
+            await pilot.pause()
+        assert modal.tested.reason == "original_evidence_unavailable"
+        modal.query_one("#rr-example", Select).value = replacement.id
+        modal.query_one("#rr-test", Button).press()
+        for _ in range(30):
+            await pilot.pause()
+            if modal.tested is not None and modal.tested.validation is not None:
+                break
+        assert modal.tested.reason == "tested"
+        assert (
+            modal.tested.validation.source.message_id
+            == replacement.persisted_message_id
+        )
+        assert rules.store.list_bindings(modal.scope)[0].revision == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["storage", "binding", "scope"])
+async def test_save_failure_preserves_edits_and_current_pin(native, fault, monkeypatch):
+
+    _owner, rules, chats, session, gateway, _controller = native
+    seed(native)
+    gateway.reply = "Evidence: repaired"
+    await rules.learn(session.id, "The answer omitted evidence")
+    scope = rules.scopes(session.id)[0]
+    pin = rules.store.list_bindings(scope)[0]
+    modal = ResponseRulesModal(scope, rules.store, rules)
+    host = ManagerHost(modal)
+    async with host.run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        title = modal.query_one("#rr-title", Input)
+        title.value = "Evidence required"
+        modal.query_one("#rr-test", Button).press()
+        for _ in range(25):
+            await pilot.pause()
+            if modal.tested is not None:
+                break
+        assert modal.tested.validation is not None
+        activate = rules.store.activate
+        if fault == "storage":
+
+            def refuse(*args, **kwargs):
+                raise OSError("fixture storage unavailable")
+
+            monkeypatch.setattr(rules.store, "activate", refuse)
+        elif fault == "binding":
+            pin = rules.store.set_binding(
+                replace(pin, state="disabled"),
+                expected_binding_revision=pin.binding_revision,
+            )
+        else:
+            chats.create_session(title="Another Chat")
+        assert await pilot.click("#rr-save")
+        for _ in range(10):
+            await pilot.pause()
+        assert title.value == "Evidence required"
+        assert rules.store.list_bindings(scope)[0] == pin
+        if fault == "storage":
+            monkeypatch.setattr(rules.store, "activate", activate)
+            assert await pilot.click("#rr-save")
+            for _ in range(10):
+                await pilot.pause()
+            assert (
+                rules.store.list_bindings(scope)[0].revision
+                == modal.tested.rule.revision
+            )
+
+
+@pytest.mark.asyncio
+async def test_promotion_previews_exact_pin_without_private_examples(native):
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    chat, _workspace, global_scope = rules.scopes(session.id)
+    modal = ResponseRulesModal(chat, rules.store, rules)
+    host = ManagerHost(modal)
+    async with host.run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        assert await pilot.click("#rr-promote")
+        for _ in range(5):
+            await pilot.pause()
+        assert isinstance(host.screen, ConfirmationDialog)
+        assert "revision 1" in host.screen.message
+        assert "Missing proof" not in host.screen.message
+        host.screen.query_one("#confirm-button", Button).press()
+        for _ in range(10):
+            await pilot.pause()
+        assert rules.store.list_bindings(global_scope)[0].revision == 1
+        assert rules.store.list_drafts(global_scope) == ()
+
+
+@pytest.mark.asyncio
+async def test_changing_scope_or_row_retains_unsaved_editor_text(native):
+    from textual.widgets import Select
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    chat, _workspace, _global_scope = rules.scopes(session.id)
+    modal = ResponseRulesModal(chat, rules.store, rules)
+    host = ManagerHost(modal)
+    async with host.run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        modal.query_one("#rr-title", Input).value = "Keep my unsaved title"
+        modal.query_one("#rr-scope", Select).value = "2"
+        for _ in range(8):
+            await pilot.pause()
+        assert modal.scope == chat
+        assert modal.query_one("#rr-title", Input).value == "Keep my unsaved title"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_testing_keeps_edits_and_pinned_revision(native):
+    import asyncio
+
+    _owner, rules, _chats, session, gateway, _controller = native
+    seed(native)
+    gateway.reply = "Evidence: repaired"
+    assert (
+        await rules.learn(session.id, "The answer omitted evidence")
+    ).state == "active"
+    scope = rules.scopes(session.id)[0]
+    pin = rules.store.list_bindings(scope)[0]
+    modal = ResponseRulesModal(scope, rules.store, rules)
+    host = ManagerHost(modal)
+    entered = asyncio.Event()
+    actual = rules.builder.validate_edit
+
+    async def held(*args, **kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+        return await actual(*args, **kwargs)
+
+    rules.builder.validate_edit = held
+    async with host.run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        modal.query_one("#rr-title", Input).value = "Evidence required"
+        assert await pilot.click("#rr-test")
+        for _ in range(20):
+            await pilot.pause()
+            if entered.is_set():
+                break
+        assert entered.is_set()
+        await pilot.press("escape")
+        for _ in range(8):
+            await pilot.pause()
+        assert host.screen is modal
+        assert modal.query_one("#rr-title", Input).value == "Evidence required"
+        assert rules.store.list_bindings(scope)[0] == pin
+        assert rules.state(session.id).phase == "idle"
+        assert modal.query_one("#rr-save", Button).disabled
+
+
+@pytest.mark.asyncio
+async def test_dirty_escape_discards_only_after_confirmation(native):
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    modal = ResponseRulesModal(rules.scopes(session.id)[0], rules.store, rules)
+    host = ManagerHost(modal)
+    async with host.run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        modal.query_one("#rr-title", Input).value = "Unsaved title"
+        await pilot.press("escape")
+        for _ in range(5):
+            await pilot.pause()
+        assert isinstance(host.screen, ConfirmationDialog)
+        host.screen.query_one("#cancel-button", Button).press()
+        for _ in range(5):
+            await pilot.pause()
+        assert host.screen is modal
+        assert modal.query_one("#rr-title", Input).value == "Unsaved title"
+        await pilot.press("escape")
+        for _ in range(5):
+            await pilot.pause()
+        host.screen.query_one("#confirm-button", Button).press()
+        for _ in range(8):
+            await pilot.pause()
+        assert modal not in host.screen_stack
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["promote", "toggle"])
+@pytest.mark.parametrize("concurrent_edit", [False, True])
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
+    native, action, size, concurrent_edit
+):
+    import asyncio
+
+    from textual.widgets import OptionList, Static
+
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    _owner, rules, _chats, session, gateway, _controller = native
+    seed(native)
+    gateway.reply = "Evidence: corrected answer"
+    assert (
+        await rules.learn(session.id, "The answer omitted evidence")
+    ).state == "active"
+    scope = rules.scopes(session.id)[0]
+    modal = ResponseRulesModal(scope, rules.store, rules)
+    host = ManagerHost(modal)
+    async with host.run_test(size=size) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        modal.query_one("#rr-title", Input).value = "Edited evidence definition"
+        modal.query_one("#rr-test", Button).press()
+        for _ in range(50):
+            await pilot.pause()
+            if modal.tested is not None and not modal._busy:
+                break
+        tested = modal.tested
+        assert tested.rule.revision == 2 and tested.validation is not None
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_db_call = rules.run_db_call
+
+        async def held_post_save_read(call, *args, **kwargs):
+            value = await original_db_call(call, *args, **kwargs)
+            if concurrent_edit and call == rules.store.list_drafts:
+                entered.set()
+                await release.wait()
+            return value
+
+        rules.run_db_call = held_post_save_read
+        try:
+            modal.query_one("#rr-save", Button).press()
+            if concurrent_edit:
+                await entered.wait()
+                assert rules.store.list_bindings(scope)[0].revision == 2
+                modal.query_one("#rr-title", Input).value = "Newer untested draft"
+        finally:
+            release.set()
+        for _ in range(20):
+            await pilot.pause()
+            if not modal._busy and rules.store.list_bindings(scope)[0].revision == 2:
+                break
+        rules.run_db_call = original_db_call
+        saved_selection = modal._selected
+        committed = rules.store.list_bindings(scope)[0]
+        assert saved_selection == tested.rule
+        assert (
+            modal._binding == committed
+            and modal._expected == committed.binding_revision
+        )
+        if concurrent_edit:
+            assert modal.query_one("#rr-title", Input).value == "Newer untested draft"
+            assert modal._has_unsaved() and modal.tested is None
+            assert modal.query_one("#rr-save", Button).disabled
+            assert (
+                "untested"
+                in str(modal.query_one("#rr-status", Static).render()).lower()
+            )
+            assert (
+                "untested"
+                in str(modal.query_one("#rr-examples", Static).render()).lower()
+            )
+        saved_details = str(modal.query_one("#rr-details", Static).render())
+        options = modal.query_one("#rr-rules", OptionList)
+        saved_row = str(options.get_option_at_index(options.highlighted).prompt)
+        assert rules.store.list_bindings(scope)[0].revision == 2
+        if action == "promote":
+            modal.query_one("#rr-promote", Button).press()
+            for _ in range(10):
+                await pilot.pause()
+                if isinstance(host.screen, ConfirmationDialog):
+                    break
+            assert isinstance(host.screen, ConfirmationDialog)
+            preview = host.screen.message
+            host.screen.query_one("#confirm-button", Button).press()
+            for _ in range(15):
+                await pilot.pause()
+            binding = rules.store.list_bindings(rules.scopes(session.id)[2])[0]
+            assert binding.revision == 2, preview
+            assert "revision 2" in preview and "Edited evidence definition" in preview
+        else:
+            for state in ("disabled", "enabled"):
+                modal.query_one("#rr-disable", Button).press()
+                # Commit can precede the reload that enables the next press.
+                async with asyncio.timeout(10):
+                    while True:
+                        await pilot.pause()
+                        if (
+                            not modal._busy
+                            and not modal.query_one("#rr-disable", Button).disabled
+                            and rules.store.list_bindings(scope)[0].state == state
+                        ):
+                            break
+                binding = rules.store.list_bindings(scope)[0]
+                assert binding.state == state
+            assert binding.revision == 2
+        assert (
+            rules.store.get_revision(binding.rule_id, binding.revision).candidate
+            == tested.rule.candidate
+        )
+        assert saved_selection == tested.rule == modal._selected
+        assert "revision 2" in saved_details
+        assert "revision 2" in saved_row and "Edited evidence definition" in saved_row
+        assert modal.query_one("#rr-title", Input).value == (
+            "Newer untested draft" if concurrent_edit else tested.rule.candidate.title
+        )
+        if concurrent_edit:
+            assert modal._has_unsaved() and modal.tested is None
+            assert modal._binding == rules.store.list_bindings(scope)[0]
+            assert modal._expected == modal._binding.binding_revision
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["reload", "promote"])
+async def test_manager_detached_subtree_callbacks_do_not_read_widgets(native, action):
+    import asyncio
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    modal = ResponseRulesModal(rules.scopes(session.id)[0], rules.store, rules)
+    async with ManagerHost(modal).run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        original = rules.run_db_call
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def held(call, *args, **kwargs):
+            value = await original(call, *args, **kwargs)
+            if call == rules.store.list_drafts:
+                entered.set()
+                await release.wait()
+            return value
+
+        rules.run_db_call = held
+        task = asyncio.create_task(modal._reload()) if action == "reload" else None
+        if task:
+            await entered.wait()
+        await modal.query_one("#rr-body").remove()
+        try:
+            if task:
+                release.set()
+                await task
+            else:
+                await modal._action("promote")
+            assert len(rules.store.list_bindings(rules.scopes(session.id)[0])) == 1
+        finally:
+            release.set()
+            rules.run_db_call = original
+
+
+@pytest.mark.asyncio
+async def test_manager_superseded_reload_cannot_replace_current_scope_rows(native):
+    import asyncio
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    chat, _workspace, global_scope = rules.scopes(session.id)
+    modal = ResponseRulesModal(chat, rules.store, rules)
+    async with ManagerHost(modal).run_test(size=(120, 35)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        original = rules.run_db_call
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def held(call, *args, **kwargs):
+            value = await original(call, *args, **kwargs)
+            if call == rules.store.list_drafts and args == (chat,):
+                entered.set()
+                await release.wait()
+            return value
+
+        rules.run_db_call = held
+        task = asyncio.create_task(modal._reload())
+        try:
+            await entered.wait()
+            modal.scope = global_scope
+            await modal._reload()
+            assert modal._rows == []
+            release.set()
+            await task
+            assert modal._rows == [], "old Chat results must not repaint Global"
+        finally:
+            release.set()
+            await task
+            rules.run_db_call = original
+
+
+@pytest.mark.asyncio
+async def test_manager_reload_preserves_edits_made_while_db_is_pending(native):
+    import asyncio
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    modal = ResponseRulesModal(rules.scopes(session.id)[0], rules.store, rules)
+    async with ManagerHost(modal).run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        original = rules.run_db_call
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def held(call, *args, **kwargs):
+            value = await original(call, *args, **kwargs)
+            if call == rules.store.list_drafts:
+                entered.set()
+                await release.wait()
+            return value
+
+        rules.run_db_call = held
+        task = asyncio.create_task(modal._reload())
+        try:
+            await entered.wait()
+            modal.query_one("#rr-title", Input).value = "Unsaved while loading"
+            release.set()
+            await task
+            assert modal.query_one("#rr-title", Input).value == "Unsaved while loading"
+            assert modal._has_unsaved()
+        finally:
+            release.set()
+            await task
+            rules.run_db_call = original

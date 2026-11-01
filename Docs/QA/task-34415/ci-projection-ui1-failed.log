@@ -1,0 +1,1042 @@
+﻿2026-10-07T04:07:55.0490178Z Current runner version: '2.337.0'
+2026-10-07T04:07:55.0538274Z ##[group]Runner Image Provisioner
+2026-10-07T04:07:55.0539127Z Hosted Compute Agent
+2026-10-07T04:07:55.0539905Z Version: 20260901.588
+2026-10-07T04:07:55.0540569Z Commit: f88ec8081b781fac6c440065ac7ff9e710ce3d0b
+2026-10-07T04:07:55.0541562Z Build Date: 2026-09-01T19:56:44Z
+2026-10-07T04:07:55.0542331Z Worker ID: {95e6b6e7-fbc0-4f9d-bb2e-57e00c3e24ce}
+2026-10-07T04:07:55.0543045Z Azure Region: westus2
+2026-10-07T04:07:55.0543639Z ##[endgroup]
+2026-10-07T04:07:55.0545235Z ##[group]Operating System
+2026-10-07T04:07:55.0545876Z Ubuntu
+2026-10-07T04:07:55.0546458Z 24.04.5
+2026-10-07T04:07:55.0546982Z LTS
+2026-10-07T04:07:55.0547530Z ##[endgroup]
+2026-10-07T04:07:55.0548155Z ##[group]Runner Image
+2026-10-07T04:07:55.0548765Z Image: ubuntu-24.04
+2026-10-07T04:07:55.0549362Z Version: 20260927.320.1
+2026-10-07T04:07:55.0550666Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260927.320/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-07T04:07:55.0552569Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260927.320
+2026-10-07T04:07:55.0553553Z ##[endgroup]
+2026-10-07T04:07:55.0554676Z ##[group]GITHUB_TOKEN Permissions
+2026-10-07T04:07:55.0556589Z Contents: read
+2026-10-07T04:07:55.0557261Z Metadata: read
+2026-10-07T04:07:55.0557842Z ##[endgroup]
+2026-10-07T04:07:55.0559853Z Secret source: Actions
+2026-10-07T04:07:55.0560940Z Cache mode: write
+2026-10-07T04:07:55.0561913Z Prepare workflow directory
+2026-10-07T04:07:55.0952301Z Prepare all required actions
+2026-10-07T04:07:55.0999797Z Getting action download info
+2026-10-07T04:07:55.4908975Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-10-07T04:07:55.5866248Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+2026-10-07T04:07:55.7679223Z Complete job name: UI Fast Lane (1)
+2026-10-07T04:07:55.8501454Z ##[group]Run actions/checkout@v4
+2026-10-07T04:07:55.8502422Z with:
+2026-10-07T04:07:55.8502888Z   repository: rmusser01/tldw_chatbook
+2026-10-07T04:07:55.8506701Z   token: ***
+2026-10-07T04:07:55.8507130Z   ssh-strict: true
+2026-10-07T04:07:55.8507566Z   ssh-user: git
+2026-10-07T04:07:55.8508013Z   persist-credentials: true
+2026-10-07T04:07:55.8508499Z   clean: true
+2026-10-07T04:07:55.8508950Z   sparse-checkout-cone-mode: true
+2026-10-07T04:07:55.8509474Z   fetch-depth: 1
+2026-10-07T04:07:55.8509905Z   fetch-tags: false
+2026-10-07T04:07:55.8510346Z   show-progress: true
+2026-10-07T04:07:55.8510799Z   lfs: false
+2026-10-07T04:07:55.8511608Z   submodules: false
+2026-10-07T04:07:55.8512081Z   set-safe-directory: true
+2026-10-07T04:07:55.8512596Z   allow-unsafe-pr-checkout: false
+2026-10-07T04:07:55.8513442Z ##[endgroup]
+2026-10-07T04:07:55.9507469Z Syncing repository: rmusser01/tldw_chatbook
+2026-10-07T04:07:55.9509278Z ##[group]Getting Git version info
+2026-10-07T04:07:55.9510223Z Working directory is '/home/runner/work/tldw_chatbook/tldw_chatbook'
+2026-10-07T04:07:55.9511577Z [command]/usr/bin/git version
+2026-10-07T04:07:55.9584396Z git version 2.55.0
+2026-10-07T04:07:55.9605502Z ##[endgroup]
+2026-10-07T04:07:55.9619014Z Temporarily overriding HOME='/home/runner/work/_temp/c638fa46-2cee-4089-9029-2f9ed87d67b0' before making global git config changes
+2026-10-07T04:07:55.9620429Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-07T04:07:55.9624739Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-07T04:07:55.9674645Z Deleting the contents of '/home/runner/work/tldw_chatbook/tldw_chatbook'
+2026-10-07T04:07:55.9679523Z ##[group]Initializing the repository
+2026-10-07T04:07:55.9683649Z [command]/usr/bin/git init /home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-07T04:07:55.9794895Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-07T04:07:55.9796494Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-07T04:07:55.9798603Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-07T04:07:55.9800234Z hint: call:
+2026-10-07T04:07:55.9801373Z hint:
+2026-10-07T04:07:55.9802505Z hint: 	git config --global init.defaultBranch <name>
+2026-10-07T04:07:55.9803898Z hint:
+2026-10-07T04:07:55.9805172Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-07T04:07:55.9807356Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-07T04:07:55.9808643Z hint:
+2026-10-07T04:07:55.9809409Z hint: 	git branch -m <name>
+2026-10-07T04:07:55.9810314Z hint:
+2026-10-07T04:07:55.9811697Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-07T04:07:55.9812922Z Initialized empty Git repository in /home/runner/work/tldw_chatbook/tldw_chatbook/.git/
+2026-10-07T04:07:55.9814603Z [command]/usr/bin/git remote add origin https://github.com/rmusser01/tldw_chatbook
+2026-10-07T04:07:55.9862064Z ##[endgroup]
+2026-10-07T04:07:55.9862865Z ##[group]Disabling automatic garbage collection
+2026-10-07T04:07:55.9865954Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-07T04:07:55.9895273Z ##[endgroup]
+2026-10-07T04:07:55.9895986Z ##[group]Setting up auth
+2026-10-07T04:07:55.9901661Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-07T04:07:55.9931489Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-07T04:07:56.0316466Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-07T04:07:56.0348411Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-07T04:07:56.0560882Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-07T04:07:56.0592628Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-07T04:07:56.0812948Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-07T04:07:56.0848177Z ##[endgroup]
+2026-10-07T04:07:56.0849114Z ##[group]Fetching the repository
+2026-10-07T04:07:56.0857337Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +e9ad5441610ade54520057fce6531093498e5fa2:refs/remotes/pull/3034/merge
+2026-10-07T04:08:17.0138498Z From https://github.com/rmusser01/tldw_chatbook
+2026-10-07T04:08:17.0139647Z  * [new ref]           e9ad5441610ade54520057fce6531093498e5fa2 -> pull/3034/merge
+2026-10-07T04:08:17.0142909Z ##[endgroup]
+2026-10-07T04:08:17.0143737Z ##[group]Determining the checkout info
+2026-10-07T04:08:17.0145319Z ##[endgroup]
+2026-10-07T04:08:17.0150446Z [command]/usr/bin/git sparse-checkout disable
+2026-10-07T04:08:17.0200257Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-07T04:08:17.0227773Z ##[group]Checking out the ref
+2026-10-07T04:08:17.0231673Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/3034/merge
+2026-10-07T04:08:18.0688395Z Updating files:  29% (9138/31149)
+2026-10-07T04:08:18.0868776Z Updating files:  30% (9345/31149)
+2026-10-07T04:08:18.1034959Z Updating files:  31% (9657/31149)
+2026-10-07T04:08:18.1239862Z Updating files:  32% (9968/31149)
+2026-10-07T04:08:18.1439626Z Updating files:  33% (10280/31149)
+2026-10-07T04:08:18.1702009Z Updating files:  34% (10591/31149)
+2026-10-07T04:08:18.5772080Z Updating files:  35% (10903/31149)
+2026-10-07T04:08:18.6139083Z Updating files:  36% (11214/31149)
+2026-10-07T04:08:18.7366041Z Updating files:  37% (11526/31149)
+2026-10-07T04:08:18.8456666Z Updating files:  38% (11837/31149)
+2026-10-07T04:08:18.9277460Z Updating files:  39% (12149/31149)
+2026-10-07T04:08:18.9416443Z Updating files:  40% (12460/31149)
+2026-10-07T04:08:19.0031446Z Updating files:  41% (12772/31149)
+2026-10-07T04:08:19.0515705Z Updating files:  42% (13083/31149)
+2026-10-07T04:08:19.1245390Z Updating files:  42% (13196/31149)
+2026-10-07T04:08:19.2112104Z Updating files:  43% (13395/31149)
+2026-10-07T04:08:19.2624166Z Updating files:  44% (13706/31149)
+2026-10-07T04:08:19.2977794Z Updating files:  45% (14018/31149)
+2026-10-07T04:08:19.3549510Z Updating files:  46% (14329/31149)
+2026-10-07T04:08:19.3817374Z Updating files:  47% (14641/31149)
+2026-10-07T04:08:19.4126270Z Updating files:  48% (14952/31149)
+2026-10-07T04:08:19.4596883Z Updating files:  49% (15264/31149)
+2026-10-07T04:08:19.4932554Z Updating files:  50% (15575/31149)
+2026-10-07T04:08:19.5267366Z Updating files:  51% (15886/31149)
+2026-10-07T04:08:19.5489609Z Updating files:  52% (16198/31149)
+2026-10-07T04:08:19.5772939Z Updating files:  53% (16509/31149)
+2026-10-07T04:08:19.6119168Z Updating files:  54% (16821/31149)
+2026-10-07T04:08:19.6430064Z Updating files:  55% (17132/31149)
+2026-10-07T04:08:19.6735797Z Updating files:  56% (17444/31149)
+2026-10-07T04:08:19.7075697Z Updating files:  57% (17755/31149)
+2026-10-07T04:08:19.7439577Z Updating files:  58% (18067/31149)
+2026-10-07T04:08:19.7809830Z Updating files:  59% (18378/31149)
+2026-10-07T04:08:19.8265243Z Updating files:  60% (18690/31149)
+2026-10-07T04:08:19.8603221Z Updating files:  61% (19001/31149)
+2026-10-07T04:08:19.8874540Z Updating files:  62% (19313/31149)
+2026-10-07T04:08:19.9127093Z Updating files:  63% (19624/31149)
+2026-10-07T04:08:19.9491007Z Updating files:  64% (19936/31149)
+2026-10-07T04:08:19.9697722Z Updating files:  65% (20247/31149)
+2026-10-07T04:08:19.9901388Z Updating files:  66% (20559/31149)
+2026-10-07T04:08:20.0074383Z Updating files:  67% (20870/31149)
+2026-10-07T04:08:20.0282754Z Updating files:  68% (21182/31149)
+2026-10-07T04:08:20.0481680Z Updating files:  69% (21493/31149)
+2026-10-07T04:08:20.0511024Z Updating files:  70% (21805/31149)
+2026-10-07T04:08:20.0679065Z Updating files:  70% (21849/31149)
+2026-10-07T04:08:20.0875507Z Updating files:  71% (22116/31149)
+2026-10-07T04:08:20.1059156Z Updating files:  72% (22428/31149)
+2026-10-07T04:08:20.1266605Z Updating files:  73% (22739/31149)
+2026-10-07T04:08:20.1457763Z Updating files:  74% (23051/31149)
+2026-10-07T04:08:20.1650630Z Updating files:  75% (23362/31149)
+2026-10-07T04:08:20.1824959Z Updating files:  76% (23674/31149)
+2026-10-07T04:08:20.2071643Z Updating files:  77% (23985/31149)
+2026-10-07T04:08:20.2297596Z Updating files:  78% (24297/31149)
+2026-10-07T04:08:20.2478592Z Updating files:  79% (24608/31149)
+2026-10-07T04:08:20.2655650Z Updating files:  80% (24920/31149)
+2026-10-07T04:08:20.2840883Z Updating files:  81% (25231/31149)
+2026-10-07T04:08:20.3023394Z Updating files:  82% (25543/31149)
+2026-10-07T04:08:20.3580965Z Updating files:  83% (25854/31149)
+2026-10-07T04:08:20.3765567Z Updating files:  84% (26166/31149)
+2026-10-07T04:08:20.3932209Z Updating files:  85% (26477/31149)
+2026-10-07T04:08:20.4106896Z Updating files:  86% (26789/31149)
+2026-10-07T04:08:20.4260244Z Updating files:  87% (27100/31149)
+2026-10-07T04:08:20.4479057Z Updating files:  88% (27412/31149)
+2026-10-07T04:08:20.4949330Z Updating files:  89% (27723/31149)
+2026-10-07T04:08:20.5357840Z Updating files:  90% (28035/31149)
+2026-10-07T04:08:20.5811318Z Updating files:  91% (28346/31149)
+2026-10-07T04:08:20.6143054Z Updating files:  92% (28658/31149)
+2026-10-07T04:08:20.6543964Z Updating files:  93% (28969/31149)
+2026-10-07T04:08:20.6851681Z Updating files:  94% (29281/31149)
+2026-10-07T04:08:20.7235033Z Updating files:  95% (29592/31149)
+2026-10-07T04:08:20.7827298Z Updating files:  96% (29904/31149)
+2026-10-07T04:08:20.8080023Z Updating files:  97% (30215/31149)
+2026-10-07T04:08:20.8454139Z Updating files:  98% (30527/31149)
+2026-10-07T04:08:20.9109276Z Updating files:  99% (30838/31149)
+2026-10-07T04:08:20.9109977Z Updating files: 100% (31149/31149)
+2026-10-07T04:08:20.9110779Z Updating files: 100% (31149/31149), done.
+2026-10-07T04:08:20.9416166Z Note: switching to 'refs/remotes/pull/3034/merge'.
+2026-10-07T04:08:20.9416806Z
+2026-10-07T04:08:20.9417143Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-07T04:08:20.9417748Z changes and commit them, and you can discard any commits you make in this
+2026-10-07T04:08:20.9418600Z state without impacting any branches by switching back to a branch.
+2026-10-07T04:08:20.9419106Z
+2026-10-07T04:08:20.9419450Z If you want to create a new branch to retain commits you create, you may
+2026-10-07T04:08:20.9420299Z do so (now or later) by using -c with the switch command. Example:
+2026-10-07T04:08:20.9420756Z
+2026-10-07T04:08:20.9420936Z   git switch -c <new-branch-name>
+2026-10-07T04:08:20.9421505Z
+2026-10-07T04:08:20.9421678Z Or undo this operation with:
+2026-10-07T04:08:20.9422016Z
+2026-10-07T04:08:20.9422166Z   git switch -
+2026-10-07T04:08:20.9422352Z
+2026-10-07T04:08:20.9422730Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-07T04:08:20.9423262Z
+2026-10-07T04:08:20.9423826Z HEAD is now at e9ad5441 Merge ee51e0b1e762463b38f7b5144161458c02d60702 into 518277133cc1281e446387b06d59dc54fea9b727
+2026-10-07T04:08:20.9563306Z ##[endgroup]
+2026-10-07T04:08:20.9606443Z [command]/usr/bin/git log -1 --format=%H
+2026-10-07T04:08:20.9628673Z e9ad5441610ade54520057fce6531093498e5fa2
+2026-10-07T04:08:20.9984586Z ##[group]Run actions/setup-python@v5
+2026-10-07T04:08:20.9984885Z with:
+2026-10-07T04:08:20.9985100Z   python-version: 3.12
+2026-10-07T04:08:20.9985323Z   cache: pip
+2026-10-07T04:08:20.9985522Z   check-latest: false
+2026-10-07T04:08:20.9987970Z   token: ***
+2026-10-07T04:08:20.9988187Z   update-environment: true
+2026-10-07T04:08:20.9988431Z   allow-prereleases: false
+2026-10-07T04:08:20.9988662Z   freethreaded: false
+2026-10-07T04:08:20.9988873Z ##[endgroup]
+2026-10-07T04:08:21.1298290Z ##[group]Installed versions
+2026-10-07T04:08:21.1401429Z (node:2310) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-10-07T04:08:21.1402775Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-07T04:08:21.1403730Z Successfully set up CPython (3.12.14)
+2026-10-07T04:08:21.1404809Z ##[endgroup]
+2026-10-07T04:08:23.3283241Z [command]/opt/hostedtoolcache/Python/3.12.14/x64/bin/pip cache dir
+2026-10-07T04:08:23.6384221Z /home/runner/.cache/pip
+2026-10-07T04:08:23.9007438Z Cache hit for: setup-python-Linux-x64-24.04-Ubuntu-python-3.12.14-pip-af4c5cd3be89ff21fa32ea929b288395945ebee23c59a397e2dfcabdfe464089
+2026-10-07T04:08:23.9113135Z (node:2310) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-07T04:08:25.1817499Z Received 4194304 of 3484503135 (0.1%), 4.0 MBs/sec
+2026-10-07T04:08:26.1818327Z Received 134217728 of 3484503135 (3.9%), 64.0 MBs/sec
+2026-10-07T04:08:27.1827684Z Received 289406976 of 3484503135 (8.3%), 92.0 MBs/sec
+2026-10-07T04:08:28.1852234Z Received 448790528 of 3484503135 (12.9%), 106.9 MBs/sec
+2026-10-07T04:08:29.1872639Z Received 608174080 of 3484503135 (17.5%), 115.9 MBs/sec
+2026-10-07T04:08:30.1857570Z Received 746586112 of 3484503135 (21.4%), 118.6 MBs/sec
+2026-10-07T04:08:31.1858990Z Received 859832320 of 3484503135 (24.7%), 117.1 MBs/sec
+2026-10-07T04:08:32.1861796Z Received 998244352 of 3484503135 (28.6%), 118.9 MBs/sec
+2026-10-07T04:08:33.1859125Z Received 1136656384 of 3484503135 (32.6%), 120.4 MBs/sec
+2026-10-07T04:08:34.1932594Z Received 1262485504 of 3484503135 (36.2%), 120.3 MBs/sec
+2026-10-07T04:08:35.1892438Z Received 1392508928 of 3484503135 (40.0%), 120.7 MBs/sec
+2026-10-07T04:08:36.1897744Z Received 1514143744 of 3484503135 (43.5%), 120.3 MBs/sec
+2026-10-07T04:08:37.1959969Z Received 1648361472 of 3484503135 (47.3%), 120.8 MBs/sec
+2026-10-07T04:08:38.1958944Z Received 1778384896 of 3484503135 (51.0%), 121.0 MBs/sec
+2026-10-07T04:08:39.1962914Z Received 1891631104 of 3484503135 (54.3%), 120.2 MBs/sec
+2026-10-07T04:08:40.2030364Z Received 2017460224 of 3484503135 (57.9%), 120.1 MBs/sec
+2026-10-07T04:08:41.2019097Z Received 2147483648 of 3484503135 (61.6%), 120.3 MBs/sec
+2026-10-07T04:08:42.2044729Z Received 2281701376 of 3484503135 (65.5%), 120.7 MBs/sec
+2026-10-07T04:08:43.2058641Z Received 2415919104 of 3484503135 (69.3%), 121.1 MBs/sec
+2026-10-07T04:08:44.2059035Z Received 2545942528 of 3484503135 (73.1%), 121.3 MBs/sec
+2026-10-07T04:08:45.2063525Z Received 2654994432 of 3484503135 (76.2%), 120.4 MBs/sec
+2026-10-07T04:08:46.2106235Z Received 2776629248 of 3484503135 (79.7%), 120.2 MBs/sec
+2026-10-07T04:08:47.2110457Z Received 2898264064 of 3484503135 (83.2%), 120.0 MBs/sec
+2026-10-07T04:08:48.2113589Z Received 3015704576 of 3484503135 (86.5%), 119.7 MBs/sec
+2026-10-07T04:08:49.2125476Z Received 3128950784 of 3484503135 (89.8%), 119.2 MBs/sec
+2026-10-07T04:08:50.2127994Z Received 3250585600 of 3484503135 (93.3%), 119.1 MBs/sec
+2026-10-07T04:08:51.2136932Z Received 3363831808 of 3484503135 (96.5%), 118.7 MBs/sec
+2026-10-07T04:08:52.0282458Z Received 3484503135 of 3484503135 (100.0%), 119.3 MBs/sec
+2026-10-07T04:08:52.0284291Z Cache Size: ~3323 MB (3484503135 B)
+2026-10-07T04:08:52.0408557Z [command]/usr/bin/tar -xf /home/runner/work/_temp/43740b16-3cda-4fa0-b94d-7409a0ac3323/cache.tzst -P -C /home/runner/work/tldw_chatbook/tldw_chatbook --use-compress-program unzstd
+2026-10-07T04:08:58.8434600Z Cache restored successfully
+2026-10-07T04:08:58.9880188Z Cache restored from key: setup-python-Linux-x64-24.04-Ubuntu-python-3.12.14-pip-af4c5cd3be89ff21fa32ea929b288395945ebee23c59a397e2dfcabdfe464089
+2026-10-07T04:08:59.3357813Z ##[group]Run python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+2026-10-07T04:08:59.3358960Z [36;1mpython -m pip install -e . pytest pytest-asyncio pytest-timeout packaging[0m
+2026-10-07T04:09:00.3286114Z shell: /usr/bin/bash -e {0}
+2026-10-07T04:09:00.3286613Z env:
+2026-10-07T04:09:00.3287148Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-07T04:09:00.3288088Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+2026-10-07T04:09:00.3288885Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-07T04:09:00.3289616Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-07T04:09:00.3290062Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-07T04:09:00.3290475Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+2026-10-07T04:09:00.3290817Z ##[endgroup]
+2026-10-07T04:09:01.0974504Z Obtaining file:///home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-07T04:09:01.1013797Z   Installing build dependencies: started
+2026-10-07T04:09:01.7023534Z   Installing build dependencies: finished with status 'done'
+2026-10-07T04:09:01.7029677Z   Checking if build backend supports build_editable: started
+2026-10-07T04:09:02.0145450Z   Checking if build backend supports build_editable: finished with status 'done'
+2026-10-07T04:09:02.0152923Z   Getting requirements to build editable: started
+2026-10-07T04:09:02.5562465Z   Getting requirements to build editable: finished with status 'done'
+2026-10-07T04:09:02.5571888Z   Preparing editable metadata (pyproject.toml): started
+2026-10-07T04:09:02.9549268Z   Preparing editable metadata (pyproject.toml): finished with status 'done'
+2026-10-07T04:09:03.0893974Z Collecting pytest
+2026-10-07T04:09:03.0907304Z   Using cached pytest-9.1.1-py3-none-any.whl.metadata (7.6 kB)
+2026-10-07T04:09:03.1133887Z Collecting pytest-asyncio
+2026-10-07T04:09:03.1146566Z   Using cached pytest_asyncio-1.4.0-py3-none-any.whl.metadata (4.1 kB)
+2026-10-07T04:09:03.1301151Z Collecting pytest-timeout
+2026-10-07T04:09:03.1313591Z   Using cached pytest_timeout-2.4.0-py3-none-any.whl.metadata (20 kB)
+2026-10-07T04:09:03.1498439Z Collecting packaging
+2026-10-07T04:09:03.1510585Z   Using cached packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+2026-10-07T04:09:03.1850980Z Collecting chardet<6,>=3.0.2 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.1863358Z   Using cached chardet-5.2.0-py3-none-any.whl.metadata (3.4 kB)
+2026-10-07T04:09:03.2085865Z Collecting httpx (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.2098340Z   Using cached httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+2026-10-07T04:09:03.2385260Z Collecting loguru (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.2397466Z   Using cached loguru-0.7.3-py3-none-any.whl.metadata (22 kB)
+2026-10-07T04:09:03.2752520Z Collecting textual==8.2.8 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.2764771Z   Using cached textual-8.2.8-py3-none-any.whl.metadata (9.1 kB)
+2026-10-07T04:09:03.2941862Z Collecting textual-diff-view==0.1.5 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.2954267Z   Using cached textual_diff_view-0.1.5-py3-none-any.whl.metadata (48 kB)
+2026-10-07T04:09:03.3284463Z Collecting requests (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.3296907Z   Using cached requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+2026-10-07T04:09:03.3646248Z Collecting rich (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.3658353Z   Using cached rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+2026-10-07T04:09:03.3823563Z Collecting pyte==0.8.2 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.3835886Z   Using cached pyte-0.8.2-py3-none-any.whl.metadata (3.0 kB)
+2026-10-07T04:09:03.7891655Z Collecting regex==2026.4.4 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.7907155Z   Using cached regex-2026.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (40 kB)
+2026-10-07T04:09:03.8123281Z Collecting wcwidth<1,>=0.2.14 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.8730523Z   Downloading wcwidth-0.9.2-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (23 kB)
+2026-10-07T04:09:03.9609799Z Collecting rich-pixels>=3.0.0 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:03.9622721Z   Using cached rich_pixels-3.0.1-py3-none-any.whl.metadata (2.2 kB)
+2026-10-07T04:09:04.1422187Z Collecting pillow>=10.4 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.1435059Z   Using cached pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.1 kB)
+2026-10-07T04:09:04.1807043Z Collecting PyYAML (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.1820633Z   Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.4 kB)
+2026-10-07T04:09:04.2842196Z Collecting pydantic<3,>=2.4 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.2855527Z   Using cached pydantic-2.13.5-py3-none-any.whl.metadata (110 kB)
+2026-10-07T04:09:04.3101551Z Collecting jsonschema<5,>=4.26 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.3113422Z   Using cached jsonschema-4.26.0-py3-none-any.whl.metadata (7.6 kB)
+2026-10-07T04:09:04.3336060Z Collecting referencing<1,>=0.37 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.3348340Z   Using cached referencing-0.37.0-py3-none-any.whl.metadata (2.8 kB)
+2026-10-07T04:09:04.3491591Z Collecting rfc8785==0.1.4 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.3503797Z   Using cached rfc8785-0.1.4-py3-none-any.whl.metadata (3.4 kB)
+2026-10-07T04:09:04.5337388Z Collecting cryptography (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.5516972Z   Downloading cryptography-50.0.2-cp311-abi3-manylinux_2_34_x86_64.whl.metadata (4.4 kB)
+2026-10-07T04:09:04.5707036Z Collecting portalocker==3.2.0 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.5719157Z   Using cached portalocker-3.2.0-py3-none-any.whl.metadata (8.7 kB)
+2026-10-07T04:09:04.6359040Z Collecting psutil (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.6373605Z   Using cached psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl.metadata (22 kB)
+2026-10-07T04:09:04.6546264Z Collecting toml (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.6559561Z   Using cached toml-0.10.2-py2.py3-none-any.whl.metadata (7.1 kB)
+2026-10-07T04:09:04.6695854Z Collecting pyperclip (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.6708328Z   Using cached pyperclip-1.11.0-py3-none-any.whl.metadata (2.4 kB)
+2026-10-07T04:09:04.6871673Z Collecting emoji (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.6956050Z   Downloading emoji-2.16.0-py3-none-any.whl.metadata (5.7 kB)
+2026-10-07T04:09:04.7142016Z Collecting jinja2 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.7156135Z   Using cached jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+2026-10-07T04:09:04.7888412Z Collecting pycryptodomex (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.7975708Z   Downloading pycryptodomex-3.24.0-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (3.4 kB)
+2026-10-07T04:09:04.8289697Z Collecting keyring (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.8306997Z   Using cached keyring-25.7.0-py3-none-any.whl.metadata (21 kB)
+2026-10-07T04:09:04.8536586Z Collecting markdownify (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.8548820Z   Using cached markdownify-1.2.3-py3-none-any.whl.metadata (9.9 kB)
+2026-10-07T04:09:04.8686184Z Collecting aiofiles (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.8698322Z   Using cached aiofiles-25.1.0-py3-none-any.whl.metadata (6.3 kB)
+2026-10-07T04:09:04.8909554Z Collecting croniter>=1.4.0 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.8922536Z   Using cached croniter-6.2.4-py3-none-any.whl.metadata (23 kB)
+2026-10-07T04:09:04.9759884Z Collecting textual-image (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:04.9887819Z   Downloading textual_image-0.14.1-py3-none-any.whl.metadata (14 kB)
+2026-10-07T04:09:05.0297754Z Collecting tiktoken==0.14.0 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:05.0310605Z   Using cached tiktoken-0.14.0-cp312-cp312-manylinux_2_28_x86_64.whl.metadata (6.7 kB)
+2026-10-07T04:09:05.0449823Z Collecting defusedxml (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:05.0463513Z   Using cached defusedxml-0.7.1-py2.py3-none-any.whl.metadata (32 kB)
+2026-10-07T04:09:05.0619368Z Collecting html5lib<2,>=1.1 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:05.0631320Z   Using cached html5lib-1.1-py2.py3-none-any.whl.metadata (16 kB)
+2026-10-07T04:09:05.0780462Z Collecting tinycss2<2,>=1.4 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:05.0792413Z   Using cached tinycss2-1.5.1-py3-none-any.whl.metadata (3.0 kB)
+2026-10-07T04:09:05.5853336Z Collecting aiohttp<4,>=3.9 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:05.5959868Z   Downloading aiohttp-3.14.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (8.3 kB)
+2026-10-07T04:09:05.6777219Z Collecting sherpa-onnx<2,>=1.13 (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:05.6880185Z   Downloading sherpa_onnx-1.13.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (53 kB)
+2026-10-07T04:09:06.3324944Z Collecting numpy (from tldw_chatbook==0.2.3)
+2026-10-07T04:09:06.3399525Z   Downloading numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+2026-10-07T04:09:06.7390496Z Collecting markdown-it-py>=2.1.0 (from markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-07T04:09:06.7404159Z   Using cached markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+2026-10-07T04:09:06.8484840Z Collecting mdit-py-plugins (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-07T04:09:06.8503708Z   Using cached mdit_py_plugins-0.6.1-py3-none-any.whl.metadata (2.9 kB)
+2026-10-07T04:09:06.8973973Z Collecting platformdirs<5,>=3.6.0 (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-07T04:09:06.9050897Z   Downloading platformdirs-4.12.3-py3-none-any.whl.metadata (5.5 kB)
+2026-10-07T04:09:06.9248357Z Collecting pygments<3.0.0,>=2.19.2 (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-07T04:09:06.9260823Z   Using cached pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+2026-10-07T04:09:06.9455528Z Collecting typing-extensions<5.0.0,>=4.4.0 (from textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-07T04:09:06.9467763Z   Using cached typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+2026-10-07T04:09:06.9656844Z Collecting aiohappyeyeballs>=2.5.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-07T04:09:06.9669029Z   Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl.metadata (5.9 kB)
+2026-10-07T04:09:06.9790018Z Collecting aiosignal>=1.4.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-07T04:09:06.9802592Z   Using cached aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+2026-10-07T04:09:06.9959478Z Collecting attrs>=17.3.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-07T04:09:06.9971610Z   Using cached attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+2026-10-07T04:09:07.0575760Z Collecting frozenlist>=1.1.1 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-07T04:09:07.0589112Z   Using cached frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (20 kB)
+2026-10-07T04:09:07.2940674Z Collecting multidict<7.0,>=4.5 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-07T04:09:07.3013146Z   Downloading multidict-6.9.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.3 kB)
+2026-10-07T04:09:07.3691478Z Collecting propcache>=0.2.0 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-07T04:09:07.3769271Z   Downloading propcache-0.5.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (25 kB)
+2026-10-07T04:09:07.6516436Z Collecting yarl<2.0,>=1.25.1 (from aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-07T04:09:07.6598975Z   Downloading yarl-1.25.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (111 kB)
+2026-10-07T04:09:07.6913663Z Collecting six>=1.9 (from html5lib<2,>=1.1->tldw_chatbook==0.2.3)
+2026-10-07T04:09:07.6925961Z   Using cached six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+2026-10-07T04:09:07.7040322Z Collecting webencodings (from html5lib<2,>=1.1->tldw_chatbook==0.2.3)
+2026-10-07T04:09:07.7052677Z   Using cached webencodings-0.6.1-py3-none-any.whl.metadata (3.4 kB)
+2026-10-07T04:09:07.7207586Z Collecting jsonschema-specifications>=2023.03.6 (from jsonschema<5,>=4.26->tldw_chatbook==0.2.3)
+2026-10-07T04:09:07.7219978Z   Using cached jsonschema_specifications-2025.9.1-py3-none-any.whl.metadata (2.9 kB)
+2026-10-07T04:09:07.9639179Z Collecting rpds-py>=0.25.0 (from jsonschema<5,>=4.26->tldw_chatbook==0.2.3)
+2026-10-07T04:09:07.9738695Z   Downloading rpds_py-2026.9.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (4.1 kB)
+2026-10-07T04:09:07.9908513Z Collecting annotated-types>=0.6.0 (from pydantic<3,>=2.4->tldw_chatbook==0.2.3)
+2026-10-07T04:09:07.9920998Z   Using cached annotated_types-0.8.0-py3-none-any.whl.metadata (15 kB)
+2026-10-07T04:09:08.6751059Z Collecting pydantic-core==2.46.5 (from pydantic<3,>=2.4->tldw_chatbook==0.2.3)
+2026-10-07T04:09:08.6770093Z   Using cached pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.6 kB)
+2026-10-07T04:09:08.6939263Z Collecting typing-inspection>=0.4.2 (from pydantic<3,>=2.4->tldw_chatbook==0.2.3)
+2026-10-07T04:09:08.6951122Z   Using cached typing_inspection-0.4.4-py3-none-any.whl.metadata (2.6 kB)
+2026-10-07T04:09:08.7340191Z Collecting sherpa-onnx-core==1.13.8 (from sherpa-onnx<2,>=1.13->tldw_chatbook==0.2.3)
+2026-10-07T04:09:08.7426503Z   Downloading sherpa_onnx_core-1.13.8-py3-none-manylinux2014_x86_64.whl.metadata (628 bytes)
+2026-10-07T04:09:08.7644218Z Collecting idna>=2.0 (from yarl<2.0,>=1.25.1->aiohttp<4,>=3.9->tldw_chatbook==0.2.3)
+2026-10-07T04:09:08.7718577Z   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+2026-10-07T04:09:08.7925841Z Collecting iniconfig>=1.0.1 (from pytest)
+2026-10-07T04:09:08.7995892Z   Downloading iniconfig-2.3.1-py3-none-any.whl.metadata (2.8 kB)
+2026-10-07T04:09:08.8191282Z Collecting pluggy<2,>=1.5 (from pytest)
+2026-10-07T04:09:08.8203551Z   Using cached pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+2026-10-07T04:09:08.8479263Z Collecting python-dateutil (from croniter>=1.4.0->tldw_chatbook==0.2.3)
+2026-10-07T04:09:08.8492923Z   Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+2026-10-07T04:09:08.8668520Z Collecting mdurl~=0.1 (from markdown-it-py>=2.1.0->markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-07T04:09:08.8680522Z   Using cached mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+2026-10-07T04:09:08.8832716Z Collecting linkify-it-py<3,>=1 (from markdown-it-py[linkify]>=2.1.0->textual==8.2.8->tldw_chatbook==0.2.3)
+2026-10-07T04:09:08.8844965Z   Using cached linkify_it_py-2.2.0-py3-none-any.whl.metadata (8.6 kB)
+2026-10-07T04:09:08.9936306Z Collecting cffi>=2.0.0 (from cryptography->tldw_chatbook==0.2.3)
+2026-10-07T04:09:08.9949986Z   Using cached cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.5 kB)
+2026-10-07T04:09:09.0137089Z Collecting pycparser (from cffi>=2.0.0->cryptography->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.0149551Z   Using cached pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+2026-10-07T04:09:09.0384211Z Collecting anyio (from httpx->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.0396820Z   Using cached anyio-4.15.1-py3-none-any.whl.metadata (4.7 kB)
+2026-10-07T04:09:09.0599500Z Collecting certifi (from httpx->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.0611694Z   Using cached certifi-2026.7.22-py3-none-any.whl.metadata (2.5 kB)
+2026-10-07T04:09:09.0786002Z Collecting httpcore==1.* (from httpx->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.0799029Z   Using cached httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+2026-10-07T04:09:09.0948615Z Collecting h11>=0.16 (from httpcore==1.*->httpx->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.0960620Z   Using cached h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+2026-10-07T04:09:09.1579912Z Collecting MarkupSafe>=2.0 (from jinja2->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.1656723Z   Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+2026-10-07T04:09:09.1827885Z Collecting SecretStorage>=3.2 (from keyring->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.1840831Z   Using cached secretstorage-3.5.0-py3-none-any.whl.metadata (4.0 kB)
+2026-10-07T04:09:09.1994487Z Collecting jeepney>=0.4.2 (from keyring->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.2005937Z   Using cached jeepney-0.9.0-py3-none-any.whl.metadata (1.2 kB)
+2026-10-07T04:09:09.2153928Z Collecting jaraco.classes (from keyring->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.2166679Z   Using cached jaraco.classes-3.4.0-py3-none-any.whl.metadata (2.6 kB)
+2026-10-07T04:09:09.2358763Z Collecting jaraco.functools (from keyring->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.2370425Z   Using cached jaraco_functools-4.6.0-py3-none-any.whl.metadata (2.9 kB)
+2026-10-07T04:09:09.2553307Z Collecting jaraco.context (from keyring->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.2565263Z   Using cached jaraco_context-6.1.2-py3-none-any.whl.metadata (4.2 kB)
+2026-10-07T04:09:09.2898775Z Collecting more-itertools (from jaraco.classes->keyring->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.2910152Z   Using cached more_itertools-11.1.0-py3-none-any.whl.metadata (41 kB)
+2026-10-07T04:09:09.3137968Z Collecting beautifulsoup4<5,>=4.9 (from markdownify->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.3149546Z   Using cached beautifulsoup4-4.15.0-py3-none-any.whl.metadata (3.8 kB)
+2026-10-07T04:09:09.3446073Z Collecting soupsieve>=1.6.1 (from beautifulsoup4<5,>=4.9->markdownify->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.3530797Z   Downloading soupsieve-2.10-py3-none-any.whl.metadata (4.4 kB)
+2026-10-07T04:09:09.5405089Z Collecting charset_normalizer<4,>=2 (from requests->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.5597829Z   Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (46 kB)
+2026-10-07T04:09:09.5944454Z Collecting urllib3<3,>=1.26 (from requests->tldw_chatbook==0.2.3)
+2026-10-07T04:09:09.6101670Z   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+2026-10-07T04:09:09.6241846Z Using cached portalocker-3.2.0-py3-none-any.whl (22 kB)
+2026-10-07T04:09:09.6253227Z Using cached pyte-0.8.2-py3-none-any.whl (31 kB)
+2026-10-07T04:09:09.6265028Z Using cached regex-2026.4.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (801 kB)
+2026-10-07T04:09:09.6278949Z Using cached rfc8785-0.1.4-py3-none-any.whl (9.2 kB)
+2026-10-07T04:09:09.6290245Z Using cached textual-8.2.8-py3-none-any.whl (731 kB)
+2026-10-07T04:09:09.6304697Z Using cached textual_diff_view-0.1.5-py3-none-any.whl (25 kB)
+2026-10-07T04:09:09.6316222Z Using cached tiktoken-0.14.0-cp312-cp312-manylinux_2_28_x86_64.whl (1.2 MB)
+2026-10-07T04:09:09.6406119Z Downloading aiohttp-3.14.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.9 MB)
+2026-10-07T04:09:09.6688330Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.9/1.9 MB 82.0 MB/s  0:00:00
+2026-10-07T04:09:09.6701876Z Using cached chardet-5.2.0-py3-none-any.whl (199 kB)
+2026-10-07T04:09:09.6714599Z Using cached html5lib-1.1-py2.py3-none-any.whl (112 kB)
+2026-10-07T04:09:09.6726471Z Using cached jsonschema-4.26.0-py3-none-any.whl (90 kB)
+2026-10-07T04:09:09.6798081Z Downloading multidict-6.9.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (336 kB)
+2026-10-07T04:09:09.6908946Z Downloading platformdirs-4.12.3-py3-none-any.whl (32 kB)
+2026-10-07T04:09:09.6937558Z Using cached pydantic-2.13.5-py3-none-any.whl (472 kB)
+2026-10-07T04:09:09.6950856Z Using cached pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+2026-10-07T04:09:09.6969151Z Using cached pygments-2.21.0-py3-none-any.whl (1.3 MB)
+2026-10-07T04:09:09.6985106Z Using cached referencing-0.37.0-py3-none-any.whl (26 kB)
+2026-10-07T04:09:09.7125025Z Downloading sherpa_onnx-1.13.8-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (4.4 MB)
+2026-10-07T04:09:09.7616919Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.4/4.4 MB 91.2 MB/s  0:00:00
+2026-10-07T04:09:09.7707859Z Downloading sherpa_onnx_core-1.13.8-py3-none-manylinux2014_x86_64.whl (10.6 MB)
+2026-10-07T04:09:09.8453621Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.6/10.6 MB 143.7 MB/s  0:00:00
+2026-10-07T04:09:09.8465719Z Using cached tinycss2-1.5.1-py3-none-any.whl (28 kB)
+2026-10-07T04:09:09.8477561Z Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+2026-10-07T04:09:09.8563992Z Downloading wcwidth-0.9.2-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (769 kB)
+2026-10-07T04:09:09.8623726Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 769.8/769.8 kB 160.5 MB/s  0:00:00
+2026-10-07T04:09:09.8707752Z Downloading yarl-1.25.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (117 kB)
+2026-10-07T04:09:09.8741976Z Using cached pytest-9.1.1-py3-none-any.whl (386 kB)
+2026-10-07T04:09:09.8754711Z Using cached pluggy-1.6.0-py3-none-any.whl (20 kB)
+2026-10-07T04:09:09.8766003Z Using cached pytest_asyncio-1.4.0-py3-none-any.whl (16 kB)
+2026-10-07T04:09:09.8777254Z Using cached pytest_timeout-2.4.0-py3-none-any.whl (14 kB)
+2026-10-07T04:09:09.8788634Z Using cached packaging-26.3-py3-none-any.whl (129 kB)
+2026-10-07T04:09:09.8800503Z Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl (15 kB)
+2026-10-07T04:09:09.8811779Z Using cached aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+2026-10-07T04:09:09.8823061Z Using cached annotated_types-0.8.0-py3-none-any.whl (13 kB)
+2026-10-07T04:09:09.8834202Z Using cached attrs-26.1.0-py3-none-any.whl (67 kB)
+2026-10-07T04:09:09.8845585Z Using cached croniter-6.2.4-py3-none-any.whl (46 kB)
+2026-10-07T04:09:09.8857499Z Using cached frozenlist-1.8.0-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (242 kB)
+2026-10-07T04:09:09.8933951Z Downloading idna-3.20-py3-none-any.whl (69 kB)
+2026-10-07T04:09:09.9030966Z Downloading iniconfig-2.3.1-py3-none-any.whl (7.6 kB)
+2026-10-07T04:09:09.9060112Z Using cached jsonschema_specifications-2025.9.1-py3-none-any.whl (18 kB)
+2026-10-07T04:09:09.9071722Z Using cached markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+2026-10-07T04:09:09.9083646Z Using cached mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+2026-10-07T04:09:09.9095026Z Using cached linkify_it_py-2.2.0-py3-none-any.whl (21 kB)
+2026-10-07T04:09:09.9106960Z Using cached pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (6.9 MB)
+2026-10-07T04:09:09.9225040Z Downloading propcache-0.5.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (250 kB)
+2026-10-07T04:09:09.9284781Z Using cached rich-15.0.0-py3-none-any.whl (310 kB)
+2026-10-07T04:09:09.9297224Z Using cached rich_pixels-3.0.1-py3-none-any.whl (6.0 kB)
+2026-10-07T04:09:09.9393926Z Downloading rpds_py-2026.9.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (371 kB)
+2026-10-07T04:09:09.9432761Z Using cached six-1.17.0-py2.py3-none-any.whl (11 kB)
+2026-10-07T04:09:09.9444233Z Using cached typing_inspection-0.4.4-py3-none-any.whl (14 kB)
+2026-10-07T04:09:09.9455674Z Using cached webencodings-0.6.1-py3-none-any.whl (8.7 kB)
+2026-10-07T04:09:09.9466843Z Using cached aiofiles-25.1.0-py3-none-any.whl (14 kB)
+2026-10-07T04:09:09.9541341Z Downloading cryptography-50.0.2-cp311-abi3-manylinux_2_34_x86_64.whl (4.8 MB)
+2026-10-07T04:09:09.9748618Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.8/4.8 MB 243.3 MB/s  0:00:00
+2026-10-07T04:09:09.9761475Z Using cached cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (221 kB)
+2026-10-07T04:09:09.9773556Z Using cached defusedxml-0.7.1-py2.py3-none-any.whl (25 kB)
+2026-10-07T04:09:09.9852049Z Downloading emoji-2.16.0-py3-none-any.whl (610 kB)
+2026-10-07T04:09:09.9900977Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 610.9/610.9 kB 126.6 MB/s  0:00:00
+2026-10-07T04:09:09.9912210Z Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+2026-10-07T04:09:09.9923995Z Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+2026-10-07T04:09:09.9935738Z Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+2026-10-07T04:09:09.9947483Z Using cached anyio-4.15.1-py3-none-any.whl (132 kB)
+2026-10-07T04:09:09.9959163Z Using cached certifi-2026.7.22-py3-none-any.whl (136 kB)
+2026-10-07T04:09:09.9970806Z Using cached jinja2-3.1.6-py3-none-any.whl (134 kB)
+2026-10-07T04:09:10.0049635Z Downloading markupsafe-3.0.4-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+2026-10-07T04:09:10.0078860Z Using cached keyring-25.7.0-py3-none-any.whl (39 kB)
+2026-10-07T04:09:10.0090380Z Using cached jeepney-0.9.0-py3-none-any.whl (49 kB)
+2026-10-07T04:09:10.0102255Z Using cached secretstorage-3.5.0-py3-none-any.whl (15 kB)
+2026-10-07T04:09:10.0113689Z Using cached jaraco.classes-3.4.0-py3-none-any.whl (6.8 kB)
+2026-10-07T04:09:10.0125372Z Using cached jaraco_context-6.1.2-py3-none-any.whl (7.9 kB)
+2026-10-07T04:09:10.0136880Z Using cached jaraco_functools-4.6.0-py3-none-any.whl (11 kB)
+2026-10-07T04:09:10.0148452Z Using cached loguru-0.7.3-py3-none-any.whl (61 kB)
+2026-10-07T04:09:10.0160183Z Using cached markdownify-1.2.3-py3-none-any.whl (15 kB)
+2026-10-07T04:09:10.0172497Z Using cached beautifulsoup4-4.15.0-py3-none-any.whl (109 kB)
+2026-10-07T04:09:10.0250984Z Downloading soupsieve-2.10-py3-none-any.whl (38 kB)
+2026-10-07T04:09:10.0281611Z Using cached mdit_py_plugins-0.6.1-py3-none-any.whl (66 kB)
+2026-10-07T04:09:10.0293359Z Using cached more_itertools-11.1.0-py3-none-any.whl (72 kB)
+2026-10-07T04:09:10.0501001Z Downloading numpy-2.5.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.7 MB)
+2026-10-07T04:09:10.1493293Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.7/16.7 MB 171.3 MB/s  0:00:00
+2026-10-07T04:09:10.1506479Z Using cached psutil-7.2.2-cp36-abi3-manylinux2010_x86_64.manylinux_2_12_x86_64.manylinux_2_28_x86_64.whl (155 kB)
+2026-10-07T04:09:10.1518291Z Using cached pycparser-3.0-py3-none-any.whl (48 kB)
+2026-10-07T04:09:10.1594327Z Downloading pycryptodomex-3.24.0-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (2.3 MB)
+2026-10-07T04:09:10.1689145Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.3/2.3 MB 274.2 MB/s  0:00:00
+2026-10-07T04:09:10.1701130Z Using cached pyperclip-1.11.0-py3-none-any.whl (11 kB)
+2026-10-07T04:09:10.1713641Z Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+2026-10-07T04:09:10.1726785Z Using cached pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (807 kB)
+2026-10-07T04:09:10.1755244Z Using cached requests-2.34.2-py3-none-any.whl (73 kB)
+2026-10-07T04:09:10.1826070Z Downloading charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (257 kB)
+2026-10-07T04:09:10.1922630Z Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+2026-10-07T04:09:10.2029381Z Downloading textual_image-0.14.1-py3-none-any.whl (183 kB)
+2026-10-07T04:09:10.2102938Z Using cached toml-0.10.2-py2.py3-none-any.whl (16 kB)
+2026-10-07T04:09:10.4707679Z Building wheels for collected packages: tldw_chatbook
+2026-10-07T04:09:10.4715808Z   Building editable for tldw_chatbook (pyproject.toml): started
+2026-10-07T04:09:11.0705316Z   Building editable for tldw_chatbook (pyproject.toml): finished with status 'done'
+2026-10-07T04:09:11.0712033Z   Created wheel for tldw_chatbook: filename=tldw_chatbook-0.2.3-0.editable-py3-none-any.whl size=29155 sha256=535c147c31377b29240f2c47e7cba20e33618e4769166fdf16331c1c0f2534b3
+2026-10-07T04:09:11.0713524Z   Stored in directory: /tmp/pip-ephem-wheel-cache-ry5fc6np/wheels/24/4b/39/86b9fd25be7c432a62d8b220df51cdb18f8f5b9d989fcea420
+2026-10-07T04:09:11.0770594Z Successfully built tldw_chatbook
+2026-10-07T04:09:11.2336648Z Installing collected packages: sherpa-onnx-core, pyperclip, webencodings, wcwidth, urllib3, typing-extensions, toml, soupsieve, six, sherpa-onnx, rpds-py, rfc8785, regex, PyYAML, pygments, pycryptodomex, pycparser, psutil, propcache, portalocker, pluggy, platformdirs, pillow, packaging, numpy, multidict, more-itertools, mdurl, MarkupSafe, loguru, linkify-it-py, jeepney, jaraco.context, iniconfig, idna, h11, frozenlist, emoji, defusedxml, charset_normalizer, chardet, certifi, attrs, annotated-types, aiohappyeyeballs, aiofiles, yarl, typing-inspection, tinycss2, requests, referencing, python-dateutil, pytest, pyte, pydantic-core, markdown-it-py, jinja2, jaraco.functools, jaraco.classes, httpcore, html5lib, cffi, beautifulsoup4, anyio, aiosignal, tiktoken, rich, pytest-timeout, pytest-asyncio, pydantic, mdit-py-plugins, markdownify, jsonschema-specifications, httpx, cryptography, croniter, aiohttp, textual-image, textual, SecretStorage, rich-pixels, jsonschema, textual-diff-view, keyring, tldw_chatbook
+2026-10-07T04:09:19.2753104Z
+2026-10-07T04:09:19.2823223Z Successfully installed MarkupSafe-3.0.4 PyYAML-6.0.3 SecretStorage-3.5.0 aiofiles-25.1.0 aiohappyeyeballs-2.7.1 aiohttp-3.14.4 aiosignal-1.4.0 annotated-types-0.8.0 anyio-4.15.1 attrs-26.1.0 beautifulsoup4-4.15.0 certifi-2026.7.22 cffi-2.1.1 chardet-5.2.0 charset_normalizer-3.5.2 croniter-6.2.4 cryptography-50.0.2 defusedxml-0.7.1 emoji-2.16.0 frozenlist-1.8.0 h11-0.16.0 html5lib-1.1 httpcore-1.0.9 httpx-0.28.1 idna-3.20 iniconfig-2.3.1 jaraco.classes-3.4.0 jaraco.context-6.1.2 jaraco.functools-4.6.0 jeepney-0.9.0 jinja2-3.1.6 jsonschema-4.26.0 jsonschema-specifications-2025.9.1 keyring-25.7.0 linkify-it-py-2.2.0 loguru-0.7.3 markdown-it-py-4.2.0 markdownify-1.2.3 mdit-py-plugins-0.6.1 mdurl-0.1.2 more-itertools-11.1.0 multidict-6.9.1 numpy-2.5.3 packaging-26.3 pillow-12.3.0 platformdirs-4.12.3 pluggy-1.6.0 portalocker-3.2.0 propcache-0.5.4 psutil-7.2.2 pycparser-3.0 pycryptodomex-3.24.0 pydantic-2.13.5 pydantic-core-2.46.5 pygments-2.21.0 pyperclip-1.11.0 pyte-0.8.2 pytest-9.1.1 pytest-asyncio-1.4.0 pytest-timeout-2.4.0 python-dateutil-2.9.0.post0 referencing-0.37.0 regex-2026.4.4 requests-2.34.2 rfc8785-0.1.4 rich-15.0.0 rich-pixels-3.0.1 rpds-py-2026.9.1 sherpa-onnx-1.13.8 sherpa-onnx-core-1.13.8 six-1.17.0 soupsieve-2.10 textual-8.2.8 textual-diff-view-0.1.5 textual-image-0.14.1 tiktoken-0.14.0 tinycss2-1.5.1 tldw_chatbook-0.2.3 toml-0.10.2 typing-extensions-4.16.0 typing-inspection-0.4.4 urllib3-2.8.0 wcwidth-0.9.2 webencodings-0.6.1 yarl-1.25.1
+2026-10-07T04:09:19.5138686Z ##[group]Run # Census order is the run order; see the checker for why it may not
+2026-10-07T04:09:19.5139281Z [36;1m# Census order is the run order; see the checker for why it may not[0m
+2026-10-07T04:09:19.5139784Z [36;1m# silently shrink. Written to a file first so a failing checker fails[0m
+2026-10-07T04:09:19.5140247Z [36;1m# the step (bash -e) instead of yielding an empty list.[0m
+2026-10-07T04:09:19.5140883Z [36;1mpython scripts/check_ui_pr_gate_census.py --shard \[0m
+2026-10-07T04:09:19.5141431Z [36;1m  "0" "4" \[0m
+2026-10-07T04:09:19.5141721Z [36;1m  > "$RUNNER_TEMP/ui-shard.txt"[0m
+2026-10-07T04:09:19.5142057Z [36;1mmapfile -t SHARD < "$RUNNER_TEMP/ui-shard.txt"[0m
+2026-10-07T04:09:19.5142481Z [36;1m# An empty shard would make bare `pytest` collect the whole tree.[0m
+2026-10-07T04:09:19.5142879Z [36;1mtest "${#SHARD[@]}" -gt 0[0m
+2026-10-07T04:09:19.5143229Z [36;1mecho "Gating shard $(( 0 + 1 ))/4: ${#SHARD[@]} Tests/UI files."[0m
+2026-10-07T04:09:19.5143634Z [36;1mpytest "${SHARD[@]}" \[0m
+2026-10-07T04:09:19.5143891Z [36;1m  --timeout=180 \[0m
+2026-10-07T04:09:19.5144131Z [36;1m  --tb=short[0m
+2026-10-07T04:09:19.5204239Z shell: /usr/bin/bash -e {0}
+2026-10-07T04:09:19.5204503Z env:
+2026-10-07T04:09:19.5204780Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-07T04:09:19.5205232Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib/pkgconfig
+2026-10-07T04:09:19.5205680Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-07T04:09:19.5206067Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-07T04:09:19.5206477Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.14/x64
+2026-10-07T04:09:19.5206871Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.14/x64/lib
+2026-10-07T04:09:19.5207210Z ##[endgroup]
+2026-10-07T04:09:19.5551805Z Gating shard 1/4: 38 Tests/UI files.
+2026-10-07T04:09:44.6648297Z ============================= test session starts ==============================
+2026-10-07T04:09:44.6649090Z platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
+2026-10-07T04:09:44.6649586Z rootdir: /home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-07T04:09:44.6650031Z configfile: pyproject.toml
+2026-10-07T04:09:44.6650463Z plugins: asyncio-1.4.0, timeout-2.4.0, platformdirs-4.12.3, anyio-4.15.1
+2026-10-07T04:09:44.6651855Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+2026-10-07T04:09:44.6652569Z timeout: 180.0s
+2026-10-07T04:09:44.6652846Z timeout method: signal
+2026-10-07T04:09:44.6653114Z timeout func_only: False
+2026-10-07T04:09:44.6653385Z collected 651 items
+2026-10-07T04:09:44.6653539Z
+2026-10-07T04:09:57.6664954Z Tests/UI/test_adaptive_pane_shell.py .......................             [  3%]
+2026-10-07T04:10:03.9270268Z Tests/UI/test_approval_argument_budget.py ............................   [  7%]
+2026-10-07T04:10:05.8656552Z Tests/UI/test_buddy_workspace_modal.py ....                              [  8%]
+2026-10-07T04:10:06.3419372Z Tests/UI/test_chat_screen_resume_handoff_registration.py ..              [  8%]
+2026-10-07T04:10:06.9857886Z Tests/UI/test_checkbox_height_render.py ..                               [  9%]
+2026-10-07T04:10:07.2330211Z Tests/UI/test_console_archive_resume_errors.py .                         [  9%]
+2026-10-07T04:10:09.0168333Z Tests/UI/test_console_character_picker_debounce.py ...                   [  9%]
+2026-10-07T04:10:10.2029836Z Tests/UI/test_console_edit_modal_keystroke_guard.py ..                   [  9%]
+2026-10-07T04:10:10.7953935Z Tests/UI/test_console_frame_states.py .                                  [ 10%]
+2026-10-07T04:10:12.3703673Z Tests/UI/test_console_model_popover_no_provider.py ...                   [ 10%]
+2026-10-07T04:10:13.1895277Z Tests/UI/test_console_popover_context_window.py ..                       [ 10%]
+2026-10-07T04:10:14.4240721Z Tests/UI/test_console_retrieval_controller.py .....                      [ 11%]
+2026-10-07T04:11:12.8219542Z Tests/UI/test_console_settings_core_first.py ........................... [ 15%]
+2026-10-07T04:11:50.6977332Z ............                                                             [ 17%]
+2026-10-07T04:12:27.4894778Z Tests/UI/test_console_settings_saved_defaults.py .............           [ 19%]
+2026-10-07T04:12:32.9779352Z Tests/UI/test_console_trace_call_recovery.py ........                    [ 20%]
+2026-10-07T04:12:34.1955091Z Tests/UI/test_console_voice_accessibility.py ...                         [ 21%]
+2026-10-07T04:12:47.5436006Z Tests/UI/test_destination_rail_row.py .................................. [ 26%]
+2026-10-07T04:13:16.3396338Z ........................................................................ [ 37%]
+2026-10-07T04:13:45.1508106Z ........................................................................ [ 48%]
+2026-10-07T04:14:14.0963812Z ........................................................................ [ 59%]
+2026-10-07T04:14:43.7152718Z ........................................................................ [ 70%]
+2026-10-07T04:14:54.8164813Z .........................                                                [ 74%]
+2026-10-07T04:15:00.3352537Z Tests/UI/test_eval_file_picker_dialog.py .......                         [ 75%]
+2026-10-07T04:15:00.8211686Z Tests/UI/test_focus_token_parity.py .                                    [ 75%]
+2026-10-07T04:15:05.7506996Z Tests/UI/test_install_command_clipboard.py ........                      [ 77%]
+2026-10-07T04:15:09.9797638Z Tests/UI/test_lab_server_status.py ..........                            [ 78%]
+2026-10-07T04:15:11.7132868Z Tests/UI/test_library_export_cancel.py ....                              [ 79%]
+2026-10-07T04:15:14.6108114Z Tests/UI/test_library_footer_focus.py .......                            [ 80%]
+2026-10-07T04:15:23.8394571Z Tests/UI/test_library_notes_work_session.py ......................       [ 83%]
+2026-10-07T04:16:14.7501838Z Tests/UI/test_library_reader_console_delete_refresh.py ..                [ 84%]
+2026-10-07T04:16:16.6106114Z Tests/UI/test_media_runtime_state.py ...                                 [ 84%]
+2026-10-07T04:16:19.0079847Z Tests/UI/test_personas_avatar_render.py ...                              [ 84%]
+2026-10-07T04:16:25.8177807Z Tests/UI/test_personas_library_pane_paging.py ........                   [ 86%]
+2026-10-07T04:16:28.5690823Z Tests/UI/test_post_release_ux_hci_validation_plan.py ....                [ 86%]
+2026-10-07T04:16:33.0475836Z Tests/UI/test_profile_owned_settings_paths.py .......                    [ 87%]
+2026-10-07T04:16:36.6462394Z Tests/UI/test_research_source_inspector.py ....                          [ 88%]
+2026-10-07T04:16:43.3243697Z Tests/UI/test_schedules_ux_fixes.py .........                            [ 89%]
+2026-10-07T04:16:46.6575632Z Tests/UI/test_server_chatbook_service_lease.py .....                     [ 90%]
+2026-10-07T04:16:53.0776250Z Tests/UI/test_settings_provider_view_model.py ..........                 [ 92%]
+2026-10-07T04:16:56.9661586Z Tests/UI/test_speech_mixin_decorators.py ......                          [ 93%]
+2026-10-07T04:17:00.1777742Z Tests/UI/test_speech_result_delivery.py .....                            [ 93%]
+2026-10-07T04:17:15.1819358Z Tests/UI/test_approval_batch_geometry.py F                               [ 94%]
+2026-10-07T04:17:44.5473693Z Tests/UI/test_console_finite_read_ownership.py ......................... [ 97%]
+2026-10-07T04:18:02.5779669Z ..............                                                           [100%]
+2026-10-07T04:18:02.5780228Z
+2026-10-07T04:18:02.5780498Z =================================== FAILURES ===================================
+2026-10-07T04:18:02.5781603Z _ test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css _
+2026-10-07T04:18:02.5782630Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/pytest_asyncio/plugin.py:569: in runtest
+2026-10-07T04:18:02.5783408Z     super().runtest()
+2026-10-07T04:18:02.5784409Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/site-packages/pytest_asyncio/plugin.py:905: in inner
+2026-10-07T04:18:02.5785189Z     runner.run(coro, context=context)
+2026-10-07T04:18:02.5785817Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/asyncio/runners.py:118: in run
+2026-10-07T04:18:02.5786520Z     return self._loop.run_until_complete(task)
+2026-10-07T04:18:02.5786978Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-07T04:18:02.5787966Z /opt/hostedtoolcache/Python/3.12.14/x64/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+2026-10-07T04:18:02.5788749Z     return future.result()
+2026-10-07T04:18:02.5789134Z            ^^^^^^^^^^^^^^^
+2026-10-07T04:18:02.5789583Z Tests/private_profile.py:158: in wrapped
+2026-10-07T04:18:02.5790088Z     pytest.fail(
+2026-10-07T04:18:02.5790844Z E   Failed: /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/pytest.log
+2026-10-07T04:18:02.5791957Z E   --- child failure: assert None is not None
+2026-10-07T04:18:02.5792897Z E   request = <FixtureRequest for <Coroutine test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css>>
+2026-10-07T04:18:02.5793778Z E
+2026-10-07T04:18:02.5794074Z E       @pytest.mark.asyncio
+2026-10-07T04:18:02.5794444Z E       @private_profile_test
+2026-10-07T04:18:02.5795081Z E       async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css(
+2026-10-07T04:18:02.5795803Z E           request: pytest.FixtureRequest,
+2026-10-07T04:18:02.5796241Z E       ) -> None:
+2026-10-07T04:18:02.5796704Z E           """Without an explicit width, `_conversations.tcss`'s bare `Select {
+2026-10-07T04:18:02.5797500Z E           width: 100%; }` rule (retired in TASK-33003.1) sized a row's decision
+2026-10-07T04:18:02.5798283Z E           Select to the FULL row width (not just its own share), overlapping/
+2026-10-07T04:18:02.5799119Z E           clipping it behind the header and args Statics laid out before it in the
+2026-10-07T04:18:02.5800066Z E           row's Horizontal -- verified empirically before landing the fix. Asserts all three
+2026-10-07T04:18:02.5800976Z E           per-row widgets render with real size AND stay within the row's own
+2026-10-07T04:18:02.5801993Z E           bounds in left-to-right order, under the real bundled stylesheet.
+2026-10-07T04:18:02.5802638Z E
+2026-10-07T04:18:02.5803176Z E           T9 (MCP Hub Phase 5): also asserts HEIGHT bounds: each `.approval-row`
+2026-10-07T04:18:02.5804094Z E           stays compact (height <= 6 -- three stacked lines since TASK-1846 split
+2026-10-07T04:18:02.5805014Z E           header/args/controls, plus slack for a multi-arg collapsed row; a row
+2026-10-07T04:18:02.5805920Z E           that lost `height: auto` balloons to ~15), the `#approval-batch-rows`
+2026-10-07T04:18:02.5806844Z E           container doesn't balloon (height <= rows*3 + slack), and the
+2026-10-07T04:18:02.5807709Z E           `#approval-batch-actions` bar sits close after the rows (region.y within
+2026-10-07T04:18:02.5808629Z E           a few rows of the last row's bottom), matching the audit-mode geometry
+2026-10-07T04:18:02.5809540Z E           tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
+2026-10-07T04:18:02.5810408Z E           # Persist before building: Console readiness re-reads the admitted profile,
+2026-10-07T04:18:02.5811551Z E           # so an in-memory splash override is lost after config cache invalidation.
+2026-10-07T04:18:02.5812326Z E           from tldw_chatbook.config import save_settings_to_cli_config
+2026-10-07T04:18:02.5812888Z E
+2026-10-07T04:18:02.5813385Z E           assert save_settings_to_cli_config({"splash_screen": {"enabled": False}})
+2026-10-07T04:18:02.5814097Z E           app = _build_ready_production_console_app()
+2026-10-07T04:18:02.5814645Z E           async with app.run_test(size=(200, 40)) as pilot:
+2026-10-07T04:18:02.5815348Z E   >           card = await _show_production_approval_batch(app, pilot, _sample_calls())
+2026-10-07T04:18:02.5816254Z E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-07T04:18:02.5816743Z E
+2026-10-07T04:18:02.5817085Z E   Tests/UI/test_approval_batch_geometry.py:42:
+2026-10-07T04:18:02.5817632Z E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+2026-10-07T04:18:02.5818362Z E   Tests/UI/test_console_mcp_approval.py:1318: in _show_production_approval_batch
+2026-10-07T04:18:02.5819301Z E       screen = await _wait_for_production_console_ready(app, pilot)
+2026-10-07T04:18:02.5819857Z E                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-07T04:18:02.5820393Z E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+2026-10-07T04:18:02.5820870Z E
+2026-10-07T04:18:02.5821724Z E   app = TldwCli(title='tldw chatbook', classes={'-wide-viewport', '-dark-mode'}, pseudo_classes={'focus', 'dark'})
+2026-10-07T04:18:02.5822961Z E   pilot = <Pilot app=TldwCli(title='tldw chatbook', classes={'-wide-viewport', '-dark-mode'}, pseudo_classes={'focus', 'dark'})>
+2026-10-07T04:18:02.5823811Z E
+2026-10-07T04:18:02.5824265Z E       async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
+2026-10-07T04:18:02.5825077Z E           """Wait through startup projections until the Console is the active screen."""
+2026-10-07T04:18:02.5825743Z E           deadline = time.monotonic() + 10.0
+2026-10-07T04:18:02.5826195Z E           while time.monotonic() < deadline:
+2026-10-07T04:18:02.5826638Z E               screen = app.screen
+2026-10-07T04:18:02.5827008Z E               if (
+2026-10-07T04:18:02.5827363Z E                   isinstance(screen, ChatScreen)
+2026-10-07T04:18:02.5827816Z E                   and screen.is_mounted
+2026-10-07T04:18:02.5828284Z E                   and screen.query("#console-task-surface")
+2026-10-07T04:18:02.5828736Z E               ):
+2026-10-07T04:18:02.5829027Z E                   break
+2026-10-07T04:18:02.5829379Z E               await pilot.pause(0.05)
+2026-10-07T04:18:02.5829775Z E           else:
+2026-10-07T04:18:02.5830188Z E               raise AssertionError("Production Console did not mount")
+2026-10-07T04:18:02.5830702Z E
+2026-10-07T04:18:02.5831399Z E           # on_mount queues the production attach reconciliation before this callback.
+2026-10-07T04:18:02.5832223Z E           # Waiting behind it observes completion even when its DB projection is slow.
+2026-10-07T04:18:02.5832882Z E           reconciliation_drained = asyncio.Event()
+2026-10-07T04:18:02.5833432Z E           screen.call_after_refresh(reconciliation_drained.set)
+2026-10-07T04:18:02.5834108Z E           await asyncio.wait_for(reconciliation_drained.wait(), timeout=10.0)
+2026-10-07T04:18:02.5834673Z E
+2026-10-07T04:18:02.5834964Z E           projection_task = None
+2026-10-07T04:18:02.5835364Z E           for timer in screen._timers:
+2026-10-07T04:18:02.5835844Z E               callback = getattr(timer, "_callback", None)
+2026-10-07T04:18:02.5836367Z E               scheduled = getattr(callback, "args", ())
+2026-10-07T04:18:02.5836878Z E               target = scheduled[0] if scheduled else None
+2026-10-07T04:18:02.5837329Z E               if (
+2026-10-07T04:18:02.5837707Z E                   getattr(target, "__self__", None) is screen
+2026-10-07T04:18:02.5838358Z E                   and getattr(target, "__func__", None) is ChatScreen.sync_task_resume_state
+2026-10-07T04:18:02.5838943Z E               ):
+2026-10-07T04:18:02.5839295Z E                   projection_task = timer._task
+2026-10-07T04:18:02.5839739Z E                   break
+2026-10-07T04:18:02.5840116Z E   >       assert projection_task is not None
+2026-10-07T04:18:02.5840546Z E   E       assert None is not None
+2026-10-07T04:18:02.5840909Z E
+2026-10-07T04:18:02.5841546Z E   Tests/UI/test_console_mcp_approval.py:1373: AssertionError
+2026-10-07T04:18:02.5842055Z E   --- child log tail ---
+2026-10-07T04:18:02.5842459Z E   qlite [Client: tldw_cli_local_instance_v1]
+2026-10-07T04:18:02.5843707Z E   2026-10-07 04:17:05.187 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-10-07T04:18:02.5845692Z E   2026-10-07 04:17:05.188 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - EventStateRepository initialized with path: /tmp/tldw-chatbook-test-fh_43we9/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-07T04:18:02.5847901Z E   2026-10-07 04:17:05.188 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - SyncStateRepository initialized with path: /tmp/tldw-chatbook-test-fh_43we9/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-07T04:18:02.5849955Z E   2026-10-07 04:17:05.404 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+2026-10-07T04:18:02.5851740Z E   2026-10-07 04:17:05.471 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-10-07T04:18:02.5853397Z E   2026-10-07 04:17:05.541 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-10-07T04:18:02.5855062Z E   2026-10-07 04:17:05.608 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-10-07T04:18:02.5856619Z E   2026-10-07 04:17:05.669 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+2026-10-07T04:18:02.5858299Z E   2026-10-07 04:17:05.730 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-10-07T04:18:02.5860207Z E   2026-10-07 04:17:05.730 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - ScheduledTasksDB initialized with path: /tmp/tldw-chatbook-test-fh_43we9/scheduled_tasks.sqlite [Client: default]
+2026-10-07T04:18:02.5862032Z E   2026-10-07 04:17:05.770 | DEBUG    | tldw_chatbook.app:__init__:1435 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-10-07T04:18:02.5863333Z E   2026-10-07 04:17:05.770 | DEBUG    | tldw_chatbook.app:__init__:1438 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-10-07T04:18:02.5865000Z E   2026-10-07 04:17:05.785 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+2026-10-07T04:18:02.5866578Z E   2026-10-07 04:17:05.856 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:595 - Created EvalsDB schema version 6
+2026-10-07T04:18:02.5868461Z E   2026-10-07 04:17:05.856 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:232 - EvalsDB initialized with path: /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+2026-10-07T04:18:02.5870333Z E   2026-10-07 04:17:05.856 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-10-07T04:18:02.5871813Z E   2026-10-07 04:17:05.898 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-10-07T04:18:02.5873280Z E   2026-10-07 04:17:05.898 | INFO     | tldw_chatbook.app:_init_worker_handlers:2176 - Worker handler registry initialized with all handlers
+2026-10-07T04:18:02.5874494Z E   2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1618 - === STARTUP TIMING SUMMARY ===
+2026-10-07T04:18:02.5875538Z E   2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1619 - Total initialization time: 1.250 seconds
+2026-10-07T04:18:02.5876563Z E   2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1625 -   basic_init: 0.127s (10.1%)
+2026-10-07T04:18:02.5877491Z E   2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1625 -   attribute_init: 0.000s (0.0%)
+2026-10-07T04:18:02.5878562Z E   2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1625 -   parallel_init: 0.001s (0.1%)
+2026-10-07T04:18:02.5879680Z E   2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1638 -     - providers_models: 0.000s (0.5% of parallel_init)
+2026-10-07T04:18:02.5880775Z E   2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1638 -     - media_db: 0.000s (0.4% of parallel_init)
+2026-10-07T04:18:02.5882208Z E   2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1638 -     - notes_service: 0.000s (0.3% of parallel_init)
+2026-10-07T04:18:02.5883286Z E   2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1638 -     - prompts_service: 0.000s (0.2% of parallel_init)
+2026-10-07T04:18:02.5884274Z E   2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1642 - ==============================
+2026-10-07T04:18:02.5886216Z E   2026-10-07 04:17:05.933 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8748 - Attempting to apply literal settings mutation: sets={"('first_run',)": ['setup_completed'], "('chat_defaults',)": ['provider', 'model'], "('api_settings', 'llama_cpp')": ['api_url', 'model']}, deletes={}
+2026-10-07T04:18:02.5889068Z E   2026-10-07 04:17:05.968 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8803 - Successfully replaced settings file at /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/config/config.toml
+2026-10-07T04:18:02.5891589Z E   2026-10-07 04:17:05.975 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-07T04:18:02.5893537Z E   2026-10-07 04:17:05.975 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-07T04:18:02.5895328Z E   2026-10-07 04:17:05.977 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-07T04:18:02.5897565Z E   2026-10-07 04:17:06.023 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3803 - Ensured chat dictionaries folder exists: /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-07T04:18:02.5899680Z E   2026-10-07 04:17:06.023 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3834 - load_settings: Configuration cached for future use
+2026-10-07T04:18:02.5901302Z E   2026-10-07 04:17:06.026 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8831 - Global configuration caches invalidated and reloaded.
+2026-10-07T04:18:02.5903090Z E   2026-10-07 04:17:06.041 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-07T04:18:02.5905051Z E   2026-10-07 04:17:06.041 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-07T04:18:02.5907293Z E   2026-10-07 04:17:06.046 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6942 - Attempting to load CLI config from: /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/config/config.toml
+2026-10-07T04:18:02.5909902Z E   2026-10-07 04:17:06.063 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6963 - Successfully loaded and merged CLI config from /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/config/config.toml
+2026-10-07T04:18:02.5916714Z E   2026-10-07 04:17:06.064 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7047 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+2026-10-07T04:18:02.5926634Z E   2026-10-07 04:17:06.064 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7051 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-07T04:18:02.5931662Z E   2026-10-07 04:17:06.066 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-07T04:18:02.5933937Z E   2026-10-07 04:17:06.112 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3803 - Ensured chat dictionaries folder exists: /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-07T04:18:02.5936088Z E   2026-10-07 04:17:06.112 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3834 - load_settings: Configuration cached for future use
+2026-10-07T04:18:02.5937147Z E   ------------------------------ Captured log call -------------------------------
+2026-10-07T04:18:02.5937878Z E   INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+2026-10-07T04:18:02.5938707Z E   WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+2026-10-07T04:18:02.5939697Z E   ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+2026-10-07T04:18:02.5940499Z E   INFO     root:app.py:2285 Splash screen enabled: False
+2026-10-07T04:18:02.5941487Z E   INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+2026-10-07T04:18:02.5943025Z E   INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+2026-10-07T04:18:02.5944436Z E   INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+2026-10-07T04:18:02.5945264Z E   INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+2026-10-07T04:18:02.5946232Z E   INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-07T04:18:02.5947162Z E   ---------------------------- Captured log teardown -----------------------------
+2026-10-07T04:18:02.5948313Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5950736Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.5952564Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5954364Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.5956135Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5957911Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.5959512Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5961483Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.5963072Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5965044Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-10-07T04:18:02.5966791Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5968572Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.5970169Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5972124Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.5973583Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-10-07T04:18:02.5974844Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-10-07T04:18:02.5976260Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5978313Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=7cbcde1cea02. Purged 0 unreachable sync_log row(s) of 1.
+2026-10-07T04:18:02.5980216Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5982168Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.5983800Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5985556Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.5987373Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5989164Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.5990757Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.5993127Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=7cbcde1cea02 (examined 0, compacted 0, skipped 0 unreadable).
+2026-10-07T04:18:02.5994942Z E   INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 78.
+2026-10-07T04:18:02.5996433Z E   INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+2026-10-07T04:18:02.5997831Z E   INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+2026-10-07T04:18:02.6000032Z E   INFO     tldw_chatbook.config:Logging_Config.py:651 ChaChaNotes_DB lazy-initialized successfully at /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db
+2026-10-07T04:18:02.6002760Z E   INFO     tldw_chatbook.DB.chachanotes_fts_backfill:Logging_Config.py:651 ChaChaNotes messages FTS backfill stopping on abort signal after 0 row(s); the next run resumes from the database's own frontier.
+2026-10-07T04:18:02.6004151Z E   ============================= slowest 25 durations =============================
+2026-10-07T04:18:02.6005229Z E   6.94s call     Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+2026-10-07T04:18:02.6006668Z E   1.23s teardown Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+2026-10-07T04:18:02.6007579Z E
+2026-10-07T04:18:02.6007866Z E   (1 durations < 1s hidden.)
+2026-10-07T04:18:02.6008332Z E   =========================== short test summary info ============================
+2026-10-07T04:18:02.6009465Z E   FAILED Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css - assert None is not None
+2026-10-07T04:18:02.6010507Z E   1 failed in 11.36s
+2026-10-07T04:18:02.6010936Z =============================== warnings summary ===============================
+2026-10-07T04:18:02.6011936Z Tests/UI/test_library_reader_console_delete_refresh.py::test_console_delete_updates_the_open_library_reader
+2026-10-07T04:18:02.6013367Z   /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Utils/Splash_Screens/environmental/train_journey.py:31: SyntaxWarning: invalid escape sequence '\ '
+2026-10-07T04:18:02.6014673Z     "  /|___|\  ",
+2026-10-07T04:18:02.6014861Z
+2026-10-07T04:18:02.6015340Z Tests/UI/test_library_reader_console_delete_refresh.py::test_console_delete_updates_the_open_library_reader
+2026-10-07T04:18:02.6016785Z   /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Utils/Splash_Screens/environmental/train_journey.py:32: SyntaxWarning: invalid escape sequence '\ '
+2026-10-07T04:18:02.6017841Z     " /_|_O_|_\ ",
+2026-10-07T04:18:02.6018026Z
+2026-10-07T04:18:02.6018361Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2026-10-07T04:18:02.6019042Z ============================= slowest 25 durations =============================
+2026-10-07T04:18:02.6019950Z 25.98s call     Tests/UI/test_library_reader_console_delete_refresh.py::test_console_delete_updates_the_open_library_reader
+2026-10-07T04:18:02.6021397Z 23.63s call     Tests/UI/test_library_reader_console_delete_refresh.py::test_console_delete_then_undo_rereads_the_open_library_reader
+2026-10-07T04:18:02.6022916Z 14.16s call     Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+2026-10-07T04:18:02.6024523Z 3.68s call     Tests/UI/test_console_settings_core_first.py::test_a_view_switch_opens_the_new_view_at_its_top[size2-context-model-model-a-console-settings-temperature]
+2026-10-07T04:18:02.6025983Z 3.54s call     Tests/UI/test_console_settings_core_first.py::test_every_row_paints_label_value_source_and_help[size1]
+2026-10-07T04:18:02.6027339Z 3.47s call     Tests/UI/test_console_settings_core_first.py::test_every_row_paints_label_value_source_and_help[size0]
+2026-10-07T04:18:02.6028596Z 3.43s call     Tests/UI/test_console_settings_saved_defaults.py::test_use_saved_defaults_stages_the_new_chat_values_and_keeps_the_pair
+2026-10-07T04:18:02.6030167Z 3.42s call     Tests/UI/test_console_settings_core_first.py::test_a_view_switch_opens_the_new_view_at_its_top[size1-model-context-Model capacity-console-context-budget-mode]
+2026-10-07T04:18:02.6031939Z 3.38s call     Tests/UI/test_console_settings_saved_defaults.py::test_title_names_the_chat_and_counts_its_unsaved_edits
+2026-10-07T04:18:02.6033188Z 3.32s call     Tests/UI/test_console_settings_core_first.py::test_context_view_labels_leave_a_blank_cell_before_their_controls[size0]
+2026-10-07T04:18:02.6034732Z 3.31s call     Tests/UI/test_console_settings_core_first.py::test_a_view_switch_opens_the_new_view_at_its_top[size0-model-context-Model capacity-console-context-budget-mode]
+2026-10-07T04:18:02.6036334Z 3.18s call     Tests/UI/test_console_settings_saved_defaults.py::test_use_saved_defaults_is_disabled_with_its_reason_while_the_draft_matches
+2026-10-07T04:18:02.6037726Z 3.12s call     Tests/UI/test_console_settings_core_first.py::test_a_view_switch_to_a_missing_key_chat_lands_as_open_does[size0]
+2026-10-07T04:18:02.6038907Z 2.78s call     Tests/UI/test_console_settings_core_first.py::test_keyboard_edits_paint_the_new_value_and_edited_source
+2026-10-07T04:18:02.6040108Z 2.74s call     Tests/UI/test_console_settings_saved_defaults.py::test_no_footer_or_model_key_acts_while_the_close_guard_shows[alt+m]
+2026-10-07T04:18:02.6041653Z 2.74s call     Tests/UI/test_console_settings_saved_defaults.py::test_no_footer_or_model_key_acts_while_the_close_guard_shows[ctrl+n]
+2026-10-07T04:18:02.6042607Z 2.73s call     Tests/UI/test_console_settings_core_first.py::test_context_view_labels_leave_a_blank_cell_before_their_controls[size1]
+2026-10-07T04:18:02.6043463Z 2.72s call     Tests/UI/test_console_settings_core_first.py::test_a_view_switch_to_a_missing_key_chat_lands_as_open_does[size1]
+2026-10-07T04:18:02.6044261Z 2.55s call     Tests/UI/test_console_settings_core_first.py::test_focus_opens_on_temperature_and_tab_reaches_apply
+2026-10-07T04:18:02.6045008Z 2.54s call     Tests/UI/test_console_settings_saved_defaults.py::test_defaults_line_follows_the_view_switch[edited]
+2026-10-07T04:18:02.6045763Z 2.51s call     Tests/UI/test_console_settings_saved_defaults.py::test_defaults_line_follows_the_view_switch[unchanged]
+2026-10-07T04:18:02.6046564Z 2.40s call     Tests/UI/test_console_settings_core_first.py::test_help_and_source_text_clear_aa_against_the_modal[textual-light]
+2026-10-07T04:18:02.6047385Z 2.39s call     Tests/UI/test_console_settings_core_first.py::test_blank_field_says_what_it_sends_and_no_placeholder_shows
+2026-10-07T04:18:02.6048125Z 2.38s call     Tests/UI/test_console_settings_core_first.py::test_pressing_the_shown_views_tab_does_nothing
+2026-10-07T04:18:02.6048894Z 2.37s call     Tests/UI/test_console_settings_core_first.py::test_a_view_switch_to_a_blocked_model_view_focuses_its_fix
+2026-10-07T04:18:02.6049478Z =========================== short test summary info ============================
+2026-10-07T04:18:02.6050501Z FAILED Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css - Failed: /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/pytest.log
+2026-10-07T04:18:02.6051760Z --- child failure: assert None is not None
+2026-10-07T04:18:02.6052483Z request = <FixtureRequest for <Coroutine test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css>>
+2026-10-07T04:18:02.6052967Z
+2026-10-07T04:18:02.6053069Z     @pytest.mark.asyncio
+2026-10-07T04:18:02.6053312Z     @private_profile_test
+2026-10-07T04:18:02.6053721Z     async def test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css(
+2026-10-07T04:18:02.6054301Z         request: pytest.FixtureRequest,
+2026-10-07T04:18:02.6054573Z     ) -> None:
+2026-10-07T04:18:02.6054878Z         """Without an explicit width, `_conversations.tcss`'s bare `Select {
+2026-10-07T04:18:02.6055338Z         width: 100%; }` rule (retired in TASK-33003.1) sized a row's decision
+2026-10-07T04:18:02.6055803Z         Select to the FULL row width (not just its own share), overlapping/
+2026-10-07T04:18:02.6056282Z         clipping it behind the header and args Statics laid out before it in the
+2026-10-07T04:18:02.6056824Z         row's Horizontal -- verified empirically before landing the fix. Asserts all three
+2026-10-07T04:18:02.6057355Z         per-row widgets render with real size AND stay within the row's own
+2026-10-07T04:18:02.6057821Z         bounds in left-to-right order, under the real bundled stylesheet.
+2026-10-07T04:18:02.6058176Z
+2026-10-07T04:18:02.6058465Z         T9 (MCP Hub Phase 5): also asserts HEIGHT bounds: each `.approval-row`
+2026-10-07T04:18:02.6058949Z         stays compact (height <= 6 -- three stacked lines since TASK-1846 split
+2026-10-07T04:18:02.6059447Z         header/args/controls, plus slack for a multi-arg collapsed row; a row
+2026-10-07T04:18:02.6059932Z         that lost `height: auto` balloons to ~15), the `#approval-batch-rows`
+2026-10-07T04:18:02.6060383Z         container doesn't balloon (height <= rows*3 + slack), and the
+2026-10-07T04:18:02.6060854Z         `#approval-batch-actions` bar sits close after the rows (region.y within
+2026-10-07T04:18:02.6061988Z         a few rows of the last row's bottom), matching the audit-mode geometry
+2026-10-07T04:18:02.6062604Z         tests' discipline so all Horizontals/Verticals in the bundle stay compact."""
+2026-10-07T04:18:02.6063275Z         # Persist before building: Console readiness re-reads the admitted profile,
+2026-10-07T04:18:02.6063982Z         # so an in-memory splash override is lost after config cache invalidation.
+2026-10-07T04:18:02.6064533Z         from tldw_chatbook.config import save_settings_to_cli_config
+2026-10-07T04:18:02.6065040Z
+2026-10-07T04:18:02.6065446Z         assert save_settings_to_cli_config({"splash_screen": {"enabled": False}})
+2026-10-07T04:18:02.6066052Z         app = _build_ready_production_console_app()
+2026-10-07T04:18:02.6066535Z         async with app.run_test(size=(200, 40)) as pilot:
+2026-10-07T04:18:02.6067048Z >           card = await _show_production_approval_batch(app, pilot, _sample_calls())
+2026-10-07T04:18:02.6067645Z                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-07T04:18:02.6078139Z
+2026-10-07T04:18:02.6078347Z Tests/UI/test_approval_batch_geometry.py:42:
+2026-10-07T04:18:02.6078757Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+2026-10-07T04:18:02.6079247Z Tests/UI/test_console_mcp_approval.py:1318: in _show_production_approval_batch
+2026-10-07T04:18:02.6079805Z     screen = await _wait_for_production_console_ready(app, pilot)
+2026-10-07T04:18:02.6080213Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-10-07T04:18:02.6080569Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+2026-10-07T04:18:02.6080826Z
+2026-10-07T04:18:02.6081451Z app = TldwCli(title='tldw chatbook', classes={'-wide-viewport', '-dark-mode'}, pseudo_classes={'focus', 'dark'})
+2026-10-07T04:18:02.6082300Z pilot = <Pilot app=TldwCli(title='tldw chatbook', classes={'-wide-viewport', '-dark-mode'}, pseudo_classes={'focus', 'dark'})>
+2026-10-07T04:18:02.6082775Z
+2026-10-07T04:18:02.6083170Z     async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
+2026-10-07T04:18:02.6083721Z         """Wait through startup projections until the Console is the active screen."""
+2026-10-07T04:18:02.6084172Z         deadline = time.monotonic() + 10.0
+2026-10-07T04:18:02.6084470Z         while time.monotonic() < deadline:
+2026-10-07T04:18:02.6084754Z             screen = app.screen
+2026-10-07T04:18:02.6084996Z             if (
+2026-10-07T04:18:02.6085351Z                 isinstance(screen, ChatScreen)
+2026-10-07T04:18:02.6085645Z                 and screen.is_mounted
+2026-10-07T04:18:02.6085951Z                 and screen.query("#console-task-surface")
+2026-10-07T04:18:02.6086253Z             ):
+2026-10-07T04:18:02.6086456Z                 break
+2026-10-07T04:18:02.6086685Z             await pilot.pause(0.05)
+2026-10-07T04:18:02.6086937Z         else:
+2026-10-07T04:18:02.6087214Z             raise AssertionError("Production Console did not mount")
+2026-10-07T04:18:02.6087560Z
+2026-10-07T04:18:02.6087886Z         # on_mount queues the production attach reconciliation before this callback.
+2026-10-07T04:18:02.6088419Z         # Waiting behind it observes completion even when its DB projection is slow.
+2026-10-07T04:18:02.6088853Z         reconciliation_drained = asyncio.Event()
+2026-10-07T04:18:02.6089221Z         screen.call_after_refresh(reconciliation_drained.set)
+2026-10-07T04:18:02.6089656Z         await asyncio.wait_for(reconciliation_drained.wait(), timeout=10.0)
+2026-10-07T04:18:02.6090025Z
+2026-10-07T04:18:02.6090225Z         projection_task = None
+2026-10-07T04:18:02.6090488Z         for timer in screen._timers:
+2026-10-07T04:18:02.6090786Z             callback = getattr(timer, "_callback", None)
+2026-10-07T04:18:02.6091291Z             scheduled = getattr(callback, "args", ())
+2026-10-07T04:18:02.6091636Z             target = scheduled[0] if scheduled else None
+2026-10-07T04:18:02.6091934Z             if (
+2026-10-07T04:18:02.6092188Z                 getattr(target, "__self__", None) is screen
+2026-10-07T04:18:02.6092627Z                 and getattr(target, "__func__", None) is ChatScreen.sync_task_resume_state
+2026-10-07T04:18:02.6093022Z             ):
+2026-10-07T04:18:02.6093252Z                 projection_task = timer._task
+2026-10-07T04:18:02.6093533Z                 break
+2026-10-07T04:18:02.6093763Z >       assert projection_task is not None
+2026-10-07T04:18:02.6094043Z E       assert None is not None
+2026-10-07T04:18:02.6094213Z
+2026-10-07T04:18:02.6094378Z Tests/UI/test_console_mcp_approval.py:1373: AssertionError
+2026-10-07T04:18:02.6094715Z --- child log tail ---
+2026-10-07T04:18:02.6094960Z qlite [Client: tldw_cli_local_instance_v1]
+2026-10-07T04:18:02.6095650Z 2026-10-07 04:17:05.187 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-10-07T04:18:02.6096910Z 2026-10-07 04:17:05.188 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - EventStateRepository initialized with path: /tmp/tldw-chatbook-test-fh_43we9/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-07T04:18:02.6098316Z 2026-10-07 04:17:05.188 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - SyncStateRepository initialized with path: /tmp/tldw-chatbook-test-fh_43we9/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-07T04:18:02.6099529Z 2026-10-07 04:17:05.404 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+2026-10-07T04:18:02.6100585Z 2026-10-07 04:17:05.471 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-10-07T04:18:02.6101899Z 2026-10-07 04:17:05.541 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-10-07T04:18:02.6103074Z 2026-10-07 04:17:05.608 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-10-07T04:18:02.6104085Z 2026-10-07 04:17:05.669 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+2026-10-07T04:18:02.6105167Z 2026-10-07 04:17:05.730 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-10-07T04:18:02.6106482Z 2026-10-07 04:17:05.730 | INFO     | tldw_chatbook.DB.base_db:__init__:992 - ScheduledTasksDB initialized with path: /tmp/tldw-chatbook-test-fh_43we9/scheduled_tasks.sqlite [Client: default]
+2026-10-07T04:18:02.6107528Z 2026-10-07 04:17:05.770 | DEBUG    | tldw_chatbook.app:__init__:1435 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-10-07T04:18:02.6108362Z 2026-10-07 04:17:05.770 | DEBUG    | tldw_chatbook.app:__init__:1438 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-10-07T04:18:02.6109436Z 2026-10-07 04:17:05.785 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+2026-10-07T04:18:02.6110439Z 2026-10-07 04:17:05.856 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:595 - Created EvalsDB schema version 6
+2026-10-07T04:18:02.6111771Z 2026-10-07 04:17:05.856 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:232 - EvalsDB initialized with path: /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+2026-10-07T04:18:02.6112944Z 2026-10-07 04:17:05.856 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-10-07T04:18:02.6113767Z 2026-10-07 04:17:05.898 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-10-07T04:18:02.6114681Z 2026-10-07 04:17:05.898 | INFO     | tldw_chatbook.app:_init_worker_handlers:2176 - Worker handler registry initialized with all handlers
+2026-10-07T04:18:02.6115396Z 2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1618 - === STARTUP TIMING SUMMARY ===
+2026-10-07T04:18:02.6116022Z 2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1619 - Total initialization time: 1.250 seconds
+2026-10-07T04:18:02.6116631Z 2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1625 -   basic_init: 0.127s (10.1%)
+2026-10-07T04:18:02.6117217Z 2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1625 -   attribute_init: 0.000s (0.0%)
+2026-10-07T04:18:02.6117803Z 2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1625 -   parallel_init: 0.001s (0.1%)
+2026-10-07T04:18:02.6118461Z 2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1638 -     - providers_models: 0.000s (0.5% of parallel_init)
+2026-10-07T04:18:02.6119162Z 2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1638 -     - media_db: 0.000s (0.4% of parallel_init)
+2026-10-07T04:18:02.6119844Z 2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1638 -     - notes_service: 0.000s (0.3% of parallel_init)
+2026-10-07T04:18:02.6120556Z 2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1638 -     - prompts_service: 0.000s (0.2% of parallel_init)
+2026-10-07T04:18:02.6121458Z 2026-10-07 04:17:05.899 | INFO     | tldw_chatbook.app:__init__:1642 - ==============================
+2026-10-07T04:18:02.6122735Z 2026-10-07 04:17:05.933 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8748 - Attempting to apply literal settings mutation: sets={"('first_run',)": ['setup_completed'], "('chat_defaults',)": ['provider', 'model'], "('api_settings', 'llama_cpp')": ['api_url', 'model']}, deletes={}
+2026-10-07T04:18:02.6124712Z 2026-10-07 04:17:05.968 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8803 - Successfully replaced settings file at /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/config/config.toml
+2026-10-07T04:18:02.6126248Z 2026-10-07 04:17:05.975 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-07T04:18:02.6127495Z 2026-10-07 04:17:05.975 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-07T04:18:02.6128786Z 2026-10-07 04:17:05.977 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-07T04:18:02.6130220Z 2026-10-07 04:17:06.023 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3803 - Ensured chat dictionaries folder exists: /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-07T04:18:02.6131741Z 2026-10-07 04:17:06.023 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3834 - load_settings: Configuration cached for future use
+2026-10-07T04:18:02.6132688Z 2026-10-07 04:17:06.026 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8831 - Global configuration caches invalidated and reloaded.
+2026-10-07T04:18:02.6133824Z 2026-10-07 04:17:06.041 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-07T04:18:02.6135059Z 2026-10-07 04:17:06.041 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /home/runner/work/tldw_chatbook/tldw_chatbook/tldw_chatbook
+2026-10-07T04:18:02.6136483Z 2026-10-07 04:17:06.046 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6942 - Attempting to load CLI config from: /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/config/config.toml
+2026-10-07T04:18:02.6138143Z 2026-10-07 04:17:06.063 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6963 - Successfully loaded and merged CLI config from /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/config/config.toml
+2026-10-07T04:18:02.6142491Z 2026-10-07 04:17:06.064 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7047 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+2026-10-07T04:18:02.6148625Z 2026-10-07 04:17:06.064 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7051 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-07T04:18:02.6151861Z 2026-10-07 04:17:06.066 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-07T04:18:02.6153415Z 2026-10-07 04:17:06.112 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3803 - Ensured chat dictionaries folder exists: /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-07T04:18:02.6154769Z 2026-10-07 04:17:06.112 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3834 - load_settings: Configuration cached for future use
+2026-10-07T04:18:02.6155438Z ------------------------------ Captured log call -------------------------------
+2026-10-07T04:18:02.6155908Z INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+2026-10-07T04:18:02.6156431Z WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+2026-10-07T04:18:02.6157067Z ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+2026-10-07T04:18:02.6157598Z INFO     root:app.py:2285 Splash screen enabled: False
+2026-10-07T04:18:02.6158113Z INFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:256 event=app_started component=app
+2026-10-07T04:18:02.6159072Z INFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:256 event=speech_stack_available component=dictation model=provider-default provider=none status=degraded
+2026-10-07T04:18:02.6159963Z INFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---
+2026-10-07T04:18:02.6160497Z INFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.
+2026-10-07T04:18:02.6161352Z INFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.
+2026-10-07T04:18:02.6161998Z ---------------------------- Captured log teardown -----------------------------
+2026-10-07T04:18:02.6162751Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6164054Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.6165104Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6166224Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.6167268Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6168378Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.6169378Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6170498Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.6171633Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6173013Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-10-07T04:18:02.6174171Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6175318Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.6176473Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6177596Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.6178518Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-10-07T04:18:02.6179351Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-10-07T04:18:02.6180297Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6181823Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=7cbcde1cea02. Purged 0 unreachable sync_log row(s) of 1.
+2026-10-07T04:18:02.6183012Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6184132Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.6185155Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6186263Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.6187299Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6188456Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=7cbcde1cea02.
+2026-10-07T04:18:02.6189463Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=7cbcde1cea02...
+2026-10-07T04:18:02.6190722Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=7cbcde1cea02 (examined 0, compacted 0, skipped 0 unreadable).
+2026-10-07T04:18:02.6191992Z INFO     tldw_chatbook.DB.ChaChaNotes_DB:Logging_Config.py:651 Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 78.
+2026-10-07T04:18:02.6192937Z INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+2026-10-07T04:18:02.6193808Z INFO     tldw_chatbook.Character_Chat.Character_Chat_Lib:Logging_Config.py:651 Character-card image metadata decoded successfully.
+2026-10-07T04:18:02.6195172Z INFO     tldw_chatbook.config:Logging_Config.py:651 ChaChaNotes_DB lazy-initialized successfully at /tmp/pytest-of-runner/pytest-0/test_batch_row_widgets_have_no0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db
+2026-10-07T04:18:02.6196885Z INFO     tldw_chatbook.DB.chachanotes_fts_backfill:Logging_Config.py:651 ChaChaNotes messages FTS backfill stopping on abort signal after 0 row(s); the next run resumes from the database's own frontier.
+2026-10-07T04:18:02.6197757Z ============================= slowest 25 durations =============================
+2026-10-07T04:18:02.6198425Z 6.94s call     Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+2026-10-07T04:18:02.6199330Z 1.23s teardown Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+2026-10-07T04:18:02.6199958Z
+2026-10-07T04:18:02.6200055Z (1 durations < 1s hidden.)
+2026-10-07T04:18:02.6200358Z =========================== short test summary info ============================
+2026-10-07T04:18:02.6201280Z FAILED Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css - assert None is not None
+2026-10-07T04:18:03.8520508Z 1 failed in 11.36s
+2026-10-07T04:18:03.8521381Z ============ 1 failed, 650 passed, 2 warnings in 520.06s (0:08:40) =============
+2026-10-07T04:18:07.0694918Z ##[error]Process completed with exit code 1.
+2026-10-07T04:18:07.0842507Z Post job cleanup.
+2026-10-07T04:18:07.1672061Z [command]/usr/bin/git version
+2026-10-07T04:18:07.1710296Z git version 2.55.0
+2026-10-07T04:18:07.1750673Z Temporarily overriding HOME='/home/runner/work/_temp/76d25b5e-93cf-4297-8b49-e974a0fbefb8' before making global git config changes
+2026-10-07T04:18:07.1752477Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-07T04:18:07.1756295Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/tldw_chatbook/tldw_chatbook
+2026-10-07T04:18:07.1796709Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-07T04:18:07.1831500Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-07T04:18:07.2117946Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-07T04:18:07.2150231Z http.https://github.com/.extraheader
+2026-10-07T04:18:07.2162271Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-10-07T04:18:07.2196861Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-07T04:18:07.2449088Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-07T04:18:07.2482990Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-07T04:18:07.2895793Z Cleaning up orphan processes
+2026-10-07T04:18:07.3191752Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

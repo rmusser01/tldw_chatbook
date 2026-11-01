@@ -10,125 +10,123 @@
 
 /* ===== WIDGET: CCPLoadingWidget (UI/CCP_Modules/ccp_loading_indicators.py) ===== */
 
-    CCPLoadingWidget {
-        height: auto;
-        width: auto;
-        align: center middle;
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
-        layer: overlay;
-        display: none;
-    }
+CCPLoadingWidget {
+    height: auto;
+    width: auto;
+    align: center middle;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+    layer: overlay;
+    display: none;
+}
 
-    CCPLoadingWidget.visible {
-        display: block;
-    }
+CCPLoadingWidget.visible {
+    display: block;
+}
 
-    CCPLoadingWidget.inline {
-        layer: default;
-        border: none;
-        padding: 0;
-    }
+CCPLoadingWidget.inline {
+    layer: default;
+    border: none;
+    padding: 0;
+}
 
-    CCPLoadingWidget .loading-text {
-        text-align: center;
-        margin-left: 1;
-    }
+CCPLoadingWidget .loading-text {
+    text-align: center;
+    margin-left: 1;
+}
 
 /* ===== WIDGET: LabDialog (UI/Chunking_Lab_Modules/dialogs.py) ===== */
 
-    LabDialog { align: center middle; background: $background 70%; }
-    LabDialog > VerticalScroll { width: 70; max-width: 96%; height: auto; max-height: 90%; padding: 1 2; background: $surface; border: solid $primary; }
-    LabDialog Static { height: auto; }
-    LabDialog Input { width: 100%; }
-    LabDialog Horizontal { height: auto; }
-    LabDialog Button { width: auto; min-width: 12; }
+LabDialog { align: center middle; background: $background 70%; }
+LabDialog > VerticalScroll { width: 70; max-width: 96%; height: auto; max-height: 90%; padding: 1 2; background: $surface; border: solid $primary; }
+LabDialog Static { height: auto; }
+LabDialog Input { width: 100%; }
+LabDialog Horizontal { height: auto; }
+LabDialog Button { width: auto; min-width: 12; }
 
 /* ===== WIDGET: EditorRegion (UI/Chunking_Lab_Modules/editor_region.py) ===== */
 
-    EditorRegion { height: 1fr; min-height: 0; padding: 0 1; }
-    EditorRegion Static { height: auto; }
-    EditorRegion Input, EditorRegion Select { width: 100%; }
-    EditorRegion TextArea { height: 12; min-height: 6; }
-    EditorRegion #lab-discard, EditorRegion #lab-undo { min-width: 12; width: auto; }
+EditorRegion { height: 1fr; min-height: 0; padding: 0 1; }
+EditorRegion Static { height: auto; }
+EditorRegion Input, EditorRegion Select { width: 100%; }
+EditorRegion TextArea { height: 12; min-height: 6; }
+EditorRegion #lab-discard, EditorRegion #lab-undo { min-width: 12; width: auto; }
 
 /* ===== WIDGET: ResultsRegion (UI/Chunking_Lab_Modules/results_region.py) ===== */
 
-    ResultsRegion { height: 1fr; min-height: 18; background: $background; }
-    ResultsRegion .results-toolbar { height: 1; }
-    ResultsRegion Button { min-width: 6; width: auto; margin-right: 1; }
-    ResultsRegion .results-status { height: 2; padding: 0 1; color: $text; }
-    ResultsRegion #comparison-status { height: 2; padding: 0 1; }
-    ResultsRegion #result-tables { height: 1fr; min-height: 9; }
-    ResultsRegion .result-column { width: 1fr; height: 1fr; min-width: 0; }
-    ResultsRegion .result-column:focus-within { background: $panel; }
-    ResultsRegion DataTable { height: 1fr; min-height: 1; }
-    ResultsRegion .page-controls { height: 1; }
-    ResultsRegion .page-label { width: 1fr; height: 1; content-align: center middle; }
-    ResultsRegion #detail-controls { height: 3; }
-    ResultsRegion #detail-slot { width: 1fr; height: 3; min-width: 0; }
-    ResultsRegion #detail-kind { width: 100%; }
-    ResultsRegion #mapping-status { height: 2; padding: 0 1; color: $text; }
-    ResultsRegion #chunk-inspector { height: 1fr; min-height: 3; border: round $surface-lighten-1; }
-    ResultsRegion #chunk-inspector:focus { border: round $accent; }
-    ResultsRegion #text-page { width: 18; height: 3; content-align: center middle; }
+ResultsRegion { height: 1fr; min-height: 18; background: $background; }
+ResultsRegion .results-toolbar { height: 1; }
+ResultsRegion Button { min-width: 6; width: auto; margin-right: 1; }
+ResultsRegion .results-status { height: 2; padding: 0 1; color: $text; }
+ResultsRegion #comparison-status { height: 2; padding: 0 1; }
+ResultsRegion #result-tables { height: 1fr; min-height: 9; }
+ResultsRegion .result-column { width: 1fr; height: 1fr; min-width: 0; }
+ResultsRegion .result-column:focus-within { background: $panel; }
+ResultsRegion DataTable { height: 1fr; min-height: 1; }
+ResultsRegion .page-controls { height: 1; }
+ResultsRegion .page-label { width: 1fr; height: 1; content-align: center middle; }
+ResultsRegion #detail-controls { height: 3; }
+ResultsRegion #detail-slot { width: 1fr; height: 3; min-width: 0; }
+ResultsRegion #detail-kind { width: 100%; }
+ResultsRegion #mapping-status { height: 2; padding: 0 1; color: $text; }
+ResultsRegion #chunk-inspector { height: 1fr; min-height: 3; border: round $surface-lighten-1; }
+ResultsRegion #chunk-inspector:focus { border: round $accent; }
+ResultsRegion #text-page { width: 18; height: 3; content-align: center middle; }
 
 /* ===== WIDGET: SampleRegion (UI/Chunking_Lab_Modules/sample_region.py) ===== */
 
-    SampleRegion { height: 1fr; min-height: 0; padding: 0 1; }
-    SampleRegion Static { height: auto; }
-    SampleRegion TextArea { height: 1fr; min-height: 4; }
+SampleRegion { height: 1fr; min-height: 0; padding: 0 1; }
+SampleRegion Static { height: auto; }
+SampleRegion TextArea { height: 1fr; min-height: 4; }
 
 /* ===== WIDGET: ConsoleDispatchRecoveryRegion (UI/Console_Modules/dispatch_recovery.py) ===== */
 
-    ConsoleDispatchRecoveryRegion {
-        display: none;
-        height: auto;
-        max-height: 8;
-        padding: 0 1;
-        overflow-y: auto;
-    }
+ConsoleDispatchRecoveryRegion {
+    display: none;
+    height: auto;
+    max-height: 8;
+    padding: 0 1;
+    overflow-y: auto;
+}
 
-    ConsoleDispatchRecoveryRegion.-visible {
-        display: block;
-    }
+ConsoleDispatchRecoveryRegion.-visible {
+    display: block;
+}
 
-    ConsoleDispatchRecoveryRegion Static {
-        height: auto;
-        width: 1fr;
-    }
+ConsoleDispatchRecoveryRegion Static {
+    height: auto;
+    width: 1fr;
+}
 
-    ConsoleDispatchRecoveryRegion #console-dispatch-recovery-warning {
-        color: $warning;
-    }
+ConsoleDispatchRecoveryRegion #console-dispatch-recovery-warning {
+    color: $warning;
+}
 
-    ConsoleDispatchRecoveryRegion #console-dispatch-recovery-actions {
-        height: 3;
-        width: 1fr;
-    }
+ConsoleDispatchRecoveryRegion #console-dispatch-recovery-actions {
+    height: 3;
+    width: 1fr;
+}
 
-    ConsoleDispatchRecoveryRegion Button {
-        min-width: 16;
-        margin-right: 1;
-    }
+ConsoleDispatchRecoveryRegion Button {
+    min-width: 16;
+    margin-right: 1;
+}
 
 /* ===== WIDGET: ConsolePromptQueueRegion (UI/Console_Modules/prompt_queue.py) ===== */
 
-    ConsolePromptQueueRegion {
-        display: none;
-        height: 1;
-        max-height: 1;
-        width: 100%;
-        background: $panel;
-        color: $text;
-    }
+ConsolePromptQueueRegion {
+    display: none;
+    height: 1;
+    max-height: 1;
+    width: 100%;
+    background: $panel;
+    color: $text;
+}
 
-    ConsolePromptQueueRegion.-visible {
-        display: block;
-    }
-
-
+ConsolePromptQueueRegion.-visible {
+    display: block;
+}
 
 
 
@@ -136,846 +134,901 @@
 
 
 
-    ConsolePromptQueueRegion.-narrow #console-prompt-queue-preview {
-        display: none;
-    }
 
 
-    ConsolePromptQueueRegion.-narrow #console-prompt-queue-summary {
-        width: 1fr;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
+ConsolePromptQueueRegion.-narrow #console-prompt-queue-preview {
+    display: none;
+}
+
+
+ConsolePromptQueueRegion.-narrow #console-prompt-queue-summary {
+    width: 1fr;
+    min-width: 0;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
 
 /* ===== WIDGET: TraceCallRecoveryCallout (UI/Console_Modules/provider_continuation_recovery.py) ===== */
 
 
-    TraceCallRecoveryCallout {
-        width: 100%;
-        height: auto;
-        max-height: 60%;
-        overflow-y: auto;
-        border: round $warning;
-        background: $boost;
-        color: $text;
-        padding: 0 1;
-        margin: 0 0 1 0;
-    }
-    TraceCallRecoveryCallout #console-trace-title {
-        width: 100%;
-        height: auto;
-        text-style: bold;
-        color: $warning-lighten-2;
-    }
-    TraceCallRecoveryCallout .console-trace-detail,
-    TraceCallRecoveryCallout #console-trace-status {
-        width: 100%;
-        height: auto;
-    }
-    TraceCallRecoveryCallout #console-trace-actions {
-        width: 100%;
-        height: auto;
-        margin-top: 1;
-    }
+TraceCallRecoveryCallout {
+    width: 100%;
+    height: auto;
+    max-height: 60%;
+    overflow-y: auto;
+    border: round $warning;
+    background: $boost;
+    color: $text;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+TraceCallRecoveryCallout #console-trace-title {
+    width: 100%;
+    height: auto;
+    text-style: bold;
+    color: $warning-lighten-2;
+}
+TraceCallRecoveryCallout .console-trace-detail,
+TraceCallRecoveryCallout #console-trace-status {
+    width: 100%;
+    height: auto;
+}
+TraceCallRecoveryCallout #console-trace-actions {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+}
 
-    TraceCallRecoveryCallout Button {
-        width: 100%;
-        min-width: 20;
-        margin-bottom: 0;
-    }
+TraceCallRecoveryCallout Button {
+    width: 100%;
+    min-width: 20;
+    margin-bottom: 0;
+}
 
 /* ===== WIDGET: ConsoleInspectorRail (UI/Console_Modules/right_rail.py) ===== */
 
-    ConsoleInspectorRail .console-inspector-scroll-owner,
-    ConsoleInspectorRail .console-inspector-scroll-owner .console-rail-section-title {
-        text-style: bold underline;
-    }
+ConsoleInspectorRail .console-inspector-scroll-owner,
+ConsoleInspectorRail .console-inspector-scroll-owner .console-rail-section-title {
+    text-style: bold underline;
+}
+
+/* ===== WIDGET: SkillEvalDetail (UI/Evals/skill_eval_detail.py) ===== */
+
+SkillEvalDetail { padding: 1; }
+
+/* ===== WIDGET: SkillEvalPanel (UI/Evals/skill_eval_panel.py) ===== */
+
+SkillEvalPanel { padding: 1; }
+
+/* ===== WIDGET: LlamaCppSetupView (UI/LLM_Management/llamacpp_setup_view.py) ===== */
+
+LlamaCppSetupView { height: auto; }
+LlamaCppSetupView Horizontal { height: auto; }
+LlamaCppSetupView .llamacpp-status { height: auto; }
 
 /* ===== WIDGET: VllmSetupView (UI/LLM_Management/vllm_setup_view.py) ===== */
 
-    VllmSetupView > #vllm-local-setup,
-    VllmSetupView > #vllm-existing-setup,
-    VllmSetupView > #vllm-current-server,
-    VllmSetupView > #vllm-next-restart {
-        height: auto;
-    }
-    VllmSetupView > #vllm-next-action,
-    VllmSetupView > .vllm-mode-actions,
-    VllmSetupView > .vllm-profile-actions,
-    VllmSetupView > .vllm-source-actions,
-    VllmSetupView > .vllm-console-actions {
-        height: 3;
-    }
+VllmSetupView > #vllm-local-setup,
+VllmSetupView > #vllm-existing-setup,
+VllmSetupView > #vllm-current-server,
+VllmSetupView > #vllm-next-restart {
+    height: auto;
+}
+VllmSetupView > #vllm-next-action,
+VllmSetupView > .vllm-mode-actions,
+VllmSetupView > .vllm-profile-actions,
+VllmSetupView > .vllm-source-actions,
+VllmSetupView > .vllm-console-actions {
+    height: 3;
+}
 
 /* ===== WIDGET: LLMManagementWindow (UI/LLM_Management_Window.py) ===== */
 
-    LLMManagementWindow {
-        layout: horizontal;
-        height: 100%;
-        width: 100%;
-    }
+LLMManagementWindow {
+    layout: horizontal;
+    height: 100%;
+    width: 100%;
+}
 
 /* ===== WIDGET: LibraryCharacterRepairDialog (UI/Library_Modules/library_character_repair_controller.py) ===== */
 
-    LibraryCharacterRepairDialog { align: center middle; }
-    LibraryCharacterRepairDialog > Container {
-        width: 76; max-width: 96%; height: auto; max-height: 90%;
-        border: thick $accent; background: $surface; padding: 1 2;
-    }
-    LibraryCharacterRepairDialog Select.library-character-repair-dialog-select { width: 100%; }
-    LibraryCharacterRepairDialog Horizontal.library-character-repair-dialog-horizontal { height: auto; }
-    LibraryCharacterRepairDialog Button.library-character-repair-dialog-button { min-width: 14; margin-right: 1; }
+LibraryCharacterRepairDialog { align: center middle; }
+LibraryCharacterRepairDialog > Container {
+    width: 76; max-width: 96%; height: auto; max-height: 90%;
+    border: thick $accent; background: $surface; padding: 1 2;
+}
+LibraryCharacterRepairDialog Select.library-character-repair-dialog-select { width: 100%; }
+LibraryCharacterRepairDialog Horizontal.library-character-repair-dialog-horizontal { height: auto; }
+LibraryCharacterRepairDialog Button.library-character-repair-dialog-button { min-width: 14; margin-right: 1; }
 
 /* ===== WIDGET: SkillImportChoiceModal (UI/Library_Modules/skill_import_choice_modal.py) ===== */
 
-    SkillImportChoiceModal {
-        align: center middle;
-        background: $background 75%;
-    }
+SkillImportChoiceModal {
+    align: center middle;
+    background: $background 75%;
+}
+
+/* ===== WIDGET: SkillRecoveryReviewModal (UI/Library_Modules/skills_trust_modals.py) ===== */
+
+SkillRecoveryReviewModal { align: center middle; }
 
 /* ===== WIDGET: LogsWindow (UI/Logs_Window.py) ===== */
 
-    LogsWindow {
-        layout: vertical;
-    }
+LogsWindow {
+    layout: vertical;
+}
 
 /* ===== WIDGET: MCPAuditMode (UI/MCP_Modules/mcp_audit_mode.py) ===== */
 
-    MCPAuditMode {
-        width: 1fr;
-        height: 100%;
-        min-height: 0;
-    }
+MCPAuditMode {
+    width: 1fr;
+    height: 100%;
+    min-height: 0;
+}
 
 /* ===== WIDGET: MCPInspector (UI/MCP_Modules/mcp_inspector.py) ===== */
 
-    MCPInspector {
-        width: 3fr;
-        min-width: 28;
-        height: 100%;
-        min-height: 0;
-    }
-    MCPInspector Button {
-        min-width: 0;
-        max-width: 100%;
-        height: auto;
-        text-wrap: wrap;
-    }
+MCPInspector {
+    width: 3fr;
+    min-width: 28;
+    height: 100%;
+    min-height: 0;
+}
+MCPInspector Button {
+    min-width: 0;
+    max-width: 100%;
+    height: auto;
+    text-wrap: wrap;
+}
 
 /* ===== WIDGET: MCPPermissionsMode (UI/MCP_Modules/mcp_permissions_mode.py) ===== */
 
-    MCPPermissionsMode {
-        width: 1fr;
-        height: 100%;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
+MCPPermissionsMode {
+    width: 1fr;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
 
 /* ===== WIDGET: MCPRail (UI/MCP_Modules/mcp_rail.py) ===== */
 
-    MCPRail {
-        width: 3fr;
-        min-width: 24;
-        height: 100%;
-        min-height: 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
+MCPRail {
+    width: 3fr;
+    min-width: 24;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
 
 /* ===== WIDGET: MCPServersMode (UI/MCP_Modules/mcp_servers_mode.py) ===== */
 
-    MCPServersMode {
-        width: 1fr;
-        height: 100%;
-        min-height: 0;
-    }
+MCPServersMode {
+    width: 1fr;
+    height: 100%;
+    min-height: 0;
+}
 
 /* ===== WIDGET: MCPToolsMode (UI/MCP_Modules/mcp_tools_mode.py) ===== */
 
-    MCPToolsMode {
-        width: 1fr;
-        height: 100%;
-        min-height: 0;
-    }
+MCPToolsMode {
+    width: 1fr;
+    height: 100%;
+    min-height: 0;
+}
 
 /* ===== WIDGET: MCPWorkbench (UI/MCP_Modules/mcp_workbench.py) ===== */
 
-    MCPWorkbench {
-        width: 100%;
-        height: 1fr;
-        min-height: 0;
-    }
+MCPWorkbench {
+    width: 100%;
+    height: 1fr;
+    min-height: 0;
+}
 
 /* ===== WIDGET: BaseAppScreen (UI/Navigation/base_app_screen.py) ===== */
 
-    BaseAppScreen {
-        background: $background;
-    }
+BaseAppScreen {
+    background: $background;
+}
 
 /* ===== WIDGET: RoleplayDraftNavigationDialog (UI/Navigation/character_conversation_navigation.py) ===== */
 
-    RoleplayDraftNavigationDialog { align: center middle; }
-    RoleplayDraftNavigationDialog > Container {
-        width: 72; max-width: 96%; height: auto; border: thick $accent;
-        background: $surface; padding: 1 2;
-    }
-    RoleplayDraftNavigationDialog Vertical.roleplay-draft-navigation-dialog-vertical { height: auto; }
-    RoleplayDraftNavigationDialog Button.roleplay-draft-navigation-dialog-button { width: 100%; margin-top: 1; }
+RoleplayDraftNavigationDialog { align: center middle; }
+RoleplayDraftNavigationDialog > Container {
+    width: 72; max-width: 96%; height: auto; border: thick $accent;
+    background: $surface; padding: 1 2;
+}
+RoleplayDraftNavigationDialog Vertical.roleplay-draft-navigation-dialog-vertical { height: auto; }
+RoleplayDraftNavigationDialog Button.roleplay-draft-navigation-dialog-button { width: 100%; margin-top: 1; }
 
 /* ===== WIDGET: MainNavigationBar (UI/Navigation/main_navigation.py) ===== */
 
-    MainNavigationBar {
-        height: 3;
-        min-height: 3;
-        width: 100%;
-        dock: top;
-        background: $background;
-        border-bottom: solid $surface-lighten-2;
-        layout: horizontal;
-        overflow: hidden;
-    }
+MainNavigationBar {
+    height: 3;
+    min-height: 3;
+    width: 100%;
+    dock: top;
+    background: $surface;
+    border-bottom: solid $tldw-boundary;
+    layout: horizontal;
+    overflow: hidden;
+}
 
 /* ===== WIDGET: ArtifactShareDialog (UI/Screens/artifact_share_dialog.py) ===== */
 
-    ArtifactShareDialog { align: center middle; background: $background 70%; }
-    ArtifactShareDialog > VerticalScroll.artifact-share-dialog-verticalscroll {
-        width: 76; max-width: 96%; height: auto; max-height: 90%;
-        background: $surface; border: solid $primary; padding: 1 2;
-    }
-    ArtifactShareDialog Input.artifact-share-dialog-input, ArtifactShareDialog RadioSet, ArtifactShareDialog SelectionList {
-        margin-bottom: 1;
-    }
-    ArtifactShareDialog #share-dialog-status { color: $warning; }
+ArtifactShareDialog { align: center middle; background: $background 70%; }
+ArtifactShareDialog > VerticalScroll.artifact-share-dialog-verticalscroll {
+    width: 76; max-width: 96%; height: auto; max-height: 90%;
+    background: $surface; border: solid $primary; padding: 1 2;
+}
+ArtifactShareDialog Input.artifact-share-dialog-input, ArtifactShareDialog RadioSet, ArtifactShareDialog SelectionList {
+    margin-bottom: 1;
+}
+ArtifactShareDialog #share-dialog-status { color: $warning; }
+
+/* ===== WIDGET: DreamsGoalsModal (UI/Screens/artifacts_dreams_goals_modal.py) ===== */
+
+DreamsGoalsModal { align: center middle; background: $background 70%; }
+DreamsGoalsModal > VerticalScroll {
+    width: 76; max-width: 96%; height: auto; max-height: 90%;
+    background: $surface; border: solid $primary; padding: 1 2;
+}
+DreamsGoalsModal #dgm-region { margin-top: 1; }
+DreamsGoalsModal #dgm-goals { height: auto; max-height: 12; margin-top: 1; }
+DreamsGoalsModal #dgm-new-goal { margin-top: 1; }
+DreamsGoalsModal #dgm-hints { color: $warning; margin-top: 1; }
+
+/* ===== WIDGET: DreamsStoryModal (UI/Screens/artifacts_dreams_modal.py) ===== */
+
+DreamsStoryModal { align: center middle; background: $background 70%; }
+DreamsStoryModal > VerticalScroll {
+    width: 76; max-width: 96%; height: auto; max-height: 90%;
+    background: $surface; border: solid $primary; padding: 1 2;
+}
+DreamsStoryModal #dsm-hints { color: $warning; margin-top: 1; }
+DreamsStoryModal #dsm-actions {
+    grid-size: 2; grid-columns: 1fr 1fr;
+    grid-rows: 1; grid-gutter: 1;
+    height: auto; margin-top: 1;
+}
+DreamsStoryModal #dsm-actions Button { width: 100%; min-width: 0; }
 
 /* ===== WIDGET: BackupRestoreScreen (UI/Screens/backup_restore_screen.py) ===== */
 
-    BackupRestoreScreen { background: $background; }
-    BackupRestoreScreen #backup-title { height: auto; padding: 1 2; text-style: bold; }
-    BackupRestoreScreen #backup-actions { layout: grid; grid-size: 2; grid-columns: 1fr 1fr; height: 6; padding: 0 1; }
-    BackupRestoreScreen #backup-actions Button.backup-restore-screen-button { width: 100%; }
-    BackupRestoreScreen #backup-status { height: auto; max-height: 5; padding: 0 2; }
-    BackupRestoreScreen #backup-body { height: 1fr; padding: 1 2; }
-    BackupRestoreScreen .backup-form { height: auto; }
-    BackupRestoreScreen .backup-form Static { height: auto; margin-top: 1; }
-    BackupRestoreScreen .backup-form Input.backup-restore-screen-input { width: 100%; }
-    BackupRestoreScreen .backup-form Checkbox { height: auto; width: 100%; }
-    BackupRestoreScreen #backup-message { height: auto; padding: 0 2; max-height: 4; }
-    BackupRestoreScreen #backup-footer-actions { height: auto; padding: 0 1; }
-    BackupRestoreScreen #backup-footer-actions Button.backup-restore-screen-button { min-width: 10; width: 1fr; }
+BackupRestoreScreen { background: $background; }
+BackupRestoreScreen #backup-title { height: auto; padding: 1 2; text-style: bold; }
+BackupRestoreScreen #backup-actions { layout: grid; grid-size: 2; grid-columns: 1fr 1fr; height: 6; padding: 0 1; }
+BackupRestoreScreen #backup-actions Button.backup-restore-screen-button { width: 100%; }
+BackupRestoreScreen #backup-status { height: auto; max-height: 5; padding: 0 2; }
+BackupRestoreScreen #backup-body { height: 1fr; padding: 1 2; }
+BackupRestoreScreen .backup-form { height: auto; }
+BackupRestoreScreen .backup-form Static { height: auto; margin-top: 1; }
+BackupRestoreScreen .backup-form Input.backup-restore-screen-input { width: 100%; }
+BackupRestoreScreen .backup-form Checkbox { height: auto; width: 100%; }
+BackupRestoreScreen #backup-message { height: auto; padding: 0 2; max-height: 4; }
+BackupRestoreScreen #backup-footer-actions { height: auto; padding: 0 1; }
+BackupRestoreScreen #backup-footer-actions Button.backup-restore-screen-button { min-width: 10; width: 1fr; }
 
 /* ===== WIDGET: ChatScreen (UI/Screens/chat_screen.py) ===== */
 
-    ChatScreen ToastRack {
-        dock: top;
-        align: right top;
-        margin-top: 1;
-        margin-bottom: 0;
-    }
+ChatScreen ToastRack {
+    dock: top;
+    align: right top;
+    margin-top: 8;
+    margin-bottom: 0;
+}
 
 /* ===== WIDGET: ChunkingLabScreen (UI/Screens/chunking_lab_screen.py) ===== */
 
-    ChunkingLabScreen #lab-title, ChunkingLabScreen #lab-status, ChunkingLabScreen #lab-message { height: auto; padding: 0 1; }
-    ChunkingLabScreen #lab-title { text-style: bold; background: $surface; }
-    ChunkingLabScreen #lab-controls, ChunkingLabScreen #lab-actions { height: 3; }
-    ChunkingLabScreen #lab-controls Button, ChunkingLabScreen #lab-actions Button { min-width: 8; width: auto; padding: 0 1; }
-    ChunkingLabScreen #lab-menu-slot { width: 1fr; min-width: 20; height: 3; }
-    ChunkingLabScreen #lab-menu { width: 100%; }
-    ChunkingLabScreen #lab-work { height: 1fr; min-height: 0; }
-    ChunkingLabScreen #lab-inputs { width: 2fr; height: 1fr; min-width: 0; }
-    ChunkingLabScreen #lab-results-scroll { width: 3fr; height: 1fr; min-width: 0; min-height: 0; }
-    ChunkingLabScreen #lab-result-choices { height: 1; }
-    ChunkingLabScreen #lab-result-choices Button { height: 1; min-width: 10; width: auto; padding: 0 1; }
-    ChunkingLabScreen ResultsRegion { width: 1fr; height: 1fr; min-width: 0; }
-    ChunkingLabScreen.-narrow #lab-inputs, ChunkingLabScreen.-narrow #lab-results-scroll { width: 1fr; }
-    ChunkingLabScreen.-narrow #lab-actions { height: 1; }
-    ChunkingLabScreen.-narrow ResultsRegion { height: 20; min-height: 20; }
-    ChunkingLabScreen.-narrow #result-tables { height: 7; min-height: 7; }
-    ChunkingLabScreen.-narrow #chunk-inspector { height: 5; min-height: 5; }
+ChunkingLabScreen #lab-title, ChunkingLabScreen #lab-status, ChunkingLabScreen #lab-message { height: auto; padding: 0 1; }
+ChunkingLabScreen #lab-title { text-style: bold; background: $surface; }
+ChunkingLabScreen #lab-controls, ChunkingLabScreen #lab-actions { height: 3; }
+ChunkingLabScreen #lab-controls Button, ChunkingLabScreen #lab-actions Button { min-width: 8; width: auto; padding: 0 1; }
+ChunkingLabScreen #lab-menu-slot { width: 1fr; min-width: 20; height: 3; }
+ChunkingLabScreen #lab-menu { width: 100%; }
+ChunkingLabScreen #lab-work { height: 1fr; min-height: 0; }
+ChunkingLabScreen #lab-inputs { width: 2fr; height: 1fr; min-width: 0; }
+ChunkingLabScreen #lab-results-scroll { width: 3fr; height: 1fr; min-width: 0; min-height: 0; }
+ChunkingLabScreen #lab-result-choices { height: 1; }
+ChunkingLabScreen #lab-result-choices Button { height: 1; min-width: 10; width: auto; padding: 0 1; }
+ChunkingLabScreen ResultsRegion { width: 1fr; height: 1fr; min-width: 0; }
+ChunkingLabScreen.-narrow #lab-inputs, ChunkingLabScreen.-narrow #lab-results-scroll { width: 1fr; }
+ChunkingLabScreen.-narrow #lab-actions { height: 1; }
+ChunkingLabScreen.-narrow ResultsRegion { height: 20; min-height: 20; }
+ChunkingLabScreen.-narrow #result-tables { height: 7; min-height: 7; }
+ChunkingLabScreen.-narrow #chunk-inspector { height: 5; min-height: 5; }
 
 /* ===== WIDGET: LabModeStrip (UI/Screens/lab_mode_strip.py) ===== */
 
-    LabModeStrip {
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        overflow: hidden;
-    }
+LabModeStrip {
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    overflow: hidden;
+}
 
-    LabModeStrip .lab-mode-label {
-        width: 8;
-        min-width: 8;
-        height: 1;
-        min-height: 1;
-    }
+LabModeStrip .lab-mode-label {
+    width: 8;
+    min-width: 8;
+    height: 1;
+    min-height: 1;
+}
 
-    LabModeStrip Button.lab-mode-chip {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
+LabModeStrip Button.lab-mode-chip {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
 
-    LabModeStrip .lab-mode-chip.is-active {
-        border: none;
-        text-style: bold underline;
-    }
+LabModeStrip .lab-mode-chip.is-active {
+    border: none;
+    text-style: bold underline;
+}
 
 /* ===== WIDGET: LibraryScreen (UI/Screens/library_screen.py) ===== */
 
-    LibraryScreen #library-open-chunking-lab, LibraryScreen #library-chunking-selected { height: 1; min-height: 1; width: auto; min-width: 15; }
-    LibraryScreen #library-details-chunking-gloss { height: auto; }
+LibraryScreen #library-open-chunking-lab, LibraryScreen #library-chunking-selected { height: 1; min-height: 1; width: auto; min-width: 15; }
+LibraryScreen #library-details-chunking-gloss { height: auto; }
 
 /* ===== WIDGET: ModelCatalogConsentModal (UI/Screens/model_catalog_consent.py) ===== */
 
-    ModelCatalogConsentModal {
-        align: center middle;
-        background: $background 75%;
-    }
+ModelCatalogConsentModal {
+    align: center middle;
+    background: $background 75%;
+}
 
 /* ===== WIDGET: CuratedView (UI/Screens/model_curated_view.py) ===== */
 
-    CuratedView {
-        height: 100%;
-    }
+CuratedView {
+    height: 100%;
+}
 
-    CuratedView .curated-header {
-        height: 3;
-    }
+CuratedView .curated-header {
+    height: 3;
+}
 
-    CuratedView .curated-header Button {
-        width: auto;
-    }
+CuratedView .curated-header Button {
+    width: auto;
+}
 
-    CuratedView .curated-list {
-        height: 1fr;
-    }
+CuratedView .curated-list {
+    height: 1fr;
+}
 
-    CuratedView .curated-model-row {
-        height: auto;
-        padding: 1;
-        margin-bottom: 1;
-        border: solid $surface-lighten-1;
-    }
+CuratedView .curated-model-row {
+    height: auto;
+    padding: 1;
+    margin-bottom: 1;
+    border: solid $surface-lighten-1;
+}
 
-    CuratedView .curated-model-title {
-        text-style: bold;
-    }
+CuratedView .curated-model-title {
+    text-style: bold;
+}
 
-    CuratedView .curated-model-muted {
-        color: $text-muted;
-    }
+CuratedView .curated-model-muted {
+    color: $text-muted;
+}
 
-    CuratedView .curated-actions {
-        height: 3;
-        margin-top: 1;
-    }
+CuratedView .curated-actions {
+    height: 3;
+    margin-top: 1;
+}
 
-    CuratedView .curated-actions Button {
-        width: auto;
-        margin-right: 1;
-    }
+CuratedView .curated-actions Button {
+    width: auto;
+    margin-right: 1;
+}
 
 /* ===== WIDGET: ExternalModelView (UI/Screens/model_external_view.py) ===== */
 
-    ExternalModelView {
-        height: 100%;
-    }
+ExternalModelView {
+    height: 100%;
+}
 
-    ExternalModelView .external-model-list {
-        height: 1fr;
-    }
+ExternalModelView .external-model-list {
+    height: 1fr;
+}
 
-    ExternalModelView .external-model-row {
-        height: auto;
-        padding: 1;
-        margin-bottom: 1;
-        border: solid $surface-lighten-1;
-    }
+ExternalModelView .external-model-row {
+    height: auto;
+    padding: 1;
+    margin-bottom: 1;
+    border: solid $surface-lighten-1;
+}
 
-    ExternalModelView .external-model-title {
-        text-style: bold;
-    }
+ExternalModelView .external-model-title {
+    text-style: bold;
+}
 
-    ExternalModelView .external-model-status,
-    ExternalModelView .external-model-path {
-        height: auto;
-        color: $text-muted;
-    }
+ExternalModelView .external-model-status,
+ExternalModelView .external-model-path {
+    height: auto;
+    color: $text-muted;
+}
 
-    ExternalModelView .external-model-actions {
-        width: 100%;
-        height: auto;
-        margin-top: 1;
-    }
+ExternalModelView .external-model-actions {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+}
 
-    ExternalModelView .external-model-actions Button {
-        width: 100%;
-    }
+ExternalModelView .external-model-actions Button {
+    width: 100%;
+}
 
-    ExternalModelView #external-model-operation-status {
-        height: auto;
-        margin-bottom: 1;
-    }
+ExternalModelView #external-model-operation-status {
+    height: auto;
+    margin-bottom: 1;
+}
 
-    ExternalModelView #external-model-operation-status.-error {
-        color: $error;
-    }
+ExternalModelView #external-model-operation-status.-error {
+    color: $error;
+}
 
-    ExternalModelView #external-model-cancel-operation {
-        width: 100%;
-        margin-bottom: 1;
-    }
+ExternalModelView #external-model-cancel-operation {
+    width: 100%;
+    margin-bottom: 1;
+}
 
 /* ===== WIDGET: InstalledView (UI/Screens/model_installed_view.py) ===== */
 
-    InstalledView {
-        height: 100%;
-    }
+InstalledView {
+    height: 100%;
+}
 
-    InstalledView .installed-header {
-        height: 3;
-    }
+InstalledView .installed-header {
+    height: 3;
+}
 
-    InstalledView .installed-header Button {
-        width: auto;
-        margin-right: 1;
-    }
+InstalledView .installed-header Button {
+    width: auto;
+    margin-right: 1;
+}
 
-    InstalledView .installed-list {
-        height: 1fr;
-    }
+InstalledView .installed-list {
+    height: 1fr;
+}
 
-    InstalledView .installed-model-row {
-        height: auto;
-        margin-bottom: 1;
-        padding: 1;
-        border: solid $surface-lighten-1;
-    }
+InstalledView .installed-model-row {
+    height: auto;
+    margin-bottom: 1;
+    padding: 1;
+    border: solid $surface-lighten-1;
+}
 
-    InstalledView .installed-model-row.-revealed {
-        border: solid $accent;
-        background: $accent 8%;
-    }
+InstalledView .installed-model-row.-revealed {
+    border: solid $accent;
+    background: $accent 8%;
+}
 
-    InstalledView .installed-model-title {
-        text-style: bold;
-    }
+InstalledView .installed-model-title {
+    text-style: bold;
+}
 
-    InstalledView .installed-model-muted {
-        color: $text-muted;
-    }
+InstalledView .installed-model-muted {
+    color: $text-muted;
+}
 
-    InstalledView .installed-import-actions {
-        height: 3;
-    }
+InstalledView .installed-import-actions {
+    height: 3;
+}
 
-    InstalledView .installed-import-actions Button {
-        width: auto;
-        margin-right: 1;
-    }
+InstalledView .installed-import-actions Button {
+    width: auto;
+    margin-right: 1;
+}
 
 /* ===== WIDGET: RemoteView (UI/Screens/model_remote_view.py) ===== */
 
-    RemoteView {
-        height: 100%;
-        background: $background;
-    }
+RemoteView {
+    height: 100%;
+    background: $background;
+}
 
-    RemoteView .remote-header {
-        height: 5;
-        padding: 0 1;
-        background: $panel;
-    }
+RemoteView .remote-header {
+    height: 5;
+    padding: 0 1;
+    background: $panel;
+}
 
-    RemoteView .remote-source {
-        height: 2;
-        padding: 0;
-        color: $text-muted;
-    }
+RemoteView .remote-source {
+    height: 2;
+    padding: 0;
+    color: $text-muted;
+}
 
-    RemoteView .remote-search-row {
-        height: 3;
-    }
+RemoteView .remote-search-row {
+    height: 3;
+}
 
-    RemoteView #remote-model-query {
-        width: 1fr;
-    }
+RemoteView #remote-model-query {
+    width: 1fr;
+}
 
-    RemoteView #remote-model-search {
-        width: auto;
-    }
+RemoteView #remote-model-search {
+    width: auto;
+}
 
-    RemoteView .remote-workspace {
-        height: 1fr;
-    }
+RemoteView .remote-workspace {
+    height: 1fr;
+}
 
-    RemoteView .remote-results-pane {
-        width: 2fr;
-        min-width: 24;
-        border-right: solid $surface-lighten-1;
-        background: $panel;
-    }
+RemoteView .remote-results-pane {
+    width: 2fr;
+    min-width: 24;
+    border-right: solid $surface-lighten-1;
+    background: $panel;
+}
 
-    RemoteView .remote-detail-pane {
-        width: 3fr;
-        min-width: 32;
-        background: $background;
-    }
+RemoteView .remote-detail-pane {
+    width: 3fr;
+    min-width: 32;
+    background: $background;
+}
 
-    RemoteView .remote-pane-title {
-        height: 2;
-        padding: 0 1;
-        text-style: bold;
-        background: $surface;
-        color: $text;
-    }
+RemoteView .remote-pane-title {
+    height: 2;
+    padding: 0 1;
+    text-style: bold;
+    background: $surface;
+    color: $text;
+}
 
-    RemoteView #remote-model-results,
-    RemoteView #remote-model-details {
-        height: 1fr;
-    }
+RemoteView #remote-model-results,
+RemoteView #remote-model-details {
+    height: 1fr;
+}
 
-    RemoteView #remote-model-results {
-        padding: 0 1;
-    }
+RemoteView #remote-model-results {
+    padding: 0 1;
+}
 
-    RemoteView #remote-model-details {
-        padding: 1 2;
-    }
+RemoteView #remote-model-details {
+    padding: 1 2;
+}
 
-    RemoteView .remote-result-row {
-        height: auto;
-        padding: 1 0;
-        border-bottom: solid $surface-lighten-1;
-    }
+RemoteView .remote-result-row {
+    height: auto;
+    padding: 1 0;
+    border-bottom: solid $surface-lighten-1;
+}
 
-    RemoteView .remote-title {
-        text-style: bold;
-    }
+RemoteView .remote-title {
+    text-style: bold;
+}
 
-    RemoteView .remote-muted {
-        color: $text-muted;
-    }
+RemoteView .remote-muted {
+    color: $text-muted;
+}
 
-    RemoteView .remote-result,
-    RemoteView .remote-candidate {
-        width: 100%;
-        margin-top: 1;
-    }
+RemoteView .remote-result,
+RemoteView .remote-candidate {
+    width: 100%;
+    margin-top: 1;
+}
 
-    RemoteView .remote-candidate-row {
-        height: auto;
-        padding: 1 0;
-        border-bottom: solid $surface-lighten-1;
-    }
+RemoteView .remote-candidate-row {
+    height: auto;
+    padding: 1 0;
+    border-bottom: solid $surface-lighten-1;
+}
 
-    RemoteView .remote-compatibility {
-        height: auto;
-        margin-bottom: 1;
-        padding: 0 1;
-        background: $warning 12%;
-        color: $text;
-        text-style: bold;
-    }
+RemoteView .remote-compatibility {
+    height: auto;
+    margin-bottom: 1;
+    padding: 0 1;
+    background: $warning 12%;
+    color: $text;
+    text-style: bold;
+}
 
-    RemoteView .remote-variant-guidance {
-        height: auto;
-        margin-top: 1;
-        padding: 0 1;
-        border-left: thick $accent;
-        background: $accent 8%;
-        color: $text;
-    }
+RemoteView .remote-variant-guidance {
+    height: auto;
+    margin-top: 1;
+    padding: 0 1;
+    border-left: thick $accent;
+    background: $accent 8%;
+    color: $text;
+}
 
-    RemoteView .remote-machine-panel {
-        height: auto;
-        margin-top: 1;
-        padding: 1;
-        border: solid $surface-lighten-1;
-        background: $panel;
-    }
+RemoteView .remote-machine-panel {
+    height: auto;
+    margin-top: 1;
+    padding: 1;
+    border: solid $surface-lighten-1;
+    background: $panel;
+}
 
-    RemoteView .remote-machine-actions {
-        height: auto;
-        min-height: 3;
-        margin-top: 1;
-    }
+RemoteView .remote-machine-actions {
+    height: auto;
+    min-height: 3;
+    margin-top: 1;
+}
 
-    RemoteView .remote-machine-actions Button {
-        width: auto;
-        margin-right: 1;
-    }
+RemoteView .remote-machine-actions Button {
+    width: auto;
+    margin-right: 1;
+}
 
-    RemoteView .remote-fit-outcome,
-    RemoteView .remote-fit-details,
-    RemoteView .remote-fit-advisory,
-    RemoteView .remote-variant-filename {
-        width: 100%;
-        height: auto;
-    }
+RemoteView .remote-fit-outcome,
+RemoteView .remote-fit-details,
+RemoteView .remote-fit-advisory,
+RemoteView .remote-variant-filename {
+    width: 100%;
+    height: auto;
+}
 
-    RemoteView .remote-fit-outcome {
-        margin-top: 1;
-        text-style: bold;
-    }
+RemoteView .remote-fit-outcome {
+    margin-top: 1;
+    text-style: bold;
+}
 
-    RemoteView .remote-fit-details {
-        color: $text-muted;
-    }
+RemoteView .remote-fit-details {
+    color: $text-muted;
+}
 
-    RemoteView .remote-fit-advisory {
-        color: $warning;
-    }
+RemoteView .remote-fit-advisory {
+    color: $warning;
+}
 
-    RemoteView .remote-variant-controls {
-        height: auto;
-        min-height: 3;
-        margin-top: 1;
-    }
+RemoteView .remote-variant-controls {
+    height: auto;
+    min-height: 3;
+    margin-top: 1;
+}
 
-    RemoteView #remote-variant-filter {
-        width: 1fr;
-        min-width: 16;
-    }
+RemoteView #remote-variant-filter {
+    width: 1fr;
+    min-width: 16;
+}
 
-    RemoteView #remote-variant-sort {
-        width: 24;
-        min-width: 18;
-        margin-left: 1;
-        margin-bottom: 0;
-    }
+RemoteView #remote-variant-sort {
+    width: 24;
+    min-width: 18;
+    margin-left: 1;
+    margin-bottom: 0;
+}
 
-    RemoteView .remote-variant-list,
-    RemoteView .remote-variant-facts,
-    RemoteView .remote-variant-summary,
-    RemoteView .remote-variant-empty {
-        height: auto;
-    }
+RemoteView .remote-variant-list,
+RemoteView .remote-variant-facts,
+RemoteView .remote-variant-summary,
+RemoteView .remote-variant-empty {
+    height: auto;
+}
 
-    RemoteView .remote-variant-empty {
-        padding: 1 0;
-    }
+RemoteView .remote-variant-empty {
+    padding: 1 0;
+}
 
-    RemoteView .remote-source-review {
-        height: auto;
-        margin-top: 1;
-        color: $text-muted;
-    }
+RemoteView .remote-source-review {
+    height: auto;
+    margin-top: 1;
+    color: $text-muted;
+}
 
-    RemoteView .remote-detail-section {
-        height: auto;
-        margin-top: 1;
-        text-style: bold;
-        color: $accent;
-    }
+RemoteView .remote-detail-section {
+    height: auto;
+    margin-top: 1;
+    text-style: bold;
+    color: $accent;
+}
 
-    RemoteView #remote-model-status {
-        height: auto;
-        min-height: 2;
-        padding: 0 1;
-        color: $text-muted;
-    }
+RemoteView #remote-model-status {
+    height: auto;
+    min-height: 2;
+    padding: 0 1;
+    color: $text-muted;
+}
 
-    RemoteView #remote-model-install-progress {
-        height: auto;
-        margin: 0 1;
-        padding: 1;
-        background: $surface;
-    }
+RemoteView #remote-model-install-progress {
+    height: auto;
+    margin: 0 1;
+    padding: 1;
+    background: $surface;
+}
 
-    RemoteView .remote-action-bar {
-        height: auto;
-        min-height: 4;
-        padding: 1;
-        border-top: solid $surface-lighten-1;
-        background: $panel;
-    }
+RemoteView .remote-action-bar {
+    height: auto;
+    min-height: 4;
+    padding: 1;
+    border-top: solid $surface-lighten-1;
+    background: $panel;
+}
 
-    RemoteView #remote-model-selection {
-        width: 1fr;
-        height: auto;
-        color: $text-muted;
-    }
+RemoteView #remote-model-selection {
+    width: 1fr;
+    height: auto;
+    color: $text-muted;
+}
 
-    RemoteView #remote-model-install {
-        width: auto;
-        min-width: 22;
-    }
+RemoteView #remote-model-install {
+    width: auto;
+    min-width: 22;
+}
 
-    RemoteView .remote-completion-actions {
-        width: auto;
-        height: 3;
-    }
+RemoteView .remote-completion-actions {
+    width: auto;
+    height: 3;
+}
 
-    RemoteView .remote-completion-actions Button {
-        width: auto;
-        margin-left: 1;
-    }
+RemoteView .remote-completion-actions Button {
+    width: auto;
+    margin-left: 1;
+}
 
-    RemoteView.-narrow .remote-results-pane {
-        width: 100%;
-        min-width: 0;
-        border-right: none;
-    }
+RemoteView.-narrow .remote-results-pane {
+    width: 100%;
+    min-width: 0;
+    border-right: none;
+}
 
-    RemoteView.-narrow .remote-detail-pane {
-        width: 100%;
-        min-width: 0;
-    }
+RemoteView.-narrow .remote-detail-pane {
+    width: 100%;
+    min-width: 0;
+}
 
-    RemoteView.-narrow .remote-header {
-        height: 4;
-        padding: 0;
-    }
+RemoteView.-narrow .remote-header {
+    height: 4;
+    padding: 0;
+}
 
-    RemoteView.-narrow .remote-source {
-        height: 1;
-    }
+RemoteView.-narrow .remote-source {
+    height: 1;
+}
 
-    RemoteView.-narrow #remote-model-details {
-        padding: 0 1;
-    }
+RemoteView.-narrow #remote-model-details {
+    padding: 0 1;
+}
 
-    RemoteView.-narrow #remote-model-status {
-        height: 1;
-        min-height: 1;
-        padding: 0;
-    }
+RemoteView.-narrow #remote-model-status {
+    height: 1;
+    min-height: 1;
+    padding: 0;
+}
 
-    RemoteView.-narrow .remote-machine-actions {
-        layout: vertical;
-    }
+RemoteView.-narrow .remote-machine-actions {
+    layout: vertical;
+}
 
-    RemoteView.-narrow .remote-variant-controls {
-        layout: vertical;
-        min-height: 6;
-        margin-top: 0;
-    }
+RemoteView.-narrow .remote-variant-controls {
+    layout: vertical;
+    min-height: 6;
+    margin-top: 0;
+}
 
-    RemoteView.-narrow #remote-variant-filter,
-    RemoteView.-narrow #remote-variant-sort {
-        width: 100%;
-        min-width: 0;
-        margin-left: 0;
-    }
+RemoteView.-narrow #remote-variant-filter,
+RemoteView.-narrow #remote-variant-sort {
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+}
 
-    RemoteView.-narrow .remote-action-bar {
-        layout: vertical;
-        min-height: 4;
-        padding: 0;
-    }
+RemoteView.-narrow .remote-action-bar {
+    layout: vertical;
+    min-height: 4;
+    padding: 0;
+}
 
-    RemoteView.-narrow #remote-model-selection {
-        height: 1;
-    }
+RemoteView.-narrow #remote-model-selection {
+    height: 1;
+}
 
-    RemoteView.-narrow #remote-model-selection,
-    RemoteView.-narrow #remote-model-install,
-    RemoteView.-narrow .remote-completion-actions {
-        width: 100%;
-        min-width: 0;
-    }
+RemoteView.-narrow #remote-model-selection,
+RemoteView.-narrow #remote-model-install,
+RemoteView.-narrow .remote-completion-actions {
+    width: 100%;
+    min-width: 0;
+}
 
-    RemoteView.-narrow .remote-completion-actions Button {
-        width: 1fr;
-        min-width: 0;
-    }
+RemoteView.-narrow .remote-completion-actions Button {
+    width: 1fr;
+    min-width: 0;
+}
 
 /* ===== WIDGET: PersonasScreen (UI/Screens/personas_screen.py) ===== */
 
-    PersonasScreen {
-        background: $background;
-    }
+PersonasScreen {
+    background: $background;
+}
 
 /* ===== WIDGET: ConflictsTab (UI/Screens/scheduling/conflicts_tab.py) ===== */
 
-    ConflictsTab {
-        height: 1fr;
-    }
+ConflictsTab {
+    height: 1fr;
+}
 
 /* ===== WIDGET: DefinitionAuditView (UI/Screens/scheduling/definition_audit_view.py) ===== */
 
-    DefinitionAuditView {
-        height: 1fr;
-    }
+DefinitionAuditView {
+    height: 1fr;
+}
 
 /* ===== WIDGET: AutomationDefinitionForm (UI/Screens/scheduling/forms/automation_definition_form.py) ===== */
 
-    AutomationDefinitionForm {
-        align: center middle;
-    }
+AutomationDefinitionForm {
+    align: center middle;
+}
 
-    AutomationDefinitionForm > VerticalScroll.automation-definition-form-verticalscroll {
-        width: 84;
-        max-width: 100%;
-        height: auto;
-        max-height: 100%;
-        background: $surface;
-        border: thick $primary;
-        padding: 1 2;
-    }
+AutomationDefinitionForm > VerticalScroll.automation-definition-form-verticalscroll {
+    width: 84;
+    max-width: 100%;
+    height: auto;
+    max-height: 100%;
+    background: $surface;
+    border: thick $primary;
+    padding: 1 2;
+}
 
 /* ===== WIDGET: NewTaskChoiceModal (UI/Screens/scheduling/forms/new_task_choice_modal.py) ===== */
 
-    NewTaskChoiceModal {
-        align: center middle;
-    }
+NewTaskChoiceModal {
+    align: center middle;
+}
 
-    NewTaskChoiceModal .new-task-choice-modal {
-        width: 64;
-        height: auto;
-        border: tall $accent;
-        background: $surface;
-        padding: 1 2;
-    }
+NewTaskChoiceModal .new-task-choice-modal {
+    width: 64;
+    height: auto;
+    border: tall $accent;
+    background: $surface;
+    padding: 1 2;
+}
 
-    NewTaskChoiceModal .new-task-choice-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
+NewTaskChoiceModal .new-task-choice-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
 
-    NewTaskChoiceModal .new-task-choice-copy {
-        height: auto;
-        color: $text-muted;
-        margin-bottom: 1;
-    }
+NewTaskChoiceModal .new-task-choice-copy {
+    height: auto;
+    color: $text-muted;
+    margin-bottom: 1;
+}
 
-    NewTaskChoiceModal .new-task-choice-actions {
-        height: 3;
-        align-horizontal: right;
-    }
+NewTaskChoiceModal .new-task-choice-actions {
+    height: 3;
+    align-horizontal: right;
+}
 
-    NewTaskChoiceModal .new-task-choice-actions Button.new-task-choice-modal-button {
-        width: auto;
-        margin-left: 1;
-    }
+NewTaskChoiceModal .new-task-choice-actions Button.new-task-choice-modal-button {
+    width: auto;
+    margin-left: 1;
+}
 
 /* ===== WIDGET: ResultsTab (UI/Screens/scheduling/results_tab.py) ===== */
 
-    ResultsTab {
-        height: 1fr;
-    }
+ResultsTab {
+    height: 1fr;
+}
 
 /* ===== WIDGET: SyncStatusWidget (UI/Screens/scheduling/sync_status_widget.py) ===== */
 
-    SyncStatusWidget {
-        height: auto;
-        padding: 1;
-    }
+SyncStatusWidget {
+    height: auto;
+    padding: 1;
+}
 
-/* ===== WIDGET: SkillRecoveryReviewModal (UI/Screens/skills_screen.py) ===== */
+/* ===== WIDGET: GuardianRuleEditModal (UI/Screens/settings_screen.py) ===== */
 
-    SkillRecoveryReviewModal { align: center middle; }
+GuardianRuleEditModal { align: center middle; background: $background 70%; }
+GuardianRuleEditModal > VerticalScroll {
+    width: 76; max-width: 96%; height: auto; max-height: 90%;
+    background: $surface; border: solid $primary; padding: 1 2;
+}
+GuardianRuleEditModal #grm-crisis-copy { color: $warning; margin-top: 1; }
+GuardianRuleEditModal #grm-status { color: $warning; margin-top: 1; }
+GuardianRuleEditModal #grm-buttons { margin-top: 1; height: auto; }
 
 /* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */
 
-    TrajectoryScreen {
-        align: left top;
-        background: $background;
-    }
+TrajectoryScreen {
+    align: left top;
+    background: $background;
+}
 
 
 
@@ -985,493 +1038,484 @@
 
 
 
-    TrajectoryScreen.trace-detail-full #trajectory-search,
-    TrajectoryScreen.trace-detail-full #trajectory-timeline,
-    TrajectoryScreen.trace-detail-full #trajectory-table {
-        display: none;
-    }
-    TrajectoryScreen.trace-inspector-open #trajectory-timeline {
-        display: none;
-    }
-    TrajectoryScreen.trace-detail-full #trajectory-inspector {
-        height: 1fr;
-        max-height: 100%;
-    }
+TrajectoryScreen.trace-detail-full #trajectory-search,
+TrajectoryScreen.trace-detail-full #trajectory-timeline,
+TrajectoryScreen.trace-detail-full #trajectory-table {
+    display: none;
+}
+TrajectoryScreen.trace-inspector-open #trajectory-timeline {
+    display: none;
+}
+TrajectoryScreen.trace-detail-full #trajectory-inspector {
+    height: 1fr;
+    max-height: 100%;
+}
 
 /* ===== WIDGET: TraceFilterBar (UI/Widgets/trace_filter_bar.py) ===== */
 
-    TraceFilterBar { width: 1fr; height: 3; }
+TraceFilterBar { width: 1fr; height: 3; }
 
 
-    TraceFilterBar #trace-filter-wide > Select { width: 1fr; min-width: 0; height: 3; margin: 0; }
+TraceFilterBar #trace-filter-wide > Select { width: 1fr; min-width: 0; height: 3; margin: 0; }
 
-    TraceFilterBar:focus #trace-filter-compact { text-style: reverse; color: $text; }
+TraceFilterBar:focus #trace-filter-compact { text-style: reverse; color: $text; }
 
 /* ===== WIDGET: TrajectoryTimeline (UI/Widgets/trajectory_timeline.py) ===== */
 
-    TrajectoryTimeline {
-        height: 6;
-        width: 1fr;
+TrajectoryTimeline {
+    height: 6;
+    width: 1fr;
 
-        &>.timeline--brush {
-            background: $primary 35%;
-            text-style: bold;
-        }
+    &>.timeline--brush {
+        background: $primary 35%;
+        text-style: bold;
     }
+}
 
 /* ===== WIDGET: SetupWizardProgress (UI/Wizards/FirstRunSetupWizard.py) ===== */
 
-    SetupWizardProgress .setup-progress-item {
-        height: auto;
-    }
-    SetupWizardProgress .step-indicator-stack {
-        layout: vertical;
-        align: center top;
-        width: auto;
-        height: auto;
-    }
-    SetupWizardProgress .step-number {
-        width: auto;
-        min-width: 4;
-        margin-right: 0;
-    }
-    SetupWizardProgress .step-title {
-        margin-right: 0;
-        text-align: center;
-    }
+SetupWizardProgress .setup-progress-item {
+    height: auto;
+}
+SetupWizardProgress .step-indicator-stack {
+    layout: vertical;
+    align: center top;
+    width: auto;
+    height: auto;
+}
+SetupWizardProgress .step-number {
+    width: auto;
+    min-width: 4;
+    margin-right: 0;
+}
+SetupWizardProgress .step-title {
+    margin-right: 0;
+    text-align: center;
+}
 
 /* ===== WIDGET: SetupRecoveryDialog (UI/Wizards/first_run_recovery_dialog.py) ===== */
 
-    SetupRecoveryDialog {
-        align: center middle;
-    }
+SetupRecoveryDialog {
+    align: center middle;
+}
 
-    SetupRecoveryDialog > Container {
-        width: 72;
-        max-width: 92%;
-        height: auto;
-        max-height: 90%;
-        border: thick $accent;
-        background: $surface;
-        padding: 1 2;
-    }
+SetupRecoveryDialog > Container {
+    width: 72;
+    max-width: 92%;
+    height: auto;
+    max-height: 90%;
+    border: thick $accent;
+    background: $surface;
+    padding: 1 2;
+}
 
-    SetupRecoveryDialog .setup-recovery-title {
-        width: 100%;
-        text-align: center;
-        text-style: bold;
-        margin-bottom: 1;
-    }
+SetupRecoveryDialog .setup-recovery-title {
+    width: 100%;
+    text-align: center;
+    text-style: bold;
+    margin-bottom: 1;
+}
 
-    SetupRecoveryDialog .setup-recovery-message {
-        width: 100%;
-        height: auto;
-        margin-bottom: 1;
-    }
+SetupRecoveryDialog .setup-recovery-message {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
 
-    SetupRecoveryDialog .setup-recovery-actions {
-        width: 100%;
-        height: auto;
-    }
+SetupRecoveryDialog .setup-recovery-actions {
+    width: 100%;
+    height: auto;
+}
 
-    SetupRecoveryDialog Button {
-        width: 100%;
-        margin-top: 1;
-    }
+SetupRecoveryDialog Button {
+    width: 100%;
+    margin-top: 1;
+}
+
+/* ===== WIDGET: VoiceOptionPicker (UI/Wizards/first_run_voice_pickers.py) ===== */
+
+VoiceOptionPicker {
+    height: auto;
+}
 
 /* ===== WIDGET: DestinationHeader (UI/Workbench/workbench_widgets.py) ===== */
 
-    DestinationHeader {
-        height: auto;
-    }
+DestinationHeader {
+    height: auto;
+}
 
 /* ===== WIDGET: AppFooterStatus (Widgets/AppFooterStatus.py) ===== */
 
-    AppFooterStatus {
-        dock: bottom;
-        height: 1;
-        background: $primary-background-darken-1;
-        width: 100%;
-        layout: horizontal;
-        padding: 0 1;
-    }
+AppFooterStatus {
+    dock: bottom;
+    height: 1;
+    background: $primary-background-darken-1;
+    width: 100%;
+    layout: horizontal;
+    padding: 0 1;
+}
 
-    AppFooterStatus #footer-key-quit {
-        width: auto;
-        padding: 0 1;
-        color: $text-muted;
-        dock: left;
-    }
+AppFooterStatus #footer-key-quit {
+    width: auto;
+    padding: 0 1;
+    color: $text-muted;
+    dock: left;
+}
 
-    AppFooterStatus #footer-spacer {
-        width: 1fr;
-    }
+AppFooterStatus #footer-spacer {
+    width: 1fr;
+}
 
-    AppFooterStatus #internal-db-size-indicator {
-        width: auto;
-        color: $text-muted;
-        dock: right;
-        padding: 0 1;
-        margin-left: 2;
-    }
+AppFooterStatus #internal-db-size-indicator {
+    width: auto;
+    color: $text-muted;
+    dock: right;
+    padding: 0 1;
+    margin-left: 2;
+}
 
 /* ===== WIDGET: ChatQuestionCard (Widgets/Chat_Widgets/chat_question_card.py) ===== */
 
-    ChatQuestionCard {
-        height: auto;
-        max-height: 24;
-        border: round $accent;
-        padding: 0 1;
-    }
-    ChatQuestionCard > #question-title {
-        height: 1;
-        text-style: bold;
-    }
-    ChatQuestionCard > #question-deadline {
-        height: auto;
-        color: $text-muted;
-    }
-    ChatQuestionCard > #question-sections {
-        height: auto;
-        max-height: 15;
-        overflow-y: auto;
-        scrollbar-gutter: stable;
-    }
-    ChatQuestionCard .question-section {
-        height: auto;
-        margin-bottom: 1;
-    }
-    ChatQuestionCard .question-header {
-        height: 1;
-        color: $accent;
-        text-style: bold;
-    }
-    ChatQuestionCard .question-text {
-        height: auto;
-    }
-    ChatQuestionCard .question-options {
-        height: auto;
-        border: none;
-        padding: 0;
-    }
-    ChatQuestionCard .question-other {
-        height: 3;
-    }
-    ChatQuestionCard > #question-actions {
-        height: 3;
-        align-horizontal: right;
-    }
+ChatQuestionCard {
+    height: auto;
+    max-height: 24;
+    border: round $accent;
+    padding: 0 1;
+}
+ChatQuestionCard > #question-title {
+    height: 1;
+    text-style: bold;
+}
+ChatQuestionCard > #question-deadline {
+    height: auto;
+    color: $text-muted;
+}
+ChatQuestionCard > #question-sections {
+    height: auto;
+    max-height: 15;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+ChatQuestionCard .question-section {
+    height: auto;
+    margin-bottom: 1;
+}
+ChatQuestionCard .question-header {
+    height: 1;
+    color: $accent;
+    text-style: bold;
+}
+ChatQuestionCard .question-text {
+    height: auto;
+}
+ChatQuestionCard .question-options {
+    height: auto;
+    border: none;
+    padding: 0;
+}
+ChatQuestionCard .question-other {
+    height: 3;
+}
+ChatQuestionCard > #question-actions {
+    height: 3;
+    align-horizontal: right;
+}
 
 /* ===== WIDGET: ConsoleActivityOutcomeNotice (Widgets/Console/console_activity_outcome_notice.py) ===== */
 
-    ConsoleActivityOutcomeNotice {
-        width: 100%;
-        height: 1;
-        min-height: 1;
-        max-height: 1;
-        background: $boost;
-    }
+ConsoleActivityOutcomeNotice {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+    max-height: 1;
+    background: $boost;
+}
 
 /* ===== WIDGET: ConsoleAppearancePickerModal (Widgets/Console/console_appearance_picker_modal.py) ===== */
 
-    ConsoleAppearancePickerModal {
-        align: center middle;
-    }
+ConsoleAppearancePickerModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: AutoSpeakConsentModal (Widgets/Console/console_auto_speak_consent.py) ===== */
 
-    AutoSpeakConsentModal {
-        align: center middle;
-    }
+AutoSpeakConsentModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: ConsoleTranscriptSurface (Widgets/Console/console_background_effect.py) ===== */
 
-    ConsoleTranscriptSurface > ConsoleTranscript > ConsoleBackgroundEffect {
-        layer: console-background;
-        dock: top;
-        width: 100%;
-        height: 100%;
-    }
+ConsoleTranscriptSurface > ConsoleTranscript > ConsoleBackgroundEffect {
+    layer: console-background;
+    dock: top;
+    width: 100%;
+    height: 100%;
+}
 
-    ConsoleTranscriptSurface > ConsoleTranscript {
-        layers: console-background default;
-        dock: top;
-        width: 100%;
-        height: 100%;
-    }
+ConsoleTranscriptSurface > ConsoleTranscript {
+    layers: console-background default;
+    dock: top;
+    width: 100%;
+    height: 100%;
+}
 
 /* ===== WIDGET: ConsoleCanvasOpenRecoveryCard (Widgets/Console/console_canvas_card.py) ===== */
 
-    ConsoleCanvasOpenRecoveryCard {
-        width: 100%;
-        height: auto;
-        border: round $warning;
-        padding: 0 1;
-        margin: 0 0 1 0;
-    }
-    ConsoleCanvasOpenRecoveryCard Input.console-canvas-recovery-url { width: 100%; height: 3; }
-    ConsoleCanvasOpenRecoveryCard .console-canvas-recovery-actions { height: 3; }
+ConsoleCanvasOpenRecoveryCard {
+    width: 100%;
+    height: auto;
+    border: round $warning;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
+ConsoleCanvasOpenRecoveryCard Input.console-canvas-recovery-url { width: 100%; height: 3; }
+ConsoleCanvasOpenRecoveryCard .console-canvas-recovery-actions { height: 3; }
 
 /* ===== WIDGET: ConsoleCanvasCard (Widgets/Console/console_canvas_card.py) ===== */
 
-    ConsoleCanvasCard {
-        width: 100%;
-        height: auto;
-        border: round $surface-lighten-1;
-        padding: 0 1;
-        margin: 0 0 1 0;
-    }
+ConsoleCanvasCard {
+    width: 100%;
+    height: auto;
+    border: round $surface-lighten-1;
+    padding: 0 1;
+    margin: 0 0 1 0;
+}
 
-    ConsoleCanvasCard .console-canvas-card-label {
-        height: auto;
-        min-height: 1;
-    }
+ConsoleCanvasCard .console-canvas-card-label {
+    height: auto;
+    min-height: 1;
+}
 
-    ConsoleCanvasCard .console-canvas-card-error {
-        color: $warning;
-        height: auto;
-        min-height: 1;
-    }
+ConsoleCanvasCard .console-canvas-card-error {
+    color: $warning;
+    height: auto;
+    min-height: 1;
+}
 
-    ConsoleCanvasCard .console-canvas-card-actions {
-        height: 3;
-        align-vertical: middle;
-    }
+ConsoleCanvasCard .console-canvas-card-actions {
+    height: 3;
+    align-vertical: middle;
+}
 
-    ConsoleCanvasCard .console-canvas-card-actions Button.console-canvas-card-action {
-        min-width: 16;
-        height: 3;
-        margin-right: 1;
-    }
+ConsoleCanvasCard .console-canvas-card-actions Button.console-canvas-card-action {
+    min-width: 16;
+    height: 3;
+    margin-right: 1;
+}
 
 /* ===== WIDGET: GlobalFullCaptureConfirmation (Widgets/Console/console_capture_policy_dialog.py) ===== */
 
-    GlobalFullCaptureConfirmation { align: center middle; }
+GlobalFullCaptureConfirmation { align: center middle; }
 
 /* ===== WIDGET: ConsoleTracePrivacyDialog (Widgets/Console/console_capture_policy_dialog.py) ===== */
 
-    ConsoleTracePrivacyDialog { align: center middle; }
+ConsoleTracePrivacyDialog { align: center middle; }
+
+/* ===== WIDGET: ConsoleCodeReviewModal (Widgets/Console/console_code_review_modal.py) ===== */
+
+ConsoleCodeReviewModal { align: center middle; }
 
 /* ===== WIDGET: ConsoleConversationActionMenu (Widgets/Console/console_conversation_action_menu.py) ===== */
 
-    ConsoleConversationActionMenu {
-        position: absolute;
-        overlay: screen;
-        width: 30;
-        height: auto;
-        max-height: 100%;
-        overflow-y: auto;
-        border: round $primary;
-        background: $surface;
-        padding: 0 1;
-    }
-    ConsoleConversationActionMenu Button {
-        width: 100%;
-        height: 1 !important;
-        min-height: 1 !important;
-        border: none !important;
-        border-top: none !important;
-        border-bottom: none !important;
-        padding: 0 1 !important;
-        text-align: left;
-    }
-    ConsoleConversationActionMenu Button:focus {
-        outline: heavy $accent;
-    }
+ConsoleConversationActionMenu {
+    position: absolute;
+    overlay: screen;
+    width: 30;
+    height: auto;
+    max-height: 100%;
+    overflow-y: auto;
+    border: round $primary;
+    background: $surface;
+    padding: 0 1;
+}
+ConsoleConversationActionMenu Button {
+    width: 100%;
+    height: 1 !important;
+    min-height: 1 !important;
+    border: none !important;
+    border-top: none !important;
+    border-bottom: none !important;
+    padding: 0 1 !important;
+    text-align: left;
+}
+ConsoleConversationActionMenu Button:focus {
+    outline: heavy $accent;
+}
 
 /* ===== WIDGET: ConsoleConversationInspector (Widgets/Console/console_conversation_inspector.py) ===== */
 
-    ConsoleConversationInspector { align: center middle; }
+ConsoleConversationInspector { align: center middle; }
 
 /* ===== WIDGET: ConsoleEditThinkingModal (Widgets/Console/console_edit_message_modal.py) ===== */
 
-    ConsoleEditThinkingModal {
-        align: center middle;
-    }
+ConsoleEditThinkingModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: ConsoleEndpointTemplateModal (Widgets/Console/console_endpoint_template_modal.py) ===== */
 
-    ConsoleEndpointTemplateModal {
-        align: center middle;
-    }
+ConsoleEndpointTemplateModal {
+    align: center middle;
+}
 
-    ConsoleEndpointTemplateModal #console-endpoint-template-modal {
-        width: 76;
-        max-width: 95%;
-        height: auto;
-        max-height: 90%;
-        border: round $panel;
-        background: $surface;
-        padding: 1 2;
-    }
+ConsoleEndpointTemplateModal #console-endpoint-template-modal {
+    width: 76;
+    max-width: 95%;
+    height: auto;
+    max-height: 90%;
+    border: round $panel;
+    background: $surface;
+    padding: 1 2;
+}
 
-    ConsoleEndpointTemplateModal .console-settings-error {
-        background: $error 25%;
-        color: $text-error;
-        text-style: bold;
-        border-left: thick $error;
-        height: auto;
-        min-height: 1;
-        margin: 1 0;
-        padding: 0 1;
-    }
+ConsoleEndpointTemplateModal .console-settings-error {
+    background: $error 25%;
+    color: $text-error;
+    text-style: bold;
+    border-left: thick $error;
+    height: auto;
+    min-height: 1;
+    margin: 1 0;
+    padding: 0 1;
+}
 
-    ConsoleEndpointTemplateModal #endpoint-template-picker {
-        height: auto;
-        max-height: 8;
-        margin: 0 0 1 0;
-    }
+ConsoleEndpointTemplateModal #endpoint-template-picker {
+    height: auto;
+    max-height: 8;
+    margin: 0 0 1 0;
+}
 
-    ConsoleEndpointTemplateModal .console-endpoint-template-label {
-        width: 16;
-        min-width: 16;
-        max-width: 16;
-        height: 1;
-        min-height: 1;
-        content-align: left middle;
-    }
+ConsoleEndpointTemplateModal .console-endpoint-template-label {
+    width: 16;
+    min-width: 16;
+    max-width: 16;
+    height: 1;
+    min-height: 1;
+    content-align: left middle;
+}
 
-    ConsoleEndpointTemplateModal .console-settings-modal-row {
-        height: auto;
-        min-height: 3;
-    }
+ConsoleEndpointTemplateModal .console-settings-modal-row {
+    height: auto;
+    min-height: 3;
+}
 
-    ConsoleEndpointTemplateModal .console-settings-control {
-        width: 1fr;
-        min-width: 0;
-    }
+ConsoleEndpointTemplateModal .console-settings-control {
+    width: 1fr;
+    min-width: 0;
+}
 
-    ConsoleEndpointTemplateModal Input.console-endpoint-template-modal-input,
-    ConsoleEndpointTemplateModal Select.console-endpoint-template-modal-select,
-    ConsoleEndpointTemplateModal Button.console-endpoint-template-modal-button {
-        height: 3;
-        min-height: 3;
-    }
+ConsoleEndpointTemplateModal Input.console-endpoint-template-modal-input,
+ConsoleEndpointTemplateModal Select.console-endpoint-template-modal-select,
+ConsoleEndpointTemplateModal Button.console-endpoint-template-modal-button {
+    height: 3;
+    min-height: 3;
+}
 
-    ConsoleEndpointTemplateModal #endpoint-template-params {
-        height: 5;
-        min-height: 3;
-    }
+ConsoleEndpointTemplateModal #endpoint-template-params {
+    height: 5;
+    min-height: 3;
+}
 
-    ConsoleEndpointTemplateModal .console-endpoint-template-hint {
-        color: $text-muted;
-        height: 1;
-    }
+ConsoleEndpointTemplateModal .console-endpoint-template-hint {
+    color: $text-muted;
+    height: 1;
+}
 
-    ConsoleEndpointTemplateModal .console-endpoint-template-actions {
-        height: auto;
-        min-height: 3;
-        align-horizontal: right;
-    }
+ConsoleEndpointTemplateModal .console-endpoint-template-actions {
+    height: auto;
+    min-height: 3;
+    align-horizontal: right;
+}
 
 /* ===== WIDGET: ConsoleFeedbackCommentModal (Widgets/Console/console_feedback_comment_modal.py) ===== */
 
-    ConsoleFeedbackCommentModal {
-        align: center middle;
-    }
+ConsoleFeedbackCommentModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: ConsoleForkChatModal (Widgets/Console/console_fork_chat_modal.py) ===== */
 
-    ConsoleForkChatModal {
-        align: center middle;
-        background: $background 70%;
-    }
+ConsoleForkChatModal {
+    align: center middle;
+    background: $background 70%;
+}
 
 /* ===== WIDGET: ConsoleLibraryAccessModal (Widgets/Console/console_library_access_modal.py) ===== */
 
-    ConsoleLibraryAccessModal {
-        align: center middle;
-    }
+ConsoleLibraryAccessModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: ConsoleLibrarySearchModal (Widgets/Console/console_library_search_modal.py) ===== */
 
-    ConsoleLibrarySearchModal {
-        align: center middle;
-    }
+ConsoleLibrarySearchModal {
+    align: center middle;
+}
 
-    ConsoleLibrarySearchModal #console-rag-settings {
-        width: 64;
-        max-width: 96%;
-        height: 20;
-        max-height: 96%;
-    }
+ConsoleLibrarySearchModal #console-rag-settings {
+    width: 64;
+    max-width: 96%;
+    height: 20;
+    max-height: 96%;
+}
 
 /* ===== WIDGET: ConsoleMessageMoreMenu (Widgets/Console/console_message_more_menu.py) ===== */
 
-    ConsoleMessageMoreMenu {
-        position: absolute;
-        overlay: screen;
-        width: 24;
-        height: auto;
-        border: round $primary;
-        background: $surface;
-        padding: 0 1;
-    }
-    ConsoleMessageMoreMenu Button {
-        width: 100%;
-        height: 1 !important;
-        min-height: 1 !important;
-        border: none !important;
-        border-top: none !important;
-        border-bottom: none !important;
-        padding: 0 1 !important;
-        text-align: left;
-    }
-    ConsoleMessageMoreMenu Button:focus {
-        outline: heavy $accent;
-    }
+ConsoleMessageMoreMenu {
+    position: absolute;
+    overlay: screen;
+    width: 24;
+    height: auto;
+    max-height: 100%;
+    overflow-y: auto;
+    border: round $primary;
+    background: $surface;
+    padding: 0 1;
+}
+ConsoleMessageMoreMenu Button {
+    width: 100%;
+    height: 1 !important;
+    min-height: 1 !important;
+    border: none !important;
+    border-top: none !important;
+    border-bottom: none !important;
+    padding: 0 1 !important;
+    text-align: left;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
 
 /* ===== WIDGET: ConsoleProjectInstructionStatusRow (Widgets/Console/console_project_instructions.py) ===== */
 
-    ConsoleProjectInstructionStatusRow {
-        width: 100%;
-        height: 1;
-        min-height: 1;
-    }
+ConsoleProjectInstructionStatusRow {
+    width: 100%;
+    height: 1;
+    min-height: 1;
+}
 
 /* ===== WIDGET: ConsoleProjectInstructionContextPanel (Widgets/Console/console_project_instructions.py) ===== */
 
-    ConsoleProjectInstructionContextPanel {
-        width: 100%;
-        height: auto;
-        max-height: 9;
-        padding: 0 1;
-        background: $surface;
-    }
+ConsoleProjectInstructionContextPanel {
+    width: 100%;
+    height: auto;
+    max-height: 9;
+    padding: 0 1;
+    background: $surface;
+}
 
 /* ===== WIDGET: ProjectInstructionSetupModal (Widgets/Console/console_project_instructions.py) ===== */
 
-    ProjectInstructionSetupModal { align: center middle; }
+ProjectInstructionSetupModal { align: center middle; }
 
 /* ===== WIDGET: ProjectInstructionNoticeModal (Widgets/Console/console_project_instructions.py) ===== */
 
-    ProjectInstructionNoticeModal { align: center middle; }
-
-/* ===== WIDGET: ConsoleProviderPicker (Widgets/Console/console_provider_picker.py) ===== */
-
-    ConsoleProviderPicker {
-        height: auto;
-        width: 1fr;
-    }
-
-    ConsoleProviderPicker #console-settings-provider-picker-input {
-        width: 100%;
-    }
-
-    ConsoleProviderPicker #console-settings-provider-picker-status {
-        height: auto;
-        color: $text-muted;
-    }
-
-    ConsoleProviderPicker #console-settings-provider-picker-results {
-        max-height: 12;
-    }
+ProjectInstructionNoticeModal { align: center middle; }
 
 /* ===== WIDGET: ConsoleReactionPickerModal (Widgets/Console/console_reaction_picker_modal.py) ===== */
 
-    ConsoleReactionPickerModal {
-        align: center middle;
-    }
+ConsoleReactionPickerModal {
+    align: center middle;
+}
 
 
 
@@ -1505,480 +1549,502 @@
 
 
 
-    ConsoleReactionPickerModal.-narrow #console-reaction-picker-modal {
-        width: 100%;
-        height: 100%;
-        padding: 0 1;
-    }
+ConsoleReactionPickerModal.-narrow #console-reaction-picker-modal {
+    width: 100%;
+    height: 100%;
+    padding: 0 1;
+}
 
-    ConsoleReactionPickerModal.-narrow #console-reaction-picker-preview {
-        display: none;
-    }
+ConsoleReactionPickerModal.-narrow #console-reaction-picker-preview {
+    display: none;
+}
 
-    ConsoleReactionPickerModal.-narrow #console-reaction-picker-results {
-        width: 100%;
-    }
+ConsoleReactionPickerModal.-narrow #console-reaction-picker-results {
+    width: 100%;
+}
 
 /* ===== WIDGET: ConsoleReviewNotesModal (Widgets/Console/console_review_notes_modal.py) ===== */
 
-    ConsoleReviewNotesModal {
-        align: center middle;
-    }
+ConsoleReviewNotesModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: ConsoleSaveMarkdownModal (Widgets/Console/console_save_markdown_modal.py) ===== */
 
-    ConsoleSaveMarkdownModal {
-        align: center middle;
-    }
+ConsoleSaveMarkdownModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: ConsoleSelectionMenu (Widgets/Console/console_selection_menu.py) ===== */
 
-    ConsoleSelectionMenu {
-        position: absolute;
+ConsoleSelectionMenu {
+    position: absolute;
 
-        overlay: screen;
-        width: auto;
-        height: auto;
-        border: round $primary;
-        background: $surface;
-        padding: 0 1;
-    }
+    overlay: screen;
+    width: auto;
+    height: auto;
+    border: round $primary;
+    background: $surface;
+    padding: 0 1;
+}
 
-    ConsoleSelectionMenu Button {
-        height: 1 !important;
-        min-height: 1 !important;
-        border: none !important;
-        border-top: none !important;
-        border-bottom: none !important;
-        padding: 0 1 !important;
-    }
+ConsoleSelectionMenu Button {
+    height: 1 !important;
+    min-height: 1 !important;
+    border: none !important;
+    border-top: none !important;
+    border-bottom: none !important;
+    padding: 0 1 !important;
+}
 
-    ConsoleSelectionMenu #console-selection-copy,
-    ConsoleSelectionMenu #console-selection-add-to-chat,
-    ConsoleSelectionMenu #console-selection-more-details,
-    ConsoleSelectionMenu #console-selection-ask-side-chat,
-    ConsoleSelectionMenu #console-selection-create-note,
-    ConsoleSelectionMenu #console-selection-request-changes,
-    ConsoleSelectionMenu #console-selection-lgm,
-    ConsoleSelectionMenu #console-selection-comment {
-        border: none !important;
-        border-top: none !important;
-        border-bottom: none !important;
-    }
-    ConsoleSelectionMenu #console-selection-feedback-hint {
-        color: $text-muted;
-        text-style: dim;
-        width: auto;
-    }
+ConsoleSelectionMenu #console-selection-copy,
+ConsoleSelectionMenu #console-selection-copy-all,
+ConsoleSelectionMenu #console-selection-copy-all-messages,
+ConsoleSelectionMenu #console-selection-full-message,
+ConsoleSelectionMenu #console-selection-add-to-chat,
+ConsoleSelectionMenu #console-selection-more-details,
+ConsoleSelectionMenu #console-selection-ask-side-chat,
+ConsoleSelectionMenu #console-selection-create-note,
+ConsoleSelectionMenu #console-selection-create-note-go,
+ConsoleSelectionMenu #console-selection-request-changes,
+ConsoleSelectionMenu #console-selection-lgm,
+ConsoleSelectionMenu #console-selection-comment {
+    border: none !important;
+    border-top: none !important;
+    border-bottom: none !important;
+}
+ConsoleSelectionMenu #console-selection-feedback-hint {
+    color: $text-muted;
+    text-style: dim;
+    width: auto;
+}
 
-    ConsoleSelectionMenu.shrunk-for-short-owner {
-        border: none;
-        overflow-y: auto;
-    }
-    ConsoleSelectionMenu.shrunk-for-short-owner #console-selection-feedback-hint {
-        display: none;
-    }
+ConsoleSelectionMenu.shrunk-for-short-owner {
+    border: none;
+    overflow-y: auto;
+}
+ConsoleSelectionMenu.shrunk-for-short-owner #console-selection-feedback-hint {
+    display: none;
+}
 
 /* ===== WIDGET: ConsoleSessionTabButton (Widgets/Console/console_session_surface.py) ===== */
 
-    ConsoleSessionTabButton {
-        text-wrap: nowrap;
-        text-overflow: clip;
-    }
-
-/* ===== WIDGET: ConsoleSetupBackdrop (Widgets/Console/console_setup_modal.py) ===== */
-
-    ConsoleSetupBackdrop {
-        width: 1fr;
-        height: 1fr;
-    }
+ConsoleSessionTabButton {
+    text-wrap: nowrap;
+    text-overflow: clip;
+}
 
 /* ===== WIDGET: ConsoleSideChatModal (Widgets/Console/console_side_chat_modal.py) ===== */
 
-    ConsoleSideChatModal {
-        align: center middle;
-    }
+ConsoleSideChatModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: ConsoleSummarizePreviewModal (Widgets/Console/console_summarize_preview_modal.py) ===== */
 
-    ConsoleSummarizePreviewModal {
-        align: center middle;
-    }
+ConsoleSummarizePreviewModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: ConsoleTaskPanel (Widgets/Console/console_task_panel.py) ===== */
 
-    ConsoleTaskPanel {
-        height: auto;
-        max-height: 12;
-        width: 1fr;
-        border-top: solid $secondary;
-        border-bottom: solid $secondary;
-        padding: 0 1;
-    }
-    ConsoleTaskPanel > #console-task-panel-header {
-        height: 1;
-        text-style: bold;
-    }
-    ConsoleTaskPanel > #console-task-panel-header:hover {
-        background: $boost;
-    }
-    ConsoleTaskPanel > #console-task-panel-body {
-        height: auto;
-        max-height: 10;
-        overflow-y: auto;
-        scrollbar-gutter: stable;
-    }
-    ConsoleTaskPanel #console-task-panel-rows {
-        height: auto;
-        width: 1fr;
-    }
+ConsoleTaskPanel {
+    height: auto;
+    max-height: 12;
+    width: 1fr;
+    border-top: solid $secondary;
+    border-bottom: solid $secondary;
+    padding: 0 1;
+}
+ConsoleTaskPanel > #console-task-panel-header {
+    height: 1;
+    text-style: bold;
+}
+ConsoleTaskPanel > #console-task-panel-header:hover {
+    background: $boost;
+}
+ConsoleTaskPanel > #console-task-panel-body {
+    height: auto;
+    max-height: 10;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+ConsoleTaskPanel #console-task-panel-rows {
+    height: auto;
+    width: 1fr;
+}
 
 /* ===== WIDGET: ConsoleTerminalSessionModal (Widgets/Console/console_terminal_session_modal.py) ===== */
 
-    ConsoleTerminalSessionModal {
-        align: center middle;
-    }
+ConsoleTerminalSessionModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: ConsoleMessageHeader (Widgets/Console/console_transcript.py) ===== */
 
-    ConsoleMessageHeader {width:100%;height:1;min-height:1;}
-    ConsoleMessageHeader > .console-transcript-speaker-label {
-        width:1fr;height:1;min-height:1;overflow:hidden;text-overflow:ellipsis;}
-    ConsoleMessageHeader > .console-message-speech-presentation {
-        width:14;min-width:14;height:1;min-height:1;}
+ConsoleMessageHeader {width:100%;height:1;min-height:1;}
+ConsoleMessageHeader > .console-transcript-speaker-label {
+    width:1fr;height:1;min-height:1;overflow:hidden;text-overflow:ellipsis;}
+ConsoleMessageHeader > .console-message-speech-presentation {
+    width:14;min-width:14;height:1;min-height:1;}
 
 /* ===== WIDGET: ConsoleTurnFileCard (Widgets/Console/console_turn_file_card.py) ===== */
 
-    ConsoleTurnFileCard {
-        height: auto;
-        min-height: 1;
-    }
-    ConsoleTurnFileCard .console-turn-file-header-row {
-        height: 1;
-        width: 100%;
-    }
-    ConsoleTurnFileCard .console-turn-file-header {
-        width: 1fr;
-        height: 1;
-        text-style: bold;
-    }
-    ConsoleTurnFileCard .console-turn-file-toggle-all-btn,
-    ConsoleTurnFileCard .console-turn-file-undo-all-btn,
-    ConsoleTurnFileCard .console-turn-file-review-btn {
-        min-width: 3;
-    }
-    ConsoleTurnFileCard .console-turn-file-row {
-        height: 1;
-        min-height: 1;
-        width: 100%;
-        text-align: left;
-    }
-    ConsoleTurnFileCard .console-turn-file-diff {
-        height: auto;
-        max-height: 20;
-        overflow-y: auto;
-        overflow-x: hidden;
-        scrollbar-size: 1 1;
-    }
-    ConsoleTurnFileCard .console-turn-file-hunk {
-        height: auto;
-        margin-bottom: 1;
-    }
-    ConsoleTurnFileCard .console-turn-file-hunk-tail {
-        height: auto;
-        margin-bottom: 1;
-        text-style: italic;
-    }
-    ConsoleTurnFileCard .console-turn-file-hunk-actions {
-        height: auto;
-    }
-    ConsoleTurnFileCard .console-turn-file-note-btn {
-        min-width: 10;
-    }
-    ConsoleTurnFileCard .console-turn-file-hunk-notes {
-        height: auto;
-    }
-    ConsoleTurnFileCard .console-turn-file-note {
-        height: auto;
-        min-height: 1;
-    }
-    ConsoleTurnFileCard .console-turn-file-note-text {
-        width: 1fr;
-    }
-    ConsoleTurnFileCard .console-turn-file-note-input {
-        width: 100%;
-    }
+ConsoleTurnFileCard {
+    height: auto;
+    min-height: 1;
+}
+ConsoleTurnFileCard .console-turn-file-header-row {
+    height: 1;
+    width: 100%;
+}
+ConsoleTurnFileCard .console-turn-file-header {
+    width: 1fr;
+    height: 1;
+    text-style: bold;
+}
+ConsoleTurnFileCard .console-turn-file-toggle-all-btn,
+ConsoleTurnFileCard .console-turn-file-undo-all-btn,
+ConsoleTurnFileCard .console-turn-file-review-btn {
+    min-width: 3;
+}
+ConsoleTurnFileCard .console-turn-file-row {
+    height: 1;
+    min-height: 1;
+    width: 100%;
+    text-align: left;
+}
+ConsoleTurnFileCard .console-turn-file-diff {
+    height: auto;
+    max-height: 20;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+}
+ConsoleTurnFileCard .console-turn-file-hunk {
+    height: auto;
+    margin-bottom: 1;
+}
+ConsoleTurnFileCard .console-turn-file-hunk-tail {
+    height: auto;
+    margin-bottom: 1;
+    text-style: italic;
+}
+ConsoleTurnFileCard .console-turn-file-hunk-actions {
+    height: auto;
+}
+ConsoleTurnFileCard .console-turn-file-note-btn {
+    min-width: 10;
+}
+ConsoleTurnFileCard .console-turn-file-hunk-notes {
+    height: auto;
+}
+ConsoleTurnFileCard .console-turn-file-note {
+    height: auto;
+    min-height: 1;
+}
+ConsoleTurnFileCard .console-turn-file-note-text {
+    width: 1fr;
+}
+ConsoleTurnFileCard .console-turn-file-note-input {
+    width: 100%;
+}
 
 /* ===== WIDGET: ConsoleVoicePreview (Widgets/Console/console_voice_preview.py) ===== */
 ConsoleVoicePreview{margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;background:$surface-lighten-1 55%;color:$text-muted;&,.console-voice-preview-user,.console-voice-preview-assistant{height:auto;}.console-voice-preview-status{color:$accent-lighten-1;text-style:italic;}}
 
 /* ===== WIDGET: ConsoleWorkspaceActionMenu (Widgets/Console/console_workspace_action_menu.py) ===== */
 
-    ConsoleWorkspaceActionMenu {
-        position: absolute;
-        overlay: screen;
-        width: 26;
-        height: auto;
-        border: round $primary;
-        background: $surface;
-        padding: 0 1;
-    }
-    ConsoleWorkspaceActionMenu Button {
-        width: 100%;
-        height: 1 !important;
-        min-height: 1 !important;
-        border: none !important;
-        border-top: none !important;
-        border-bottom: none !important;
-        padding: 0 1 !important;
-        text-align: left;
-    }
-    ConsoleWorkspaceActionMenu Button:focus {
-        outline: heavy $accent;
-    }
+ConsoleWorkspaceActionMenu {
+    position: absolute;
+    overlay: screen;
+    width: 26;
+    height: auto;
+    border: round $primary;
+    background: $surface;
+    padding: 0 1;
+}
+ConsoleWorkspaceActionMenu Button {
+    width: 100%;
+    height: 1 !important;
+    min-height: 1 !important;
+    border: none !important;
+    border-top: none !important;
+    border-bottom: none !important;
+    padding: 0 1 !important;
+    text-align: left;
+}
+ConsoleWorkspaceActionMenu Button:focus {
+    outline: heavy $accent;
+}
 
 /* ===== WIDGET: WorkspaceArchiveReceiptModal (Widgets/Console/console_workspace_switcher_modal.py) ===== */
 
-    WorkspaceArchiveReceiptModal { align: center middle; }
+WorkspaceArchiveReceiptModal { align: center middle; }
+
+/* ===== WIDGET: PortraitRadio (Widgets/Console/portrait_radio.py) ===== */
+
+PortraitRadio { height: auto; width: 100%; min-width: 0; }
+PortraitRadio Static.portrait-radio-line { height: 1; width: 100%; text-wrap: nowrap; text-overflow: ellipsis; }
+
+
+
+
+PortraitRadio.voice-compact #console-character-voice-meter { display: none; }
 
 /* ===== WIDGET: LibraryEmergencyReturn (Widgets/Library/library_emergency_return.py) ===== */
 
-    LibraryEmergencyReturn {
-        width: 100%;
-        height: 1;
-        border: none;
-    }
+LibraryEmergencyReturn {
+    width: 100%;
+    height: 1;
+    border: none;
+}
 
 /* ===== WIDGET: LibraryNoteFolderNameDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
 
-    LibraryNoteFolderNameDialog { align: center middle; }
-    LibraryNoteFolderNameDialog > Vertical {
-        width: 56; height: auto; padding: 1 2;
-        border: tall $accent; background: $surface;
-    }
+LibraryNoteFolderNameDialog { align: center middle; }
+LibraryNoteFolderNameDialog > Vertical {
+    width: 56; height: auto; padding: 1 2;
+    border: tall $accent; background: $surface;
+}
 
 /* ===== WIDGET: LibraryNoteFolderTargetDialog (Widgets/Library/library_note_folder_dialog.py) ===== */
 
-    LibraryNoteFolderTargetDialog { align: center middle; }
-    LibraryNoteFolderTargetDialog > Vertical {
-        width: 64; height: auto; padding: 1 2;
-        border: tall $accent; background: $surface;
-    }
+LibraryNoteFolderTargetDialog { align: center middle; }
+LibraryNoteFolderTargetDialog > Vertical {
+    width: 64; height: auto; max-height: 100%;
+    padding: 1 2;
+    border: tall $accent; background: $surface;
+}
 
 /* ===== WIDGET: LibraryNoteImportCanvas (Widgets/Library/library_note_import_canvas.py) ===== */
 
 
 
-    LibraryNoteImportCanvas {
-        width: 1fr;
-        min-width: 40;
-        height: 1fr;
-        overflow: hidden;
-    }
+LibraryNoteImportCanvas {
+    width: 1fr;
+    min-width: 40;
+    height: 1fr;
+    overflow: hidden;
+}
 
-    LibraryNoteImportCanvas #note-import-heading,
-    LibraryNoteImportCanvas #note-import-status,
-    LibraryNoteImportCanvas #note-import-overflow-hint,
-    LibraryNoteImportCanvas .note-import-primary {
-        height: auto;
-    }
+LibraryNoteImportCanvas #note-import-heading,
+LibraryNoteImportCanvas #note-import-status,
+LibraryNoteImportCanvas #note-import-overflow-hint,
+LibraryNoteImportCanvas .note-import-primary {
+    height: auto;
+}
 
-    LibraryNoteImportCanvas #note-import-body {
-        height: 1fr;
-        overflow-y: auto;
-    }
+LibraryNoteImportCanvas #note-import-body {
+    height: 1fr;
+    overflow-y: auto;
+}
 
-    LibraryNoteImportCanvas Static,
-    LibraryNoteImportCanvas Input,
-    LibraryNoteImportCanvas Button {
-        width: 1fr;
-    }
+LibraryNoteImportCanvas Static,
+LibraryNoteImportCanvas Input,
+LibraryNoteImportCanvas Button {
+    width: 1fr;
+}
 
-    LibraryNoteImportCanvas .note-import-group-heading {
-        text-style: bold;
-        width: 1fr;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
+LibraryNoteImportCanvas .note-import-group-heading {
+    text-style: bold;
+    width: 1fr;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
 
-    LibraryNoteImportCanvas .note-import-item-name {
-        text-style: bold;
-    }
+LibraryNoteImportCanvas .note-import-item-name {
+    text-style: bold;
+}
 
-    LibraryNoteImportCanvas .note-import-quiet {
-        color: $text-muted;
-    }
+LibraryNoteImportCanvas .note-import-quiet {
+    color: $text-muted;
+}
 
-    LibraryNoteImportCanvas .note-import-error {
-        color: $text-error;
-        text-style: bold;
-    }
+LibraryNoteImportCanvas .note-import-error {
+    color: $text-error;
+    text-style: bold;
+}
 
 
 
-    LibraryNoteImportCanvas #notes-import-review-options {
-        height: auto;
-    }
+LibraryNoteImportCanvas #notes-import-review-options {
+    height: auto;
+}
 
-    LibraryNoteImportCanvas .note-import-row {
-        height: 1;
-        width: 1fr;
-    }
+LibraryNoteImportCanvas .note-import-row {
+    height: 1;
+    width: 1fr;
+}
 
-    LibraryNoteImportCanvas .note-import-group-row {
-        height: 1;
-        width: 1fr;
-        margin-top: 1;
-    }
+LibraryNoteImportCanvas .note-import-group-row {
+    height: 1;
+    width: 1fr;
+    margin-top: 1;
+}
 
-    LibraryNoteImportCanvas .note-import-row-text {
-        width: 1fr;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
+LibraryNoteImportCanvas .note-import-row-text {
+    width: 1fr;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
 
-    LibraryNoteImportCanvas .note-import-row-destination {
-        height: 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
+LibraryNoteImportCanvas .note-import-row-destination {
+    height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
 
-    LibraryNoteImportCanvas .note-import-row-action {
-        width: auto;
-        min-width: 6;
-        margin-left: 1;
-    }
+LibraryNoteImportCanvas .note-import-row-action {
+    width: auto;
+    min-width: 6;
+    margin-left: 1;
+}
 
-    LibraryNoteImportCanvas .note-import-skipped-row {
-        height: auto;
-        color: $text-muted;
-    }
+LibraryNoteImportCanvas .note-import-skipped-row {
+    height: auto;
+    color: $text-muted;
+}
 
 /* ===== WIDGET: LibraryReviewSetPickerDialog (Widgets/Library/library_review_set_picker.py) ===== */
 
-    LibraryReviewSetPickerDialog { align: center middle; }
+LibraryReviewSetPickerDialog { align: center middle; }
 
 /* ===== WIDGET: NotesRecoveryDialog (Widgets/Library/notes_recovery_dialog.py) ===== */
 
-    NotesRecoveryDialog { align: center middle; }
+NotesRecoveryDialog { align: center middle; }
 
 /* ===== WIDGET: ModelInstallProgress (Widgets/ModelArtifacts/install_progress.py) ===== */
 
-    ModelInstallProgress {
-        height: auto;
-    }
+ModelInstallProgress {
+    height: auto;
+}
 
-    ModelInstallProgress ProgressBar {
-        margin-top: 1;
-    }
+ModelInstallProgress ProgressBar {
+    margin-top: 1;
+}
+
+ModelInstallProgress .model-install-cancel {
+    margin-top: 1;
+}
+
+/* ===== WIDGET: ModelPlanPanel (Widgets/ModelArtifacts/plan_panel.py) ===== */
+
+ModelPlanPanel {
+    height: auto;
+}
+
+ModelPlanPanel .model-plan-details {
+    margin-top: 1;
+}
 
 /* ===== WIDGET: ManagedGGUFRuntimeChoiceModal (Widgets/ModelArtifacts/runtime_choice_modal.py) ===== */
 
-    ManagedGGUFRuntimeChoiceModal {
-        align: center middle;
-    }
+ManagedGGUFRuntimeChoiceModal {
+    align: center middle;
+}
 
-    ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-modal {
-        width: 64;
-        height: auto;
-        border: tall $accent;
-        background: $surface;
-        padding: 1 2;
-    }
+ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-modal {
+    width: 64;
+    height: auto;
+    border: tall $accent;
+    background: $surface;
+    padding: 1 2;
+}
 
-    ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
+ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-title {
+    text-style: bold;
+    margin-bottom: 1;
+}
 
-    ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-copy {
-        height: auto;
-        color: $text-muted;
-        margin-bottom: 1;
-    }
+ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-copy {
+    height: auto;
+    color: $text-muted;
+    margin-bottom: 1;
+}
 
-    ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-actions {
-        height: 3;
-        align-horizontal: right;
-    }
+ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-actions {
+    height: 3;
+    align-horizontal: right;
+}
 
-    ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-actions Button {
-        width: auto;
-        margin-left: 1;
-    }
+ManagedGGUFRuntimeChoiceModal .managed-gguf-runtime-actions Button {
+    width: auto;
+    margin-left: 1;
+}
 
 /* ===== WIDGET: ActorPackImportReviewDialog (Widgets/Persona_Widgets/actor_pack_import_review.py) ===== */
 
-    ActorPackImportReviewDialog {
-        align: center middle;
-    }
+ActorPackImportReviewDialog {
+    align: center middle;
+}
 
-    ActorPackImportReviewDialog #actor-pack-import-review {
-        width: 88%;
-        max-width: 92;
-        height: 90%;
-        max-height: 40;
-        background: $surface;
-        border: tall $accent;
-        padding: 1 2;
-    }
+ActorPackImportReviewDialog #actor-pack-import-review {
+    width: 88%;
+    max-width: 92;
+    height: 90%;
+    max-height: 40;
+    background: $surface;
+    border: tall $accent;
+    padding: 1 2;
+}
 
-    ActorPackImportReviewDialog #actor-pack-import-title {
-        height: 1;
-        text-style: bold;
-        margin-bottom: 1;
-    }
+ActorPackImportReviewDialog #actor-pack-import-title {
+    height: 1;
+    text-style: bold;
+    margin-bottom: 1;
+}
 
-    ActorPackImportReviewDialog #actor-pack-import-scroll {
-        height: 1fr;
-        scrollbar-size: 1 1;
-    }
+ActorPackImportReviewDialog #actor-pack-import-scroll {
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
 
-    ActorPackImportReviewDialog .actor-pack-import-heading {
-        height: 1;
-        text-style: bold;
-        margin-top: 1;
-    }
+ActorPackImportReviewDialog .actor-pack-import-heading {
+    height: 1;
+    text-style: bold;
+    margin-top: 1;
+}
 
-    ActorPackImportReviewDialog .actor-pack-import-copy {
-        height: auto;
-        text-wrap: wrap;
-    }
+ActorPackImportReviewDialog .actor-pack-import-copy {
+    height: auto;
+    text-wrap: wrap;
+}
 
-    ActorPackImportReviewDialog #actor-pack-import-actions {
-        height: auto;
-        min-height: 3;
-        margin-top: 1;
-        align: right middle;
-    }
+ActorPackImportReviewDialog #actor-pack-import-actions {
+    height: auto;
+    min-height: 3;
+    margin-top: 1;
+    align: right middle;
+}
 
-    ActorPackImportReviewDialog #actor-pack-import-actions Button {
-        width: auto;
-        min-width: 11;
-        margin-left: 1;
-    }
+ActorPackImportReviewDialog #actor-pack-import-actions Button {
+    width: auto;
+    min-width: 11;
+    margin-left: 1;
+}
 
 /* ===== WIDGET: BuddyCharacterReviewDialog (Widgets/Persona_Widgets/buddy_character_review.py) ===== */
 
-    BuddyCharacterReviewDialog { align: center middle; }
-    BuddyCharacterReviewDialog #buddy-review {
-        width: 94%; max-width: 96; height: 94%;
-        border: round $accent; background: $panel; padding: 0 1;
-    }
-    BuddyCharacterReviewDialog #buddy-review-scroll { height: 1fr; }
-    BuddyCharacterReviewDialog .buddy-copy { height: auto; }
-    BuddyCharacterReviewDialog .buddy-text { height: 4; }
-    BuddyCharacterReviewDialog #buddy-preview-host,
-    BuddyCharacterReviewDialog #buddy-portrait-host { height: 8; }
-    BuddyCharacterReviewDialog #buddy-actions { height: 3; }
-    BuddyCharacterReviewDialog #buddy-actions Button {
-        width: 1fr; min-width: 0; border: none;
-    }
-    BuddyCharacterReviewDialog #buddy-status { height: auto; max-height: 4; }
+BuddyCharacterReviewDialog { align: center middle; }
+BuddyCharacterReviewDialog #buddy-review {
+    width: 94%; max-width: 96; height: 94%;
+    border: round $accent; background: $panel; padding: 0 1;
+}
+BuddyCharacterReviewDialog #buddy-review-scroll { height: 1fr; }
+BuddyCharacterReviewDialog .buddy-copy { height: auto; }
+BuddyCharacterReviewDialog .buddy-text { height: 4; }
+BuddyCharacterReviewDialog #buddy-preview-host,
+BuddyCharacterReviewDialog #buddy-portrait-host { height: 8; }
+BuddyCharacterReviewDialog #buddy-actions { height: 3; }
+BuddyCharacterReviewDialog #buddy-actions Button {
+    width: 1fr; min-width: 0; border: none;
+}
+BuddyCharacterReviewDialog #buddy-status { height: auto; max-height: 4; }
 
 /* ===== WIDGET: BuddyConversationModal (Widgets/Persona_Widgets/buddy_conversation_modal.py) ===== */
 
-    BuddyConversationModal { align: center middle; }
+BuddyConversationModal { align: center middle; }
 
 
 
@@ -1987,1385 +2053,1392 @@ ConsoleVoicePreview{margin:0 1 1 1;padding:0 1;border-left:thick $accent 45%;bac
 
 
 
-    BuddyConversationModal.compact #buddy-reply { height: 3; }
-    BuddyConversationModal.compact #buddy-conversation-title { height: 1; }
+BuddyConversationModal.compact #buddy-reply { height: 3; }
+BuddyConversationModal.compact #buddy-conversation-title { height: 1; }
 
 /* ===== WIDGET: BuddyManagementModal (Widgets/Persona_Widgets/buddy_management_modal.py) ===== */
 
-    BuddyManagementModal { align: center middle; }
+BuddyManagementModal { align: center middle; }
 
 /* ===== WIDGET: BuddySpeechControls (Widgets/Persona_Widgets/buddy_speech_controls.py) ===== */
 
-    BuddySpeechControls { height: auto; }
-    BuddySpeechControls Static.buddy-speech-controls-static { height: auto; }
-    BuddySpeechControls Horizontal.buddy-speech-controls-horizontal { height: auto; }
-    BuddySpeechControls Button.buddy-speech-controls-button { min-width: 8; }
+BuddySpeechControls { height: auto; }
+BuddySpeechControls Static.buddy-speech-controls-static { height: auto; }
+BuddySpeechControls Horizontal.buddy-speech-controls-horizontal { height: auto; }
+BuddySpeechControls Button.buddy-speech-controls-button { min-width: 8; }
 
 /* ===== WIDGET: BuddyWorkspaceModal (Widgets/Persona_Widgets/buddy_workspace_modal.py) ===== */
 
-    BuddyWorkspaceModal { align: center middle; }
+BuddyWorkspaceModal { align: center middle; }
 
 /* ===== WIDGET: PersonaBuddyWidget (Widgets/Persona_Widgets/persona_buddy_widget.py) ===== */
 
-    PersonaBuddyWidget {
-        position: absolute;
-        overlay: screen;
-        layer: overlay;
-        width: 28;
-        height: 12;
-        min-width: 1;
-        min-height: 1;
-        padding: 0;
-        background: $panel;
-        color: $text;
-        border: round $accent;
-        overflow: hidden hidden;
-    }
+PersonaBuddyWidget {
+    position: absolute;
+    overlay: screen;
+    layer: overlay;
+    width: 28;
+    height: 12;
+    min-width: 1;
+    min-height: 1;
+    padding: 0;
+    background: $panel;
+    color: $text;
+    border: round $accent;
+    overflow: hidden hidden;
+}
 
-    PersonaBuddyWidget:focus {
-        outline: heavy $accent;
-    }
+PersonaBuddyWidget:focus {
+    outline: heavy $accent;
+}
 
-    PersonaBuddyWidget .persona-buddy-control {
-        position: absolute;
-        layer: controls;
-        width: 3;
-        min-width: 3;
-        height: 1;
-        min-height: 1;
-        padding: 0;
-        margin: 0;
-        border: none;
-        background: $surface-darken-1;
-        color: $text-muted;
-        content-align: center middle;
-        text-align: center;
-    }
+PersonaBuddyWidget .persona-buddy-control {
+    position: absolute;
+    layer: controls;
+    width: 3;
+    min-width: 3;
+    height: 1;
+    min-height: 1;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: $surface-darken-1;
+    color: $text-muted;
+    content-align: center middle;
+    text-align: center;
+}
 
-    PersonaBuddyWidget .persona-buddy-control:focus {
-        background: $accent;
-        color: $text;
-        text-style: bold underline;
-        outline: none;
-    }
+PersonaBuddyWidget .persona-buddy-control:focus {
+    background: $accent;
+    color: $text;
+    text-style: bold underline;
+    outline: none;
+}
 
-    PersonaBuddyWidget #persona-buddy-frame {
-        width: 100%;
-        height: 100%;
-        padding: 0;
-        layer: pet;
-        content-align: center middle;
-        text-align: center;
-        color: $text;
-    }
+PersonaBuddyWidget #persona-buddy-frame {
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    layer: pet;
+    content-align: center middle;
+    text-align: center;
+    color: $text;
+}
 
-    PersonaBuddyWidget #persona-buddy-frame.persona-buddy-alert {
-        color: $warning;
-        text-style: bold;
-    }
+PersonaBuddyWidget #persona-buddy-frame.persona-buddy-alert {
+    color: $warning;
+    text-style: bold;
+}
 
-    PersonaBuddyWidget #persona-buddy-collapse {
-        offset: 0 0;
-    }
+PersonaBuddyWidget #persona-buddy-collapse {
+    offset: 0 0;
+}
 
-    PersonaBuddyWidget.persona-buddy-compact {
-        height: 1;
-        padding: 0;
-        border: none;
-    }
+PersonaBuddyWidget.persona-buddy-compact {
+    height: 1;
+    padding: 0;
+    border: none;
+}
 
-    PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame {
-        display: none;
-    }
+PersonaBuddyWidget.persona-buddy-compact #persona-buddy-frame {
+    display: none;
+}
 
-    PersonaBuddyWidget.persona-buddy-compact .persona-buddy-control {
-        height: 1;
-        width: 3;
-        min-width: 3;
-        padding: 0;
-        content-align: center middle;
-        text-align: center;
-    }
+PersonaBuddyWidget.persona-buddy-compact .persona-buddy-control {
+    height: 1;
+    width: 3;
+    min-width: 3;
+    padding: 0;
+    content-align: center middle;
+    text-align: center;
+}
 
 /* ===== WIDGET: PersonaProfileCardWidget (Widgets/Persona_Widgets/persona_profile_card_widget.py) ===== */
 
-    PersonaProfileCardWidget {
-        width: 100%;
-        height: 100%;
-    }
+PersonaProfileCardWidget {
+    width: 100%;
+    height: 100%;
+}
 
-    PersonaProfileCardWidget #personas-card-body {
-        height: 1fr;
-    }
+PersonaProfileCardWidget #personas-card-body {
+    height: 1fr;
+}
 
-    PersonaProfileCardWidget .ds-field-row {
-        height: auto;
-    }
+PersonaProfileCardWidget .ds-field-row {
+    height: auto;
+}
 
-    PersonaProfileCardWidget .ds-toolbar {
-        height: 1;
-        min-height: 1;
-    }
+PersonaProfileCardWidget .ds-toolbar {
+    height: 1;
+    min-height: 1;
+}
 
-    PersonaProfileCardWidget .ds-toolbar Button {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-        margin-right: 1;
-    }
+PersonaProfileCardWidget .ds-toolbar Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    margin-right: 1;
+}
 
 /* ===== WIDGET: PersonaProfileEditorWidget (Widgets/Persona_Widgets/persona_profile_editor_widget.py) ===== */
 
-    PersonaProfileEditorWidget {
-        width: 100%;
-        height: 100%;
-    }
+PersonaProfileEditorWidget {
+    width: 100%;
+    height: 100%;
+}
 
-    PersonaProfileEditorWidget #personas-editor-body {
-        height: 1fr;
-    }
+PersonaProfileEditorWidget #personas-editor-body {
+    height: 1fr;
+}
 
-    PersonaProfileEditorWidget .ds-toolbar {
-        height: 1;
-        min-height: 1;
-    }
+PersonaProfileEditorWidget .ds-toolbar {
+    height: 1;
+    min-height: 1;
+}
 
-    PersonaProfileEditorWidget .ds-toolbar Button {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-        margin-right: 1;
-    }
+PersonaProfileEditorWidget .ds-toolbar Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    margin-right: 1;
+}
 
 
-    PersonaProfileEditorWidget .is-invalid {
-        border: round red;
-    }
+PersonaProfileEditorWidget .is-invalid {
+    border: round red;
+}
 
 /* ===== WIDGET: PersonasCharacterCardWidget (Widgets/Persona_Widgets/personas_character_card_widget.py) ===== */
 
-    PersonasCharacterCardWidget {
-        width: 100%;
+PersonasCharacterCardWidget {
+    width: 100%;
 
-        height: 100%;
-        min-height: 10;
-    }
+    height: 100%;
+    min-height: 10;
+}
 
-    PersonasCharacterCardWidget #personas-character-card-body {
-        height: 1fr;
-        display: none;
-    }
+PersonasCharacterCardWidget #personas-character-card-body {
+    height: 1fr;
+    display: none;
+}
 
-    PersonasCharacterCardWidget .ds-field-row {
-        height: auto;
-    }
+PersonasCharacterCardWidget .ds-field-row {
+    height: auto;
+}
 
-    PersonasCharacterCardWidget .ds-toolbar {
-        height: 1;
-        min-height: 1;
-    }
+PersonasCharacterCardWidget .ds-toolbar {
+    height: 1;
+    min-height: 1;
+}
 
-    PersonasCharacterCardWidget .ds-toolbar Button {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-        margin-right: 1;
-    }
+PersonasCharacterCardWidget .ds-toolbar Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    margin-right: 1;
+}
 
 /* ===== WIDGET: PersonasCharacterDictionariesWidget (Widgets/Persona_Widgets/personas_character_dictionaries.py) ===== */
 
-    PersonasCharacterDictionariesWidget {
-        height: auto;
-        width: 100%;
-    }
+PersonasCharacterDictionariesWidget {
+    height: auto;
+    width: 100%;
+}
 
-    PersonasCharacterDictionariesWidget #personas-char-dicts-toggle {
-        width: 100%;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
+PersonasCharacterDictionariesWidget #personas-char-dicts-toggle {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
 
-    PersonasCharacterDictionariesWidget #personas-char-dicts-body {
-        height: auto;
-    }
+PersonasCharacterDictionariesWidget #personas-char-dicts-body {
+    height: auto;
+}
 
-    PersonasCharacterDictionariesWidget .personas-dict-form-row {
-        height: auto;
-    }
+PersonasCharacterDictionariesWidget .personas-dict-form-row {
+    height: auto;
+}
 
-    PersonasCharacterDictionariesWidget #personas-char-dicts-table { height: auto; max-height: 8; }
+PersonasCharacterDictionariesWidget #personas-char-dicts-table { height: auto; max-height: 8; }
 
 /* ===== WIDGET: PersonasCharacterEditorWidget (Widgets/Persona_Widgets/personas_character_editor_widget.py) ===== */
 
-    PersonasCharacterEditorWidget {
-        width: 100%;
-        height: 100%;
-    }
+PersonasCharacterEditorWidget {
+    width: 100%;
+    height: 100%;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-body {
-        height: 1fr;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-body {
+    height: 1fr;
+}
 
-    PersonasCharacterEditorWidget .ds-field-row {
-        height: auto;
-    }
+PersonasCharacterEditorWidget .ds-field-row {
+    height: auto;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-first-message {
-        height: 3;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-first-message {
+    height: 3;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-description {
-        height: 4;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-description {
+    height: 4;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-personality {
-        height: 3;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-personality {
+    height: 3;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-system-prompt {
-        height: 3;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-system-prompt {
+    height: 3;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-advanced {
-        height: auto;
-        display: none;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-advanced {
+    height: auto;
+    display: none;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-scenario,
-    PersonasCharacterEditorWidget #personas-char-editor-post-history,
-    PersonasCharacterEditorWidget #personas-char-editor-creator-notes {
-        height: 2;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-scenario,
+PersonasCharacterEditorWidget #personas-char-editor-post-history,
+PersonasCharacterEditorWidget #personas-char-editor-creator-notes {
+    height: 2;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-greetings-table {
-        min-height: 4;
-        max-height: 8;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-greetings-table {
+    min-height: 4;
+    max-height: 8;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-greeting-edit {
-        height: 3;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-greeting-edit {
+    height: 3;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-advanced-toggle {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
-
-
-    PersonasCharacterEditorWidget #personas-char-editor-generate-toolbar {
-        height: auto;
-        width: 100%;
-    }
-
-    PersonasCharacterEditorWidget #personas-char-editor-concept-row {
-        height: auto;
-        width: 100%;
-    }
-
-    PersonasCharacterEditorWidget #personas-char-editor-concept {
-        width: 1fr;
-        min-width: 0;
-    }
-
-    PersonasCharacterEditorWidget #personas-char-editor-generate-preview {
-        height: auto;
-        width: 100%;
-        padding: 0 1;
-    }
-
-    PersonasCharacterEditorWidget #personas-char-editor-generate-preview-text {
-        height: auto;
-        width: 100%;
-        text-wrap: wrap;
-    }
-
-    PersonasCharacterEditorWidget .ds-field-label-row {
-        height: auto;
-        width: 100%;
-    }
-
-    PersonasCharacterEditorWidget .personas-generate-button {
-        width: auto;
-        min-width: 10;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
-
-    PersonasCharacterEditorWidget #personas-char-editor-avatar-row {
-        height: auto;
-        min-height: 1;
-        padding: 0 1;
-    }
-
-    PersonasCharacterEditorWidget #personas-char-editor-avatar-status {
-        width: auto;
-        margin-right: 2;
-    }
-
-    PersonasCharacterEditorWidget #personas-char-editor-avatar-upload,
-    PersonasCharacterEditorWidget #personas-char-editor-avatar-remove,
-    PersonasCharacterEditorWidget #personas-char-editor-avatar-generate {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-advanced-toggle {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
 
 
-    PersonasCharacterEditorWidget #personas-char-editor-avatar-thumb {
-        height: 10;
-        max-width: 24;
-        max-height: 10;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-generate-toolbar {
+    height: auto;
+    width: 100%;
+}
+
+PersonasCharacterEditorWidget #personas-char-editor-concept-row {
+    height: auto;
+    width: 100%;
+}
+
+PersonasCharacterEditorWidget #personas-char-editor-concept {
+    width: 1fr;
+    min-width: 0;
+}
+
+PersonasCharacterEditorWidget #personas-char-editor-generate-preview {
+    height: auto;
+    width: 100%;
+    padding: 0 1;
+}
+
+PersonasCharacterEditorWidget #personas-char-editor-generate-preview-text {
+    height: auto;
+    width: 100%;
+    text-wrap: wrap;
+}
+
+PersonasCharacterEditorWidget .ds-field-label-row {
+    height: auto;
+    width: 100%;
+}
+
+PersonasCharacterEditorWidget .personas-generate-button {
+    width: auto;
+    min-width: 10;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
+
+PersonasCharacterEditorWidget #personas-char-editor-avatar-row {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+}
+
+PersonasCharacterEditorWidget #personas-char-editor-avatar-status {
+    width: auto;
+    margin-right: 2;
+}
+
+PersonasCharacterEditorWidget #personas-char-editor-avatar-upload,
+PersonasCharacterEditorWidget #personas-char-editor-avatar-remove,
+PersonasCharacterEditorWidget #personas-char-editor-avatar-generate {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
 
 
-    PersonasCharacterEditorWidget .personas-char-editor-expr-set-row {
-        height: auto;
-        min-height: 1;
-        overflow-x: auto;
-        scrollbar-size-horizontal: 0;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-avatar-thumb {
+    height: 10;
+    max-width: 24;
+    max-height: 10;
+}
 
 
-    PersonasCharacterEditorWidget #personas-char-editor-expr-header {
-        width: auto;
-        min-width: 0;
-    }
-
-    PersonasCharacterEditorWidget #personas-char-editor-expr-import,
-    PersonasCharacterEditorWidget #personas-char-editor-expr-export,
-    PersonasCharacterEditorWidget #personas-char-editor-expr-generate-all,
-    PersonasCharacterEditorWidget #personas-char-editor-style-pick {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        margin-left: 1;
-        border: none;
-    }
+PersonasCharacterEditorWidget .personas-char-editor-expr-set-row {
+    height: auto;
+    min-height: 1;
+    overflow-x: auto;
+    scrollbar-size-horizontal: 0;
+}
 
 
-    PersonasCharacterEditorWidget #personas-char-editor-style-readout {
-        width: auto;
-        min-width: 0;
-        margin-left: 2;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-expr-header {
+    width: auto;
+    min-width: 0;
+}
+
+PersonasCharacterEditorWidget #personas-char-editor-expr-import,
+PersonasCharacterEditorWidget #personas-char-editor-expr-export,
+PersonasCharacterEditorWidget #personas-char-editor-expr-generate-all,
+PersonasCharacterEditorWidget #personas-char-editor-style-pick {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    margin-left: 1;
+    border: none;
+}
 
 
-    PersonasCharacterEditorWidget .personas-char-editor-expression-slot {
-        height: auto;
-        min-height: 1;
-    }
-
-    PersonasCharacterEditorWidget .personas-char-editor-expr-row {
-        height: auto;
-        min-height: 1;
-        padding: 0 1;
-    }
-
-    PersonasCharacterEditorWidget .personas-char-editor-expr-label {
-        width: auto;
-        margin-right: 1;
-    }
-
-    PersonasCharacterEditorWidget .personas-char-editor-expr-hint {
-        width: auto;
-        margin-right: 2;
-    }
-
-    PersonasCharacterEditorWidget .personas-char-editor-expr-upload,
-    PersonasCharacterEditorWidget .personas-char-editor-expr-clear,
-    PersonasCharacterEditorWidget .personas-char-editor-expr-generate {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
+PersonasCharacterEditorWidget #personas-char-editor-style-readout {
+    width: auto;
+    min-width: 0;
+    margin-left: 2;
+}
 
 
-    PersonasCharacterEditorWidget .personas-char-editor-expr-thumb {
-        height: 10;
-        max-width: 24;
-        max-height: 10;
-    }
+PersonasCharacterEditorWidget .personas-char-editor-expression-slot {
+    height: auto;
+    min-height: 1;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-legacy-expressions,
-    PersonasCharacterEditorWidget #personas-char-editor-visual-identity-host {
-        width: 100%;
-        height: auto;
-    }
+PersonasCharacterEditorWidget .personas-char-editor-expr-row {
+    height: auto;
+    min-height: 1;
+    padding: 0 1;
+}
 
-    PersonasCharacterEditorWidget #personas-char-editor-visual-identity-host {
-        min-height: 16;
-    }
+PersonasCharacterEditorWidget .personas-char-editor-expr-label {
+    width: auto;
+    margin-right: 1;
+}
 
-    PersonasCharacterEditorWidget .ds-toolbar {
-        height: 1;
-        min-height: 1;
-    }
+PersonasCharacterEditorWidget .personas-char-editor-expr-hint {
+    width: auto;
+    margin-right: 2;
+}
 
-    PersonasCharacterEditorWidget .ds-toolbar Button {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-        margin-right: 1;
-    }
+PersonasCharacterEditorWidget .personas-char-editor-expr-upload,
+PersonasCharacterEditorWidget .personas-char-editor-expr-clear,
+PersonasCharacterEditorWidget .personas-char-editor-expr-generate {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
 
 
-    PersonasCharacterEditorWidget .is-invalid {
-        border: round red;
-    }
+PersonasCharacterEditorWidget .personas-char-editor-expr-thumb {
+    height: 10;
+    max-width: 24;
+    max-height: 10;
+}
+
+PersonasCharacterEditorWidget #personas-char-editor-legacy-expressions,
+PersonasCharacterEditorWidget #personas-char-editor-visual-identity-host {
+    width: 100%;
+    height: auto;
+}
+
+PersonasCharacterEditorWidget #personas-char-editor-visual-identity-host {
+    min-height: 16;
+}
+
+PersonasCharacterEditorWidget .ds-toolbar {
+    height: 1;
+    min-height: 1;
+}
+
+PersonasCharacterEditorWidget .ds-toolbar Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    margin-right: 1;
+}
+
+
+PersonasCharacterEditorWidget .is-invalid {
+    border: round red;
+}
 
 /* ===== WIDGET: PersonasCharacterTTSWidget (Widgets/Persona_Widgets/personas_character_tts_widget.py) ===== */
 
-    PersonasCharacterTTSWidget {
-        width: 100%;
-        height: auto;
-        padding: 0 1;
-        margin: 1 0 0 0;
-    }
+PersonasCharacterTTSWidget {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+    margin: 1 0 0 0;
+}
 
-    PersonasCharacterTTSWidget .personas-character-tts-row {
-        width: 100%;
-        height: auto;
-    }
+PersonasCharacterTTSWidget .personas-character-tts-row {
+    width: 100%;
+    height: auto;
+}
 
-    PersonasCharacterTTSWidget .personas-character-tts-profile {
-        width: 1fr;
-    }
+PersonasCharacterTTSWidget .personas-character-tts-profile {
+    width: 1fr;
+}
 
-    PersonasCharacterTTSWidget .personas-character-tts-status {
-        width: 100%;
-        height: auto;
-    }
+PersonasCharacterTTSWidget .personas-character-tts-status {
+    width: 100%;
+    height: auto;
+}
 
-    PersonasCharacterTTSWidget .personas-character-tts-actions {
-        width: 100%;
-        height: auto;
-    }
+PersonasCharacterTTSWidget .personas-character-tts-actions {
+    width: 100%;
+    height: auto;
+}
 
-    PersonasCharacterTTSWidget .personas-character-tts-ordinary-actions {
-        width: 100%;
-        height: 1;
-    }
+PersonasCharacterTTSWidget .personas-character-tts-ordinary-actions {
+    width: 100%;
+    height: 1;
+}
 
-    PersonasCharacterTTSWidget .personas-character-tts-actions Button {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        border: none;
-        padding: 0 1;
-        margin-right: 1;
-    }
+PersonasCharacterTTSWidget .personas-character-tts-actions Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0 1;
+    margin-right: 1;
+}
 
-    PersonasCharacterTTSWidget .personas-character-tts-recovery-actions {
-        width: 100%;
-        height: auto;
-    }
+PersonasCharacterTTSWidget .personas-character-tts-recovery-actions {
+    width: 100%;
+    height: auto;
+}
 
-    PersonasCharacterTTSWidget .personas-character-tts-recovery-actions Button {
-        width: 100%;
-        margin-right: 0;
-    }
+PersonasCharacterTTSWidget .personas-character-tts-recovery-actions Button {
+    width: 100%;
+    margin-right: 0;
+}
 
 /* ===== WIDGET: PersonasCharacterWorldBooksWidget (Widgets/Persona_Widgets/personas_character_world_books.py) ===== */
 
-    PersonasCharacterWorldBooksWidget {
-        height: auto;
-        width: 100%;
-    }
+PersonasCharacterWorldBooksWidget {
+    height: auto;
+    width: 100%;
+}
 
-    PersonasCharacterWorldBooksWidget #personas-char-worldbooks-toggle {
-        width: 100%;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
+PersonasCharacterWorldBooksWidget #personas-char-worldbooks-toggle {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
 
-    PersonasCharacterWorldBooksWidget #personas-char-worldbooks-body {
-        height: auto;
-    }
+PersonasCharacterWorldBooksWidget #personas-char-worldbooks-body {
+    height: auto;
+}
 
-    PersonasCharacterWorldBooksWidget .personas-dict-form-row {
-        height: auto;
-    }
+PersonasCharacterWorldBooksWidget .personas-dict-form-row {
+    height: auto;
+}
 
-    PersonasCharacterWorldBooksWidget #personas-char-worldbooks-table { height: auto; max-height: 8; }
+PersonasCharacterWorldBooksWidget #personas-char-worldbooks-table { height: auto; max-height: 8; }
 
 /* ===== WIDGET: PersonasConversationTranscriptWidget (Widgets/Persona_Widgets/personas_conversation_transcript_widget.py) ===== */
 
-    PersonasConversationTranscriptWidget {
-        width: 100%;
-        height: 1fr;
-    }
+PersonasConversationTranscriptWidget {
+    width: 100%;
+    height: 1fr;
+}
 
-    PersonasConversationTranscriptWidget #personas-transcript-scroll {
-        height: 1fr;
-    }
+PersonasConversationTranscriptWidget #personas-transcript-scroll {
+    height: 1fr;
+}
 
-    PersonasConversationTranscriptWidget #personas-transcript-preview-note {
-        height: auto;
-    }
+PersonasConversationTranscriptWidget #personas-transcript-preview-note {
+    height: auto;
+}
 
-    PersonasConversationTranscriptWidget .personas-transcript-line {
-        height: auto;
-    }
+PersonasConversationTranscriptWidget .personas-transcript-line {
+    height: auto;
+}
 
 /* ===== WIDGET: PersonasDictionaryDetailWidget (Widgets/Persona_Widgets/personas_dictionary_detail.py) ===== */
 
-    PersonasDictionaryDetailWidget {
-        height: 1fr;
-        min-height: 0;
-    }
-    PersonasDictionaryDetailWidget #personas-dict-entries-scroll {
-        height: 1fr;
-    }
-    PersonasDictionaryDetailWidget #personas-dict-entries-table {
-        min-height: 6;
-        max-height: 12;
-    }
-    PersonasDictionaryDetailWidget .personas-dict-form-row {
-        height: auto;
-    }
-    PersonasDictionaryDetailWidget #personas-dict-entry-replacement,
-    PersonasDictionaryDetailWidget #personas-dict-description {
-        height: 4;
-    }
-    PersonasDictionaryDetailWidget #personas-dict-entry-error,
-    PersonasDictionaryDetailWidget #personas-dict-status {
-        height: 1;
-    }
-    PersonasDictionaryDetailWidget #personas-dict-validation {
-        height: auto;
-        max-height: 5;
-    }
-    PersonasDictionaryDetailWidget #personas-dict-stats-body {
-        height: auto;
-    }
-    PersonasDictionaryDetailWidget #personas-dict-versions-table {
-        height: auto;
-        max-height: 8;
-    }
-    PersonasDictionaryDetailWidget #personas-dict-version-snapshot {
-        height: auto;
-    }
-    PersonasDictionaryDetailWidget #personas-dict-attachments-table {
-        height: auto;
-        max-height: 8;
-    }
+PersonasDictionaryDetailWidget {
+    height: 1fr;
+    min-height: 0;
+}
+PersonasDictionaryDetailWidget #personas-dict-entries-scroll {
+    height: 1fr;
+}
+PersonasDictionaryDetailWidget #personas-dict-entries-table {
+    min-height: 6;
+    max-height: 12;
+}
+PersonasDictionaryDetailWidget .personas-dict-form-row {
+    height: auto;
+}
+PersonasDictionaryDetailWidget #personas-dict-entry-replacement,
+PersonasDictionaryDetailWidget #personas-dict-description {
+    height: 4;
+}
+PersonasDictionaryDetailWidget #personas-dict-entry-error,
+PersonasDictionaryDetailWidget #personas-dict-status {
+    height: 1;
+}
+PersonasDictionaryDetailWidget #personas-dict-validation {
+    height: auto;
+    max-height: 5;
+}
+PersonasDictionaryDetailWidget #personas-dict-stats-body {
+    height: auto;
+}
+PersonasDictionaryDetailWidget #personas-dict-versions-table {
+    height: auto;
+    max-height: 8;
+}
+PersonasDictionaryDetailWidget #personas-dict-version-snapshot {
+    height: auto;
+}
+PersonasDictionaryDetailWidget #personas-dict-attachments-table {
+    height: auto;
+    max-height: 8;
+}
 
 /* ===== WIDGET: PersonasDictionaryTryItWidget (Widgets/Persona_Widgets/personas_dictionary_tryit.py) ===== */
 
-    PersonasDictionaryTryItWidget {
-        height: auto;
-        max-height: 60%;
-    }
-    PersonasDictionaryTryItWidget #personas-dict-tryit-sample {
-        height: 4;
-    }
-    PersonasDictionaryTryItWidget #personas-dict-tryit-original,
-    PersonasDictionaryTryItWidget #personas-dict-tryit-processed {
-        height: auto;
-        max-height: 8;
-    }
-    PersonasDictionaryTryItWidget #personas-dict-tryit-status {
-        height: 1;
-    }
-    PersonasDictionaryTryItWidget #personas-dict-tryit-summary {
-        height: 1;
-    }
-    PersonasDictionaryTryItWidget #personas-dict-tryit-details {
-        height: auto;
-        max-height: 12;
-        overflow-y: auto;
-    }
-    PersonasDictionaryTryItWidget #personas-dict-tryit-fired,
-    PersonasDictionaryTryItWidget #personas-dict-tryit-nearmiss {
-        height: auto;
-    }
+PersonasDictionaryTryItWidget {
+    height: auto;
+    max-height: 60%;
+}
+PersonasDictionaryTryItWidget #personas-dict-tryit-sample {
+    height: 4;
+}
+PersonasDictionaryTryItWidget #personas-dict-tryit-original,
+PersonasDictionaryTryItWidget #personas-dict-tryit-processed {
+    height: auto;
+    max-height: 8;
+}
+PersonasDictionaryTryItWidget #personas-dict-tryit-status {
+    height: 1;
+}
+PersonasDictionaryTryItWidget #personas-dict-tryit-summary {
+    height: 1;
+}
+PersonasDictionaryTryItWidget #personas-dict-tryit-details {
+    height: auto;
+    max-height: 12;
+    overflow-y: auto;
+}
+PersonasDictionaryTryItWidget #personas-dict-tryit-fired,
+PersonasDictionaryTryItWidget #personas-dict-tryit-nearmiss {
+    height: auto;
+}
 
 /* ===== WIDGET: PersonasInspectorPane (Widgets/Persona_Widgets/personas_inspector_pane.py) ===== */
 
 
-    PersonasInspectorPane #personas-inspector-avatar-thumb {
-        height: auto;
-        max-width: 24;
-        max-height: 10;
-    }
+PersonasInspectorPane #personas-inspector-avatar-thumb {
+    height: auto;
+    max-width: 24;
+    max-height: 10;
+}
 
-    PersonasInspectorPane #personas-conversations-list {
-        height: auto;
-        max-height: 10;
-    }
+PersonasInspectorPane #personas-conversations-list {
+    height: auto;
+    max-height: 10;
+}
 
-    PersonasInspectorPane #personas-readiness-console {
-        width: 100%;
-        min-width: 0;
-        height: auto;
-        text-wrap: wrap;
-    }
+PersonasInspectorPane #personas-readiness-console {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    text-wrap: wrap;
+}
 
-    PersonasInspectorPane .personas-conversation-row {
-        width: 100%;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
+PersonasInspectorPane .personas-conversation-row {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
 
-    PersonasInspectorPane .personas-conversation-row Static {
-        width: 100%;
-        height: 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
+PersonasInspectorPane .personas-conversation-row Static {
+    width: 100%;
+    height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
 
-    PersonasInspectorPane .personas-conversations-tail {
-        height: auto;
-        min-height: 2;
-    }
+PersonasInspectorPane .personas-conversations-tail {
+    height: auto;
+    min-height: 2;
+}
 
-    PersonasInspectorPane .personas-conversations-tail Static {
-        height: auto;
-        min-height: 2;
-        text-wrap: wrap;
-    }
+PersonasInspectorPane .personas-conversations-tail Static {
+    height: auto;
+    min-height: 2;
+    text-wrap: wrap;
+}
 
-    PersonasInspectorPane #personas-inspector-actions, PersonasInspectorPane #personas-independent-buddy-actions {
-        height: auto;
-    }
+PersonasInspectorPane #personas-inspector-actions, PersonasInspectorPane #personas-independent-buddy-actions {
+    height: auto;
+}
 
-    PersonasInspectorPane #personas-inspector-actions Button, PersonasInspectorPane #personas-independent-buddy-actions Button {
-        width: 100%;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
+PersonasInspectorPane #personas-inspector-actions Button, PersonasInspectorPane #personas-independent-buddy-actions Button {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
 
-    PersonasInspectorPane #personas-export-include-tts {
-        width: 100%;
-        height: auto;
-    }
+PersonasInspectorPane #personas-export-include-tts {
+    width: 100%;
+    height: auto;
+}
 
 
-    PersonasInspectorPane #personas-export-include-tts:disabled {
-        opacity: 100%;
-        color: $text-disabled;
-    }
+PersonasInspectorPane #personas-export-include-tts:disabled {
+    opacity: 100%;
+    color: $text-disabled;
+}
 
-    PersonasInspectorPane #personas-export-include-tts:disabled .toggle--button {
-        background: $surface;
-        color: $text;
-    }
+PersonasInspectorPane #personas-export-include-tts:disabled .toggle--button {
+    background: $surface;
+    color: $text;
+}
 
 /* ===== WIDGET: PersonasLibraryPane (Widgets/Persona_Widgets/personas_library_pane.py) ===== */
 
-    PersonasLibraryPane #personas-library-rows ListItem {
-        width: 100%;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-    }
 
-    PersonasLibraryPane #personas-library-rows ListItem Static {
-        width: 100%;
-        height: 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    PersonasLibraryPane #personas-library-rows ListItem.personas-library-recovery-row {
-        height: auto;
-        min-height: 6;
-    }
-
-    PersonasLibraryPane #personas-library-rows ListItem.personas-library-recovery-row Static {
-        height: auto;
-        min-height: 6;
-        text-wrap: wrap;
-        text-overflow: clip;
-    }
+PersonasLibraryPane #personas-library-toolbar Button,
+PersonasLibraryPane #personas-library-filterbar Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    margin-right: 1;
+}
 
 
-    PersonasLibraryPane #personas-library-pagebar Button {
-        width: 5;
-        min-width: 5;
-    }
-
-    PersonasLibraryPane #personas-library-page-info {
-        width: 1fr;
-        text-align: center;
-    }
+PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar,
+PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar {
+    layout: vertical;
+    height: auto;
+}
 
 
-    PersonasLibraryPane #personas-library-toolbar Button,
-    PersonasLibraryPane #personas-library-filterbar Button {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-        margin-right: 1;
-    }
+PersonasLibraryPane.personas-library-stacked-controls #personas-library-search {
+    height: 1;
+    min-height: 1;
+    border: none;
+    padding: 0 1;
+}
 
-
-    PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar,
-    PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar {
-        layout: vertical;
-        height: auto;
-    }
-
-
-    PersonasLibraryPane.personas-library-stacked-controls #personas-library-search {
-        height: 1;
-        min-height: 1;
-        border: none;
-        padding: 0 1;
-    }
-
-    PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar Button,
-    PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar Button {
-        width: 100%;
-        margin-right: 0;
-    }
+PersonasLibraryPane.personas-library-stacked-controls #personas-library-toolbar Button,
+PersonasLibraryPane.personas-library-stacked-controls #personas-library-filterbar Button {
+    width: 100%;
+    margin-right: 0;
+}
 
 /* ===== WIDGET: PersonasLoreDetailWidget (Widgets/Persona_Widgets/personas_lore_detail.py) ===== */
 
-    PersonasLoreDetailWidget {
-        height: 1fr;
-        min-height: 0;
-    }
-    PersonasLoreDetailWidget #personas-lore-entries-scroll {
-        height: 1fr;
-    }
-    PersonasLoreDetailWidget #personas-lore-entries-table {
-        min-height: 6;
-        max-height: 12;
-    }
-    PersonasLoreDetailWidget .personas-lore-form-row {
-        height: auto;
-    }
-    PersonasLoreDetailWidget #personas-lore-entry-content,
-    PersonasLoreDetailWidget #personas-lore-description {
-        height: 4;
-    }
-    PersonasLoreDetailWidget #personas-lore-status {
-        height: 1;
-    }
-    PersonasLoreDetailWidget #personas-lore-attachments-table {
-        height: auto;
-        max-height: 8;
-    }
+PersonasLoreDetailWidget {
+    height: 1fr;
+    min-height: 0;
+}
+PersonasLoreDetailWidget #personas-lore-entries-scroll {
+    height: 1fr;
+}
+PersonasLoreDetailWidget #personas-lore-entries-table {
+    min-height: 6;
+    max-height: 12;
+}
+PersonasLoreDetailWidget .personas-lore-form-row {
+    height: auto;
+}
+PersonasLoreDetailWidget #personas-lore-entry-content,
+PersonasLoreDetailWidget #personas-lore-description {
+    height: 4;
+}
+PersonasLoreDetailWidget #personas-lore-status {
+    height: 1;
+}
+PersonasLoreDetailWidget #personas-lore-attachments-table {
+    height: auto;
+    max-height: 8;
+}
 
 /* ===== WIDGET: PersonasLoreTryItWidget (Widgets/Persona_Widgets/personas_lore_tryit.py) ===== */
 
-    PersonasLoreTryItWidget {
-        height: auto;
-        max-height: 60%;
-    }
-    PersonasLoreTryItWidget #personas-lore-tryit-sample {
-        height: 4;
-    }
-    PersonasLoreTryItWidget #personas-lore-tryit-pull-history-row {
-        height: auto;
-    }
-    PersonasLoreTryItWidget #personas-lore-tryit-status {
-        height: 1;
-    }
-    PersonasLoreTryItWidget #personas-lore-tryit-injections {
-        height: auto;
-        max-height: 10;
-        overflow-y: auto;
-    }
-    PersonasLoreTryItWidget #personas-lore-tryit-summary {
-        height: 1;
-    }
-    PersonasLoreTryItWidget #personas-lore-tryit-details {
-        height: auto;
-        max-height: 12;
-        overflow-y: auto;
-    }
-    PersonasLoreTryItWidget #personas-lore-tryit-fired,
-    PersonasLoreTryItWidget #personas-lore-tryit-nearmiss {
-        height: auto;
-    }
+PersonasLoreTryItWidget {
+    height: auto;
+    max-height: 60%;
+}
+PersonasLoreTryItWidget #personas-lore-tryit-sample {
+    height: 4;
+}
+PersonasLoreTryItWidget #personas-lore-tryit-pull-history-row {
+    height: auto;
+}
+PersonasLoreTryItWidget #personas-lore-tryit-status {
+    height: 1;
+}
+PersonasLoreTryItWidget #personas-lore-tryit-injections {
+    height: auto;
+    max-height: 10;
+    overflow-y: auto;
+}
+PersonasLoreTryItWidget #personas-lore-tryit-summary {
+    height: 1;
+}
+PersonasLoreTryItWidget #personas-lore-tryit-details {
+    height: auto;
+    max-height: 12;
+    overflow-y: auto;
+}
+PersonasLoreTryItWidget #personas-lore-tryit-fired,
+PersonasLoreTryItWidget #personas-lore-tryit-nearmiss {
+    height: auto;
+}
 
 /* ===== WIDGET: PersonaVisualCustomStateDialog (Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py) ===== */
 
-    PersonaVisualCustomStateDialog {
-        align: center middle;
-        background: $background 60%;
-    }
+PersonaVisualCustomStateDialog {
+    align: center middle;
+    background: $background 60%;
+}
 
-    PersonaVisualCustomStateDialog #persona-visual-custom-dialog {
-        width: 64;
-        max-width: 92%;
-        height: auto;
-        padding: 1 2;
-        border: round $accent;
-        background: $panel;
-    }
+PersonaVisualCustomStateDialog #persona-visual-custom-dialog {
+    width: 64;
+    max-width: 92%;
+    height: auto;
+    padding: 1 2;
+    border: round $accent;
+    background: $panel;
+}
 
-    PersonaVisualCustomStateDialog .persona-visual-custom-actions {
-        height: 3;
-        margin-top: 1;
-    }
+PersonaVisualCustomStateDialog .persona-visual-custom-actions {
+    height: 3;
+    margin-top: 1;
+}
 
-    PersonaVisualCustomStateDialog Button {
-        width: 1fr;
-        min-width: 0;
-    }
+PersonaVisualCustomStateDialog Button {
+    width: 1fr;
+    min-width: 0;
+}
 
 /* ===== WIDGET: PersonasPersonaVisualPackWidget (Widgets/Persona_Widgets/personas_persona_visual_pack_widget.py) ===== */
 
-    PersonasPersonaVisualPackWidget {
-        width: 100%;
-        height: 33;
-        min-height: 20;
-        margin-top: 1;
-        padding: 1;
-        border: round $surface-lighten-1;
-        background: $panel;
-    }
+PersonasPersonaVisualPackWidget {
+    width: 100%;
+    height: 33;
+    min-height: 20;
+    margin-top: 1;
+    padding: 1;
+    border: round $surface-lighten-1;
+    background: $panel;
+}
 
-    PersonasPersonaVisualPackWidget .persona-visual-copy {
-        width: 100%;
-        height: auto;
-    }
+PersonasPersonaVisualPackWidget .persona-visual-copy {
+    width: 100%;
+    height: auto;
+}
 
-    PersonasPersonaVisualPackWidget #personas-persona-visual-notice,
-    PersonasPersonaVisualPackWidget #personas-persona-visual-status {
-        color: $text-muted;
-    }
+PersonasPersonaVisualPackWidget #personas-persona-visual-notice,
+PersonasPersonaVisualPackWidget #personas-persona-visual-status {
+    color: $text-muted;
+}
 
-    PersonasPersonaVisualPackWidget #personas-persona-visual-body {
-        width: 100%;
-        height: 1fr;
-        min-height: 8;
-        margin-top: 1;
-    }
+PersonasPersonaVisualPackWidget #personas-persona-visual-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 8;
+    margin-top: 1;
+}
 
-    PersonasPersonaVisualPackWidget #personas-persona-visual-results {
-        width: 2fr;
-        height: 100%;
-        min-width: 20;
-    }
+PersonasPersonaVisualPackWidget #personas-persona-visual-results {
+    width: 2fr;
+    height: 100%;
+    min-width: 20;
+}
 
-    PersonasPersonaVisualPackWidget #personas-persona-visual-preview-host {
-        width: 1fr;
-        height: 100%;
-        min-width: 18;
-        margin-left: 1;
-        padding: 1;
-        background: $surface;
-        content-align: center middle;
-    }
+PersonasPersonaVisualPackWidget #personas-persona-visual-preview-host {
+    width: 1fr;
+    height: 100%;
+    min-width: 18;
+    margin-left: 1;
+    padding: 1;
+    background: $surface;
+    content-align: center middle;
+}
 
-    PersonasPersonaVisualPackWidget #personas-persona-visual-actions {
-        width: 100%;
-        height: 12;
-        layout: grid;
-        grid-size: 3 4;
-        grid-gutter: 0 1;
-        margin-top: 1;
-    }
+PersonasPersonaVisualPackWidget #personas-persona-visual-actions {
+    width: 100%;
+    height: 12;
+    layout: grid;
+    grid-size: 3 4;
+    grid-gutter: 0 1;
+    margin-top: 1;
+}
 
-    PersonasPersonaVisualPackWidget #personas-persona-visual-actions Button {
-        width: 1fr;
-        height: 3;
-        min-width: 0;
-        border: none;
-    }
+PersonasPersonaVisualPackWidget #personas-persona-visual-actions Button {
+    width: 1fr;
+    height: 3;
+    min-width: 0;
+    border: none;
+}
 
-    PersonasPersonaVisualPackWidget #personas-persona-visual-actions Button:focus {
-        outline: heavy $accent;
-    }
+PersonasPersonaVisualPackWidget #personas-persona-visual-actions Button:focus {
+    outline: heavy $accent;
+}
 
-    PersonasPersonaVisualPackWidget.-narrow {
-        height: 37;
-    }
+PersonasPersonaVisualPackWidget.-narrow {
+    height: 37;
+}
 
-    PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-body {
-        height: 12;
-    }
+PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-body {
+    height: 12;
+}
 
-    PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-preview-host {
-        min-width: 14;
-        padding: 0 1;
-    }
+PersonasPersonaVisualPackWidget.-narrow #personas-persona-visual-preview-host {
+    min-width: 14;
+    padding: 0 1;
+}
 
 /* ===== WIDGET: PersonasPreviewPane (Widgets/Persona_Widgets/personas_preview_pane.py) ===== */
 
-    PersonasPreviewPane {
-        height: auto;
-        max-height: 60%;
-    }
+PersonasPreviewPane {
+    height: auto;
+    max-height: 60%;
+}
 
-    PersonasPreviewPane #personas-preview-toggle {
-        width: 100%;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-    }
+PersonasPreviewPane #personas-preview-toggle {
+    width: 100%;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+}
 
-    PersonasPreviewPane #personas-preview-body {
-        height: auto;
-    }
+PersonasPreviewPane #personas-preview-body {
+    height: auto;
+}
 
-    PersonasPreviewPane #personas-preview-status {
-        height: 1;
-        min-height: 1;
-    }
+PersonasPreviewPane #personas-preview-status {
+    height: 1;
+    min-height: 1;
+}
 
-    PersonasPreviewPane #personas-preview-provider {
-        height: auto;
-        min-height: 1;
-        color: $text-muted;
-    }
+PersonasPreviewPane #personas-preview-provider {
+    height: auto;
+    min-height: 1;
+    color: $text-muted;
+}
 
-    PersonasPreviewPane #personas-preview-transcript {
-        height: auto;
-        max-height: 10;
-        min-height: 2;
-    }
+PersonasPreviewPane #personas-preview-transcript {
+    height: auto;
+    max-height: 10;
+    min-height: 2;
+}
 
-    PersonasPreviewPane .ds-toolbar {
-        height: 1;
-        min-height: 1;
-    }
+PersonasPreviewPane .ds-toolbar {
+    height: 1;
+    min-height: 1;
+}
 
-    PersonasPreviewPane .ds-toolbar Button {
-        width: auto;
-        min-width: 0;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-        margin-right: 1;
-    }
+PersonasPreviewPane .ds-toolbar Button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    margin-right: 1;
+}
 
 /* ===== WIDGET: PersonasVisualIdentityPackWidget (Widgets/Persona_Widgets/personas_visual_identity_pack_widget.py) ===== */
 
-    PersonasVisualIdentityPackWidget {
-        width: 100%;
-        height: 1fr;
-        min-height: 16;
-    }
+PersonasVisualIdentityPackWidget {
+    width: 100%;
+    height: 1fr;
+    min-height: 16;
+}
 
-    PersonasVisualIdentityPackWidget #personas-visual-identity-title,
-    PersonasVisualIdentityPackWidget #personas-visual-identity-notice,
-    PersonasVisualIdentityPackWidget #personas-visual-identity-count,
-    PersonasVisualIdentityPackWidget #personas-visual-identity-label,
-    PersonasVisualIdentityPackWidget #personas-visual-identity-key,
-    PersonasVisualIdentityPackWidget #personas-visual-identity-dirty {
-        width: 100%;
-        height: auto;
-    }
+PersonasVisualIdentityPackWidget #personas-visual-identity-title,
+PersonasVisualIdentityPackWidget #personas-visual-identity-notice,
+PersonasVisualIdentityPackWidget #personas-visual-identity-count,
+PersonasVisualIdentityPackWidget #personas-visual-identity-label,
+PersonasVisualIdentityPackWidget #personas-visual-identity-key,
+PersonasVisualIdentityPackWidget #personas-visual-identity-dirty {
+    width: 100%;
+    height: auto;
+}
 
-    PersonasVisualIdentityPackWidget #personas-visual-identity-notice,
-    PersonasVisualIdentityPackWidget #personas-visual-identity-count,
-    PersonasVisualIdentityPackWidget #personas-visual-identity-key,
-    PersonasVisualIdentityPackWidget #personas-visual-identity-dirty {
-        color: $text-muted;
-    }
+PersonasVisualIdentityPackWidget #personas-visual-identity-notice,
+PersonasVisualIdentityPackWidget #personas-visual-identity-count,
+PersonasVisualIdentityPackWidget #personas-visual-identity-key,
+PersonasVisualIdentityPackWidget #personas-visual-identity-dirty {
+    color: $text-muted;
+}
 
-    PersonasVisualIdentityPackWidget #personas-visual-identity-filter {
-        width: 100%;
-        height: 3;
-    }
+PersonasVisualIdentityPackWidget #personas-visual-identity-filter {
+    width: 100%;
+    height: 3;
+}
 
-    PersonasVisualIdentityPackWidget #personas-visual-identity-body {
-        width: 100%;
-        height: 1fr;
-        min-height: 5;
-    }
+PersonasVisualIdentityPackWidget #personas-visual-identity-body {
+    width: 100%;
+    height: 1fr;
+    min-height: 5;
+}
 
-    PersonasVisualIdentityPackWidget #personas-visual-identity-results {
-        width: 2fr;
-        height: 100%;
-        min-width: 0;
-    }
+PersonasVisualIdentityPackWidget #personas-visual-identity-results {
+    width: 2fr;
+    height: 100%;
+    min-width: 0;
+}
 
-    PersonasVisualIdentityPackWidget #personas-visual-identity-preview {
-        width: 1fr;
-        height: 100%;
-        min-width: 0;
-        margin-left: 1;
-        padding: 1;
-        background: $surface;
-    }
+PersonasVisualIdentityPackWidget #personas-visual-identity-preview {
+    width: 1fr;
+    height: 100%;
+    min-width: 0;
+    margin-left: 1;
+    padding: 1;
+    background: $surface;
+}
 
-    PersonasVisualIdentityPackWidget #personas-visual-identity-preview-image {
-        width: 100%;
-        height: 1fr;
-        content-align: center middle;
-    }
+PersonasVisualIdentityPackWidget #personas-visual-identity-preview-image {
+    width: 100%;
+    height: 1fr;
+    content-align: center middle;
+}
 
-    PersonasVisualIdentityPackWidget #personas-visual-identity-actions {
-        width: 100%;
-        height: 3;
-        overflow-x: auto;
-    }
+PersonasVisualIdentityPackWidget #personas-visual-identity-actions {
+    width: 100%;
+    height: 3;
+    overflow-x: auto;
+}
 
-    PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button {
-        width: 1fr;
-        height: 3;
-        min-width: 0;
-        border: none;
-        margin-right: 1;
-    }
+PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button {
+    width: 1fr;
+    height: 3;
+    min-width: 0;
+    border: none;
+    margin-right: 1;
+}
 
-    PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button:focus {
-        outline: heavy $accent;
-    }
+PersonasVisualIdentityPackWidget #personas-visual-identity-actions Button:focus {
+    outline: heavy $accent;
+}
 
-    PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-preview-image {
-        display: none;
-    }
+PersonasVisualIdentityPackWidget.-narrow #personas-visual-identity-preview-image {
+    display: none;
+}
 
 /* ===== WIDGET: PetdexImportReviewDialog (Widgets/Persona_Widgets/petdex_import_review.py) ===== */
 
-    PetdexImportReviewDialog { align: center middle; }
-    PetdexImportReviewDialog #petdex-review {
-        width: 94%; max-width: 96; height: 94%;
-        border: round $accent; background: $panel; padding: 0 1;
-    }
-    PetdexImportReviewDialog #petdex-scroll { height: 1fr; }
-    PetdexImportReviewDialog .petdex-copy { height: auto; }
-    PetdexImportReviewDialog #petdex-states { height: 10; }
-    PetdexImportReviewDialog #petdex-preview-host { height: 10; }
-    PetdexImportReviewDialog .petdex-actions { height: 3; }
-    PetdexImportReviewDialog .petdex-actions Button {
-        width: 1fr; min-width: 0; border: none;
-    }
+PetdexImportReviewDialog { align: center middle; }
+PetdexImportReviewDialog #petdex-review {
+    width: 94%; max-width: 96; height: 94%;
+    border: round $accent; background: $panel; padding: 0 1;
+}
+PetdexImportReviewDialog #petdex-scroll { height: 1fr; }
+PetdexImportReviewDialog .petdex-copy { height: auto; }
+PetdexImportReviewDialog #petdex-states { height: 10; }
+PetdexImportReviewDialog #petdex-preview-host { height: 10; }
+PetdexImportReviewDialog .petdex-actions { height: 3; }
+PetdexImportReviewDialog .petdex-actions Button {
+    width: 1fr; min-width: 0; border: none;
+}
+
+/* ===== WIDGET: PortraitCompositionReview (Widgets/Persona_Widgets/portrait_composition_review.py) ===== */
+
+PortraitCompositionReview { align: center middle; }
+PortraitCompositionReview > VerticalScroll.portrait-pairs-dialog {
+    width: 120; max-width: 100%;
+    height: 100%; max-height: 100%;
+    padding: 1 2;
+    background: $panel; border: tall $primary;
+}
+PortraitCompositionReview .pairs-copy { height: auto; color: $text-muted; }
+PortraitCompositionReview #portrait-pairs-canvas { width: 100%; height: 1fr; min-height: 13; }
+PortraitCompositionReview .pairs-pan { height: auto; width: 100%; }
+PortraitCompositionReview .pairs-coordinate { width: 1fr; height: auto; }
+PortraitCompositionReview Input.portrait-pairs-input { width: 100%; }
+
+/* ===== WIDGET: PortraitPerformanceEditor (Widgets/Persona_Widgets/portrait_performance_editor.py) ===== */
+
+PortraitPerformanceEditor { height: auto; width: 1fr; }
+PortraitPerformanceEditor .portrait-review-row { height: auto; width: 1fr; }
+PortraitPerformanceEditor Button.portrait-review-action { width: auto; margin-right: 1; }
+PortraitPerformanceEditor .portrait-review-images { height: auto; width: 1fr; }
+PortraitPerformanceEditor .portrait-review-image { width: 24; height: 13; margin-right: 2; }
+PortraitPerformanceEditor .portrait-review-copy { height: auto; color: $text-muted; }
+PortraitPerformanceEditor.portrait-review-compact .portrait-review-row,
+PortraitPerformanceEditor.portrait-review-compact .portrait-review-images { layout: vertical; }
+
+/* ===== WIDGET: PortraitRegionEditor (Widgets/Persona_Widgets/portrait_region_editor.py) ===== */
+
+PortraitRegionEditor { align: center middle; }
+PortraitRegionEditor > VerticalScroll.portrait-regions-dialog {
+    width: 120; max-width: 100%;
+    height: 100%; max-height: 100%;
+    padding: 1 2;
+    background: $panel; border: tall $primary;
+}
+PortraitRegionEditor .region-copy { height: auto; color: $text-muted; }
+PortraitRegionEditor #portrait-regions-source { height: 13; width: 100%; }
+PortraitRegionEditor #portrait-regions-detail { height: auto; width: 100%; }
+PortraitRegionEditor .region-fields { height: auto; width: 100%; }
+PortraitRegionEditor .region-field { width: 1fr; height: auto; }
+PortraitRegionEditor Input.portrait-region-input { width: 100%; }
+PortraitRegionEditor .dialog-buttons { height: auto; }
+PortraitRegionEditor.region-compact .region-fields,
+PortraitRegionEditor.region-compact .dialog-buttons { layout: vertical; }
 
 /* ===== WIDGET: ToolPackImportOptionsModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
 
-    ToolPackImportOptionsModal {
-        align: center middle;
-    }
+ToolPackImportOptionsModal {
+    align: center middle;
+}
 
-    ToolPackImportOptionsModal #tool-pack-import-options {
-        width: 82%;
-        max-width: 86;
-        height: auto;
-        max-height: 34;
-        background: $surface;
-        border: tall $accent;
-        padding: 1 2;
-    }
+ToolPackImportOptionsModal #tool-pack-import-options {
+    width: 82%;
+    max-width: 86;
+    height: auto;
+    max-height: 34;
+    background: $surface;
+    border: tall $accent;
+    padding: 1 2;
+}
 
-    ToolPackImportOptionsModal .tool-pack-options-copy {
-        width: 100%;
-        height: auto;
-        text-wrap: wrap;
-        margin-bottom: 1;
-    }
+ToolPackImportOptionsModal .tool-pack-options-copy {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+    margin-bottom: 1;
+}
 
-    ToolPackImportOptionsModal #tool-pack-import-server-mappings {
-        height: 8;
-        margin-bottom: 1;
-    }
+ToolPackImportOptionsModal #tool-pack-import-server-mappings {
+    height: 8;
+    margin-bottom: 1;
+}
 
-    ToolPackImportOptionsModal #tool-pack-import-options-error {
-        color: $error;
-        min-height: 1;
-    }
+ToolPackImportOptionsModal #tool-pack-import-options-error {
+    color: $error;
+    min-height: 1;
+}
 
-    ToolPackImportOptionsModal #tool-pack-import-options-actions {
-        height: auto;
-        align: right middle;
-    }
+ToolPackImportOptionsModal #tool-pack-import-options-actions {
+    height: auto;
+    align: right middle;
+}
 
-    ToolPackImportOptionsModal Button#tool-pack-import-options-cancel,
-    ToolPackImportOptionsModal Button#tool-pack-import-options-review {
-        width: auto;
-        min-width: 12;
-        margin-left: 1;
-    }
+ToolPackImportOptionsModal Button#tool-pack-import-options-cancel,
+ToolPackImportOptionsModal Button#tool-pack-import-options-review {
+    width: auto;
+    min-width: 12;
+    margin-left: 1;
+}
 
 /* ===== WIDGET: ToolPackImportReviewModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
 
-    ToolPackImportReviewModal {
-        align: center middle;
-    }
+ToolPackImportReviewModal {
+    align: center middle;
+}
 
-    ToolPackImportReviewModal #tool-pack-import-review {
-        width: 88%;
-        max-width: 96;
-        height: 90%;
-        max-height: 42;
-        background: $surface;
-        border: tall $accent;
-        padding: 1 2;
-    }
+ToolPackImportReviewModal #tool-pack-import-review {
+    width: 88%;
+    max-width: 96;
+    height: 90%;
+    max-height: 42;
+    background: $surface;
+    border: tall $accent;
+    padding: 1 2;
+}
 
-    ToolPackImportReviewModal #tool-pack-import-title {
-        height: 1;
-        text-style: bold;
-        margin-bottom: 1;
-    }
+ToolPackImportReviewModal #tool-pack-import-title {
+    height: 1;
+    text-style: bold;
+    margin-bottom: 1;
+}
 
-    ToolPackImportReviewModal #tool-pack-import-scroll {
-        height: 1fr;
-        scrollbar-size: 1 1;
-    }
+ToolPackImportReviewModal #tool-pack-import-scroll {
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
 
-    ToolPackImportReviewModal .tool-pack-review-heading {
-        height: 1;
-        text-style: bold;
-        margin-top: 1;
-    }
+ToolPackImportReviewModal .tool-pack-review-heading {
+    height: 1;
+    text-style: bold;
+    margin-top: 1;
+}
 
-    ToolPackImportReviewModal .tool-pack-review-copy {
-        width: 100%;
-        height: auto;
-        text-wrap: wrap;
-    }
+ToolPackImportReviewModal .tool-pack-review-copy {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+}
 
-    ToolPackImportReviewModal #tool-pack-import-actions {
-        height: auto;
-        min-height: 3;
-        margin-top: 1;
-        align: right middle;
-    }
+ToolPackImportReviewModal #tool-pack-import-actions {
+    height: auto;
+    min-height: 3;
+    margin-top: 1;
+    align: right middle;
+}
 
-    ToolPackImportReviewModal Button#tool-pack-import-cancel,
-    ToolPackImportReviewModal Button#tool-pack-import-revise,
-    ToolPackImportReviewModal Button#tool-pack-import-unbound {
-        width: auto;
-        min-width: 12;
-        margin-left: 1;
-    }
+ToolPackImportReviewModal Button#tool-pack-import-cancel,
+ToolPackImportReviewModal Button#tool-pack-import-revise,
+ToolPackImportReviewModal Button#tool-pack-import-unbound {
+    width: auto;
+    min-width: 12;
+    margin-left: 1;
+}
 
 /* ===== WIDGET: ToolPackExportReviewModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
 
-    ToolPackExportReviewModal {
-        align: center middle;
-    }
+ToolPackExportReviewModal {
+    align: center middle;
+}
 
-    ToolPackExportReviewModal #tool-pack-export-review {
-        width: 86%;
-        max-width: 92;
-        height: 86%;
-        max-height: 38;
-        background: $surface;
-        border: tall $accent;
-        padding: 1 2;
-    }
+ToolPackExportReviewModal #tool-pack-export-review {
+    width: 86%;
+    max-width: 92;
+    height: 86%;
+    max-height: 38;
+    background: $surface;
+    border: tall $accent;
+    padding: 1 2;
+}
 
-    ToolPackExportReviewModal #tool-pack-export-scroll {
-        height: 1fr;
-        scrollbar-size: 1 1;
-    }
+ToolPackExportReviewModal #tool-pack-export-scroll {
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
 
-    ToolPackExportReviewModal .tool-pack-export-heading {
-        height: 1;
-        text-style: bold;
-        margin-top: 1;
-    }
+ToolPackExportReviewModal .tool-pack-export-heading {
+    height: 1;
+    text-style: bold;
+    margin-top: 1;
+}
 
-    ToolPackExportReviewModal .tool-pack-export-copy {
-        width: 100%;
-        height: auto;
-        text-wrap: wrap;
-    }
+ToolPackExportReviewModal .tool-pack-export-copy {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+}
 
-    ToolPackExportReviewModal #tool-pack-export-actions {
-        height: auto;
-        min-height: 3;
-        align: right middle;
-    }
+ToolPackExportReviewModal #tool-pack-export-actions {
+    height: auto;
+    min-height: 3;
+    align: right middle;
+}
 
-    ToolPackExportReviewModal Button#tool-pack-export-cancel,
-    ToolPackExportReviewModal Button#tool-pack-export-continue {
-        width: auto;
-        min-width: 12;
-        margin-left: 1;
-    }
+ToolPackExportReviewModal Button#tool-pack-export-cancel,
+ToolPackExportReviewModal Button#tool-pack-export-continue {
+    width: auto;
+    min-width: 12;
+    margin-left: 1;
+}
 
 /* ===== WIDGET: ToolProfileFirstBindReviewModal (Widgets/Settings_Widgets/tool_pack_import_review.py) ===== */
 
-    ToolProfileFirstBindReviewModal {
-        align: center middle;
-    }
+ToolProfileFirstBindReviewModal {
+    align: center middle;
+}
 
-    ToolProfileFirstBindReviewModal #tool-profile-bind-review {
-        width: 88%;
-        max-width: 96;
-        height: 90%;
-        max-height: 42;
-        background: $surface;
-        border: tall $warning;
-        padding: 1 2;
-    }
+ToolProfileFirstBindReviewModal #tool-profile-bind-review {
+    width: 88%;
+    max-width: 96;
+    height: 90%;
+    max-height: 42;
+    background: $surface;
+    border: tall $warning;
+    padding: 1 2;
+}
 
-    ToolProfileFirstBindReviewModal #tool-profile-bind-title {
-        height: 1;
-        text-style: bold;
-        margin-bottom: 1;
-    }
+ToolProfileFirstBindReviewModal #tool-profile-bind-title {
+    height: 1;
+    text-style: bold;
+    margin-bottom: 1;
+}
 
-    ToolProfileFirstBindReviewModal #tool-profile-bind-scroll {
-        height: 1fr;
-        scrollbar-size: 1 1;
-    }
+ToolProfileFirstBindReviewModal #tool-profile-bind-scroll {
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
 
-    ToolProfileFirstBindReviewModal .tool-profile-bind-heading {
-        height: 1;
-        text-style: bold;
-        margin-top: 1;
-    }
+ToolProfileFirstBindReviewModal .tool-profile-bind-heading {
+    height: 1;
+    text-style: bold;
+    margin-top: 1;
+}
 
-    ToolProfileFirstBindReviewModal .tool-profile-bind-copy {
-        width: 100%;
-        height: auto;
-        text-wrap: wrap;
-    }
+ToolProfileFirstBindReviewModal .tool-profile-bind-copy {
+    width: 100%;
+    height: auto;
+    text-wrap: wrap;
+}
 
-    ToolProfileFirstBindReviewModal #tool-profile-bind-actions {
-        height: auto;
-        min-height: 3;
-        margin-top: 1;
-        align: right middle;
-    }
+ToolProfileFirstBindReviewModal #tool-profile-bind-actions {
+    height: auto;
+    min-height: 3;
+    margin-top: 1;
+    align: right middle;
+}
 
-    ToolProfileFirstBindReviewModal #tool-profile-bind-actions Button {
-        width: auto;
-        min-width: 12;
-        margin-left: 1;
-    }
+ToolProfileFirstBindReviewModal #tool-profile-bind-actions Button {
+    width: auto;
+    min-width: 12;
+    margin-left: 1;
+}
 
 /* ===== WIDGET: ToolProfilesPanel (Widgets/Settings_Widgets/tool_profiles_panel.py) ===== */
 
-    ToolProfilesPanel {
-        width: 100%;
-        height: auto;
-    }
+ToolProfilesPanel {
+    width: 100%;
+    height: auto;
+}
 
-    ToolProfilesPanel .tool-profiles-toolbar,
-    ToolProfilesPanel .tool-profile-actions {
-        width: 100%;
-        height: auto;
-        layout: horizontal;
-    }
+ToolProfilesPanel .tool-profiles-toolbar,
+ToolProfilesPanel .tool-profile-actions {
+    width: 100%;
+    height: auto;
+    layout: horizontal;
+}
 
-    ToolProfilesPanel .tool-profile-row {
-        width: 100%;
-        height: auto;
-        margin-bottom: 1;
-        padding: 0 1;
-        border: round $panel;
-    }
+ToolProfilesPanel .tool-profile-row {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+    padding: 0 1;
+    border: round $panel;
+}
 
-    ToolProfilesPanel .tool-profile-title {
-        width: 100%;
-        text-style: bold;
-    }
+ToolProfilesPanel .tool-profile-title {
+    width: 100%;
+    text-style: bold;
+}
 
-    ToolProfilesPanel .tool-profile-detail {
-        width: 100%;
-        color: $text-muted;
-    }
+ToolProfilesPanel .tool-profile-detail {
+    width: 100%;
+    color: $text-muted;
+}
 
-    ToolProfilesPanel Button.tool-profiles-panel-button {
-        width: auto;
-        min-width: 8;
-        height: 1;
-        min-height: 1;
-        padding: 0 1;
-        border: none;
-        margin-right: 1;
-    }
+ToolProfilesPanel Button.tool-profiles-panel-button {
+    width: auto;
+    min-width: 8;
+    height: 1;
+    min-height: 1;
+    padding: 0 1;
+    border: none;
+    margin-right: 1;
+}
 
-    ToolProfilesPanel .tool-profile-actions Button.tool-profiles-panel-button {
-        margin-right: 0;
-    }
+ToolProfilesPanel .tool-profile-actions Button.tool-profiles-panel-button {
+    margin-right: 0;
+}
 
 /* ===== WIDGET: WorkspaceChangeReviewPanel (Widgets/Settings_Widgets/workspace_change_review.py) ===== */
 
-    WorkspaceChangeReviewPanel {
-        height: auto;
-    }
+WorkspaceChangeReviewPanel {
+    height: auto;
+}
 
 /* ===== WIDGET: _BackdropClickShield (Widgets/modal_dismissal.py) ===== */
 
-    _BackdropClickShield {
-        width: 1;
-        height: 1;
-        position: absolute;
-        overlay: screen;
-        background: transparent;
-    }
+_BackdropClickShield {
+    width: 1;
+    height: 1;
+    position: absolute;
+    overlay: screen;
+    background: transparent;
+}
 
 /* ===== WIDGET: ProjectSkillsImportModal (Widgets/project_skills_import_modal.py) ===== */
 
-    ProjectSkillsImportModal {
-        align: center middle;
-    }
+ProjectSkillsImportModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: TemplateSelectorDialog (Widgets/template_selector.py) ===== */
 
-    TemplateSelectorDialog {
-        align: center middle;
-    }
-    TemplateSelectorDialog .template-selector-dialog {
-        width: 76;
-        max-width: 95%;
-        height: 80%;
-        border: round $accent;
-        background: $surface;
-        padding: 1 2;
-    }
+TemplateSelectorDialog {
+    align: center middle;
+}
+TemplateSelectorDialog .template-selector-dialog {
+    width: 76;
+    max-width: 95%;
+    height: 80%;
+    border: round $accent;
+    background: $surface;
+    padding: 1 2;
+}
 
 /* ===== WIDGET: WorkspaceCreateModal (Widgets/workspace_create_modal.py) ===== */
 
-    WorkspaceCreateModal {
-        align: center middle;
-    }
+WorkspaceCreateModal {
+    align: center middle;
+}
 
 /* ===== WIDGET: WorkspacePersonaPicker (Widgets/workspace_persona_default.py) ===== */
 
-    WorkspacePersonaPicker { height: auto; }
-    WorkspacePersonaPicker Static { height: auto; }
-    WorkspacePersonaPicker Select.workspace-persona-picker-select { height: 3; }
+WorkspacePersonaPicker { height: auto; }
+WorkspacePersonaPicker Static { height: auto; }
+WorkspacePersonaPicker Select.workspace-persona-picker-select { height: 3; }
 
 /* ===== WIDGET: WorkspacePersonaDefaultModal (Widgets/workspace_persona_default.py) ===== */
 
-    WorkspacePersonaDefaultModal { align: center middle; }
+WorkspacePersonaDefaultModal { align: center middle; }

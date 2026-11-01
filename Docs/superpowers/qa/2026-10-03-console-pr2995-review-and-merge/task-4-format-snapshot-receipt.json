@@ -1,0 +1,47 @@
+{
+  "name": "format-snapshot",
+  "revision": "fc1627e99b8722a0a69812530d950410e8356ba0",
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/terminal_qualification/format_ratchet.py",
+    "snapshot",
+    "--base",
+    "fc1627e99b8722a0a69812530d950410e8356ba0",
+    "--output",
+    ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-format-baseline.json",
+    "--path",
+    "tldw_chatbook/Chat/console_chat_start.py",
+    "--path",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "--path",
+    "tldw_chatbook/Chat/message_metadata.py",
+    "--path",
+    "tldw_chatbook/DB/automatic_work.py",
+    "--path",
+    "Tests/Chat/test_console_chat_start.py",
+    "--path",
+    "Tests/DB/test_automatic_chat_starts.py",
+    "--path",
+    "Tests/Chat/test_console_durable_commit_offload.py",
+    "--path",
+    "Tests/Chat/test_console_durable_commit_diagnostics.py",
+    "--path",
+    "Tests/Chat/test_console_close_during_durable_postcommit.py"
+  ],
+  "environment": {
+    "TLDW_TEST_CONFIG_ROOT": null
+  },
+  "sha256": {
+    "tldw_chatbook/Chat/console_chat_start.py": "788bfad53a3707aa686650c8e7a9651b4751d08b022455571d15ec4dc6dac8d8",
+    "tldw_chatbook/Chat/console_chat_controller.py": "1e871398a219dec109c65fd10894f7724e1f3d4027b21eab0d0c9710e567d22f",
+    "tldw_chatbook/Chat/message_metadata.py": "c8aa1bdf33d9297dce415cc0332460f89f3720bdb3cedab6c872171ca61a99a0",
+    "tldw_chatbook/DB/automatic_work.py": "724ea9ff4cd41d75097787d79814c5cd783eb88f403e8d6f36c878d57130860d",
+    "Tests/Chat/test_console_chat_start.py": "e1082aed78dc543bccc3b8c71e07ca5c1e9ca6c8f7493bcc6327c683e85183a6",
+    "Tests/DB/test_automatic_chat_starts.py": "0facbc59edaf699fb5171eef4d327621d4767a56b2feee0de13a6638a07fd3ad",
+    "Tests/Chat/test_console_durable_commit_offload.py": "d9a419f072b32e1610a7953fb0720809f68b69c6321072a617aa0eb431cc0761",
+    "Tests/Chat/test_console_durable_commit_diagnostics.py": "820c4b75575577161111897d91708e1a87aa61aa6bd7b080dfd8ca52f4a95ebe",
+    "Tests/Chat/test_console_close_during_durable_postcommit.py": "84632938a1445aafea6f2b0d9c989dfd949994b9e7180092c37be873741596ad"
+  },
+  "exit": 0
+}

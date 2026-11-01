@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_EMERGENCY_STOP_HEADER_LABEL,
+    CONSOLE_EMERGENCY_STOP_HEADER_SHORT_LABEL,
+    ConsoleControlState,
+)
 from tldw_chatbook.Chat.console_glyphs import GLYPH_HOOKS
 from tldw_chatbook.UI.Workbench.workbench_state import (
     Density,
@@ -11,6 +15,9 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchMode,
     WorkbenchPaneState,
     WorkbenchState,
+)
+from tldw_chatbook.Widgets.Console.console_context_controls import (
+    COMPACTION_PAUSE_FORECAST_COPY,
 )
 from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 
@@ -27,11 +34,16 @@ def build_console_workbench_state(
     ephemeral: bool = False,
     hook_attention: int = 0,
     readiness_word: str = "",
+    blocked_turn: str = "",
+    compaction_pause_expected: bool = False,
+    compaction_forecast_unavailable: bool = False,
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
     Args:
         control_state: Current Console control labels and readiness state.
+            Its ``emergency_stop_held`` (TASK-33620.1) badges the header with
+            the hold and disables the Send action.
         provider_blocker_copy: Provider/setup blocker copy, if send is blocked.
             Only used to derive header/mode "blocked" status; the shared
             Workbench recovery banner is never populated from it. First-run
@@ -46,6 +58,11 @@ def build_console_workbench_state(
         hook_attention: Enabled hooks or permission errors needing attention.
         readiness_word: The active chat's spec §5 readiness word
             (TASK-33005.3); the header badge shows it unless a run is active.
+        blocked_turn: Why an accepted turn is stuck unsent, or "". A
+            stuck turn badges the header "Blocked", not the readiness word
+            (TASK-33621.2).
+        compaction_pause_expected: The chat is over its Ask trigger, so the
+            badge says the next send pauses to compact (TASK-33621.4).
         density: Requested Workbench density, currently ``normal`` or ``compact``.
         ephemeral: Whether the active session is temporary. Retained for
             callers even though no top action reads it today: Save Chatbook
@@ -59,7 +76,8 @@ def build_console_workbench_state(
     blocker = provider_blocker_copy.strip()
     workbench_density: Density = "compact" if density == "compact" else "normal"
     provider_status = "blocked" if blocker else "ready"
-    send_available = can_send and not blocker
+    held = control_state.emergency_stop_held  # TASK-33620.1
+    send_available = can_send and not blocker and not held
 
     # Save Chatbook is deliberately absent here: as a top-strip button it
     # was disabled at rest for most sessions (no artifact yet), spending a
@@ -151,11 +169,36 @@ def build_console_workbench_state(
             subtitle="— Chat, source handoffs, live runs, and control actions.",
             # TASK-347: a live generation must not read "Ready". A run only
             # runs once past the blocker gate, so running takes precedence.
-            status="running" if run_active else ("blocked" if blocker else "ready"),
+            status="running"
+            if run_active
+            else ("blocked" if blocker or blocked_turn or held else "ready"),
             density=workbench_density,
             # TASK-33005.3: the badge is the status row's readiness word, so
             # the strip below keeps its width for the context/cost chip.
-            status_label="" if run_active else readiness_word,
+            # TASK-33620.1: an active emergency stop outranks both: it holds
+            # every new run, so "Ready" would be untrue until it is cleared.
+            # Single-pane widths pass no readiness word, and get the short one.
+            status_label=""
+            if run_active
+            else (
+                (
+                    CONSOLE_EMERGENCY_STOP_HEADER_LABEL
+                    if readiness_word
+                    else CONSOLE_EMERGENCY_STOP_HEADER_SHORT_LABEL
+                )
+                if held
+                else (
+                    "Blocked"
+                    if blocked_turn
+                    else COMPACTION_PAUSE_FORECAST_COPY
+                    if compaction_pause_expected and readiness_word and not blocker
+                    else "Compaction forecast unavailable"
+                    if compaction_forecast_unavailable
+                    and readiness_word
+                    and not blocker
+                    else readiness_word
+                )
+            ),
         ),
         modes=modes,
         actions=actions,

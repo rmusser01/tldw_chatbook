@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│   a  │ Library notes · Ready · Next: Create a note or add from files.                                 │  o                                                   │
+│   v  │ Notes (132)                                                                                    │  t                                                   │
+│      │ These notes live in the Library's own database — for notes that live in a folder on disk,      │  e                                                   │
+│      │ switch to Folder files. To copy or keep a folder synced, choose Add from files.                │  s                                                   │
+│      │                                                                                                │                                                      │
+│      │ Filter                                                                                         │                                                      │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│      │ ▊ Filter notes… (Enter)                                                                      ▎ │                                                      │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│      │                                                                                                │                                                      │
+│      │    New     Sort: Newest     Select                                                             │                                                      │
+│      │    Add from files…     Export     Manage sync folders                                          │                                                      │
+│ ---> │ Folders & placement                                                                            │                                                      │
+│      │    New folder     Add to folder     ○ Move note     ○ Remove placement                         │                                                      │
+│      │                                                                                                │                                                      │
+│      │                                                                                                │                                                      │
+│      │  ▸ Agent_Lessons                                                                               │                                                      │
+│      │  ▸ Journal                                                                                     │<---                                                  │
+│      │  ▸ Meetings                                                                                    │                                                      │
+│      │  ▸ Projects                                                                                    │                                                      │
+│      │  ▸ Recipes                                                                                     │                                                      │
+│      │  ▸ Research                                                                                    │                                                      │
+│ ---> │  ▸ Study                                                                                       │                                                      │
+│      │  ▾ VSync  ⇄ Sync managed                                                                       │                                                      │
+│      │    quotes · 2m                                                                                 │                                                      │
+│      │    ideas · 4m                                                                                  │                                                      │
+│      │    travel lisbon · 4m                                                                          │                                                      │
+│      │    meeting 2026-09-30 · 4m                                                                     │                                                      │
+│      │    books to read · 4m                                                                          │                                                      │
+│      │    shopping · 4m                                                                               │                                                      │
+│      │    README.txt · 4m                                                                             │                                                      │
+│      │    recipe pancakes · 4m                                                                        │                                                      │
+│      │    passwords-hint · 4m                                                                         │                                                      │
+│      │    work todo · 4m                                                                              │                                                      │
+│      │  ▾ Unfiled                                                                                     │                                                      │
+│      └────────────────────────────────────────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc focus rail | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

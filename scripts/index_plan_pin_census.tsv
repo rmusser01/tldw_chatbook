@@ -12,8 +12,16 @@
 # measurements in its docstring where a textbook index was simply never
 # chosen because no media DB has ever run ANALYZE.
 
+# ADR-241: bounded project-index eligible directory frontier without ANALYZE.
+directories_eligible	plan-pinned	Tests/DB/test_workspace_project_index_db.py::test_scan_unit_atomic_receipts_replay_and_indexed_attempt_frontier
+
 # ADR-138: existing workflow history index, bounded history read.
 workflow_revisions_history	plan-pinned	Tests/DB/test_workflows_authoring_storage.py::test_history_page_uses_workflow_revisions_history_without_statistics
+
+# ADR-223/224: embedding eviction and timestamp/keyset browse paths without ANALYZE.
+idx_embedding_cache_created	plan-pinned	Tests/RAG/test_embedding_content_hash_cache.py::TestRAGIndexingDBEmbeddingCache::test_eviction_query_uses_created_index_with_canonical_timestamps
+idx_conv_char_lm	plan-pinned	Tests/ChaChaNotesDB/test_sargable_timestamps.py::TestExplainQueryPlans::test_conversation_first_page_all_scope_uses_char_composite
+idx_character_cards_visible_name	plan-pinned	Tests/ChaChaNotesDB/test_sargable_timestamps.py::TestExplainQueryPlans::test_character_browse_page_uses_visibility_name_index
 
 # ADR-098 completed-pair reconciliation locators (schema 72).
 idx_console_dispatch_checkpoints_user_message	plan-pinned	Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py
@@ -131,6 +139,9 @@ idx_documentversions_merge_parent_uuid	pre-convention	plan never captured withou
 idx_documentversions_prev_version	pre-convention	plan never captured without stats
 idx_documentversions_uuid	pre-convention	plan never captured without stats
 idx_eval_results_run	pre-convention	plan never captured without stats
+# task-34399: get_run_results pages WHERE run_id = ? ORDER BY created_at ASC;
+# the plan must SEARCH eval_results on this index with no re-sort B-tree.
+idx_eval_results_run_created	plan-pinned	Tests/DB/test_eval_results_run_created_index_plan.py::test_run_results_page_uses_the_index_without_stats
 idx_eval_run_metrics_run	pre-convention	plan never captured without stats
 idx_eval_runs_group	pre-convention	plan never captured without stats
 idx_eval_runs_model	pre-convention	plan never captured without stats
@@ -189,10 +200,10 @@ idx_messages_feedback	pre-convention	plan never captured without stats
 idx_messages_role	pre-convention	plan never captured without stats
 idx_messages_selected_variant	pre-convention	plan never captured without stats
 idx_messages_variant_of	pre-convention	plan never captured without stats
-idx_messages_variants_by_parent	pre-convention	plan never captured without stats
+idx_messages_variants_by_parent	plan-pinned	Tests/DB/test_message_subtree_delete_bounds.py (TASK-33628.11)
 idx_mindmap_nodes_mindmap_id	pre-convention	plan never captured without stats
 idx_msg_gen_meta_message	pre-convention	plan never captured without stats
-idx_msgs_conv_ts	pre-convention	plan never captured without stats
+idx_msgs_conv_ts	plan-pinned	Tests/DB/test_message_root_rows_page.py (TASK-33628.7)
 idx_msgs_conversation	pre-convention	plan never captured without stats
 idx_msgs_parent	pre-convention	plan never captured without stats
 idx_msgs_ranking	pre-convention	plan never captured without stats
@@ -209,14 +220,11 @@ idx_notes_organization_heads_note_subject	plan-pinned	Tests/DB/test_chachanotes_
 idx_notes_organization_intents_note_subject_latest	plan-pinned	Tests/DB/test_chachanotes_note_organization_receipts_migration.py
 idx_notes_organization_intents_pending	plan-pinned	Tests/DB/test_chachanotes_notes_organization_migration.py
 idx_notes_file_path	pre-convention	plan never captured without stats
-idx_notes_file_path_on_disk	pre-convention	plan never captured without stats
 idx_notes_file_path_unique	pre-convention	plan never captured without stats
-idx_notes_is_externally_synced	pre-convention	plan never captured without stats
 idx_notes_is_synced	pre-convention	plan never captured without stats
 idx_notes_last_modified	pre-convention	plan never captured without stats
 idx_notes_sync_excluded	pre-convention	plan never captured without stats
 idx_notes_sync_root	pre-convention	plan never captured without stats
-idx_notes_sync_root_folder	pre-convention	plan never captured without stats
 idx_persona_visual_assets_version_key	pre-convention	plan never captured without stats
 idx_persona_visual_bindings_persona_active	pre-convention	plan never captured without stats
 idx_probe_annotations_group	pre-convention	plan never captured without stats
@@ -255,6 +263,9 @@ idx_subscription_stats_date	pre-convention	plan never captured without stats
 idx_subscriptions_folder	pre-convention	plan never captured without stats
 idx_subscriptions_last_checked	pre-convention	plan never captured without stats
 idx_subscriptions_priority_active	pre-convention	plan never captured without stats
+# task-34399: the OPML-dedupe exact-source lookups (WHERE source = ?) ran
+# inside BEGIN IMMEDIATE; the plan must SEARCH on this index, never SCAN.
+idx_subscriptions_source	plan-pinned	Tests/DB/test_subscriptions_source_index_plan.py::test_exact_source_lookup_does_not_scan_subscriptions
 idx_subscriptions_tags	pre-convention	plan never captured without stats
 idx_sync_conflicts_note	pre-convention	plan never captured without stats
 idx_sync_conflicts_resolution	pre-convention	plan never captured without stats
@@ -309,6 +320,7 @@ uq_keywords_sync_id	plan-pinned	Tests/DB/test_chachanotes_notes_organization_mig
 uq_local_watchlist_runs_active_source	pre-convention	branch index predates TASK-21593; partial UNIQUE claim invariant, not a read optimization
 uq_canvas_documents_id_conversation	pre-convention	composite UNIQUE foreign-key target for conversation-owned hints; correctness enforcer, not a read optimization (ADR-121)
 uq_canvas_revisions_id_canvas	pre-convention	composite UNIQUE foreign-key target for same-canvas parent ownership; correctness enforcer, not a read optimization (ADR-121)
+uq_canvas_revisions_single_root	pre-convention	NEW ADR-239 partial UNIQUE root correctness enforcer; not a read optimization or historical plan claim
 uq_note_folder_memberships_active_owner	pre-convention	plan never captured without stats
 uq_note_folders_active_normalized_path	pre-convention	plan never captured without stats
 uq_note_folders_sync_id	plan-pinned	Tests/DB/test_chachanotes_notes_organization_migration.py
@@ -328,6 +340,29 @@ idx_note_links_target	plan-pinned	Tests/Notes/test_note_backlink_query.py::test_
 idx_collkw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
 idx_convkw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
 idx_notekw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
+idx_dream_track_runs_item	plan-pinned	Tests/Dreams/test_dreams_db_track.py (list_recent_track_runs + consecutive_track_dispositions ordering; tldw_chatbook/DB/Dreams_DB.py)
+idx_dream_tracked_status	plan-pinned	Tests/Dreams/test_dreams_db_track.py (list_tracked_items status filter + count_active_tracked; tldw_chatbook/DB/Dreams_DB.py)
+idx_dream_tracked_origin_story	plan-pinned	Tests/Dreams/test_dreams_db_track.py (find_tracked_by_story active-only lookup; per-story badge read; tldw_chatbook/DB/Dreams_DB.py)
+idx_guardian_alerts_rule_ts	pre-convention	guardian local stack (ADR-204) shipped without a captured plan
+idx_guardian_alerts_session_ts	pre-convention	guardian local stack (ADR-204) shipped without a captured plan
+idx_guardian_alerts_topic_ts	pre-convention	guardian local stack (ADR-204) shipped without a captured plan
 
 # Native foreign-key conversation cleanup searches body-free Stop receipts.
-idx_hook_continuation_receipts_conversation	plan-pinned	Tests/DB/test_chachanotes_v74_hook_continuation_receipts_migration.py::test_conversation_cascade_uses_receipt_index_without_statistics
+idx_hook_continuation_receipts_conversation	plan-pinned	Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py::test_conversation_cascade_uses_receipt_index_without_statistics
+
+# ADR-199: real FIFO report loading and exact progress-claim abort cleanup.
+idx_fleet_progress_conversation_sequence	plan-pinned	Tests/Agents/test_durable_fleet_messages.py::test_saved_reopen_preserves_fifo_and_revokes_old_capabilities
+idx_automatic_progress_claims_attempt	plan-pinned	Tests/DB/test_automatic_work_budget.py::test_automatic_work_indexes_serve_real_queries_without_statistics
+idx_automatic_chains_allowance_root	plan-pinned	Tests/DB/test_automatic_work_budget.py
+idx_automatic_chat_start_conversation_active	plan-pinned	Tests/DB/test_automatic_work_budget.py
+idx_conversations_archived_browse_order	plan-pinned	Tests/ChaChaNotesDB/test_conversations_browse_index.py
+idx_conversations_last_modified	plan-pinned	Tests/ChaChaNotesDB/test_conversations_browse_index.py
+
+# PR2921: retained historical catalog index, no new current-runtime CREATE.
+idx_dream_feedback_story	plan-pinned	Tests/Dreams/test_schema_lineage.py::test_historical_feedback_index_retains_statistics_free_plan
+idx_machine_followup_receipts_conversation	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_response_rule_assessments_source	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_response_rule_drafts_scope	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+
+# ADR-166: current local archive episode inventory without ANALYZE.
+idx_conversations_archive_chronology	plan-pinned	Tests/DB/test_archive_chronology.py::test_archive_chronology_index_orders_mixed_inventory_without_temp_sort

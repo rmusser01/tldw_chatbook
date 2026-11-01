@@ -23,6 +23,7 @@ from tldw_chatbook.Utils.input_validation import (
 from .vllm_connection import VllmConnectionSnapshot
 from .vllm_profiles import (
     VllmProfileDocumentV1,
+    VllmProfileValidationError,
     default_vllm_profile,
 )
 from .vllm_setup import (
@@ -36,6 +37,52 @@ from .vllm_setup import (
     changed_launch_field_labels,
     semantic_fingerprint,
 )
+
+
+def _classify_vllm_profile_validation(
+    error: VllmProfileValidationError,
+) -> tuple[str, str]:
+    """Map private profile validation text to bounded adjacent UI recovery."""
+
+    message = str(error)
+    if "profile names must be unique" in message:
+        return "name", "duplicate_name"
+    field_rules = (
+        ("python_environment", "python_environment", "invalid_python_environment"),
+        ("model_value", "model_value", "invalid_model_value"),
+        ("model_source", "model_source", "invalid_model_source"),
+        ("bind_address", "bind_address", "invalid_bind_address"),
+        (
+            "tensor_parallel_size",
+            "tensor_parallel_size",
+            "invalid_tensor_parallel_size",
+        ),
+        (
+            "maximum_model_length",
+            "maximum_model_length",
+            "invalid_maximum_model_length",
+        ),
+        (
+            "gpu_memory_utilization",
+            "gpu_memory_utilization",
+            "invalid_gpu_memory_utilization",
+        ),
+        ("trust_remote_code", "trust_remote_code", "invalid_trust_remote_code"),
+        ("dtype", "dtype", "invalid_dtype"),
+        ("port", "port", "invalid_port"),
+        ("name", "name", "invalid_name"),
+    )
+    for marker, field, classification in field_rules:
+        if marker in message:
+            return field, classification
+    if "only local launch drafts" in message:
+        return "mode", "local_profiles_only"
+    if "profile store is capped" in message:
+        return "profile", "profile_cap"
+    if "profile is unavailable" in message:
+        return "profile", "profile_unavailable"
+    return "profile", "profile_invalid"
+
 
 _PREFLIGHT_HELP_TARGETS = {
     "python_environment": "vllm-python-environment-help",

@@ -142,9 +142,7 @@ async def test_slot_pool_grows_with_content_and_is_capped_at_max() -> None:
         assert all(slot.display for slot in slots)
         last = MAX_VISIBLE_SOURCE_ROWS - 1
         assert f"Source big {last}" in str(
-            source_list.query_one(
-                f"#research-source-row-title-{last}", Static
-            ).render()
+            source_list.query_one(f"#research-source-row-title-{last}", Static).render()
         )
 
 
@@ -178,9 +176,7 @@ async def test_page_swaps_at_max_recycle_without_mount_churn() -> None:
         textual_widget_module.Widget.__init__ = counting_init
         try:
             for swap in range(5):
-                source_list.sync_page(
-                    _page(f"swap{swap}", MAX_VISIBLE_SOURCE_ROWS)
-                )
+                source_list.sync_page(_page(f"swap{swap}", MAX_VISIBLE_SOURCE_ROWS))
                 receipts.sync_operations(
                     _operations(f"swap{swap}", MAX_VISIBLE_SOURCE_RECEIPTS),
                     incomplete=False,
@@ -193,9 +189,7 @@ async def test_page_swaps_at_max_recycle_without_mount_churn() -> None:
         slots_after = list(source_list.query(_ResearchSourceRowSlot))
         receipt_slots_after = list(receipts.query(_ResearchSourceReceiptSlot))
         # Identity-stable: the same slot objects, still mounted, same order.
-        assert [id(slot) for slot in slots_after] == [
-            id(slot) for slot in slots_before
-        ]
+        assert [id(slot) for slot in slots_after] == [id(slot) for slot in slots_before]
         assert [id(slot) for slot in receipt_slots_after] == [
             id(slot) for slot in receipt_slots_before
         ]
@@ -204,9 +198,7 @@ async def test_page_swaps_at_max_recycle_without_mount_churn() -> None:
             source_list.query_one("#research-source-row-title-0", Static).render()
         )
         assert "operation-swap4-0" in str(
-            receipts.query_one(
-                "#research-source-receipt-owner-0", Static
-            ).render()
+            receipts.query_one("#research-source-receipt-owner-0", Static).render()
         )
 
 
@@ -285,9 +277,7 @@ async def test_dom_order_matches_slot_index_order_across_growth_steps() -> None:
         source_list.sync_page(_page("step2", MAX_VISIBLE_SOURCE_ROWS))
         await pilot.pause()
 
-        indexes = [
-            slot.index for slot in source_list.query(_ResearchSourceRowSlot)
-        ]
+        indexes = [slot.index for slot in source_list.query(_ResearchSourceRowSlot)]
         assert indexes == list(range(MAX_VISIBLE_SOURCE_ROWS))
         titles = [
             str(

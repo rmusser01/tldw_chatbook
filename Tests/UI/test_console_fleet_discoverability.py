@@ -195,8 +195,7 @@ async def test_console_f1_help_is_scrollable_and_reachable_at_realistic_sizes(
         # so it is on-screen and compositor-visible before any scrolling,
         # regardless of how tall the scrollable content is.
         assert (
-            close_button.region.y + close_button.region.height
-            <= pilot.app.size.height
+            close_button.region.y + close_button.region.height <= pilot.app.size.height
         )
         at_rest = _compositor_text(pilot.app.export_screenshot(simplify=True))
         assert "Close" in at_rest
@@ -240,9 +239,7 @@ async def test_console_f1_help_is_scrollable_and_reachable_at_realistic_sizes(
         scroll.scroll_end(animate=False)
         await pilot.pause()
         await pilot.pause()
-        after_scroll_end = _compositor_text(
-            pilot.app.export_screenshot(simplify=True)
-        )
+        after_scroll_end = _compositor_text(pilot.app.export_screenshot(simplify=True))
         assert "Alt+W" in after_scroll_end
         assert "switch workspace" in after_scroll_end
         assert "Alt+1..9" in after_scroll_end
@@ -317,9 +314,7 @@ async def test_fleet_coachmark_does_not_reappear_for_a_third_tab_after_dismiss()
         session_a_id = store.active_session_id
 
         console.query_one("#console-new-chat-tab", Button).press()
-        session_b_id = await _wait_for_active_session_change(
-            store, pilot, session_a_id
-        )
+        session_b_id = await _wait_for_active_session_change(store, pilot, session_a_id)
         await pilot.pause()
         console.query_one("#console-fleet-coachmark-dismiss", Button).press()
         await pilot.pause()

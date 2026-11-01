@@ -228,8 +228,14 @@ async def test_ingest_and_ignore_never_dispatch_a_write_for_an_id_less_entity():
         await pilot.pause(0.2)
         screen = host.screen_stack[-1]
 
-        no_id_entity = {"entity_kind": "watchlist_item", "item_id": 999, "status": "new"}
-        assert "id" not in no_id_entity, "the fixture must actually lack the key under test"
+        no_id_entity = {
+            "entity_kind": "watchlist_item",
+            "item_id": 999,
+            "status": "new",
+        }
+        assert "id" not in no_id_entity, (
+            "the fixture must actually lack the key under test"
+        )
 
         calls: list[tuple[object, str]] = []
         real_update_item_status = screen._update_item_status

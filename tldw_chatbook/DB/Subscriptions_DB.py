@@ -31,7 +31,19 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, List, Dict, Any, Literal, Mapping, Optional, Sequence, TYPE_CHECKING, Union
+from typing import (
+    Iterable,
+    Iterator,
+    List,
+    Dict,
+    Any,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
+    Union,
+)
 from urllib.parse import urlparse, urlunparse
 from urllib.parse import urlsplit, urlunsplit
 
@@ -73,7 +85,7 @@ if TYPE_CHECKING:
     )
 
 
-_CURRENT_SCHEMA_VERSION = 2
+_CURRENT_SCHEMA_VERSION = 3
 _AGENT_NAME_ORDER_PREFIX_CHARS = 96
 
 INTERRUPTED_RUN_ERROR = "Interrupted: the application stopped before this run finished."
@@ -645,8 +657,10 @@ class SubscriptionsDB(BaseDB):
         _core_access(self)
         if self._read_only:
             conn = connect_private_sqlite(
-                "db.subscriptions.agent_read", self.db_path_str,
-                read_only=True, must_exist=True,
+                "db.subscriptions.agent_read",
+                self.db_path_str,
+                read_only=True,
+                must_exist=True,
             )
         else:
             conn = super()._get_connection()
@@ -654,7 +668,9 @@ class SubscriptionsDB(BaseDB):
             _register_core_connection(self, conn)
             _core_access(self)
             conn.row_factory = sqlite3.Row
-            conn.create_function("unicode_casefold", 1, _sqlite_unicode_casefold, deterministic=True)
+            conn.create_function(
+                "unicode_casefold", 1, _sqlite_unicode_casefold, deterministic=True
+            )
             conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
             if self._read_only:
@@ -749,33 +765,29 @@ class SubscriptionsDB(BaseDB):
                 "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'schema_version'"
             ).fetchone()
             if has_version_table:
-                versions = [int(row[0]) for row in conn.execute("SELECT version FROM schema_version")]
+                versions = [
+                    int(row[0])
+                    for row in conn.execute("SELECT version FROM schema_version")
+                ]
                 # Every version this build can open: the current one and the one
                 # it knows how to migrate from. Anything else -- a FUTURE version
                 # above all -- must reach the refusal below with the database
                 # untouched: normalizing it away would delete a newer build's
                 # marker and then run v2 assumptions over schema and data this
                 # build has never seen (Qodo #4).
-                recognized = set(versions) <= {1, _CURRENT_SCHEMA_VERSION}
-                if recognized and _CURRENT_SCHEMA_VERSION in versions:
-                    # The current version is present, possibly beside stale rows
-                    # left by an abnormal exit (the fresh-create path's
-                    # `INSERT OR IGNORE` and the migration path's `DELETE` +
-                    # insert can disagree about what "the" row is -- task-32343).
-                    # Normalize rather than refuse to open.
-                    if len(versions) > 1:
-                        with self.transaction() as tx_conn:
-                            tx_conn.execute(
-                                "DELETE FROM schema_version WHERE version != ?",
-                                (_CURRENT_SCHEMA_VERSION,),
-                            )
-                elif versions == [1]:
-                    self._migrate_from_v1_to_v2()
-                else:
+                recognized = bool(versions) and set(versions) <= {1, 2, 3}
+                if not recognized:
                     raise SubscriptionError(
                         f"Unsupported subscriptions schema version {versions} in "
                         f"{self.db_path_str}; this build supports {_CURRENT_SCHEMA_VERSION}"
                     )
+                if max(versions) == 1:
+                    self._migrate_from_v1_to_v2()
+                if max(versions) < 3:
+                    self._migrate_from_v2_to_v3()
+                elif len(versions) > 1:
+                    with self.transaction() as tx_conn:
+                        tx_conn.execute("DELETE FROM schema_version WHERE version != 3")
 
             with self.transaction() as conn:
                 conn.executescript("""
@@ -785,7 +797,7 @@ class SubscriptionsDB(BaseDB):
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY NOT NULL
             );
-            INSERT OR IGNORE INTO schema_version (version) VALUES (2);
+            INSERT OR IGNORE INTO schema_version (version) VALUES (3);
             
             -- Unified subscription table with enhanced features
             CREATE TABLE IF NOT EXISTS subscriptions (
@@ -1019,6 +1031,10 @@ class SubscriptionsDB(BaseDB):
             CREATE INDEX IF NOT EXISTS idx_subscriptions_tags ON subscriptions(tags);
             CREATE INDEX IF NOT EXISTS idx_subscriptions_folder ON subscriptions(folder);
             CREATE INDEX IF NOT EXISTS idx_subscriptions_last_checked ON subscriptions(last_checked);
+            -- task-34399: the exact-source lookups (OPML dedupe inside BEGIN
+            -- IMMEDIATE: _find_exact_source_id, get_subscription_id_by_source,
+            -- resolve_collection_candidates) otherwise full-scan subscriptions.
+            CREATE INDEX IF NOT EXISTS idx_subscriptions_source ON subscriptions(source);
             CREATE INDEX IF NOT EXISTS idx_subscription_items_status_created ON subscription_items(subscription_id, status, created_at);
             CREATE INDEX IF NOT EXISTS idx_subscription_items_canonical_url ON subscription_items(canonical_url);
             CREATE INDEX IF NOT EXISTS idx_url_snapshots_lookup ON url_snapshots(subscription_id, url, created_at);
@@ -1131,8 +1147,21 @@ class SubscriptionsDB(BaseDB):
             conn.execute("DELETE FROM schema_version")
             conn.execute(
                 "INSERT INTO schema_version (version) VALUES (?)",
-                (_CURRENT_SCHEMA_VERSION,),
+                (2,),
             )
+
+    def _migrate_from_v2_to_v3(self):
+        """Persist conservative URL lineage before any restored source is fetched."""
+        with self.transaction(immediate=True) as conn:
+            migration = Path(__file__).with_name("migrations") / "subscriptions_v2_to_v3_url_provenance.sql"
+            pending = ""
+            for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
+                pending += line
+                if sqlite3.complete_statement(pending):
+                    conn.execute(pending)
+                    pending = ""
+            if pending.strip():
+                raise SubscriptionError("incomplete_provenance_migration")
 
     def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
@@ -1148,14 +1177,17 @@ class SubscriptionsDB(BaseDB):
 
             # Add columns to subscription_items
             items_cols = {
-                row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(subscription_items)")
             }
             if "queued_for_briefing" not in items_cols:
                 cursor.execute(
                     "ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0"
                 )
             if "run_id" not in items_cols:
-                cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
+                cursor.execute(
+                    "ALTER TABLE subscription_items ADD COLUMN run_id INTEGER"
+                )
             if "alert_matches" not in items_cols:
                 cursor.execute(
                     "ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT"
@@ -1163,7 +1195,8 @@ class SubscriptionsDB(BaseDB):
 
             # Add columns to subscription_filters
             filters_cols = {
-                row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(subscription_filters)")
             }
             if "priority" not in filters_cols:
                 cursor.execute(
@@ -1365,7 +1398,8 @@ class SubscriptionsDB(BaseDB):
             # same probe: an explicit INSERT/UPDATE naming it raises), so there
             # is no data-migration step for a crash to catch mid-way at all.
             items_xcols = {
-                row[1] for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")
+                row[1]
+                for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")
             }
             if "effective_date" not in items_xcols:
                 cursor.execute(
@@ -1645,10 +1679,13 @@ class SubscriptionsDB(BaseDB):
             # this method. Only the column needs checking, for databases created
             # before batch_id existed.
             run_cols = {
-                row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")
             }
             if "batch_id" not in run_cols:
-                cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
+                cursor.execute(
+                    "ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT"
+                )
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_local_watchlist_runs_batch "
                 "ON local_watchlist_runs(batch_id)"
@@ -1761,7 +1798,11 @@ class SubscriptionsDB(BaseDB):
         """
         if chunk_size < 1:
             raise ValueError(f"chunk_size must be >= 1, got {chunk_size!r}")
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): one write-lock-reserving unit per
+        # chunk -- the task-21100 policy applied to this backfill's own
+        # chunk transaction (cost unchanged: the driver previously relied
+        # on python-sqlite3's implicit DEFERRED begin at the first INSERT).
+        with self.transaction(immediate=True) as conn:
             rows = conn.execute(
                 """
                 SELECT id, title, content, author
@@ -2043,9 +2084,11 @@ class SubscriptionsDB(BaseDB):
             transaction rather than starting its own.
 
         Raises:
-            Exception: Whatever the body raises, re-raised unchanged after the
-                OUTERMOST block rolls back. An inner block does not roll back;
-                the exception propagates so the outermost can.
+            BaseException: Whatever the body raises (including
+                KeyboardInterrupt/SystemExit/GeneratorExit), re-raised
+                unchanged after the OUTERMOST block rolls back. An inner
+                block does not roll back; the exception propagates so the
+                outermost can.
         """
         conn = self.conn
         if not hasattr(self._local, "transaction_depth"):
@@ -2067,7 +2110,11 @@ class SubscriptionsDB(BaseDB):
                 conn.execute("BEGIN IMMEDIATE")
             yield conn
             conn.commit()
-        except Exception:
+        # BaseException, not Exception: KeyboardInterrupt/SystemExit/
+        # GeneratorExit must also roll back, or the thread-local connection
+        # stays inside the transaction after the depth counter resets and
+        # the next caller commits (or trips over) the abandoned writes.
+        except BaseException:
             conn.rollback()
             raise
         finally:
@@ -2202,9 +2249,7 @@ class SubscriptionsDB(BaseDB):
             ]
 
         tags = [
-            tag.strip()
-            for tag in str(row.get("tags") or "").split(",")
-            if tag.strip()
+            tag.strip() for tag in str(row.get("tags") or "").split(",") if tag.strip()
         ]
         return {
             "id": f"local:subscription:{source_id}",
@@ -2255,6 +2300,16 @@ class SubscriptionsDB(BaseDB):
             ID of the created subscription
         """
         start_time = time.time()
+        options = kwargs.get("processing_options")
+        if isinstance(options, str):
+            try:
+                options = json.loads(options)
+            except ValueError:
+                options = None
+        options = dict(options) if isinstance(options, dict) else {}
+        if options.get("url_provenance") != "user_entered":
+            options["url_provenance"] = "unknown"
+        kwargs["processing_options"] = options
 
         _core_access(self)
         # A cold settings load owns startup/config admission independently.
@@ -2262,10 +2317,14 @@ class SubscriptionsDB(BaseDB):
         # still refuses a pause that arrives after the settings read.
         default_threshold = (
             _default_auto_pause_threshold()
-            if "auto_pause_threshold" not in kwargs else None
+            if "auto_pause_threshold" not in kwargs
+            else None
         )
 
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
 
             # Prepare fields
@@ -2358,13 +2417,59 @@ class SubscriptionsDB(BaseDB):
 
             return subscription_id
 
+    def run_states(
+        self, subscription_ids: Iterable[int], rule_ids: Iterable[int] = ()
+    ) -> tuple[Dict[int, Dict[str, Any]], Dict[int, Dict[str, Any]]]:
+        """The state of some subscriptions and alert rules, in two reads.
+
+        The Dreams start check (TASK-34924) compares what Dreams' records
+        say with the sources and rules a restore may have put back; these
+        are its two reads of this store, by primary key.
+
+        Args:
+            subscription_ids: Subscriptions to read.
+            rule_ids: Local alert rules to read.
+
+        Returns:
+            ``({subscription_id: {"is_active", "is_paused", "source",
+            "processing_options"}}, {rule_id: {"enabled", "updated_at"}})``
+            for the rows that exist; a deleted row is absent.
+        """
+        sources = sorted({int(value) for value in subscription_ids})
+        rules = sorted({int(value) for value in rule_ids})
+        states: Dict[int, Dict[str, Any]] = {}
+        enabled: Dict[int, Dict[str, Any]] = {}
+        if not sources and not rules:
+            return states, enabled  # no connection opened for nothing
+        with self.connection() as conn:
+            if sources:
+                marks = ", ".join("?" for _ in sources)
+                for row in conn.execute(
+                        "SELECT id, is_active, is_paused, source,"
+                        " processing_options FROM subscriptions"
+                        f" WHERE id IN ({marks})", sources):
+                    states[int(row[0])] = {
+                        "is_active": bool(row[1]), "is_paused": bool(row[2]),
+                        "source": row[3], "processing_options": row[4]}
+            if rules:
+                marks = ", ".join("?" for _ in rules)
+                for row in conn.execute(
+                        "SELECT id, enabled, updated_at"
+                        " FROM local_watchlist_alert_rules"
+                        f" WHERE id IN ({marks})", rules):
+                    enabled[int(row[0])] = {
+                        "enabled": bool(row[1]), "updated_at": row[2]}
+        return states, enabled
+
     def get_subscription(self, subscription_id: int) -> Optional[Dict[str, Any]]:
         """Get a subscription by ID."""
         start_time = time.time()
 
         with self.connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM subscriptions WHERE id = ?", (subscription_id,))
+            cursor.execute(
+                "SELECT * FROM subscriptions WHERE id = ?", (subscription_id,)
+            )
             row = cursor.fetchone()
             result = dict(row) if row else None
 
@@ -2396,7 +2501,10 @@ class SubscriptionsDB(BaseDB):
         if not kwargs:
             return False
 
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
 
             # Build update query
@@ -2479,7 +2587,10 @@ class SubscriptionsDB(BaseDB):
         """Delete a subscription and all related data."""
         start_time = time.time()
 
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM subscriptions WHERE id = ?", (subscription_id,))
             success = cursor.rowcount > 0
@@ -2641,7 +2752,10 @@ class SubscriptionsDB(BaseDB):
         """
         start_time = time.time()
 
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
 
             now = datetime.now(timezone.utc).isoformat()
@@ -2858,7 +2972,10 @@ class SubscriptionsDB(BaseDB):
                 today; kept for callers that already know the failure is
                 terminal.
         """
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
             now = datetime.now(timezone.utc).isoformat()
             self._advance_failure_and_maybe_pause(
@@ -2867,7 +2984,10 @@ class SubscriptionsDB(BaseDB):
 
     def reset_subscription_errors(self, subscription_id: int) -> None:
         """Reset error count after successful check."""
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -3448,7 +3568,9 @@ class SubscriptionsDB(BaseDB):
         next_cursor = None
         if has_more and visible_rows:
             last_row = visible_rows[-1]
-            next_cursor = WatchlistItemCursor(last_row["effective_date"], last_row["id"])
+            next_cursor = WatchlistItemCursor(
+                last_row["effective_date"], last_row["id"]
+            )
         return WatchlistItemPage(
             items=tuple(visible_rows),
             has_more=has_more,
@@ -4190,6 +4312,7 @@ class SubscriptionsDB(BaseDB):
             "item_created_at, item_effective_date, source_id, source_name, "
             "source_type, source_url, provenance_version"
         )
+
         def page(
             conn: sqlite3.Connection,
             *,
@@ -4298,9 +4421,7 @@ class SubscriptionsDB(BaseDB):
                 (after_created_at, after_created_at, after_kind, after_kind, after_id)
             )
         briefing_where = (
-            f"WHERE {' AND '.join(briefing_predicates)}"
-            if briefing_predicates
-            else ""
+            f"WHERE {' AND '.join(briefing_predicates)}" if briefing_predicates else ""
         )
         with self.transaction() as conn:
             runs = conn.execute(
@@ -4330,11 +4451,8 @@ class SubscriptionsDB(BaseDB):
                 """,
                 (*briefing_params, limit + 1),
             ).fetchall()
-        combined = [
-            {"kind": "source_check", "row": dict(row)} for row in runs
-        ] + [
-            {"kind": "briefing_generation", "row": dict(row)}
-            for row in briefings
+        combined = [{"kind": "source_check", "row": dict(row)} for row in runs] + [
+            {"kind": "briefing_generation", "row": dict(row)} for row in briefings
         ]
         combined.sort(key=lambda item: int(item["row"]["id"]), reverse=True)
         combined.sort(key=lambda item: item["kind"])
@@ -4637,7 +4755,10 @@ class SubscriptionsDB(BaseDB):
         error: Optional[str] = None,
     ) -> bool:
         """Update item status with error tracking."""
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
 
             updates = ["status = ?"]
@@ -4703,7 +4824,10 @@ class SubscriptionsDB(BaseDB):
             predicates.append(
                 "NOT EXISTS (SELECT 1 FROM watchlist_sources ws WHERE ws.subscription_id = subscription_items.subscription_id)"
             )
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             rows = conn.execute(
                 f"UPDATE subscription_items SET status = 'reviewed' WHERE {' AND '.join(predicates)} RETURNING id",
                 tuple(params),
@@ -4731,7 +4855,10 @@ class SubscriptionsDB(BaseDB):
         # transaction still wraps every chunk, so a mid-batch failure
         # rolls the whole restore back.
         restored = 0
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             for offset in range(0, len(item_ids), self._RESTORE_ITEMS_CHUNK_SIZE):
                 chunk = item_ids[offset : offset + self._RESTORE_ITEMS_CHUNK_SIZE]
                 placeholders = ", ".join("?" for _ in chunk)
@@ -4758,7 +4885,10 @@ class SubscriptionsDB(BaseDB):
             queued: `True` to mark the item queued for the next briefing,
                 `False` to clear the flag.
         """
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             conn.execute(
                 "UPDATE subscription_items SET queued_for_briefing = ? WHERE id = ?",
                 (1 if queued else 0, item_id),
@@ -4778,7 +4908,10 @@ class SubscriptionsDB(BaseDB):
             item_id: `subscription_items.id` to update.
             flagged: `True` to star the item, `False` to unstar it.
         """
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             conn.execute(
                 "UPDATE subscription_items SET is_flagged = ? WHERE id = ?",
                 (1 if flagged else 0, item_id),
@@ -4934,7 +5067,10 @@ class SubscriptionsDB(BaseDB):
         """Guardedly terminalize an active source receipt, releasing its claim."""
         if status in {"queued", "running"}:
             raise ValueError("Terminal run status required")
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             updated = conn.execute(
                 "UPDATE local_watchlist_runs SET status = ?, finished_at = ?, "
                 "stats_json = COALESCE(?, stats_json), error_msg = ?, log_text = ?, "
@@ -4960,7 +5096,10 @@ class SubscriptionsDB(BaseDB):
         self, run_id: int, *, started_at: str
     ) -> Dict[str, Any] | None:
         """Guardedly move one queued receipt to running without releasing it."""
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             updated = conn.execute(
                 "UPDATE local_watchlist_runs SET status = 'running', "
                 "started_at = COALESCE(started_at, ?), updated_at = ? "
@@ -5042,7 +5181,10 @@ class SubscriptionsDB(BaseDB):
         if "updated_at" not in fields:
             assignments.append("updated_at = CURRENT_TIMESTAMP")
         values.append(briefing_id)
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             updated = conn.execute(
                 f"UPDATE briefings SET {', '.join(assignments)} "
                 "WHERE id = ? AND status = 'generating'",
@@ -5068,7 +5210,10 @@ class SubscriptionsDB(BaseDB):
         Returns:
             The new row's `id`.
         """
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.execute(
                 "INSERT INTO briefings (watchlist_id, status) VALUES (?, ?)",
                 (watchlist_id, status),
@@ -5131,7 +5276,10 @@ class SubscriptionsDB(BaseDB):
         # would appear twice in the same SET clause.
         extra = "" if "updated_at" in fields else ", updated_at = CURRENT_TIMESTAMP"
         values.append(briefing_id)
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             conn.execute(
                 f"UPDATE briefings SET {set_clause}{extra} WHERE id = ?",
                 values,
@@ -5151,7 +5299,10 @@ class SubscriptionsDB(BaseDB):
         provenance: Sequence[BriefingProvenanceRow],
     ) -> Dict[str, Any]:
         """Atomically snapshot provenance and publish one completed briefing."""
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             for row in provenance:
                 live_item = conn.execute(
                     "SELECT id FROM subscription_items WHERE id = ?", (row.item_id,)
@@ -5581,7 +5732,10 @@ class SubscriptionsDB(BaseDB):
         Returns:
             The new row's `id`.
         """
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.execute(
                 "INSERT INTO briefing_presets (name, roster_json, style_notes, "
                 "provider, model) VALUES (?, ?, ?, ?, ?)",
@@ -5636,7 +5790,10 @@ class SubscriptionsDB(BaseDB):
         # would appear twice in the same SET clause.
         extra = "" if "updated_at" in fields else ", updated_at = CURRENT_TIMESTAMP"
         values.append(preset_id)
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             conn.execute(
                 f"UPDATE briefing_presets SET {set_clause}{extra} WHERE id = ?",
                 values,
@@ -5699,7 +5856,10 @@ class SubscriptionsDB(BaseDB):
         Returns:
             `True` if a row was deleted, `False` if no row had that id.
         """
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.execute(
                 "DELETE FROM briefing_presets WHERE id = ?", (preset_id,)
             )
@@ -5737,7 +5897,10 @@ class SubscriptionsDB(BaseDB):
         Returns:
             The new row's `id`.
         """
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.execute(
                 "INSERT INTO briefing_scripts (briefing_id, preset_id, preset_name, "
                 "roster_snapshot_json, status) VALUES (?, ?, ?, ?, ?)",
@@ -5791,7 +5954,10 @@ class SubscriptionsDB(BaseDB):
         # would appear twice in the same SET clause.
         extra = "" if "updated_at" in fields else ", updated_at = CURRENT_TIMESTAMP"
         values.append(script_id)
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             conn.execute(
                 f"UPDATE briefing_scripts SET {set_clause}{extra} WHERE id = ?",
                 values,
@@ -5876,7 +6042,10 @@ class SubscriptionsDB(BaseDB):
         Returns:
             The new row's `id`.
         """
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.execute(
                 "INSERT INTO briefing_audio "
                 "(script_id, voice_snapshot_json, status, error) "
@@ -5935,7 +6104,10 @@ class SubscriptionsDB(BaseDB):
         # would appear twice in the same SET clause.
         extra = "" if "updated_at" in fields else ", updated_at = CURRENT_TIMESTAMP"
         values.append(audio_id)
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             conn.execute(
                 f"UPDATE briefing_audio SET {set_clause}{extra} WHERE id = ?",
                 values,
@@ -6155,7 +6327,10 @@ class SubscriptionsDB(BaseDB):
             return
 
         values.append(watchlist_id)
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             if default_preset_id is not _UNSET and default_preset_id is not None:
                 preset = conn.execute(
                     "SELECT 1 FROM briefing_presets WHERE id = ?",
@@ -6266,7 +6441,10 @@ class SubscriptionsDB(BaseDB):
         if not item_ids:
             return 0
 
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
 
             placeholders = ",".join(["?" for _ in item_ids])
@@ -6287,7 +6465,10 @@ class SubscriptionsDB(BaseDB):
         self, subscription_id: int, date: str, stats: Dict[str, Any]
     ) -> None:
         """Record daily statistics."""
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
 
             # Insert or update stats for the day
@@ -6413,7 +6594,10 @@ class SubscriptionsDB(BaseDB):
         action_params: Optional[Dict] = None,
     ) -> int:
         """Add smart filter rule."""
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -6475,7 +6659,9 @@ class SubscriptionsDB(BaseDB):
                 filter_dict = dict(row)
                 filter_dict["conditions"] = json.loads(filter_dict["conditions"])
                 if filter_dict["action_params"]:
-                    filter_dict["action_params"] = json.loads(filter_dict["action_params"])
+                    filter_dict["action_params"] = json.loads(
+                        filter_dict["action_params"]
+                    )
                 filters.append(filter_dict)
 
             return filters
@@ -6484,7 +6670,10 @@ class SubscriptionsDB(BaseDB):
         self, name: str, config: Dict[str, Any], category: Optional[str] = None
     ) -> int:
         """Save subscription template."""
-        with self.transaction() as conn:
+        # IMMEDIATE (task-21233): reserves the write lock up front
+        # (task-21100 policy; this writer can overlap the chunked
+        # items_fts backfill's per-chunk commits).
+        with self.transaction(immediate=True) as conn:
             cursor = conn.cursor()
 
             cursor.execute(
@@ -6769,13 +6958,14 @@ class SubscriptionsDB(BaseDB):
         finalizer has nothing left to do and must not act on a connection this
         thread may since have reopened.
         """
-        connection = getattr(self._local, "conn", None)
+        local = self._local
+        connection = getattr(local, "conn", None)
         if connection is None:
             return
+        cleanup = getattr(local, "connection_cleanup", None)
         with _core_closing(self, connection) as allowed:
             if not allowed:
                 return
-            connection = getattr(self._local, "conn", None)
             if connection:
                 try:
                     if not self.is_memory_db and not connection.in_transaction:
@@ -6789,13 +6979,15 @@ class SubscriptionsDB(BaseDB):
                             f"{self.db_path_str}: {exc}"
                         )
                 connection.close()
-                cleanup = getattr(self._local, "connection_cleanup", None)
                 if cleanup is not None:
                     cleanup.detach()
-                    self._local.connection_cleanup = None
-                self._local.conn = None
+                    if getattr(local, "connection_cleanup", None) is cleanup:
+                        local.connection_cleanup = None
+                if getattr(local, "conn", None) is connection:
+                    local.conn = None
             with self._connections_lock:
-                self._connections.pop(threading.get_ident(), None)
-
+                ident = threading.get_ident()
+                if self._connections.get(ident) is connection:
+                    self._connections.pop(ident)
 
     # End of Subscriptions_DB.py

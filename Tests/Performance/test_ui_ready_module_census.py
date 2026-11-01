@@ -159,12 +159,27 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: against it at ~50 sites, so deferring it is lazy-import surgery in hot
 #: Console code for a microsecond-scale import -- the 1022 -> 1023 reasoning.
 #: The SSH locator module WAS deferred off this path (registry_service).
-MAX_TLDW_MODULES_AT_UI_READY = 1033
+# TASK-22504 (2026-10-11): `console_voice_input` (2,260 LOC) was deferred
+# off the Chat first-paint leg (dictation/hands_free/realtime lazy-load it
+# on first voice use; the composer's STATE_* constants and the app's
+# speech-stack diagnostic load past ready). Measured 1033 -> 1031: the
+# module itself plus `Utils.local_stt_providers`. Its heavier closure
+# (STT coordinator/registry/routing, Backup_Recovery, config) was already
+# resident through other boot legs, honestly attributed in the task notes.
+MAX_TLDW_MODULES_AT_UI_READY = 1031
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
 #: trajectory family TASK-22213 took off the Chat leg.
 ABSENT_AT_READY_PREFIXES = (
+    "tldw_chatbook.Chat.archive_recovery",
+    # TASK-21239: the Kanban interop trio is a zero-consumer subsystem
+    # built lazily on first property access; its import chain (including
+    # the 76-model `tldw_api.kanban_schemas`, TASK-21107) must stay off the
+    # whole first-paint window, not just the import phase.
+    "tldw_chatbook.Kanban_Interop",
+    # Resend execution is first-use work; pure row eligibility is already resident.
+    "tldw_chatbook.Chat.console_turn_resend",
     "tldw_chatbook.Chunking",
     # Personal Context is user/setup/settings/send work. Its encrypted store,
     # interview coordinator, and agent tools must not delay the first frame.
@@ -175,6 +190,25 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Schema composition is first-send work; its frozen data type is already resident.
+    "tldw_chatbook.Agents.first_request_schemas",
+    # Local transcription failure attribution is first-failure work.
+    "tldw_chatbook.STT.failure_diagnostics",
+    # Empty Console has neither persisted markers nor assistant token rates.
+    "tldw_chatbook.Chat.console_change_review_read",
+    "tldw_chatbook.Chat.console_token_rate",
+    "tldw_chatbook.Agents.archive_recovery_tool_provider",
+    "tldw_chatbook.Chat.conversation_archive_actions",
+    "tldw_chatbook.DB.conversation_archive_queries",
+    "tldw_chatbook.UI.Console_Modules.archive_recovery",
+    "tldw_chatbook.Widgets.Chat_Widgets.archive_recovery_cards",
+    # TASK-22504: the 2,260-LOC voice-input module is first-voice-use work;
+    # the three Console_Modules seams and the composer's STATE_* constants
+    # lazy-load it, and the app's speech-stack diagnostic waits for ready.
+    "tldw_chatbook.Chat.console_voice_input",
+    # Compaction failure copy is needed only when a compaction fails. Shed
+    # this interaction-only edge to cover the chat-start resident (ADR-097).
+    "tldw_chatbook.Chat.console_compaction_failure",
     # Resend eligibility and dispatch load with transcript rows or an action,
     # never while mounting an empty Console (TASK-33803, ADR-097).
     "tldw_chatbook.Chat.console_turn_resend",
@@ -182,6 +216,11 @@ ABSENT_AT_READY_MODULES = (
     # Delete action, an armed or shown confirmation, or the Inspector's
     # pending-delete copy), never before first paint.
     "tldw_chatbook.Chat.console_message_delete",
+    # TASK-33628.5: its plan/write/apply phases, imported by the first delete;
+    # the registry app exit waits on, and the store teardown (app exit only).
+    "tldw_chatbook.Chat.console_subtree_delete",
+    "tldw_chatbook.Chat.console_durable_writes",
+    "tldw_chatbook.Chat.console_store_teardown",
     "tldw_chatbook.UI.Console_Modules.message_delete",
     "tldw_chatbook.Widgets.Console.console_transcript_delete_confirmation",
     "tldw_chatbook.Widgets.Console.console_message_delete_receipt",
@@ -199,6 +238,9 @@ ABSENT_AT_READY_MODULES = (
     # Parsing imported notes and assigning settings controls are first-use work.
     "tldw_chatbook.Notes.note_import_parsers",
     "tldw_chatbook.Widgets.select_values",
+    # Task24/R107: explicit interaction helpers stay behind first use.
+    "tldw_chatbook.Chat.console_generate_image",
+    "tldw_chatbook.Chat.console_side_chat",
     # TASK-32507: run-hook commands and summaries are lifecycle-event work.
     "tldw_chatbook.Agents.run_hooks",
     # Speculative voice resources are first-voice work, never first paint.
@@ -211,6 +253,25 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Chat.console_voice_trace_gateway",
     "tldw_chatbook.Chat.console_voice_trace_promotion",
     "tldw_chatbook.Widgets.Console.console_voice_preview",
+    # TASK-21247: the notes-sync runtime CONSTRUCTION chain. A zero-profile
+    # boot must neither construct the owner nor import what constructing it
+    # pulls in -- on_mount gates the lazy property read on the same
+    # TASK-21112 start evidence start() uses. Deliberately NOT listed
+    # (measured still resident, 2026-10-11): notes_sync_legacy (imported by
+    # the gate predicate itself) + filesystem it pulls, and
+    # conflicts/models/reconciler (module-level imports of the Library
+    # notes-sync controller, pre-existing boot cost unrelated to
+    # construction).
+    "tldw_chatbook.Notes.notes_sync_authority",
+    "tldw_chatbook.Notes.notes_sync_coordinator",
+    "tldw_chatbook.Notes.notes_sync_executor",
+    "tldw_chatbook.Notes.notes_sync_runtime",
+    "tldw_chatbook.Notes.notes_sync_watcher",
+    # TASK-21107: the 76-pydantic-model kanban schema module rides the
+    # Kanban_Interop prefix above; named separately so a re-eagering that
+    # bypasses the package (a direct `..tldw_api` import elsewhere) still
+    # fails with this module named.
+    "tldw_chatbook.tldw_api.kanban_schemas",
     # PCM wrapping belongs to requested playback, not Console first paint.
     "tldw_chatbook.TTS.pcm_playback",
     # Inspect's Environment implementation is first-open work, not closed-rail boot.
@@ -558,3 +619,80 @@ def test_census_script_embeds_the_unit_tested_helper():
         in _CENSUS_SCRIPT
     )
     compile(_CENSUS_SCRIPT, "<census>", "exec")
+
+
+def test_console_interaction_helpers_load_only_on_first_use(tmp_path):
+    """Cold Console import defers helpers; actual handlers keep canonical owners."""
+    script = r"""
+import Tests.conftest  # private profile/null keyring/network guard before product
+import asyncio
+import sys
+from types import SimpleNamespace
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
+names = ("tldw_chatbook.Chat.console_generate_image", "tldw_chatbook.Chat.console_side_chat")
+assert all(name not in sys.modules for name in names), [n for n in names if n in sys.modules]
+
+class Composer:
+    text = "/generate-image a dragon"
+    def draft_text(self): return self.text
+    def clear_draft(self): self.text = ""
+    def insert_text_as_paste(self, value): self.text += value
+composer = Composer()
+assert ChatScreen._insert_console_style_token_into_composer(
+    SimpleNamespace(query_one=lambda *args: composer), "style_anime")
+from tldw_chatbook.Chat import console_generate_image as owner
+assert composer.text == owner.insert_style_token_into_draft("/generate-image a dragon", "style_anime")
+assert names[1] not in sys.modules
+options = asyncio.run(ConsoleImageController._console_generate_image_llm_context_options(
+    SimpleNamespace(), SimpleNamespace(context_llm_enabled=False, context_llm_turns=3, context_llm_timeout_seconds=2)))
+assert type(options) is owner.LLMContextOptions
+assert not options.enabled
+
+from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Widgets.Console.console_selection_menu import ConsoleSideChatRequested
+pushed = []
+gateway = object()
+selection = ConsoleProviderSelection(provider="openai", explicit_model="test")
+screen = SimpleNamespace(app=SimpleNamespace(push_screen=pushed.append),
+    _ensure_console_provider_gateway=lambda: gateway,
+    _build_console_provider_selection=lambda: selection)
+ChatScreen._console_side_chat_requested(screen, ConsoleSideChatRequested(quote="selected text", mode="ask"))
+from tldw_chatbook.Chat.console_side_chat import ConsoleSideChatService
+assert len(pushed) == 1
+assert type(pushed[0]._service) is ConsoleSideChatService
+assert pushed[0]._service.gateway is gateway
+assert pushed[0]._provider_selection is selection
+assert pushed[0]._auto_send_prompt is None
+print("FIRST_USE_IDENTITY_OK")
+"""
+    profile = tmp_path / "first-use-profile"
+    profile.mkdir(mode=0o700)
+    env = {
+        key: os.environ[key]
+        for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
+        if key in os.environ
+    }
+    env.update(
+        {
+            "HOME": str(profile),
+            "XDG_DATA_HOME": str(profile / "data"),
+            "XDG_CONFIG_HOME": str(profile / "config"),
+            "TLDW_CONFIG_PATH": str(profile / "config.toml"),
+            "TLDW_TEST_MODE": "1",
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "FIRST_USE_IDENTITY_OK" in result.stdout

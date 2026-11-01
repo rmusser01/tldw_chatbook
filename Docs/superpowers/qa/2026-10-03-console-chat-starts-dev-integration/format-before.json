@@ -1,0 +1,237 @@
+{
+  "Tests/Agents/test_agent_chat_create_tools.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "Tests/Chat/test_automatic_work_lineage.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "Tests/Chat/test_chat_create_confirm_card.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "Tests/Chat/test_console_agent_project_instructions.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "Tests/Chat/test_console_chat_create_confirm.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "Tests/Chat/test_console_chat_create_integration.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "Tests/Chat/test_console_chat_fork.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "Tests/Chat/test_console_chat_start.py": {
+    "exists": false,
+    "format_returncode": null,
+    "output": "fatal: path 'Tests/Chat/test_console_chat_start.py' does not exist in 'f0ffcf9e819b577bd38c416f38550969c75fb5a0'\n"
+  },
+  "Tests/Chat/test_console_fleet_wake.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "Tests/Chat/test_message_metadata.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "Tests/DB/test_automatic_chat_starts.py": {
+    "exists": false,
+    "format_returncode": null,
+    "output": "fatal: path 'Tests/DB/test_automatic_chat_starts.py' does not exist in 'f0ffcf9e819b577bd38c416f38550969c75fb5a0'\n"
+  },
+  "Tests/DB/test_automatic_wake_attempts.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "Tests/DB/test_automatic_work_budget.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "Tests/DB/test_automatic_work_deadlines.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "Tests/DB/test_automatic_work_migration.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "Tests/DB/test_chachanotes_console_library_policy_migration.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "Tests/DB/test_chachanotes_v74_agent_chat_starts_migration.py": {
+    "exists": false,
+    "format_returncode": null,
+    "output": "fatal: path 'Tests/DB/test_chachanotes_v74_agent_chat_starts_migration.py' does not exist in 'f0ffcf9e819b577bd38c416f38550969c75fb5a0'\n"
+  },
+  "Tests/UI/test_console_launch_wake.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "Tests/UI/test_console_prompt_queue.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "Tests/UI/test_console_runtime_ownership.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Agents/automatic_work_budget.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "tldw_chatbook/Agents/automatic_work_runtime.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "tldw_chatbook/Agents/tool_catalog.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/chat_persistence_service.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_agent_bridge.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_chat_models.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_chat_start.py": {
+    "exists": false,
+    "format_returncode": null,
+    "output": "fatal: path 'tldw_chatbook/Chat/console_chat_start.py' does not exist in 'f0ffcf9e819b577bd38c416f38550969c75fb5a0'\n"
+  },
+  "tldw_chatbook/Chat/console_chat_store.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_dispatch_checkpoint.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_dispatch_repository.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_fleet_wake.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_prompt_queue_coordinator.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_roleplay_identity.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_runtime.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/console_turn_preparation.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Chat/message_metadata.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/DB/AgentRuns_DB.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/DB/automatic_work.py": {
+    "exists": true,
+    "format_returncode": 0,
+    "output": ""
+  },
+  "tldw_chatbook/UI/Console_Modules/prompt_queue.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/UI/Console_Modules/workspace.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Widgets/Chat_Widgets/chat_create_confirm_card.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Widgets/Console/console_composer_bar.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  },
+  "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py": {
+    "exists": true,
+    "format_returncode": 1,
+    "output": ""
+  }
+}

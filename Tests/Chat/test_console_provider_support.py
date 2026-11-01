@@ -55,10 +55,14 @@ from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
         # except a model with a thinking toggle (TASK-33502).
         ("nvidia", "meta/llama-3.3-70b-instruct", "reasoning_effort", "unsupported"),
         ("nvidia", "qwen/qwen3.5-397b-a17b", "reasoning_effort", "supported"),
-        ("fireworks", "accounts/fireworks/models/qwen3p8", "reasoning_effort", "unsupported"),
+        # Fireworks sends reasoning effort; whether a model honours it varies.
+        ("fireworks", "accounts/fireworks/models/qwen3p8", "reasoning_effort", "unknown"),
         ("together", "moonshotai/Kimi-K3", "reasoning_effort", "unsupported"),
         ("cerebras", "gpt-oss-120b", "reasoning_effort", "unsupported"),
         ("anthropic", "claude-sonnet-5", "thinking_effort", "supported"),
+        ("anthropic", "claude-haiku-5-5", "thinking_effort", "supported"),
+        ("anthropic", "claude-haiku-5-5", "thinking_budget_tokens", "unsupported"),
+        ("anthropic", "claude-haiku-4-5", "thinking_budget_tokens", "unknown"),
         (
             "anthropic",
             "claude-sonnet-5",
@@ -453,7 +457,8 @@ def test_auxiliary_requests_forward_the_same_generation_fields(provider: str) ->
     }
 
 
-def test_anthropic_hides_only_the_fields_its_request_drops() -> None:
+@pytest.mark.parametrize("modern_model", ["claude-sonnet-5", "claude-haiku-5-5"])
+def test_anthropic_hides_only_the_fields_its_request_drops(modern_model: str) -> None:
     """AC#4: Min P, Seed and both penalties are gone; the rest keeps support."""
 
     fields = supported_generation_fields("anthropic", "claude-sonnet-4-5")
@@ -472,7 +477,7 @@ def test_anthropic_hides_only_the_fields_its_request_drops() -> None:
     )
     # The model-gated fixed thinking budget keeps its existing rule.
     assert "thinking_budget_tokens" not in supported_generation_fields(
-        "Anthropic", "claude-sonnet-5"
+        "Anthropic", modern_model
     )
 
 

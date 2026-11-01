@@ -283,3 +283,36 @@ def test_chat_handoff_model_context_uses_answer_citation_prompt_contract() -> No
         "Cite each evidence-supported claim with its bracketed source label" in context
     )
     assert "Content:\nRetrieved content" in context
+
+
+def test_console_evidence_allows_live_file_grounding() -> None:
+    from tldw_chatbook.Chat.answer_citations import (
+        format_console_evidence_for_cited_answer,
+    )
+
+    context = format_console_evidence_for_cited_answer(_bundle(_reference("S1")))
+
+    assert "workspace file evidence" in context
+    assert "[S#] labels only for the supplied Library references" in context
+    assert "Snippet: Expired credential caused the incident." in context
+    assert (
+        "Use only available evidence references below to ground factual claims."
+        not in context
+    )
+
+
+def test_library_evidence_stays_strict() -> None:
+    strict = format_evidence_for_cited_answer(_bundle(_reference("S1")))
+
+    assert (
+        "Use only available evidence references below to ground factual claims."
+        in strict
+    )
+
+
+def test_console_invalid_bundle_has_no_grounding_block() -> None:
+    from tldw_chatbook.Chat.answer_citations import (
+        format_console_evidence_for_cited_answer,
+    )
+
+    assert format_console_evidence_for_cited_answer({}) == ""

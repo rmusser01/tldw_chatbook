@@ -205,20 +205,31 @@ def test_simultaneous_untouched_agent_lessons_seeds_converge_on_server_winner(
 
         winner = transport.push(first)[0]
         assert transport.pull(second) == [{"status": "applied"}]
-        active = second.notes.get_connection().execute(
-            "SELECT sync_id FROM note_folders WHERE name = 'Agent_Lessons' "
-            "AND deleted = 0"
-        ).fetchall()
-        state = second.notes.get_connection().execute(
-            "SELECT folder_sync_id FROM agent_lessons_seed_state WHERE "
-            "profile_id = ? AND dataset_id = ?",
-            (PROFILE, DATASET),
-        ).fetchone()
+        active = (
+            second.notes.get_connection()
+            .execute(
+                "SELECT sync_id FROM note_folders WHERE name = 'Agent_Lessons' "
+                "AND deleted = 0"
+            )
+            .fetchall()
+        )
+        state = (
+            second.notes.get_connection()
+            .execute(
+                "SELECT folder_sync_id FROM agent_lessons_seed_state WHERE "
+                "profile_id = ? AND dataset_id = ?",
+                (PROFILE, DATASET),
+            )
+            .fetchone()
+        )
         assert [row["sync_id"] for row in active] == [winner.object_id]
         assert state["folder_sync_id"] == winner.object_id
-        assert second.notes.get_connection().execute(
-            "SELECT COUNT(*) FROM notes_organization_adoption_reviews"
-        ).fetchone()[0] == 0
+        assert (
+            second.notes.get_connection()
+            .execute("SELECT COUNT(*) FROM notes_organization_adoption_reviews")
+            .fetchone()[0]
+            == 0
+        )
     finally:
         first.close()
         second.close()

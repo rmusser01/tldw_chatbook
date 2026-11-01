@@ -313,18 +313,21 @@ class TestSemanticIndexIsEmpty:
 class TestTrustworthyCollectionCount:
     """Shared trustworthy-count rule for stats displays (task-251)."""
 
-    @pytest.mark.parametrize("stats,expected", [
-        ({"count": 0}, 0),
-        ({"count": 42}, 42),
-        ({"count": 0, "error": "stats failed"}, None),
-        ({"count": None}, None),
-        ({"count": 0.0}, None),
-        ({"count": False}, None),
-        ({"count": "0"}, None),
-        ({"count": -1}, None),
-        ("not-a-mapping", None),
-        (None, None),
-    ])
+    @pytest.mark.parametrize(
+        "stats,expected",
+        [
+            ({"count": 0}, 0),
+            ({"count": 42}, 42),
+            ({"count": 0, "error": "stats failed"}, None),
+            ({"count": None}, None),
+            ({"count": 0.0}, None),
+            ({"count": False}, None),
+            ({"count": "0"}, None),
+            ({"count": -1}, None),
+            ("not-a-mapping", None),
+            (None, None),
+        ],
+    )
     def test_only_genuine_nonnegative_ints_are_trusted(self, stats, expected):
         result = trustworthy_collection_count(stats)
         if expected is None:

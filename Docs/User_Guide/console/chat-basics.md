@@ -23,8 +23,9 @@ task...".
 ![Transcript with a selected assistant message and its action row](../images/console/action-row.svg)
 
 - **Transcript** — the scrolling center pane. Each message shows a role label
-  (User / Assistant / System / Tool) and the message body; replies still in
-  flight carry a status suffix such as "[streaming]".
+  (User / Assistant / System / Tool) and the message body. A reply still in
+  flight says so after its role label: "Generating…" until its first text
+  arrives, then "Streaming…".
 - **Selected message + action row** — clicking a message (or moving to it
   with j/k) selects it and shows a row of action buttons directly beneath
   it, plus a one-line guide that names the row's icon buttons in words —
@@ -75,16 +76,64 @@ of a price.
 ### Recovering an interrupted response
 
 After reopening a conversation, Console may show **Response delivery status is
-unknown on the source device**. This means the previous request needs a recovery
-decision; it does not mean a model is still running. The composer says **Send
-blocked — resolve response recovery first**.
+unknown**. This means the previous request may have reached the provider without
+a known outcome and needs a recovery decision; it does not mean a model is still
+running. The composer says **Send blocked — resolve response recovery first**,
+and the header, run chip and Inspector **Run** line read **Blocked**
+(`Blocked — recovery needed`). A conversation imported from another device says
+**Response delivery status is unknown on the source device** instead, and offers
+no actions here.
 
 Use the recovery controls above the composer. **Retry anyway** may send a
-duplicate request because the previous delivery cannot be confirmed. **Discard**
-keeps your user message and settles the interrupted response without replaying
-the request. A failed recovery leaves the available controls usable so you can
-address the reported problem and try again or discard. Once recovery settles,
-the composer clears this blocker.
+duplicate request because the previous delivery cannot be confirmed. (If the
+request was accepted but never sent, the card reads **Response accepted;
+waiting for dispatch.** and offers **Retry response** instead.) A retry streams
+the reply into the same pending response. Pressing **Retry anyway** or
+**Discard** disables both buttons at once and shows "Retrying…" (or
+"Discarding…") until the outcome arrives. **Discard** keeps your user message
+and settles the interrupted response without replaying the request. A failed
+recovery leaves the available controls usable so you can address the reported
+problem and try again or discard. Once recovery settles, the composer clears
+this blocker. After **Discard**, your user message offers **Resend** to ask
+again without forking, including after you reopen the conversation — see
+[Resend a broken turn](#resend-a-broken-turn).
+
+### When a message doesn't fit the model
+
+If compacting older turns cannot make a message fit the selected model,
+Console refuses it before anything is sent or saved, and the message stays in
+the composer. One system line names the model, what fills its window and the
+setting that changes it, for example "Your message was not sent:
+brand-new-model-x's 4,096-token context window (assumed) is used up by the
+response reservation, Max tokens (4,096), and the safety margin, so compacting
+older turns cannot make room. Lower Max tokens in Chat settings ▸ Model and
+generation (Ctrl+O). This model's context window is assumed, not known; if it
+is larger, set the real value in Settings ▸ Providers & Models (F4)." It says
+"assumed" only when the window really is. Switching to a model with a
+larger window (Alt+M) also works. [When a chat reaches its context
+limit](context-and-rag.md#when-a-chat-reaches-its-context-limit) lists each
+cause and its fix.
+
+A message that was already accepted when it was refused (a queued prompt, for
+example) gets a recovery card above the composer instead: "Not sent — this
+message doesn't fit the selected model. Change a setting above, then Discard
+and Resend the message." **Retry response** stays disabled: it would replay
+the message exactly as it was accepted, with the same model and reply limit,
+so it could only be refused again. Change the model (Alt+M) or the limit,
+press **Discard**, then select your message and press **r** (Resend), which
+sends it with the current settings.
+
+### When a reply fails
+
+A failed reply quotes the provider's own reason, prefixed with its name, and
+says what to do: for example "Provider error from OpenRouter: authentication
+failed. Status: 401. OpenRouter says: “API key expired.” Update the API key in Settings ▸ Providers & Models,
+or run Ctrl+P ▸ Setup: Run setup wizard." A model the provider no longer
+serves (a 404) names **Alt+M: Switch model**. Only the provider's one-line
+message is shown, capped at 200 characters and with anything shaped like a
+key hidden. A provider that stops sending mid-reply reads "no reply for 90 s
+— the provider stopped sending. Retry, or wait longer by raising
+chat_defaults.stream_stall_timeout_seconds in config.toml."
 
 ### Collapsed rail labels
 
@@ -177,6 +226,21 @@ tool, code, and link styling keeps priority over immersive coloring.
 
 - Printable keys go straight into the draft; click anywhere in the draft to
   place the caret; Left/Right and Home/End move it.
+- When the app starts on the Console, you can type as soon as it appears.
+  For up to a couple of seconds after that first frame, the nav bar's Home
+  button still holds focus, but letters typed then land in the draft, in
+  order, and the caret moves there with the first one. Keys still go to an
+  open dialog, to the setup card while it is showing, and to a text field,
+  the transcript or the Terminal when you put focus there yourself.
+- Typing also reaches the draft from a control that has no use for the key:
+  a letter typed on a status-strip segment, a rail or header button or a tab
+  moves focus to the draft and lands there (Space still presses a focused
+  button). A letter typed in an open menu (a message's **More…** menu, the
+  text-selection menu, a conversation or workspace row menu) closes the menu
+  and lands in the draft the same way. While the composer is collapsed,
+  such keys are not typed anywhere. While focus is elsewhere the draft area
+  says **Esc to type**, unless that would push the draft onto another row
+  or the focused Terminal is capturing input (Escape belongs to the terminal).
 - **Enter sends or queues.** During an accepted agent turn, **Send** becomes
   **Queue** and Enter adds the exact text draft after that turn. For a newline
   inside the draft use **Ctrl+J** (works in
@@ -189,6 +253,14 @@ tool, code, and link styling keeps priority over immersive coloring.
   move the caret between wrapped lines. While you type, a dim ghost
   completion of the most recent matching past prompt may appear after the
   caret — press **Right** at the end of the draft to accept it.
+- **The slash-command popup leads with what you use.** Typing `/` opens the
+  completion popup; within whatever you've typed so far, the commands and
+  skills you use most often are offered first (ties stay alphabetical). The
+  counts come only from this app's local prompt history — dispatched
+  commands and `$skill` mentions you've sent before — and never leave the
+  machine. With no history yet the popup keeps its default order, and
+  filtering works exactly as before: ranking reorders the filtered list, it
+  never adds or drops rows.
 - **Ctrl+C** clears the draft while the composer owns the cursor. If you first
   use **Ctrl+A** to select the whole draft, **Ctrl+C** copies it instead.
   **Ctrl+U** also clears the draft; **Ctrl+Z** restores an accidental clear;
@@ -283,15 +355,34 @@ as its block format.
 ### Large pastes
 
 Pasting more than 50 characters (configurable) collapses the paste into a
-single token reading "Pasted Text: N Characters". Press Enter (or click the
-token) once to turn it into "Unfurl?", and again to expand the full text in
-place; clicking elsewhere resets a pending "Unfurl?" back to the collapsed
-token. Whatever the display state, **the full pasted text is always what
-sends** — collapsing is purely visual. While the draft contains a paste
-token, slash-command parsing is skipped and the draft sends as plain text.
-The collapse behavior is set by `collapse_large_pastes` and
-`paste_collapse_threshold` under `[console]` in config.toml, also editable
-in **Settings > Console Behavior**.
+single token reading "Pasted text | N characters | Ctrl+E expand". A text file
+you insert and a large `/prompt` insert become tokens too; a file's token shows
+its name, for example "📄 notes.md · 4 KB | Ctrl+E expand". Nothing collapses
+inside a raw CLI command (see Raw CLI user commands below).
+
+**Enter always sends** the draft, every token in full, wherever the caret is
+and whatever a token is showing: paste then Enter, a question then a paste, a
+question typed in front of a paste, a `/prompt` insert or an inserted file each
+send on one Enter. Enter never expands a token. To expand one from the
+keyboard, press **Ctrl+E**: it puts the full text of the token right before or
+right after the caret in place at once. With no token beside the caret, Ctrl+E
+expands the nearest one, so paste, type a question, Ctrl+E works too. A paste
+that starts or ends with a line break draws that break outside its token;
+Ctrl+E reaches it all the same. **Ctrl+Z** right after an expand puts the
+collapsed token back and keeps everything you typed. Some editors' built-in
+terminals keep Ctrl+E for themselves (VS Code on Windows and Linux opens Quick
+Open with it); there, click the token instead.
+Clicking a token still expands it: the first click asks "Expand pasted text (N
+characters)? Ctrl+E: yes · Esc: no" (a file's question names the file) and puts
+the caret right after that token, and a second click or Ctrl+E puts the full
+text in place. Esc, or moving the caret off the token, answers no and puts the
+collapsed token back. Enter while the question shows sends the draft, the
+token in full. The **Send** button always sends too. Whatever the display
+state, **the full pasted text is always what sends** — collapsing is purely
+visual. While the draft contains a paste token, slash-command parsing is
+skipped and the draft sends as plain text. The collapse behavior is set by
+`collapse_large_pastes` and `paste_collapse_threshold` under `[console]` in
+config.toml, also editable in **Settings > Console Behavior**.
 
 ### Raw CLI user commands — full host authority
 
@@ -307,18 +398,45 @@ It has two separate gates:
    accept the danger confirmation, and save. This writes
    `raw_cli_permitted = true` under `[console]` in `config.toml`; the default is
    `false`.
-2. Press **Arm host access** and accept the second confirmation. Arming exists
-   only in process memory. Every Chatbook launch starts unarmed even when the
-   saved unlock remains on; locking, disarming, or leaving the app cancels
-   active raw commands with bounded best-effort cleanup.
+2. Arm it for this launch: press **Arm raw CLI** there, or choose **Arm…** in
+   the composer (see below), and accept the second confirmation. That
+   confirmation also says that while raw CLI is armed, models get the
+   host-shell tool `shell_exec` when local tools are on. A model must ask
+   before it runs a command: you can run it once, allow shell commands for
+   that Console session, or deny. Arming exists only in process memory. Every Chatbook launch starts
+   unarmed even when the saved unlock remains on; locking, disarming, or
+   leaving the app cancels active raw commands with bounded best-effort
+   cleanup.
 
 To run a command, physically type the exact prefix `! ` (exclamation mark,
 space), then type or paste the command body and send. Pasting the prefix cannot
 select raw mode; this prevents a pasted prompt from silently turning into host
 execution. A physically typed prefix may be followed by pasted command text.
-Start with `\! ` to send an ordinary chat message beginning with literal `! `.
-When raw mode is recognized, the composer turns red and identifies host access
-before you send.
+Text you paste or a file you insert after the prefix is never collapsed into
+a token, so the whole command is on screen before Enter or **Run** starts it.
+The command body has a 16 KiB UTF-8 limit. An insertion that exceeds it is
+refused with a notice; your existing draft is kept and nothing is truncated.
+Start with `\! ` to send an ordinary chat message beginning with literal `! `;
+it is sent without the backslash and leaves the composer like any message.
+When raw mode is recognized, the composer turns red and its status names the
+raw CLI state before you send:
+
+- **RAW CLI · HOST ACCESS**: armed. The primary action reads **Run**.
+- **RAW CLI · NOT ARMED**: unlocked but not armed for this launch. The primary
+  action reads **Arm…**. Enter, **Arm…** and the Workbench's send open the arm
+  confirmation, with **Cancel** focused. Confirming arms raw CLI for this
+  launch and leaves the command in the composer; press Enter (or **Run**) again
+  to run it. Cancelling changes nothing.
+- **RAW CLI · LOCKED**: the saved unlock is off. The primary action reads
+  **Locked**; unlock raw CLI in Settings first.
+
+Enter, **Run** and the Workbench's send all take an armed command out of the
+composer. If Console refuses it (raw CLI locked, for example), the exact draft
+comes back once, however many times you press Enter.
+If you have entered more text while a refusal is pending, both drafts are kept
+together as ordinary chat text. The restored command does not grant raw CLI
+authority to that newer input. To run a reviewed command, start an empty draft,
+physically type `! `, then reinsert the reviewed command body.
 
 Console raw commands use automatic shell selection. The shared executor
 supports **Bash**, **PowerShell**, and **CMD**, invokes them with fixed
@@ -342,22 +460,112 @@ statistics tools.
 
 ### Sending, streaming, and stopping
 
-- Enter sends the draft. The reply row appears immediately with a dim
-  "Generating…" placeholder, then streams in with a "[streaming]" suffix
-  until it completes.
+- Enter, the **Send** button and the Workbench's send all send the draft the
+  same way. Your message appears in the transcript at once,
+  marked **Sending…**, while Console prepares the turn: the header reads
+  **Running**, the tab shows **●**, the status row shows **Run: Sending…** and
+  Send reads **Sending...** (its strip: "Queue opens once this turn is
+  accepted"). The draft stays in the composer until Console takes the turn,
+  then clears; while it stays, the composer keeps its height, so text the
+  strip narrows is cut to its row rather than wrapped. A **Sending…** row
+  keeps its mark until the reply's row (or a notice) appears beneath it, so
+  the two arrive together. If the turn is refused before that, the
+  **Sending…** row disappears and the draft is kept (wrapped to its full
+  height again), or offered back on the shelf as `Not sent: <reason>` with
+  **Restore**.
+  Slash commands, typed `! ` commands, Enter during a run (which queues) and
+  a send behind a **Blocked** turn (which is refused) skip this step.
+- Console stays responsive while it prepares the turn. Enter sends exactly
+  what the composer held when you pressed it; anything you type afterwards
+  stays in the composer for your next message. An Enter on an empty composer
+  sends nothing but a staged image, even if you start typing right after it.
+  Pressing Enter again while the first message is being prepared never sends
+  it twice. A bare second Enter (nothing new typed, or the same image still
+  staged) counts only when the first send asks for one, as "Unknown command …
+  Press Enter again to send as text" does; after a send, a refusal or a hook
+  review it does nothing, so a refusal is not shown twice. If you typed more
+  while the first message was still in the composer, Console says "Not sent:
+  your previous message is still being sent." and keeps your text there to
+  send in a moment; when that message is in another tab, the notice names the
+  tab. A new message typed after the first one has left the composer, then
+  Enter, is handled once the first send finishes, the way any Enter is at
+  that moment (during a reply it queues), unless something else (a spoken
+  "Console, send.") has sent that text by then: nothing you typed is sent
+  twice. Clearing the composer after you press Enter does not cancel that
+  Enter: it still sends what it captured. If you change the message itself
+  while it is being sent (not just add to its end), it is still sent as it
+  was when you pressed Enter; when the composer still holds it, Console keeps
+  your changed text and says "Your message was sent, but the composer still
+  shows it …", so you do not send it again by accident. If you cleared or
+  replaced it, nothing is said: what is there is your next message. An Enter
+  is only ever sent in the tab where you pressed it. If
+  you switch tabs, the turn is still sent from its own tab (or, in the first
+  instant after Enter, stopped with a notice and its draft kept there), and
+  the sent text leaves that tab's draft; anything you typed after it stays.
+  Switching away and straight back while it is being sent does not bring it
+  back either.
+- The reply row then appears. Until its first text arrives, the label after
+  "Assistant" reads "Generating…" with the time waited, for example
+  "Generating… · 4s". After 15 seconds with no text it reads "Waiting for a
+  reply · 15s"; a local model adds "model may be loading". Replies stream by
+  default for every provider, cloud and local: the text appears as it
+  arrives, the label reads "Streaming…", and the label goes away when the
+  reply completes.
+- **Turning streaming off.** Streaming is on unless you turn it off. The
+  shipped `[chat_defaults] streaming = true` applies to every provider and
+  overrides any `streaming` value under `[api_settings.<provider>]`. A
+  `config.toml` written by an older version streams too, unless its
+  `[chat_defaults]` sets `streaming` or only the older `enable_streaming`
+  key. Turn it off for:
+  - **one chat**: in Chat settings set **Streaming** to **Off** and press
+    **Apply to this chat**;
+  - **one model**: set **Streaming** to **Off** and press **Save as model
+    default**, in Chat settings or in Switch model (**Alt+M**), or set it
+    in **Settings ▸ Providers & Models ▸ Model defaults**;
+  - **one provider**: add `streaming = false` under
+    `[console.provider_defaults.<provider>]` in `config.toml` (for example
+    `[console.provider_defaults.custom]`);
+  - **every chat**: set **Streaming** to **Off** in **Settings ▸ Console
+    Behavior** and save.
+
+  The model and provider settings take priority over the setting for every
+  chat. A chat you reopen keeps the Streaming value saved with it, so one
+  saved with Streaming Off (for example a cloud chat started before streaming
+  became the default) stays Off until you set **Streaming** to **On** in Chat
+  settings and press **Apply to this chat**. A self-hosted server (llama.cpp,
+  vLLM, Ollama and the other local providers) or a Custom OpenAI-compatible
+  slot (Custom, Custom 2) that refuses a streamed request with a client
+  error such as HTTP 400, or answers one with no text, is asked once more
+  without streaming on its own, and the reply appears all at once. Each such
+  reply costs one refused request first, so turn streaming off for that
+  model or provider to skip it. Both Custom slots count as self-hosted here,
+  even one pointed at a paid hosted service: that service gets the second
+  request too, and after a stream that arrived empty both requests may be
+  billed. A cloud provider is not asked again, and neither, for now, is a
+  named custom endpoint of the OpenAI-compatible family (one made with
+  **New endpoint…**): when it refuses a streamed request before any text,
+  the System row quotes the provider's own error message where it sent one
+  and adds how to turn streaming off. OpenAI does
+  not do this yet: a streamed request it refuses is sent up to three times
+  and fails with a general provider error ("provider returned HTTP 502")
+  that does not quote OpenAI's message. If that happens, turn streaming off
+  for that chat or model and send again to see OpenAI's own error. With
+  streaming off, the reply appears all at once when the provider finishes,
+  and the label shows the time waited until then.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's
   run.") appears at the right end of the composer row, after Dictate and
   Redirect; the collapsed composer strip gets its own Stop. The keyboard
   routes stop the same run: **Ctrl+G** (advertised in the footer only while a
   run is active), **Tab** to Stop then **Enter** or **Space**, `/stop`, or
-  **Ctrl+P → Console: Stop this tab's run**. Stopping keeps the partial
-  reply, tagged "[stopped]", and adds a System row: "Response stopped by
-  user."
+  **Ctrl+P → Console: Stop this tab's run**. Stopping keeps the text that
+  has already streamed in, marks the reply "Stopped", and adds a System row:
+  "Response stopped by user." A reply that is not streaming has no text
+  until it completes, so stopping it keeps none.
 - **Redirect** shows beside Stop only where the row has room for it whole;
   at narrower widths use `/redirect <correction>` or **Ctrl+P → Console:
   Redirect this tab's run** (both take the correction from the composer the
   same way the button does).
-- A reply that errors out is tagged "[failed]", and its action row is a
+- A reply that errors out is marked "Failed", and its action row is a
   single **Try** button that retries it.
 - If you scroll up during or after a run, a pill docks at the bottom of the
   transcript so you can jump back: "▼ streaming below — jump to latest",
@@ -432,7 +640,8 @@ top of the control deck (above the status row) shows `Queue N/10`, whether it is
 of the next prompt, and **Manage** plus a state-specific action such as
 **Pause**, **Resume**, **Retry**, **Resume next**, **Review**, or **Try again**.
 
-- **Preparing...** means the turn has not crossed the accepted boundary yet;
+- **Sending...** and then **Preparing...** mean the turn has not crossed the
+  accepted boundary yet;
   the draft stays in the composer and the strip beside the button reads
   "Queue opens once this turn is accepted". Once the turn is accepted, an
   empty draft reads "Type to queue". A regenerate or continue never opens the
@@ -449,7 +658,8 @@ of the next prompt, and **Manage** plus a state-specific action such as
 - Recognized slash commands still run immediately and are never queued.
 - Queued prompts are sent one after another, in order, for as long as each
   turn succeeds. **Pause** takes effect once the turn in progress finishes;
-  it never cuts that turn short.
+  it never cuts that turn short. Until then the shelf reads `Pausing` and the
+  button reads **Keep draining**, which cancels the pause.
 - **Manage** opens a modal pinned to this tab. Prompts are numbered from 1
   and the queue's state is written at the top, for example
   `Queue 2/10 · Draining`. You can edit, move, remove, or clear waiting prompts; a prompt
@@ -471,10 +681,25 @@ of the next prompt, and **Manage** plus a state-specific action such as
   **Resume next**, **Try again**, and **Retry** (or **Retry failed** and
   **Retry stopped** in Manage) send nothing: a notice says the conversation
   has changed, and the shelf switches to `Context changed` with **Review**.
-  A pending response's **Retry response**, **Retry anyway**, or **Discard**
-  still settles that response, but the prompts waiting behind it stop at the
-  same review. **Use current** then sends the next waiting prompt; it does
-  not re-run the failed or stopped turn.
+  A pending response's **Retry response**, **Retry anyway**, and **Discard**
+  sit on its recovery card above the composer, never on the shelf. Any of
+  them still settles that response, but the prompts waiting behind it stop
+  at the same review. **Use current** then sends the next waiting prompt; it
+  does not re-run the failed or stopped turn.
+- A message Console refused to send stays on the shelf with the reason, for
+  example `Not sent: Last send is blocked; resolve it first`. **Restore**
+  puts it back in the composer; **Discard** drops it.
+- If a message cannot be saved to the conversation before it goes out,
+  Console sends nothing. A card in the transcript reads **Send could not be
+  saved; your message was not sent** ("Impact: The provider was not
+  contacted."), the header reads **Blocked** and the status row
+  **Run: Blocked — send not saved**; the message is also on the shelf as
+  `Not sent: Couldn't save the prepared turn…`. **Retry send** tries to save
+  and send it again; **Cancel send** or the shelf's **Restore** puts it back in
+  the composer, and **Discard** drops it. Any of them ends the failed send, so
+  the next message in that conversation goes through. The failure is never
+  shown as provider setup, and the chat is not counted as a live run when you
+  quit.
 
 Queue text is process-memory-only until its turn is accepted. It is not saved
 to conversation history, prompt history, screen snapshots, or the database.
@@ -488,19 +713,47 @@ the focused action, and **Esc** clears the selection. Four shortcuts act
 on the selected message directly: **c** Copy, **e** Edit, **f** Fork, and
 **r** Regenerate — or, on a row that shows **Retry** or **Resend** in that
 slot, that action.
-While a reply is still generating, every action is disabled with the
-tooltip "Wait for response to finish before using message actions."
+
+While the transcript has keyboard focus its single letters are commands,
+and the footer says so: it leads with "Transcript keys · Esc to type",
+then **j/k** select, **Y** trace and **U** review reports. **Y** opens Trace
+and **U** opens retained review reports for the chat only from the transcript;
+from anywhere else a typed **y** or **u** is just a letter, in
+your draft (or in the text field or Terminal that has focus). **Esc** clears
+one thing at a time — an open message menu or text selection first, then
+the selected message — and once there
+is nothing left to clear it returns you to the composer, so the next thing
+you type lands in your draft.
+While a reply is still generating, the regular row actions are disabled with
+the tooltip "Wait for response to finish before using message actions."
+**More… ▸ Copy all** remains available for its current response trace.
+
+In a long chat Console draws only the part of the transcript around what you
+are reading, and loads more as you scroll. When a message is selected for
+you that is far outside that part, or has more than a few screens of
+messages coming back below it — the first message an **Undo** restores,
+say — the transcript jumps to it: the message is drawn at the top, with
+the messages after it below, and the rest load as you scroll (**End** goes
+to the newest). When such a jump, or an **Undo** of fewer messages, brings
+back more than a screen of messages below the selected one, they are drawn
+a screen at a time: the scrollbar's thumb shrinks as each screen arrives,
+and Console keeps responding meanwhile. If you were following the newest
+message, the view returns to it once they are all drawn, unless you
+scrolled in the meantime.
 
 The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
 text-response **< / >** controls when applicable, **Fork**,
 **Regenerate/Retry/Resend** when applicable, **Continue** when applicable, and
-**More…**. The menu contains **Save as…**, **Helpful**, **Not helpful**,
+**More…**. The menu contains **Copy all** for assistant responses,
+**Save as…**, **Helpful**, **Not helpful**,
 **Delete**, and — on a finished assistant reply — the three note actions
 **Capture as note**, **Summarize up to** (here as note) and **Save
 transcript** (up to here as note), when those actions are available; the
 diagnostic **View original** also appears there when an original attempt can
-be shown safely. The menu is 24 cells wide and cuts a long label at about
-fifteen characters, which is why the last two read short.
+be shown safely. Long labels stay on one row and end with an ellipsis when
+needed, so their identifying words remain visible even while focused.
+In a short terminal the menu scrolls; **↑/↓** bring the focused action into
+view, including after resizing.
 
 | Action | What it does | Where it appears |
 |---|---|---|
@@ -522,14 +775,14 @@ fifteen characters, which is why the last two read short.
 
 ### Send your first message
 1. Open Console (Ctrl+2) and type into "Ask, command, or paste task...".
-2. Press **Enter**. The reply streams in with "[streaming]"; when it
-   finishes, the suffix disappears. The session title and tab label take
+2. Press **Enter**. The reply streams in under a "Streaming…" label; when
+   it finishes, the label disappears. The session title and tab label take
    the text of your first message.
 
 ### Stop a reply mid-stream
-1. While the reply shows "[streaming]", click **Stop** (the right end of the
+1. While the reply shows "Streaming…", click **Stop** (the right end of the
    composer row) or press **Ctrl+G**.
-2. The partial reply stays, tagged "[stopped]", and a System row reads
+2. The partial reply stays, marked "Stopped", and a System row reads
    "Response stopped by user." Send again to keep the conversation going.
    If you stopped it before any text arrived, select your message and use
    **Resend** to ask again.
@@ -538,8 +791,16 @@ fifteen characters, which is why the last two read short.
 1. Click the reply, or move to it with j/k.
 2. Press **c** or click **Copy** — toast: "Copied message to clipboard."
 
+For the complete retained response trace, choose **More… ▸ Copy all**. It
+includes thinking, tool arguments and full retained results even when those
+sections are collapsed. A text selection also offers **Copy all messages** for
+the entire current chat's active branch and **Select full message** for the
+whole current body. **Create Note** and **Create+Go to Note** save the full
+selection without the prompt quote limit. See [text selection & feedback](text-selection-and-feedback.md)
+for the scopes, note actions, and terminal clipboard limits.
+
 ### Retry a failed reply
-1. Select the reply tagged "[failed]".
+1. Select the reply marked "Failed".
 2. Click **Retry** or press **r** — the reply is retried in place.
 
 ### Resend a broken turn
@@ -602,14 +863,52 @@ itself, and offers Undo afterwards.
    messages under it change before you confirm (a new turn arrives under it,
    say), Delete asks again with the new count rather than removing more than
    you saw.
-3. A **Deleted N messages** receipt opens. **Undo** (focused) puts exactly
-   those messages back where they were and returns the conversation to the
-   branch you were on; they stay restored after you close and reopen the
-   chat. **Done** or **Esc** keeps the delete, and from then on it can't be
-   undone in the app. If Undo can't finish (the database is busy, say), the
-   messages stay deleted and the receipt opens again so you can retry; if
-   something changed them after the delete, Undo is refused and the delete
-   stands.
+3. A receipt opens straight away. While the delete is being saved it reads
+   **Deleting N messages…**; with thousands of messages that can take a
+   moment, and the rest of Chatbook keeps responding while it saves
+   (redrawing the transcript afterwards can still pause it briefly).
+   A save can't be stopped once it starts, so until it finishes **Esc**
+   doesn't close the receipt and **Ctrl+Q** says the delete is still being
+   saved (press it again to be asked whether to quit anyway). **Quit
+   anyway** still gives the save a few seconds to finish before Chatbook
+   closes; either way the delete is saved in full or not at all, never
+   halfway.
+4. Once saved, the receipt reads **Deleted N messages**. **Undo** (focused)
+   puts exactly those messages back where they were and returns the
+   conversation to the branch you were on; while it works the receipt reads
+   **Restoring N messages…** (**Esc** and **Ctrl+Q** wait for it as they do
+   for the delete), and it closes when they are back, with the first
+   restored message selected. They stay
+   restored after you close and reopen the chat. **Done** or **Esc** keeps
+   the delete, and from then on it can't be undone in the app. If Undo can't
+   finish (the database is busy, say), the messages stay deleted and the
+   receipt offers Undo again so you can retry; if something changed them
+   after the delete, Undo is refused and the delete stands.
+
+**Conversations saved before branching.** Older versions of Chatbook saved
+each message on its own, without a link to the message before it. Console
+reads such a conversation as one chain in saved order, so "later messages"
+means every message saved after the one you delete. Rows the transcript never
+shows, such as a tool result or an empty message saved between them, are
+deleted with them, so they leave search and exports too. They are not part of
+the count, and Undo puts them back with the rest.
+
+A new first message in such a conversation stays its own branch beside the
+old one: an **Edit & resend** of the first message, or a prompt sent after
+rewinding to before it, typed or spoken in a voice exchange. Console marks it
+when it is saved. Two cases carry no mark, and Console reads them as more
+later messages of the old chain:
+
+- a first-message edit or before-first prompt saved by an older version of
+  Chatbook, which had no mark to write;
+- a copy that arrived without the mark: the mark is kept only in this
+  device's saved copy, so sync from another device, export and import, or a
+  rewrite by an older version drops it.
+
+Such a branch shows after the older messages, and Delete on one of those
+older messages counts it and removes it too. Undo puts it back. Nothing in
+the saved conversation tells it apart from an older message whose reply came
+later through **Resend**, so Console does not guess.
 
 ### Capture a reply into a note
 1. Select the assistant reply, click **More…**, then choose
@@ -647,7 +946,8 @@ Composer:
 
 | Key | Action |
 |---|---|
-| Enter | Send now, queue after an accepted turn, or advance a focused paste token |
+| Enter | Send now or queue after an accepted turn, whatever the caret is on; it never expands a collapsed token (see Large pastes) |
+| Ctrl+E | Expand the collapsed paste, file or `/prompt` token beside the caret, or the nearest one |
 | Ctrl+J | Insert a newline (works in any terminal) |
 | Shift+Enter | Insert a newline (where the terminal delivers it) |
 | Ctrl+A | Select the whole draft |
@@ -669,7 +969,9 @@ Transcript:
 | Enter | Show the selected message's actions; activate a focused action |
 | Tab / Shift+Tab | Cycle through the action row |
 | c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message (r runs Retry or Resend when the row shows it instead) |
-| Esc | Clear the selection |
+| y | Open Trace for this chat |
+| u | Open retained review reports for this chat |
+| Esc | Clear the selection; with nothing selected, return to the composer |
 
 ## Related settings & docs
 
@@ -716,10 +1018,15 @@ prior exports, or backups. See [Context, RAG, and exchange capture](context-and-
 - **Regenerate goes deeper than this page** — ♻ never overwrites the old
   answer; it creates a variant you can step back to with < >. Details and
   known limitations live in [branching & rewind](branching-and-rewind.md).
-- **A "[failed]" reply's message reports one status, the real one.** The
+- **A "Failed" reply's message reports one status, the real one.** The
   detail text names the HTTP status the provider actually returned — it no
   longer pairs that with a mismatched generic status elsewhere in the same
   message.
+- **A request Chatbook stops before sending says so.** If a turn has nothing
+  the provider can accept (for example, an Anthropic or Cohere request with no
+  user message), the failure says the app could not build the request, that
+  it was not sent, and which field failed the check (`messages`). It does not
+  report a provider HTTP error, because the provider never saw the request.
 
 —
 

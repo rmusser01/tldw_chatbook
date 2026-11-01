@@ -281,19 +281,13 @@ async def test_footer_hides_send_hint_while_setup_locks_composer(monkeypatch):
 
     async with host.run_test(size=(120, 40)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for(
-            lambda: console._console_setup_modal_blocking(), pilot
-        )
+        await _wait_for(lambda: console._console_setup_modal_blocking(), pilot)
         footer = console.query_one(AppFooterStatus)
-        await _wait_for(
-            lambda: "continue setup" in footer.shortcut_text, pilot
-        )
+        await _wait_for(lambda: "continue setup" in footer.shortcut_text, pilot)
         assert "Enter send" not in footer.shortcut_text
 
         # Block lifts (or never applied): the normal send hint returns.
-        monkeypatch.setattr(
-            console, "_console_setup_modal_blocking", lambda: False
-        )
+        monkeypatch.setattr(console, "_console_setup_modal_blocking", lambda: False)
         console._register_console_footer_shortcuts()
         await pilot.pause()
         assert "continue setup" not in footer.shortcut_text

@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from Tests.Agents.conftest import join_fleet_children, pin_agent_settings
 from Tests.Agents.test_agent_service import FleetChat, fence
 from Tests.Agents.test_fleet_runtime import RunIdProbeProvider
@@ -160,7 +161,10 @@ class PausedChildToolProvider:
         return ToolResult(ok=True, content="released")
 
 
-def test_captured_context_reaches_raw_child_and_tool_threads(db):
+@private_profile_test
+def test_captured_context_reaches_raw_child_and_tool_threads(
+    request: pytest.FixtureRequest, db
+):
     context = accepted_context(db)
     seen = []
     tool = ContextProbe()
@@ -190,7 +194,10 @@ def test_captured_context_reaches_raw_child_and_tool_threads(db):
         join_fleet_children(service)
 
 
-def test_prepared_context_cannot_start_service_or_tool_worker(db):
+@private_profile_test
+def test_prepared_context_cannot_start_service_or_tool_worker(
+    request: pytest.FixtureRequest, db
+):
     context = accepted_context(db, accepted=False)
     service, chat = make_service(db, context, ["should not run"])
     with pytest.raises(AutomaticWorkRefused, match="acceptance_required"):
@@ -205,7 +212,10 @@ def test_prepared_context_cannot_start_service_or_tool_worker(db):
     assert dispatched == []
 
 
-def test_three_generations_share_six_actual_launches_and_manual_is_uncharged(db):
+@private_profile_test
+def test_three_generations_share_six_actual_launches_and_manual_is_uncharged(
+    request: pytest.FixtureRequest, db
+):
     context = accepted_context(db)
     chain_id = context.chain_id
     for generation in range(3):
@@ -255,8 +265,9 @@ def test_three_generations_share_six_actual_launches_and_manual_is_uncharged(db)
 
 
 @pytest.mark.parametrize("failure_site", ["construct", "start", "review"])
+@private_profile_test
 def test_proven_prelaunch_failure_refunds_shared_reservation(
-    db, monkeypatch, failure_site
+    request: pytest.FixtureRequest, db, monkeypatch, failure_site
 ):
     context = accepted_context(db, child_launches=1)
     failed = []
@@ -320,7 +331,10 @@ def test_proven_prelaunch_failure_refunds_shared_reservation(
         join_fleet_children(service)
 
 
-def test_inline_model_setup_failure_keeps_accepted_launch_charge(db, monkeypatch):
+@private_profile_test
+def test_inline_model_setup_failure_keeps_accepted_launch_charge(
+    request: pytest.FixtureRequest, db, monkeypatch
+):
     pin_agent_settings(monkeypatch, max_live_subagents=1)
     context = accepted_context(db, child_launches=1)
 
@@ -347,7 +361,10 @@ def test_inline_model_setup_failure_keeps_accepted_launch_charge(db, monkeypatch
     assert snapshot.pause_reason == "child_launch_budget"
 
 
-def test_finished_child_continuation_cannot_bypass_shared_launch_limit(db):
+@private_profile_test
+def test_finished_child_continuation_cannot_bypass_shared_launch_limit(
+    request: pytest.FixtureRequest, db
+):
     context = accepted_context(db, child_launches=1)
     fleet = FleetCoordinator(max_live=3, clock=time.monotonic)
 
@@ -381,7 +398,10 @@ def test_finished_child_continuation_cannot_bypass_shared_launch_limit(db):
         join_fleet_children(service)
 
 
-def test_survivor_still_honors_its_chain_deadline_after_parent_returns(db, monkeypatch):
+@private_profile_test
+def test_survivor_still_honors_its_chain_deadline_after_parent_returns(
+    request: pytest.FixtureRequest, db, monkeypatch
+):
     wall, monotonic = [1000.0], [10.0]
     monkeypatch.setattr(db.automatic_work, "_wall_clock", lambda: wall[0])
     monkeypatch.setattr(db.automatic_work, "_monotonic_clock", lambda: monotonic[0])
@@ -422,8 +442,9 @@ def test_survivor_still_honors_its_chain_deadline_after_parent_returns(db, monke
 
 
 @pytest.mark.parametrize("stop_mode", ["elapsed_deadline", "explicit_cancel"])
+@private_profile_test
 def test_real_paused_capped_child_releases_logically_before_physical_worker(
-    db, monkeypatch, stop_mode
+    request: pytest.FixtureRequest, db, monkeypatch, stop_mode
 ):
     import tldw_chatbook.Agents.agent_service as service_module
 
@@ -512,8 +533,9 @@ def test_real_paused_capped_child_releases_logically_before_physical_worker(
     assert capacity.snapshot().executions == ()
 
 
+@private_profile_test
 def test_real_human_wait_pauses_only_capped_child_then_wall_boundary_stops_it(
-    db, monkeypatch
+    request: pytest.FixtureRequest, db, monkeypatch
 ):
     import tldw_chatbook.Agents.agent_service as service_module
 
@@ -603,8 +625,9 @@ def test_real_human_wait_pauses_only_capped_child_then_wall_boundary_stops_it(
     assert capacity.snapshot().executions == ()
 
 
+@private_profile_test
 def test_deep_search_is_refused_in_automatic_tool_thread_but_manual_is_unchanged(
-    db, tmp_path
+    request: pytest.FixtureRequest, db, tmp_path
 ):
     context = accepted_context(db)
     calls = []
@@ -637,7 +660,10 @@ def test_deep_search_is_refused_in_automatic_tool_thread_but_manual_is_unchanged
     assert calls == [{}]
 
 
-def test_automatic_origin_without_accepted_context_cannot_dispatch(db):
+@private_profile_test
+def test_automatic_origin_without_accepted_context_cannot_dispatch(
+    request: pytest.FixtureRequest, db
+):
     capacity = RuntimeCapacity()
     service, chat = make_service(
         db,
@@ -653,8 +679,9 @@ def test_automatic_origin_without_accepted_context_cannot_dispatch(db):
     assert capacity.snapshot().executions == ()
 
 
+@private_profile_test
 def test_tool_wait_keeps_automatic_deadline_while_human_clock_is_paused(
-    db, monkeypatch
+    request: pytest.FixtureRequest, db, monkeypatch
 ):
     import tldw_chatbook.Agents.agent_service as service_module
 
@@ -701,7 +728,10 @@ def test_tool_wait_keeps_automatic_deadline_while_human_clock_is_paused(
     assert capacity.snapshot().executions == ()
 
 
-def test_local_tool_rechecks_chain_after_human_approval(db, tmp_path):
+@private_profile_test
+def test_local_tool_rechecks_chain_after_human_approval(
+    request: pytest.FixtureRequest, db, tmp_path
+):
     context = accepted_context(db)
     calls = []
 
@@ -730,7 +760,10 @@ def test_local_tool_rechecks_chain_after_human_approval(db, tmp_path):
     assert calls == []
 
 
-def test_captured_automatic_authority_keeps_automatic_capacity_origin(db):
+@private_profile_test
+def test_captured_automatic_authority_keeps_automatic_capacity_origin(
+    request: pytest.FixtureRequest, db
+):
     context = accepted_context(db)
     capacity = RuntimeCapacity()
     seen = []
@@ -744,7 +777,10 @@ def test_captured_automatic_authority_keeps_automatic_capacity_origin(db):
     assert db.list_runs("conversation")[0]["work_chain_id"] == context.chain_id
 
 
-def test_refused_automatic_run_releases_injected_execution_owner(db):
+@private_profile_test
+def test_refused_automatic_run_releases_injected_execution_owner(
+    request: pytest.FixtureRequest, db
+):
     capacity = RuntimeCapacity()
     owner = capacity.begin_execution(
         origin=WorkOrigin.AUTOMATIC, conversation_id="conversation"
@@ -771,7 +807,10 @@ def test_refused_automatic_run_releases_injected_execution_owner(db):
 
 
 @pytest.mark.parametrize("capacity_kind", ["runtime", "fleet"])
-def test_occupied_child_capacity_refunds_chain_before_retry(db, capacity_kind):
+@private_profile_test
+def test_occupied_child_capacity_refunds_chain_before_retry(
+    request: pytest.FixtureRequest, db, capacity_kind
+):
     context = accepted_context(db, child_launches=1)
     capacity = RuntimeCapacity(max_child_executions=1, reserved_manual_children=0)
     fleet = FleetCoordinator(max_live=1, clock=time.monotonic)
@@ -823,7 +862,10 @@ def test_occupied_child_capacity_refunds_chain_before_retry(db, capacity_kind):
         join_fleet_children(service)
 
 
-def test_concurrent_service_launches_cannot_double_spend_chain_remainder(db):
+@private_profile_test
+def test_concurrent_service_launches_cannot_double_spend_chain_remainder(
+    request: pytest.FixtureRequest, db
+):
     context = accepted_context(db, child_launches=1)
     ready = threading.Barrier(2)
     errors = []

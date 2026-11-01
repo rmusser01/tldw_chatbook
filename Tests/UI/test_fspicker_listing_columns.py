@@ -102,9 +102,7 @@ async def test_dialog_shows_column_headers(tmp_path):
         header = host.screen.query_one("#file-dialog-column-headers")
         rendered = _render_static(header)
         for column in ("Name", "Size", "Modified"):
-            assert column in rendered, (
-                f"column header {column!r} missing: {rendered!r}"
-            )
+            assert column in rendered, f"column header {column!r} missing: {rendered!r}"
 
 
 def _render_static(widget) -> str:

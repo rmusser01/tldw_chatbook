@@ -3,8 +3,9 @@
 Single source of truth for three consumers:
 
 * the coverage contract test (``test_modal_wide_tier.py``) -- every anchor
-  below must have an ``App.-wide-viewport`` rule in the built bundle, and
-  every rule in that block must have an entry here;
+  below must have an ``App.-wide-viewport`` rule in the built bundle (the
+  hook review's lives in its Settings screen sheet), and every rule in that
+  block must have an entry here;
 * the spot geometry tests -- the ``WIDE_TIER_CAPS`` tier representatives;
 * the QA visual harness -- mount every surface, capture narrow/wide SVGs.
 
@@ -19,9 +20,9 @@ deliberately absent, as is the Console session switcher: its
 ``_sync_modal_max_height`` sets ``width`` imperatively via
 ``set_styles`` (inline styles outrank every CSS rule), so it joins the
 inventory's imperative-geometry exclusions. The Conversation settings
-modal keeps its own shipped ``196`` cap and Python toggle (PR #2670);
-the Alt+M Switch model popover is a fixed 140-column width token
-(TASK-33004.4 replaced its PR #2672 tier).
+modal and the Alt+M Switch model popover are fixed width tokens (176 and
+140 columns: TASK-33006.1 retired the modal's PR #2670 196-column tier,
+TASK-33004.4 the popover's PR #2672 tier).
 
 Each entry: ``(anchor, cap, owner_module)``.
 
@@ -33,7 +34,7 @@ Each entry: ``(anchor, cap, owner_module)``.
   ``.dialog-container``) from leaking to other widgets.
 * ``cap`` is the ``max-width`` (columns) at the wide tier; base tier
   geometry is untouched. Ladder: base width >= 104 -> 170, 84-96 -> 150,
-  <= 80 -> 120 (settings modal's 196 stays as shipped).
+  <= 80 -> 120.
 * ``owner_module`` is the tldw_chatbook module whose Python (or owning
   sheet) defines the anchor, so the contract can fail loudly when an id
   is renamed without updating the tier.
@@ -51,17 +52,21 @@ from __future__ import annotations
 
 from tldw_chatbook.Constants import WIDE_VIEWPORT_COLUMNS as WIDE_VIEWPORT_COLUMNS
 
-#: ModalScreen subclasses deliberately outside the wide tier, each with its
-#: reason. Sourced from the modal inventory's skip column and the rollout
+#: ModalScreen subclasses outside the wide tier, each with its reason.
+#: Sourced from the modal inventory's skip column and the rollout
 #: exclusions, plus individually verified stragglers; the reverse-sweep
 #: contract also fails on stale entries (a skip for a class that no longer
-#: exists or is no longer a modal).
+#: exists or is no longer a modal). Most are deliberate; entries marked
+#: "follow-up wave" carry fixed base caps that the ladder would relax --
+#: documented gaps queued for a second wide-tier pass, not verdicts that
+#: they never need scaling.
 MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     # -- inventory skip column (tiny-by-design / judgment) ------------------
     "PasswordDialog": "inventory #72: single-input dialog, scaling adds nothing",
     "VoiceBlendDialog": "inventory #74: fixed 15-column slider grid, extra width is dead space",
     "ConfirmationDialog": "inventory #76: tiny-by-design confirm",
     "UnsavedChangesDialog": "tiny-by-design confirm (ConfirmationDialog family)",
+    "GeneratedVideoConfirmation": "tiny-by-design confirm (ConfirmationDialog family)",
     "CancelConfirmationDialog": "inventory #77: tiny-by-design confirm",
     "RecoveryPassphraseDialog": "inventory #78: tiny passphrase entry",
     "RagProfileNameModal": "inventory #79: tiny single-input (settings sheet geometry)",
@@ -74,10 +79,10 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "TagFilterPicker": "inventory #86: tiny tag list",
     # -- inventory section B (special surfaces) + rollout exclusions --------
     "ConsoleModelPopover": "Switch model: fixed 140-column width token (TASK-33004.4)",
+    "ConsoleSettingsModal": "Chat settings: fixed 176x22 width/height tokens (TASK-33006.1)",
     "ConsoleSessionSwitcherModal": "imperative inline width via set_styles outranks every CSS rule",
     "ConsoleImageViewerModal": "content-fit auto geometry, nothing to scale",
     "ProjectInstructionNoticeModal": "notice-style modal, inventory section-B exclusion",
-    "DeleteConfirmDialog": "tiny media delete confirm (inventory section B)",
     # -- stragglers verified against the tree 2026-09-19 (not inventoried) --
     "DeleteConfirmationDialog": "tiny delete confirm (base width 70)",
     "ManagedGGUFRuntimeChoiceModal": "compact runtime choice dialog (base width 64)",
@@ -86,8 +91,6 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "ConsoleAppearancePickerModal": "compact theme swatch picker (base width 64)",
     "SessionGitTrustDialog": "no pinned width; default modal geometry",
     "_GlobalSpeechTTSLeaveModal": "tiny leave confirmation",
-    "ConfirmDialog": "tiny confirm (Voice Cloning window)",
-    "ConfirmDisableDialog": "tiny confirm (deprecated legacy settings window)",
     "_VllmProfileDeleteConfirmationDialog": "tiny delete confirm (LLM screen)",
     "_SettlingGuardedConfirmationDialog": "tiny wizard confirmation",
     # -- wave 2 (2026-09-19): skills_screen left the module skip list when
@@ -95,6 +98,27 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     # tiny-by-design (PasswordDialog family, base width 64) --
     "SkillTrustPassphraseModal": "single-input passphrase dialog (base width 64), PasswordDialog family",
     "SkillTrustBootstrapModal": "two-input passphrase bootstrap dialog (base width 64), PasswordDialog family",
+    # -- modals added after wave 2, triaged 2026-10-23 (TASK-36382): the
+    # first assertion's stale names had hidden them --
+    "ConsoleMessageDeleteReceiptModal": "tiny delete receipt (base width 60)",
+    "ConsolePromptDraftSaveDialog": "tiny save-draft confirm (base width 60)",
+    "SessionSummaryDialog": "tiny summary dialog (base width 44)",
+    "ThemeLeaveModal": "tiny leave confirmation (base width 60)",
+    "ResponseRulesModal": "95% of the viewport already, wider than the 85% tier",
+    "ConsoleGoalSetupModal": "goal setup form (base width 76) -- follow-up wave",
+    "ConsoleGoalHistory": "goal history (base width 76) -- follow-up wave",
+    "ConsoleGoalStatus": "goal status (base width 90) -- follow-up wave",
+    "DreamsGoalsModal": "Dreams goals (base width 76) -- follow-up wave",
+    "DreamsStoryModal": "Dreams story (base width 76) -- follow-up wave",
+    "GuardianRuleEditModal": "guardian rule editor (base width 76) -- follow-up wave",
+    "MCPRecoveryReviewDialog": "MCP recovery review (base width 80) -- follow-up wave",
+    "FileNotesHistoryDialog": "File Notes history (base width 90) -- follow-up wave",
+    "WorkflowRunConfirmation": "workflow run confirm (base 90% / 100) -- follow-up wave",
+    "WorkflowRunSetup": "workflow run setup (base 90% / 100) -- follow-up wave",
+    # -- added on dev after that triage, found by the sweep at the 2026-10-30
+    # re-sync (TASK-36382) --
+    "PortraitCompositionReview": "portrait composition review (base width 120) -- follow-up wave",
+    "PortraitRegionEditor": "portrait region editor (base width 120) -- follow-up wave",
 }
 
 #: Whole modules whose ModalScreen subclasses are all outside the tier:
@@ -150,8 +174,6 @@ WIDE_TIER_WIDTH_PERCENT = 85
 #: then anchor, so the generated CSS block and the tables read top-down
 #: from biggest cap to smallest.
 MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
-    # cap 196 -- the shipped Conversation settings tier, unchanged (PR #2670)
-    ("#console-settings-modal", 196, "Widgets/Console/console_settings_modal.py"),
     # cap 170 -- base width >= 104
     ("#console-hooks-review", 170, "Widgets/Console/console_hooks_review_modal.py"),
     (
@@ -192,8 +214,7 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     # cap 170 -- wave 2 (2026-09-19): skip-list follow-ups the triage report
     # named (base caps 100-120 the ladder relaxes at wide viewports)
     ("#notes-recovery-dialog", 170, "Widgets/Library/notes_recovery_dialog.py"),
-    ("#skills-recovery-review", 170, "UI/Screens/skills_screen.py"),
-    ("ChatbookCreationWindow > Container", 170, "UI/ChatbookCreationWindow.py"),
+    ("#skills-recovery-review", 170, "UI/Library_Modules/skills_trust_modals.py"),
     (
         "ChatbookExportManagementWindow > Container",
         170,

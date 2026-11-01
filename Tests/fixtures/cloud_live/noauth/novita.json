@@ -1,0 +1,386 @@
+{
+  "server": "novita",
+  "base_url": "https://api.novita.ai/openai/v1",
+  "probe_model": "zai-org/glm-5.3-flash",
+  "listing": {
+    "status": 200,
+    "entries": [
+      {
+        "id": "zai-org/glm-5.3-flash"
+      },
+      {
+        "id": "deepseek/deepseek-v4-pro-0813-p"
+      },
+      {
+        "id": "deepseek/deepseek-v4.1-flash-dst"
+      },
+      {
+        "id": "deepseek/deepseek-v4.1-flash-p"
+      },
+      {
+        "id": "xiaomimimo/mimo-v2.6-flash"
+      },
+      {
+        "id": "xiaomimimo/mimo-v2.6-pro"
+      },
+      {
+        "id": "tencent/hy4-preview"
+      },
+      {
+        "id": "zai-org/glm-5.3-p"
+      },
+      {
+        "id": "deepseek/deepseek-v4.1-flash"
+      },
+      {
+        "id": "zai-org/glm-5.3"
+      },
+      {
+        "id": "deepseek/deepseek-v4-pro-0813"
+      },
+      {
+        "id": "moonshotai/kimi-k3"
+      },
+      {
+        "id": "tencent/hy3"
+      },
+      {
+        "id": "zai-org/glm-5.2"
+      },
+      {
+        "id": "moonshotai/kimi-k2.7-code"
+      },
+      {
+        "id": "deepseek/deepseek-v4-flash-0731-p"
+      },
+      {
+        "id": "qwen/qwen3.8-flash"
+      },
+      {
+        "id": "deepseek/deepseek-v4-flash-vision-exp"
+      },
+      {
+        "id": "deepseek/deepseek-v4-flash-0731"
+      },
+      {
+        "id": "mindai/macaron-v1-venti"
+      },
+      {
+        "id": "minimax/minimax-m3"
+      },
+      {
+        "id": "deepseek/deepseek-v4-flash"
+      },
+      {
+        "id": "deepseek/deepseek-v4-pro"
+      },
+      {
+        "id": "inclusionai/ling-3.1-flash"
+      },
+      {
+        "id": "qwen/qwen3.8-27b"
+      },
+      {
+        "id": "inclusionai/ling-3.0-flash-fin"
+      },
+      {
+        "id": "qwen/qwen3.8-2.4t-a95b"
+      },
+      {
+        "id": "qwen/qwen3.8-max"
+      },
+      {
+        "id": "inclusionai/ling-3.0-flash"
+      },
+      {
+        "id": "mindai/macaron-v1-tall"
+      },
+      {
+        "id": "stepfun/step-3.7-flash"
+      },
+      {
+        "id": "nvidia/nemotron-3-nano-30b-a3b"
+      },
+      {
+        "id": "baidu/cobuddy"
+      },
+      {
+        "id": "xiaomimimo/mimo-v2.5"
+      },
+      {
+        "id": "qwen/qwen3.7-max"
+      },
+      {
+        "id": "xiaomimimo/mimo-v2.5-pro"
+      },
+      {
+        "id": "qwen/qwen3.6-27b"
+      },
+      {
+        "id": "moonshotai/kimi-k2.6"
+      },
+      {
+        "id": "bunny"
+      },
+      {
+        "id": "zai-org/glm-5.1"
+      },
+      {
+        "id": "minimax/minimax-m2.7-highspeed"
+      },
+      {
+        "id": "zai-org/glm-5v-turbo"
+      },
+      {
+        "id": "google/gemma-4-26b-a4b-it"
+      },
+      {
+        "id": "google/gemma-4-31b-it"
+      },
+      {
+        "id": "zai-org/glm-5-turbo"
+      },
+      {
+        "id": "minimax/minimax-m2.7"
+      },
+      {
+        "id": "minimax/minimax-m2.5-highspeed"
+      },
+      {
+        "id": "qwen/qwen3.5-27b"
+      },
+      {
+        "id": "qwen/qwen3.5-122b-a10b"
+      },
+      {
+        "id": "qwen/qwen3.5-35b-a3b"
+      },
+      {
+        "id": "qwen/qwen3.5-397b-a17b"
+      },
+      {
+        "id": "qwen/qwen3.5-plus"
+      },
+      {
+        "id": "minimax/minimax-m2.5"
+      },
+      {
+        "id": "zai-org/glm-5"
+      },
+      {
+        "id": "qwen/qwen3-coder-next"
+      },
+      {
+        "id": "deepseek/deepseek-ocr-2"
+      },
+      {
+        "id": "moonshotai/kimi-k2.5"
+      },
+      {
+        "id": "zai-org/glm-4.7-h"
+      },
+      {
+        "id": "zai-org/glm-4.7-flash"
+      },
+      {
+        "id": "minimax/minimax-m2.1"
+      },
+      {
+        "id": "zai-org/glm-4.7"
+      },
+      {
+        "id": "zai-org/autoglm-phone-9b-multilingual"
+      },
+      {
+        "id": "moonshotai/kimi-k2-thinking"
+      },
+      {
+        "id": "minimax/minimax-m2"
+      },
+      {
+        "id": "paddlepaddle/paddleocr-vl"
+      },
+      {
+        "id": "qwen/qwen3-vl-235b-a22b-thinking"
+      },
+      {
+        "id": "qwen/qwen3.6-plus"
+      },
+      {
+        "id": "zai-org/glm-4.6v"
+      },
+      {
+        "id": "zai-org/glm-4.6"
+      },
+      {
+        "id": "qwen/qwen3.6-35b-a3b"
+      },
+      {
+        "id": "qwen/qwen3-next-80b-a3b-instruct"
+      },
+      {
+        "id": "qwen/qwen3-vl-235b-a22b-instruct"
+      },
+      {
+        "id": "qwen/qwen3-max"
+      },
+      {
+        "id": "moonshotai/kimi-k2-0905"
+      },
+      {
+        "id": "qwen/qwen3-coder-480b-a35b-instruct"
+      },
+      {
+        "id": "qwen/qwen3-coder-30b-a3b-instruct"
+      },
+      {
+        "id": "openai/gpt-oss-120b"
+      },
+      {
+        "id": "moonshotai/kimi-k2-instruct"
+      },
+      {
+        "id": "qwen/qwen3-235b-a22b-thinking-2507"
+      },
+      {
+        "id": "deepseek/deepseek_v3"
+      },
+      {
+        "id": "meta-llama/llama-3.1-8b-instruct"
+      },
+      {
+        "id": "google/gemma-3-12b-it"
+      },
+      {
+        "id": "zai-org/glm-4.5v"
+      },
+      {
+        "id": "openai/gpt-oss-20b"
+      },
+      {
+        "id": "qwen/qwen3-235b-a22b-instruct-2507"
+      },
+      {
+        "id": "meta-llama/llama-3.3-70b-instruct"
+      },
+      {
+        "id": "qwen/qwen-2.5-72b-instruct"
+      },
+      {
+        "id": "mistralai/mistral-nemo"
+      },
+      {
+        "id": "minimaxai/minimax-m1-80k"
+      },
+      {
+        "id": "deepseek/deepseek-r1-0528"
+      },
+      {
+        "id": "microsoft/wizardlm-2-8x22b"
+      },
+      {
+        "id": "deepseek/deepseek-r1-0528-qwen3-8b"
+      },
+      {
+        "id": "qwen/qwen3-235b-a22b-fp8"
+      },
+      {
+        "id": "meta-llama/llama-4-maverick-17b-128e-instruct-fp8"
+      },
+      {
+        "id": "meta-llama/llama-4-scout-17b-16e-instruct"
+      },
+      {
+        "id": "nousresearch/hermes-2-pro-llama-3-8b"
+      },
+      {
+        "id": "sao10k/l3-70b-euryale-v2.1"
+      },
+      {
+        "id": "sao10k/l3-8b-lunaris"
+      },
+      {
+        "id": "baichuan/baichuan-m2-32b"
+      },
+      {
+        "id": "baidu/ernie-4.5-vl-424b-a47b"
+      },
+      {
+        "id": "google/gemma-3-27b-it"
+      },
+      {
+        "id": "deepseek/deepseek-r1-turbo"
+      },
+      {
+        "id": "deepseek/deepseek-r1/community"
+      },
+      {
+        "id": "Sao10K/L3-8B-Stheno-v3.2"
+      },
+      {
+        "id": "gryphe/mythomax-l2-13b"
+      },
+      {
+        "id": "ming-image-0.1-design-layer"
+      },
+      {
+        "id": "ming-image-0.1-design"
+      },
+      {
+        "id": "inclusionai/ling-3.0-flash-vl"
+      },
+      {
+        "id": "inclusionai/ling-3.0-flash-sante"
+      },
+      {
+        "id": "dev/glm46"
+      },
+      {
+        "id": "zai-org/glm-4.5-air"
+      },
+      {
+        "id": "qwen/qwen3-vl-30b-a3b-instruct"
+      },
+      {
+        "id": "qwen/qwen3-omni-30b-a3b-thinking"
+      },
+      {
+        "id": "qwen/qwen3-omni-30b-a3b-instruct"
+      },
+      {
+        "id": "qwen/qwen-mt-plus"
+      },
+      {
+        "id": "baidu/ernie-4.5-21B-a3b"
+      },
+      {
+        "id": "thudm/glm-4-32b-0414"
+      },
+      {
+        "id": "meta-llama/llama-3.2-1b-instruct"
+      },
+      {
+        "id": "sao10k/l31-70b-euryale-v2.2"
+      }
+    ]
+  },
+  "chat_no_key": {
+    "status": 403,
+    "body": {
+      "code": 403,
+      "reason": "INVALID_API_KEY",
+      "message": "invalid API key",
+      "metadata": {}
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "code": 401,
+      "reason": "FAILED_TO_AUTH",
+      "message": "failed to authenticate API key",
+      "metadata": {}
+    }
+  },
+  "probed_at": "2026-09-30T04:19:43+00:00"
+}

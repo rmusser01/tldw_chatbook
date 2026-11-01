@@ -131,7 +131,8 @@ def test_pause_during_serialization_refuses_derived_effects_and_publication(
 
     def serialize(*args, **kwargs):
         result = original(*args, **kwargs)
-        pauses.append(storage._begin_local_pause())
+        if not pauses:
+            pauses.append(storage._begin_local_pause())
         return result
 
     monkeypatch.setattr(source.toml, "dumps", serialize)

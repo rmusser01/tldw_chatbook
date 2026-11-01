@@ -1,0 +1,139 @@
+"""Private, read-only mounted probe for ImageGenDemoScreen publication ownership."""
+from __future__ import annotations
+import os
+from pathlib import Path
+import sys
+
+ROOT = Path.cwd()
+OUT = Path(__file__).resolve().parent
+PROFILE = OUT / 'profile'
+(PROFILE / 'config').mkdir(parents=True, exist_ok=True)
+(PROFILE / 'data').mkdir(parents=True, exist_ok=True)
+(PROFILE / 'config' / 'config.toml').write_text(
+    '[paths]\ndata_dir = ' + repr((PROFILE / 'data').as_posix()) + '\n[model_catalog]\nenabled = false\n', encoding='utf-8'
+)
+os.environ['TLDW_TEST_CONFIG_ROOT'] = str(PROFILE)
+os.environ['TLDW_TEST_CONFIG_ROOT_OWNER'] = str(Path(__file__).resolve())
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+os.environ['PYTHONUTF8'] = '1'
+sys.path.insert(0, str(ROOT))
+import Tests.conftest as guards
+import asyncio
+import io
+import json
+import threading
+from types import SimpleNamespace
+from textual.app import App
+from textual.worker import get_current_worker
+from textual.widgets import Button, Static, TextArea
+from PIL import Image
+import tldw_chatbook.UI.Screens.image_gen_demo_screen as module
+
+class MountedDemo(module.ImageGenDemoScreen):
+    # Keep actual feature composition, handlers, workers, decode, publication;
+    # only the unrelated application shell is omitted by this minimal host.
+    def compose(self):
+        yield from self.compose_content()
+
+class DemoHost(App):
+    CSS = 'TextArea {height: 5;} #imagegen-status {height: 2;} #imagegen-meta {height: 3;}'
+    def on_mount(self):
+        self.demo = MountedDemo(self)
+        self.push_screen(self.demo)
+
+async def until(predicate, label):
+    async with asyncio.timeout(10):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+async def run_case(case):
+    old_entered = threading.Event()
+    old_release = threading.Event()
+    new_entered = threading.Event()
+    records = []
+    workers = {}
+    original = (module.list_image_models_for_catalog, module.build_request, module.run_generation)
+    module.list_image_models_for_catalog = lambda: [{'name': 'probe', 'is_configured': True}]
+    module.build_request = lambda **kwargs: SimpleNamespace(**kwargs)
+    def fake_adapter(req):
+        workers[req.prompt] = get_current_worker()
+        if req.prompt == 'OLD':
+            old_entered.set()
+            old_release.wait()  # explicit finally-release, never expires before UI work
+            if case == 'stale_failure':
+                raise RuntimeError('OLD adapter failure')
+        else:
+            new_entered.set()
+        buf = io.BytesIO()
+        Image.new('RGB', (8, 8), 'red' if req.prompt == 'OLD' else 'blue').save(buf, format='PNG')
+        return SimpleNamespace(content=buf.getvalue(), content_type='image/png', bytes_len=len(buf.getvalue()))
+    module.run_generation = fake_adapter
+    app = DemoHost()
+    try:
+        async with app.run_test(size=(110, 46)) as pilot:
+            await pilot.pause()
+            demo = app.demo
+            original_apply = demo._apply_result
+            original_status = demo._set_status
+            def apply(pixels, meta):
+                original_apply(pixels, meta)
+                records.append({'kind': 'result', 'meta': meta})
+            def status(message):
+                original_status(message)
+                records.append({'kind': 'status', 'message': message})
+            demo._apply_result = apply
+            demo._set_status = status
+            text = demo.query_one('#imagegen-prompt', TextArea)
+            button = demo.query_one('#imagegen-generate', Button)
+            text.load_text('OLD')
+            assert await pilot.click('#imagegen-generate')
+            await until(old_entered.is_set, 'old worker entered')
+            enabled_while_old_running = not button.disabled
+            if case == 'serial_control':
+                old_release.set()
+                await until(lambda: any(r.get('meta', '').endswith("prompt='OLD'") for r in records), 'OLD publication')
+            await until(lambda: not button.has_class('-active'), 'button press animation retired')
+            text.load_text('NEW')
+            assert await pilot.click('#imagegen-generate')
+            await until(new_entered.is_set, 'new worker entered')
+            await until(lambda: any(r.get('meta', '').endswith("prompt='NEW'") for r in records), 'NEW publication')
+            new_result_before_release = str(demo.query_one('#imagegen-meta', Static).render())
+            old_cancelled_before_release = workers['OLD'].is_cancelled
+            old_release.set()
+            if case == 'stale_success':
+                await until(lambda: records[-1].get('meta', '').endswith("prompt='OLD'"), 'late OLD publication')
+            elif case == 'stale_failure':
+                await until(lambda: any('OLD adapter failure' in r.get('message', '') for r in records), 'late OLD failure')
+            await pilot.pause()
+            result = {
+                'case': case,
+                'generate_enabled_while_old_running': enabled_while_old_running,
+                'old_cancelled_before_release': old_cancelled_before_release,
+                'new_result_before_old_release': new_result_before_release,
+                'final_status': str(demo.query_one('#imagegen-status', Static).render()),
+                'final_metadata': str(demo.query_one('#imagegen-meta', Static).render()),
+                'publication_order': records,
+            }
+            print(json.dumps(result, ensure_ascii=False), flush=True)
+            return result
+    finally:
+        old_release.set()
+        module.list_image_models_for_catalog, module.build_request, module.run_generation = original
+
+async def main():
+    results = [await run_case(case) for case in ('serial_control', 'stale_success', 'stale_failure')]
+    attempts = guards.network_guard.blocked_attempts()
+    violations = guards._real_profile_guard.take_violations()
+    report = {'cases': results, 'blocked_network_attempts': attempts, 'profile_violations': violations}
+    (OUT / 'image-demo-publication.json').write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
+    assert 'NEW' in results[0]['final_metadata']
+    assert results[1]['old_cancelled_before_release'] is True and 'OLD' in results[1]['final_metadata']
+    assert results[2]['old_cancelled_before_release'] is True and 'OLD adapter failure' in results[2]['final_status']
+    assert not attempts
+    assert not violations
+
+if __name__ == '__main__':
+    asyncio.run(main())
+
+
+

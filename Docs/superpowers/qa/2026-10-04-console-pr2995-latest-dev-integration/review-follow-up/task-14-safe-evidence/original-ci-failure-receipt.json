@@ -1,0 +1,20 @@
+{
+  "published_head": "b1efc37ae8f481c1df01e2f253d5878ba68e35a4",
+  "run": 37229906610,
+  "job": 111518400864,
+  "log_path": "task-14-pr-fastlane-failure.log",
+  "log_sha256": "b7e096e34c60e2467bae7ee76a8734aea9f413bc83ab4f6a57d86b9503532ecb",
+  "diagnosis_sha256": "6875c55c86786c6f5cb3d7e5ea91ae8335aa9a6e613ceb45cf31f7ffba423f2b",
+  "original_failures": [
+    "2026-10-04T20:39:41.2658808Z FAILED Tests/UI/test_console_runtime_ownership.py::test_idle_reconciled_view_does_not_admit_transcript_poll - AttributeError: 'types.SimpleNamespace' object has no attribute 'consume_pending_vllm_console_intent'",
+    "2026-10-04T20:39:41.2660339Z FAILED Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[viewed] - AttributeError: 'types.SimpleNamespace' object has no attribute 'consume_pending_vllm_console_intent'",
+    "2026-10-04T20:39:41.2661863Z FAILED Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[other] - AttributeError: 'types.SimpleNamespace' object has no attribute 'consume_pending_vllm_console_intent'",
+    "2026-10-04T20:39:41.2663714Z FAILED Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[wake] - AttributeError: 'types.SimpleNamespace' object has no attribute 'consume_pending_vllm_console_intent'",
+    "2026-10-04T20:39:41.2665154Z FAILED Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[review] - AttributeError: 'types.SimpleNamespace' object has no attribute 'consume_pending_vllm_console_intent'",
+    "2026-10-04T20:39:41.2666552Z FAILED Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[custody] - AttributeError: 'types.SimpleNamespace' object has no attribute 'consume_pending_vllm_console_intent'"
+  ],
+  "summary": [
+    "2026-10-04T20:39:41.2667494Z ======= 6 failed, 216 passed, 1 xfailed, 5 warnings in 529.99s (0:08:49) ======="
+  ],
+  "local_red_same_missing_consumer": true
+}

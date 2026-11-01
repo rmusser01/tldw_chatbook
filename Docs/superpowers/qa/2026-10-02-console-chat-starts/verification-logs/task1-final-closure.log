@@ -1,0 +1,15 @@
+........................................................................ [ 72%]
+............................                                             [100%]
+============================= slowest 25 durations =============================
+3.73s call     Tests/Chat/test_automatic_work_lineage.py::test_accepted_manual_turns_establish_distinct_chains_for_both_paths[True]
+2.50s call     Tests/Chat/test_automatic_work_lineage.py::test_accepted_manual_turns_establish_distinct_chains_for_both_paths[False]
+1.65s call     Tests/Chat/test_automatic_work_lineage.py::test_failed_chain_write_prevents_dispatch_and_clears_stream_ownership
+1.55s call     Tests/Chat/test_automatic_work_lineage.py::test_prior_wake_token_cannot_authorize_a_later_delivery
+1.44s setup    Tests/DB/test_automatic_chat_starts.py::test_two_targets_share_the_last_generation
+1.38s call     Tests/Chat/test_automatic_work_lineage.py::test_manual_chain_uses_persisted_conversation_identity
+1.33s call     Tests/Chat/test_automatic_work_lineage.py::test_plain_wakes_keep_separate_result_lineage_and_no_fresh_allowance
+1.32s call     Tests/Chat/test_automatic_work_lineage.py::test_refused_manual_send_creates_no_allowance
+1.29s call     Tests/Chat/test_automatic_work_lineage.py::test_chain_creation_waits_for_sqlite_without_blocking_console
+
+(16 durations < 1s hidden.)
+100 passed in 35.07s

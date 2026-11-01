@@ -164,13 +164,9 @@ def build_settings_privacy_posture(
         validate_custom_pii_rules_config,
     )
 
-    custom_pii = validate_custom_pii_rules_config(
-        console.get("trace_custom_pii_rules")
-    )
+    custom_pii = validate_custom_pii_rules_config(console.get("trace_custom_pii_rules"))
     custom_rules = () if custom_pii.ruleset is None else custom_pii.ruleset.rules
-    maintenance = (
-        trace_maintenance if isinstance(trace_maintenance, Mapping) else {}
-    )
+    maintenance = trace_maintenance if isinstance(trace_maintenance, Mapping) else {}
 
     return SettingsPrivacyPosture(
         encryption_enabled=encryption_enabled,
@@ -240,9 +236,7 @@ def env_var_summary(*, present: int, missing: int, configured: int) -> str:
     Returns:
         A single row stating how many referenced env vars are actually set.
     """
-    return (
-        f"{present} of {configured} referenced env vars are set ({missing} unset)"
-    )
+    return f"{present} of {configured} referenced env vars are set ({missing} unset)"
 
 
 def skill_trust_display(status: str) -> str:
@@ -306,7 +300,10 @@ def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ..
         ),
         _custom_pii_rules_row(posture),
         *(
-            ("Custom PII diagnostics: " + ", ".join(posture.trace_custom_pii_diagnostics),)
+            (
+                "Custom PII diagnostics: "
+                + ", ".join(posture.trace_custom_pii_diagnostics),
+            )
             if posture.trace_custom_pii_diagnostics
             else ()
         ),
@@ -325,7 +322,10 @@ def build_privacy_posture_rows(posture: SettingsPrivacyPosture) -> tuple[str, ..
 
 
 def _trace_storage_row(posture: SettingsPrivacyPosture) -> str:
-    if posture.trace_normalized_writes_enabled and not posture.trace_legacy_writes_enabled:
+    if (
+        posture.trace_normalized_writes_enabled
+        and not posture.trace_legacy_writes_enabled
+    ):
         return "Trace storage: compact ledger for new calls; no transcript copies"
     if posture.trace_normalized_writes_enabled:
         return "Trace storage: compact ledger plus compatibility copies"

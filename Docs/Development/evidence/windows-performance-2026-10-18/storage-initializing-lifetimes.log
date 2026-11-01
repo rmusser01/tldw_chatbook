@@ -1,0 +1,804 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\Working\Github\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 90.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 63 items
+
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[EventStateRepository] FAILED [  1%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[SyncStateRepository] FAILED [  3%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_local_pause_refuses_new_storage_before_native_allocation PASSED [  4%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_live_repository_operation_finishes_exact_descendant_after_pause[EventStateRepository] PASSED [  6%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_live_repository_operation_finishes_exact_descendant_after_pause[SyncStateRepository] PASSED [  7%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_worker_transaction_drains_after_commit_and_native_close[EventStateRepository] FAILED [  9%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_worker_transaction_drains_after_commit_and_native_close[SyncStateRepository] FAILED [ 11%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[authority] FAILED [ 12%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[startup] FAILED [ 14%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_pause_cancels_actual_pending_native_acquisition FAILED [ 15%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_operation_provenance_refuses_unrelated_descendants[thread] PASSED [ 17%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_operation_provenance_refuses_unrelated_descendants[task] PASSED [ 19%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_operation_provenance_refuses_unrelated_descendants[copy] PASSED [ 20%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_operation_provenance_refuses_unrelated_descendants[stale] PASSED [ 22%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_operation_provenance_refuses_unrelated_descendants[path] PASSED [ 23%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_operation_provenance_refuses_unrelated_descendants[startup] PASSED [ 25%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_pause_identity_refuses_copied_or_expired_authority PASSED [ 26%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_holder_probe_rejects_replaced_native_gate PASSED [ 28%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_failed_native_close_retains_actual_handle_and_blocks_drain PASSED [ 30%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_operation_cannot_switch_native_authority PASSED [ 31%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_transaction_rolls_back_and_closes_native_file[EventStateRepository] FAILED [ 33%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_transaction_rolls_back_and_closes_native_file[SyncStateRepository] PASSED [ 34%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_participant_pause_resume_and_memory_semantics[EventStateRepository] PASSED [ 36%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_participant_pause_resume_and_memory_semantics[SyncStateRepository] PASSED [ 38%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_ordinary_factory_exception_retains_a_real_native_handle FAILED [ 39%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_constructor_close_cannot_retire_admission_before_constructor_returns FAILED [ 41%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_failed_native_retirement_remains_in_pause_accounting PASSED [ 42%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_unqualified_startup_cannot_report_native_drain PASSED [ 44%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_async_child_cannot_inherit_parent_operation_authority PASSED [ 46%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_thread_local_discovery_cannot_supply_a_validation_callback[object] PASSED [ 47%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_thread_local_discovery_cannot_supply_a_validation_callback[overridden_method] PASSED [ 49%]
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_copied_pause_cannot_override_its_identity_check PASSED [ 50%]
+Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_config_snapshot_and_public_capture_policy_finish_together[runtime] PASSED [ 52%]
+Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_config_snapshot_and_public_capture_policy_finish_together[serialized] PASSED [ 53%]
+Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_pause_cancels_each_config_lock_wait_without_leaking_partial_locks[rebuild] PASSED [ 55%]
+Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_pause_cancels_each_config_lock_wait_without_leaking_partial_locks[file] PASSED [ 57%]
+Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_config_lock_cleanup_restores_the_enclosing_repository_operation[success] PASSED [ 58%]
+Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_config_lock_cleanup_restores_the_enclosing_repository_operation[failure] PASSED [ 60%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_config_owner_reopens_with_exact_binding_and_protected_parent[False] PASSED [ 61%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_config_owner_reopens_with_exact_binding_and_protected_parent[True] PASSED [ 63%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_only_profile_creates_user_directory_inside_owned_root PASSED [ 65%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_ordinary_unbound_config_parent_behavior_is_unchanged[False] PASSED [ 66%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_ordinary_unbound_config_parent_behavior_is_unchanged[True] PASSED [ 68%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_default_data_parent_is_verified_without_creation_authority PASSED [ 69%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[unsafe] PASSED [ 71%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[missing] PASSED [ 73%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[alias] FAILED [ 74%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[external] PASSED [ 76%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[ambiguous] PASSED [ 77%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[write] PASSED [ 79%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[snapshot] PASSED [ 80%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[generic] PASSED [ 82%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[registration] PASSED [ 84%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[maintenance] PASSED [ 85%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[unsafe] PASSED [ 87%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[replaced] PASSED [ 88%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[missing] PASSED [ 90%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[unsafe_active] PASSED [ 92%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[foreign] PASSED [ 93%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[alias] PASSED [ 95%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[pending] FAILED [ 96%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[cancel] PASSED [ 98%]
+Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[uncertain] PASSED [100%]
+
+================================== FAILURES ===================================
+_ test_repository_schema_connection_is_closed_on_return[EventStateRepository] _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_repository_schema_connect0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002816DECC470>
+repository_type = <class 'tldw_chatbook.Notifications.event_state_repository.EventStateRepository'>
+
+    @pytest.mark.parametrize("repository_type", [EventStateRepository, SyncStateRepository])
+    def test_repository_schema_connection_is_closed_on_return(
+        tmp_path, monkeypatch, repository_type
+    ):
+        connections = []
+        original = repository_type._get_connection
+
+        def observed(self):
+            connection = original(self)
+            connections.append(connection)
+            return connection
+
+        monkeypatch.setattr(repository_type, "_get_connection", observed)
+        repository = repository_type(tmp_path / "state.sqlite")
+        try:
+>           assert connections
+E           assert []
+
+Tests\Backup_Recovery\test_participant_lifetimes.py:32: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-19 09:42:17.383 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-19 09:42:17.494 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-19 09:42:17.494 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-19 09:42:17.495 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+---------------------------- Captured stderr call -----------------------------
+2026-10-19 09:42:17.509 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-60\test_repository_schema_connect0\state.sqlite [Client: default]
+_ test_repository_schema_connection_is_closed_on_return[SyncStateRepository] __
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_repository_schema_connect1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002816EFF5FA0>
+repository_type = <class 'tldw_chatbook.Sync_Interop.sync_state_repository.SyncStateRepository'>
+
+    @pytest.mark.parametrize("repository_type", [EventStateRepository, SyncStateRepository])
+    def test_repository_schema_connection_is_closed_on_return(
+        tmp_path, monkeypatch, repository_type
+    ):
+        connections = []
+        original = repository_type._get_connection
+
+        def observed(self):
+            connection = original(self)
+            connections.append(connection)
+            return connection
+
+        monkeypatch.setattr(repository_type, "_get_connection", observed)
+        repository = repository_type(tmp_path / "state.sqlite")
+        try:
+>           assert connections
+E           assert []
+
+Tests\Backup_Recovery\test_participant_lifetimes.py:32: AssertionError
+---------------------------- Captured stderr call -----------------------------
+2026-10-19 09:42:17.729 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-60\test_repository_schema_connect1\state.sqlite [Client: default]
+_ test_actual_worker_transaction_drains_after_commit_and_native_close[EventStateRepository] _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_actual_worker_transaction0')
+local_root = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_actual_worker_transaction0/bootstrap')
+repository_type = <class 'tldw_chatbook.Notifications.event_state_repository.EventStateRepository'>
+
+    @pytest.mark.parametrize("repository_type", [EventStateRepository, SyncStateRepository])
+    def test_actual_worker_transaction_drains_after_commit_and_native_close(
+        tmp_path, local_root, repository_type
+    ):
+        from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+        from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
+
+        storage.admit_startup()
+        startup = storage._startups[(os.getpid(), str(local_root))]
+        repository = repository_type(tmp_path / "worker.sqlite")
+        entered, finish = threading.Event(), threading.Event()
+        connections, errors = [], []
+
+        def work():
+            try:
+                with repository.transaction() as conn:
+                    connections.append(conn)
+                    conn.execute("CREATE TABLE phase2_worker (value TEXT)")
+                    conn.execute("INSERT INTO phase2_worker VALUES ('committed')")
+                    entered.set()
+                    assert finish.wait(3)
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    conn.execute("SELECT 1")
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=work)
+        thread.start()
+        assert entered.wait(3)
+        pause = storage._begin_local_pause()
+        try:
+            assert not pause.drain(time.monotonic() + 0.03)
+            # The coordinator cannot use or close this actual thread-affine handle.
+>           with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
+E           Failed: DID NOT RAISE <class 'sqlite3.ProgrammingError'>
+
+Tests\Backup_Recovery\test_participant_lifetimes.py:143: Failed
+---------------------------- Captured stderr call -----------------------------
+2026-10-19 09:42:18.520 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-60\test_actual_worker_transaction0\worker.sqlite [Client: default]
+_ test_actual_worker_transaction_drains_after_commit_and_native_close[SyncStateRepository] _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_actual_worker_transaction1')
+local_root = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_actual_worker_transaction1/bootstrap')
+repository_type = <class 'tldw_chatbook.Sync_Interop.sync_state_repository.SyncStateRepository'>
+
+    @pytest.mark.parametrize("repository_type", [EventStateRepository, SyncStateRepository])
+    def test_actual_worker_transaction_drains_after_commit_and_native_close(
+        tmp_path, local_root, repository_type
+    ):
+        from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+        from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
+
+        storage.admit_startup()
+        startup = storage._startups[(os.getpid(), str(local_root))]
+        repository = repository_type(tmp_path / "worker.sqlite")
+        entered, finish = threading.Event(), threading.Event()
+        connections, errors = [], []
+
+        def work():
+            try:
+                with repository.transaction() as conn:
+                    connections.append(conn)
+                    conn.execute("CREATE TABLE phase2_worker (value TEXT)")
+                    conn.execute("INSERT INTO phase2_worker VALUES ('committed')")
+                    entered.set()
+                    assert finish.wait(3)
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    conn.execute("SELECT 1")
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=work)
+        thread.start()
+        assert entered.wait(3)
+        pause = storage._begin_local_pause()
+        try:
+            assert not pause.drain(time.monotonic() + 0.03)
+            # The coordinator cannot use or close this actual thread-affine handle.
+            with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
+                connections[0].execute("SELECT 1")
+            finish.set()
+            thread.join(3)
+            assert not thread.is_alive() and not errors
+>           assert pause.drain(time.monotonic() + 1)
+E           assert False
+E            +  where False = drain((126548.156 + 1))
+E            +    where drain = <tldw_chatbook.Backup_Recovery.storage_admission._LocalPause object at 0x000002816F36AF30>.drain
+E            +    and   126548.156 = <built-in function monotonic>()
+E            +      where <built-in function monotonic> = time.monotonic
+
+Tests\Backup_Recovery\test_participant_lifetimes.py:148: AssertionError
+---------------------------- Captured stderr call -----------------------------
+2026-10-19 09:42:18.826 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-60\test_actual_worker_transaction1\worker.sqlite [Client: default]
+_ test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[authority] _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_pre_authority_attempt_sta0')
+local_root = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_pre_authority_attempt_sta0/bootstrap')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002816F3466C0>
+lookup = 'authority'
+
+    @pytest.mark.parametrize("lookup", ["authority", "startup"])
+    def test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late(
+        tmp_path, local_root, monkeypatch, lookup
+    ):
+        from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+        entered, finish = threading.Event(), threading.Event()
+        errors = []
+        if lookup == "authority":
+            module, name = storage, "admission_authority"
+        else:
+            module, name = bootstrap, "require_startup_permission"
+        original = getattr(module, name)
+
+        def blocked(*args, **kwargs):
+            entered.set()
+            assert finish.wait(3)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, blocked)
+        path = tmp_path / "late.sqlite"
+
+        def work():
+            try:
+                if lookup == "authority":
+                    connect_private_sqlite("db.base", path).close()
+                else:
+                    storage.admit_startup()
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=work)
+        thread.start()
+        assert entered.wait(3)
+        pause = storage._begin_local_pause()
+        try:
+            assert not pause.drain(time.monotonic() + 0.03)
+            assert storage._pending_acquisitions
+            finish.set()
+            thread.join(3)
+            assert not thread.is_alive() and errors
+            assert not path.exists()
+            assert not storage._pending_acquisitions
+>           assert pause.drain(time.monotonic() + 1)
+E           assert False
+E            +  where False = drain((126549.312 + 1))
+E            +    where drain = <tldw_chatbook.Backup_Recovery.storage_admission._LocalPause object at 0x000002816F368B30>.drain
+E            +    and   126549.312 = <built-in function monotonic>()
+E            +      where <built-in function monotonic> = time.monotonic
+
+Tests\Backup_Recovery\test_participant_lifetimes.py:214: AssertionError
+_ test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[startup] _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_pre_authority_attempt_sta1')
+local_root = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_pre_authority_attempt_sta1/bootstrap')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002816F3687D0>
+lookup = 'startup'
+
+    @pytest.mark.parametrize("lookup", ["authority", "startup"])
+    def test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late(
+        tmp_path, local_root, monkeypatch, lookup
+    ):
+        from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+        entered, finish = threading.Event(), threading.Event()
+        errors = []
+        if lookup == "authority":
+            module, name = storage, "admission_authority"
+        else:
+            module, name = bootstrap, "require_startup_permission"
+        original = getattr(module, name)
+
+        def blocked(*args, **kwargs):
+            entered.set()
+            assert finish.wait(3)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, blocked)
+        path = tmp_path / "late.sqlite"
+
+        def work():
+            try:
+                if lookup == "authority":
+                    connect_private_sqlite("db.base", path).close()
+                else:
+                    storage.admit_startup()
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=work)
+        thread.start()
+        assert entered.wait(3)
+        pause = storage._begin_local_pause()
+        try:
+            assert not pause.drain(time.monotonic() + 0.03)
+            assert storage._pending_acquisitions
+            finish.set()
+            thread.join(3)
+            assert not thread.is_alive() and errors
+            assert not path.exists()
+            assert not storage._pending_acquisitions
+>           assert pause.drain(time.monotonic() + 1)
+E           assert False
+E            +  where False = drain((126550.39 + 1))
+E            +    where drain = <tldw_chatbook.Backup_Recovery.storage_admission._LocalPause object at 0x000002816F36BEF0>.drain
+E            +    and   126550.39 = <built-in function monotonic>()
+E            +      where <built-in function monotonic> = time.monotonic
+
+Tests\Backup_Recovery\test_participant_lifetimes.py:214: AssertionError
+____________ test_pause_cancels_actual_pending_native_acquisition _____________
+
+local_root = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_pause_cancels_actual_pend0/bootstrap')
+
+    def test_pause_cancels_actual_pending_native_acquisition(local_root):
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+        from tldw_chatbook.Backup_Recovery.control_records import admission_authority
+
+        authority = admission_authority(local_root)
+        errors = []
+
+        def acquire():
+            try:
+                storage.acquire_storage().close()
+            except BaseException as error:
+                errors.append(error)
+
+        with authority.maintenance(("bootstrap.unbound",), 3):
+            thread = threading.Thread(target=acquire)
+            thread.start()
+            key = (os.getpid(), str(local_root))
+            _eventually(lambda: key in storage._holds)
+            hold = storage._holds[key]
+            assert not hold.ready.is_set()
+            pause = storage._begin_local_pause()
+            try:
+>               assert pause.drain(time.monotonic() + 2)
+E               assert False
+E                +  where False = drain((126551.625 + 2))
+E                +    where drain = <tldw_chatbook.Backup_Recovery.storage_admission._LocalPause object at 0x000002816F3AE690>.drain
+E                +    and   126551.625 = <built-in function monotonic>()
+E                +      where <built-in function monotonic> = time.monotonic
+
+Tests\Backup_Recovery\test_participant_lifetimes.py:244: AssertionError
+_ test_repository_transaction_rolls_back_and_closes_native_file[EventStateRepository] _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_repository_transaction_ro0')
+local_root = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_repository_transaction_ro0/bootstrap')
+repository_type = <class 'tldw_chatbook.Notifications.event_state_repository.EventStateRepository'>
+
+    @pytest.mark.parametrize("repository_type", [EventStateRepository, SyncStateRepository])
+    def test_repository_transaction_rolls_back_and_closes_native_file(
+        tmp_path, local_root, repository_type
+    ):
+        repository = repository_type(tmp_path / "rollback.sqlite")
+        with repository.transaction() as connection:
+            connection.execute("CREATE TABLE phase2_rollback (value TEXT)")
+        with pytest.raises(ValueError, match="rollback_test"):
+            with repository.transaction() as connection:
+                connection.execute("INSERT INTO phase2_rollback VALUES ('uncommitted')")
+                raise ValueError("rollback_test")
+>       with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+E       Failed: DID NOT RAISE <class 'sqlite3.ProgrammingError'>
+
+Tests\Backup_Recovery\test_participant_lifetimes.py:412: Failed
+---------------------------- Captured stderr call -----------------------------
+2026-10-19 09:42:25.600 | INFO     | tldw_chatbook.DB.base_db:__init__:1016 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-60\test_repository_transaction_ro0\rollback.sqlite [Client: default]
+________ test_ordinary_factory_exception_retains_a_real_native_handle _________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_ordinary_factory_exceptio0')
+local_root = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_ordinary_factory_exceptio0/bootstrap')
+launch = <function launch.<locals>.start at 0x000002816F3E99E0>
+
+    def test_ordinary_factory_exception_retains_a_real_native_handle(
+        tmp_path, local_root, launch
+    ):
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+        retained = []
+
+        class RetainingFactory(sqlite3.Connection):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                retained.append(self)
+                raise RuntimeError("factory_failed_after_native_allocation")
+
+        path = tmp_path / "retained-factory.sqlite"
+        with pytest.raises(RuntimeError, match="factory_failed_after_native_allocation"):
+            connect_private_sqlite("db.base", path, factory=RetainingFactory)
+        assert retained[0].execute("SELECT 1").fetchone()[0] == 1
+        pause = storage._begin_local_pause()
+        try:
+            assert not pause.drain(time.monotonic() + 0.03)
+            child = launch(local_root / "admission", "maintenance", ("bootstrap.unbound",))
+            _eventually(storage._local_pause_requested)
+>           assert not select.select([child.stdout], [], [], 0.03)[0]
+E           OSError: [WinError 10038] An operation was attempted on something that is not a socket
+
+Tests\Backup_Recovery\test_participant_lifetimes.py:474: OSError
+__ test_constructor_close_cannot_retire_admission_before_constructor_returns __
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_constructor_close_cannot_0')
+local_root = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_constructor_close_cannot_0/bootstrap')
+launch = <function launch.<locals>.start at 0x000002816F3E8400>
+
+    def test_constructor_close_cannot_retire_admission_before_constructor_returns(
+        tmp_path, local_root, launch
+    ):
+        from tldw_chatbook.Backup_Recovery import storage_admission as storage
+        from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+        entered, finish = threading.Event(), threading.Event()
+        errors = []
+
+        class ReopeningFactory(sqlite3.Connection):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.close()
+                # Accepted ordinary factories can reinitialize a previously closed
+                # connection while their constructor still owns the allocation.
+                sqlite3.Connection.__init__(self, *args, **kwargs)
+                assert self.execute("SELECT 1").fetchone()[0] == 1
+                entered.set()
+                assert finish.wait(3)
+
+        def work():
+            try:
+                connection = connect_private_sqlite(
+                    "db.base", tmp_path / "reopen.sqlite", factory=ReopeningFactory
+                )
+                connection.close()
+            except BaseException as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=work)
+        thread.start()
+        assert entered.wait(3)
+        pause = storage._begin_local_pause()
+        child = None
+        try:
+            assert not pause.drain(time.monotonic() + 0.03)
+            child = launch(local_root / "admission", "maintenance", ("bootstrap.unbound",))
+            _eventually(storage._local_pause_requested)
+>           assert not select.select([child.stdout], [], [], 0.03)[0]
+E           OSError: [WinError 10038] An operation was attempted on something that is not a socket
+
+Tests\Backup_Recovery\test_participant_lifetimes.py:520: OSError
+_ test_bound_data_verification_never_repairs_or_selects_other_directories[alias] _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_bound_data_verification_n2')
+mode = 'alias'
+
+    @pytest.mark.parametrize("mode", ["unsafe", "missing", "alias", "external", "ambiguous"])
+    def test_bound_data_verification_never_repairs_or_selects_other_directories(tmp_path, mode):
+        changes = {
+            "unsafe": "import sys,subprocess\n"
+            "from tldw_chatbook.Utils.platform_files import os as native_os\n"
+            "if sys.platform=='win32':\n"
+            " subprocess.run(['icacls',str(data),'/grant','*S-1-1-0:(R)'],check=True,capture_output=True)\n"
+            "else:data.chmod(0o755)\n"
+            "assert native_os.stat(data).st_mode & 0o044",
+            "missing": "data.rename(home/'preserved-data')",
+            "alias": "data.rename(home/'preserved-data');data.symlink_to(home/'preserved-data',target_is_directory=True)",
+            "external": "external=home/'external';external.mkdir(mode=0o700);(external/'fixture').mkdir(mode=0o700)\nselected.write_text(selected.read_text()+f'[paths]\\ndata_dir=\"{external.as_posix()}\"\\n')",
+            "ambiguous": "(home/'.tldw_cli-data').mkdir(mode=0o700)",
+        }
+        script = _DEFAULT_DIRECTORIES.replace(
+            "authority.register('profile',(selected,store,data/'chat_dicts'))",
+            (changes[mode] + "\n" if mode == "external" else "")
+            + "authority.register('profile',(selected,store,data/'chat_dicts'))",
+        ).split("from tldw_chatbook import config")[0]
+        if mode != "external":
+            script += changes[mode] + "\n"
+        script += """
+    try:
+     from tldw_chatbook import config
+     config.get_user_data_dir()
+    except (bootstrap.RecoveryRequired,OSError,ValueError,SystemExit) as error:
+     if isinstance(error,SystemExit):assert error.code not in (None,0)
+    else:raise AssertionError('unverified data directory admitted')
+    assert not (home/'.tldw_cli-data-root.lock').exists()
+    """
+        if mode == "unsafe":
+            script += "assert native_os.stat(data).st_mode & 0o044\n"
+        elif mode == "missing":
+            script += "assert not data.exists()\n"
+        elif mode == "alias":
+            script += "assert data.is_symlink()\n"
+        script += "print('retired and reopened')\n"
+>       _run(tmp_path, mode, "default-data", script=script, timeout=30)
+
+Tests\Backup_Recovery\test_bound_config_companions.py:140:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_bound_data_verification_n2')
+route = 'alias', outcome = 'default-data'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w", encoding="utf-8") as output:
+                result = subprocess.run(
+                    [sys.executable, "-X", "utf8", "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text(encoding="utf-8", errors="replace")
+        stderr = ""
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: Traceback (most recent call last):
+E           File "<string>", line 20, in <module>
+E           File "C:\Python312\Lib\pathlib.py", line 1386, in symlink_to
+E             os.symlink(target, self, target_is_directory)
+E         OSError: [WinError 1314] A required privilege is not held by the client: 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-60\\test_bound_data_verification_n2\\home\\preserved-data' -> 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-60\\test_bound_data_verification_n2\\home\\.local\\share\\tldw_cli\\fixture'
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe', '-X', 'utf8', '-c', '\nimport os\nfrom pathlib import Path\nfrom tldw_chatbook.Backup_Recovery import bootstrap\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\nhome=Path.home();parent=home/\'.config\'/\'tldw_cli\';parent.mkdir(parents=True,mode=0o700)\nselected=parent/\'config.toml\';data=home/\'.local/share/tldw_cli/fixture\'\nfor folder in (home/\'.local\',home/\'.local/share\',data.parent,data):folder.mkdir(mode=0o700)\n(data/\'chat_dicts\').mkdir(mode=0o700)\nstore=data/\'existing-owned-file\';store.write_bytes(b\'original\');store.chmod(0o600)\nselected.write_text(f\'[general]\\nusers_name="fixture"\\n\')\nselected.chmod(0o600);selected.with_name(selected.name+\'.lock\').touch(mode=0o600)\nos.environ.pop(\'TLDW_CONFIG_PATH\',None)\nroot=bootstrap.default_bootstrap_root();authority=admission_authority(root)\nauthority.register(\'profile\',(selected,store,data/\'chat_dicts\'))\nbind_profile(root,selected,(\'profile\',),root/\'admission\')\nbefore=bootstrap._records(root)[1]\nassert str(parent) not in before[0][\'roots\']\nassert bootstrap.startup_permission(selected,root)==(True,\'startup_allowed\')\ndata.rename(home/\'preserved-data\');data.symlink_to(home/\'preserved-data\',target_is_directory=True)\n\ntry:\n from tldw_chatbook import config\n config.get_user_data_dir()\nexcept (bootstrap.RecoveryRequired,OSError,ValueError,SystemExit) as error:\n if isinstance(error,SystemExit):assert error.code not in (None,0)\nelse:raise AssertionError(\'unverified data directory admitted\')\nassert not (home/\'.tldw_cli-data-root.lock\').exists()\nassert data.is_symlink()\nprint(\'retired and reopened\')\n', 'alias', 'default-data'], returncode=1).returncode
+
+Tests\Backup_Recovery\test_home_citation_retirement.py:332: AssertionError
+___________ test_bound_config_companion_operation_contract[pending] ___________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_bound_config_companion_op11')
+mode = 'pending'
+
+    @pytest.mark.parametrize(
+        "mode", ["write", "snapshot", "generic", "registration", "maintenance", "unsafe", "replaced", "missing", "unsafe_active", "foreign", "alias", "pending", "cancel", "uncertain"]
+    )
+    def test_bound_config_companion_operation_contract(tmp_path, mode):
+>       _run(tmp_path, mode, "native", script=_OPERATIONS, timeout=30)
+
+Tests\Backup_Recovery\test_bound_config_companions.py:340:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.tmp-windows-settings-tests/pytest-of-GDesktop-1/pytest-60/test_bound_config_companion_op11')
+route = 'pending', outcome = 'native'
+
+    def _run(
+        tmp_path,
+        route,
+        outcome,
+        *,
+        script=_SCRIPT,
+        timeout=45,
+        installed_package=None,
+        expect_restart=False,
+    ):
+        root = tmp_path.resolve()
+        test_root = Path(__file__).resolve().parents[2]
+        for name in ("home", "config", "data"):
+            (root / name).mkdir(mode=0o700)
+        environment = os.environ.copy()
+        environment.update(
+            HOME=str(root / "home"),
+            USERPROFILE=str(root / "home"),
+            XDG_CONFIG_HOME=str(root / "config"),
+            XDG_DATA_HOME=str(root / "data"),
+            TLDW_CONFIG_PATH=str(root / "config" / "config.toml"),
+            TLDW_TEST_MODE="1",
+            TLDW_DISABLE_CONFIG_WATCH="1",
+        )
+        cwd = test_root
+        if installed_package is not None:
+            installed = Path(installed_package).resolve()
+            environment.update(
+                PYTHONNOUSERSITE="1",
+                PYTHONPATH=os.pathsep.join((str(installed), str(test_root))),
+                TLDW_TEST_INSTALLED_PACKAGE=str(installed),
+            )
+            cwd = root
+        log = root / "restart-output.log"
+        deadline = time.monotonic() + timeout
+        # A fresh Windows process inherits the old process's output handles. Files
+        # let the original process exit without waiting for EOF from its descendant.
+        if expect_restart:
+            from Tests.Backup_Recovery.restart_observation import wait_for_restart
+
+            receipt = root / "home" / "restart-process.json"
+        try:
+            with log.open("w", encoding="utf-8") as output:
+                result = subprocess.run(
+                    [sys.executable, "-X", "utf8", "-c", script, route, outcome],
+                    cwd=cwd,
+                    env=environment,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
+                if expect_restart:
+                    assert result.returncode == 0, log.read_text()[-7000:]
+                    fresh_code = wait_for_restart(receipt, deadline)
+                    assert fresh_code in (None, 0), log.read_text()[-7000:]
+        except BaseException as primary:
+            if expect_restart:
+                try:
+                    # A parent may fail after spawning and before its normal exit.
+                    # Never wait for a missing receipt or signal an unproved PID.
+                    if receipt.exists():
+                        wait_for_restart(receipt, time.monotonic())
+                except TimeoutError:
+                    pass  # The observer retires the verified child at this deadline.
+                except BaseException as cleanup:  # noqa: BLE001 - retain the original test failure.
+                    primary.add_note("restart_cleanup_error:" + type(cleanup).__name__)
+            raise
+        stdout = log.read_text(encoding="utf-8", errors="replace")
+        stderr = ""
+>       assert result.returncode == 0, stderr[-6000:] + stdout[-1000:]
+E       AssertionError: dw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3887[0m - [34m[1mEnsured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-60\test_bound_config_companion_op11\home\data\fixture\chat_dicts[0m
+E         [32m2026-10-19 09:43:15.910[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3918[0m - [34m[1mload_settings: Configuration cached for future use[0m
+E         [32m2026-10-19 09:43:15.910[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m11828[0m - [1mDefault API Endpoint (from config.py global scope): openai[0m
+E         [32m2026-10-19 09:43:15.910[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m11851[0m - [34m[1mCRITICAL DEBUG: Database initialization is now lazy - will initialize on first access[0m
+E         Traceback (most recent call last):
+E           File "<string>", line 54, in <module>
+E         AssertionError: pending authority was admitted
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe', '-X', 'utf8', '-c', '\nimport os\nfrom pathlib import Path\nfrom tldw_chatbook.Backup_Recovery import bootstrap\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\nhome=Path.home();parent=home/\'.config\'/\'tldw_cli\';parent.mkdir(parents=True,mode=0o700)\nselected=parent/\'config.toml\';data=home/\'data\';data.mkdir(mode=0o700)\n(data/\'fixture\').mkdir(mode=0o700)\nselected.write_text(f\'[general]\\nusers_name="fixture"\\n[paths]\\ndata_dir="{data.as_posix()}"\\n\')\nselected.chmod(0o600);selected.with_name(selected.name+\'.lock\').touch(mode=0o600)\nos.environ.pop(\'TLDW_CONFIG_PATH\',None)\nfrom tldw_chatbook import config\nfrom tldw_chatbook.Backup_Recovery import storage_admission as storage\nassert not storage._raw_operations and not storage._operations\nstorage._shutdown()\nassert not storage._live_leases\nroot=bootstrap.default_bootstrap_root();authority=admission_authority(root)\nauthority.register(\'profile\',(selected,data))\nbind_profile(root,selected,(\'profile\',),root/\'admission\')\nbefore=bootstrap._records(root)[1]\nassert str(parent) not in before[0][\'roots\']\nassert bootstrap.startup_permission(selected,root)==(True,\'startup_allowed\')\n\nimport sys,stat,threading\nfrom contextlib import contextmanager\nfrom tldw_chatbook.Backup_Recovery import config_participants,raw_participants as raw,storage_admission as storage\nfrom tldw_chatbook.Backup_Recovery.admission import Admission\nfrom tldw_chatbook.Utils.platform_files import fcntl,os as native_os\nmode=sys.argv[1]\ninitial=selected.read_bytes();parent_stat=parent.stat()\nregistry_before=bootstrap._registry(root)\nassert config.application_owned_config_directory(selected)==parent\nif mode in (\'foreign\',\'alias\',\'pending\',\'cancel\',\'uncertain\'):\n if mode in (\'foreign\',\'alias\'):\n  backup=config._advanced_backup_path(selected)\n  if mode==\'alias\':os.link(selected,backup)\n  else:\n   backup.write_bytes(b\'foreign owned bytes\');backup.chmod(0o600)\n   authority.register(\'foreign-backup\',(backup,))\n  preserved=backup.read_bytes()\n  try:config.read_cli_config_serialized()\n  except (bootstrap.RecoveryRequired,OSError,ValueError):pass\n  else:raise AssertionError(\'foreign companion was admitted\')\n  assert backup.read_bytes()==preserved and selected.read_bytes()==initial\n elif mode==\'pending\':\n  from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout\n  replacement=home/\'new-config\';replacement.write_bytes(initial);replacement.chmod(0o600)\n  with storage.acquire_storage(selected):\n   try:authority.remap(\'profile\',(replacement,data),0.01)\n   except AdmissionTimeout:pass\n   else:raise AssertionError(\'remap unexpectedly crossed native owner\')\n  try:config.read_cli_config_serialized()\n  except (bootstrap.RecoveryRequired,OSError,ValueError):pass\n  else:raise AssertionError(\'pending authority was admitted\')\n  assert selected.read_bytes()==initial\n elif mode==\'cancel\':\n  ready=threading.Event();proceed=threading.Event();waiting=threading.Event();errors=[]\n  acquire=storage.acquire_storage;lock=Admission._lock\n  def observed_acquire(path=None,**kwargs):\n   lease=acquire(path,**kwargs)\n   if threading.current_thread().name==\'reader\' and path==selected:\n    ready.set();assert proceed.wait(3)\n   return lease\n  @contextmanager\n  def observed_lock(self,fd,name,lock_mode,*args,**kwargs):\n   if threading.current_thread().name==\'reader\' and name==\'registry.lock\' and kwargs.get(\'cancel\') is not None:waiting.set()\n   with lock(self,fd,name,lock_mode,*args,**kwargs) as value:yield value\n  storage.acquire_storage=observed_acquire;Admission._lock=observed_lock\n  def reader():\n   try:config.read_cli_config_serialized()\n   except BaseException as error:errors.append(error)\n  thread=threading.Thread(target=reader,name=\'reader\');thread.start()\n  try:\n   assert ready.wait(3)\n   with authority._directory() as fd,lock(authority,fd,\'registry.lock\',fcntl.LOCK_EX):\n    proceed.set();assert waiting.wait(3)\n    with storage._lock:\n     pending=[attempt for attempt in storage._pending_acquisitions if attempt.thread is thread]\n     assert pending\n     for attempt in pending:attempt.cancel.set()\n    thread.join(3);assert not thread.is_alive()\n   assert errors and not raw._states and not storage._raw_operations\n   assert not storage._live_leases and not storage._holds\n  finally:storage.acquire_storage=acquire;Admission._lock=lock;proceed.set()\n elif mode==\'uncertain\':\n  fd=None\n  try:\n   with config_participants.operation(config) as operation:\n    fd=os.open(selected,os.O_RDONLY)\n    raw._states[operation].descriptors.add(fd)\n  except bootstrap.RecoveryRequired:pass\n  else:raise AssertionError(\'unretired descriptor lost protection\')\n  assert operation in raw._states and storage._live_leases\n  with authority._directory() as parent_fd:\n   lock_fd=authority._open(parent_fd,\'registry.lock\',os.O_RDWR)\n   try:\n    try:fcntl.flock(lock_fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n    except BlockingIOError:pass\n    else:raise AssertionError(\'unretired companion released registry protection\')\n   finally:os.close(lock_fd)\n  os.close(fd)\n print(\'retired and reopened\');raise SystemExit(0)\nif mode in (\'write\',\'snapshot\',\'generic\',\'registration\',\'maintenance\',\'unsafe\',\'replaced\',\'missing\',\'unsafe_active\'):\n def make_parent_public():\n  assert native_os.stat(parent).st_mode & 0o077 == 0\n  if sys.platform==\'win32\':\n   import subprocess\n   subprocess.run([\'icacls\',str(parent),\'/grant\',\'*S-1-1-0:(R)\'],check=True,capture_output=True)\n  else:parent.chmod(0o755)\n  assert native_os.stat(parent).st_mode & 0o044\n if mode==\'unsafe\':make_parent_public()\n if mode in (\'unsafe\',\'replaced\',\'missing\',\'unsafe_active\'):\n  controls={p.relative_to(root):(p.stat().st_ino,p.read_bytes()) for p in root.rglob(\'*\') if p.is_file()}\n  damage_applied=mode==\'unsafe\';rename_prevented=False\n  try:\n   if mode in (\'replaced\',\'missing\',\'unsafe_active\'):\n    with config_participants.operation(config):\n     if mode==\'unsafe_active\':make_parent_public();damage_applied=True\n     else:\n      moved=home/\'old-parent\'\n      try:parent.rename(moved)\n      except OSError as error:\n       if sys.platform!=\'win32\' or getattr(error,\'winerror\',None) not in (5,32):raise\n       rename_prevented=True\n      else:\n       if mode==\'replaced\':\n        parent.mkdir(mode=0o700);selected.write_bytes(initial);selected.chmod(0o600)\n       damage_applied=True\n     if not rename_prevented:config._prepare_config_parent(selected)\n   else:config.read_cli_config_serialized()\n  except (bootstrap.RecoveryRequired,OSError,ValueError):\n   if not damage_applied:raise\n  else:assert rename_prevented,\'unsafe parent was admitted\'\n  if rename_prevented:\n   # Windows pins prevent damage while active; the same move must work after release.\n   assert not raw._states and not storage._raw_operations\n   assert not moved.exists() and selected.read_bytes()==initial\n   assert (parent.stat().st_dev,parent.stat().st_ino,parent.stat().st_mode)==(parent_stat.st_dev,parent_stat.st_ino,parent_stat.st_mode)\n   assert bootstrap._records(root)[1]==before and bootstrap._registry(root)==registry_before\n   assert {p.relative_to(root):(p.stat().st_ino,p.read_bytes()) for p in root.rglob(\'*\') if p.is_file()}==controls\n   parent.rename(moved);moved.rename(parent)\n   assert (parent.stat().st_dev,parent.stat().st_ino,parent.stat().st_mode)==(parent_stat.st_dev,parent_stat.st_ino,parent_stat.st_mode)\n   assert bootstrap._records(root)[1]==before and bootstrap._registry(root)==registry_before\n  elif mode in (\'unsafe\',\'unsafe_active\'):assert native_os.stat(parent).st_mode & 0o044\n  elif mode==\'replaced\':assert not (parent/\'recovery-bootstrap\').exists()\n  elif mode==\'missing\':assert not parent.exists()\n  observed_parent=moved if damage_applied and mode in (\'replaced\',\'missing\') else parent\n  observed_root=observed_parent/root.relative_to(parent)\n  assert (observed_parent/selected.name).read_bytes()==initial\n  assert {p.relative_to(observed_root):(p.stat().st_ino,p.read_bytes()) for p in observed_root.rglob(\'*\') if p.is_file()}==controls\n  print(\'retired and reopened\');raise SystemExit(0)\n if mode==\'write\':\n  loaded,backup=config.replace_cli_config_serialized(initial.decode()+\'[appearance]\\ntheme="textual-dark"\\n\')\n  assert loaded[\'appearance\'][\'theme\']==\'textual-dark\' and backup.read_bytes()==initial\n elif mode==\'snapshot\':\n  exported=config.export_cli_config_snapshot(timestamp=\'20260913_235900\')\n  assert exported.read_bytes()==initial\n elif mode==\'generic\':\n  with config_participants.operation(config):\n   assert config.application_owned_config_directory(selected) is None\n   refusals=[]\n   def unrelated():\n    for outside in (parent,parent/\'unrelated.txt\',root,root/\'admission\'/\'registry.json\'):\n     try:\n      with storage.acquire_storage(outside):pass\n     except bootstrap.RecoveryRequired:refusals.append(outside)\n   thread=threading.Thread(target=unrelated);thread.start();thread.join(5)\n   assert not thread.is_alive() and len(refusals)==4\n elif mode in (\'registration\',\'maintenance\'):\n  attempted=threading.Event();done=threading.Event();errors=[]\n  original=Admission._lock\n  @contextmanager\n  def observed(self,fd,name,lock_mode,*args,**kwargs):\n   if threading.current_thread().name==\'contender\' and (\n    name==\'registry.lock\' and lock_mode==fcntl.LOCK_EX\n    or mode==\'maintenance\' and name.endswith(\'.lease\') and lock_mode==fcntl.LOCK_EX\n   ):attempted.set()\n   with original(self,fd,name,lock_mode,*args,**kwargs) as value:yield value\n  Admission._lock=observed\n  def contender():\n   try:\n    if mode==\'registration\':authority.register(\'foreign-lock\',(selected.with_name(selected.name+\'.lock\'),))\n    else:\n     with authority.maintenance((\'profile\',),5):pass\n   except BaseException as error:errors.append(error)\n   finally:done.set()\n  thread=threading.Thread(target=contender,name=\'contender\')\n  try:\n   with config_participants.operation(config):\n    thread.start();assert attempted.wait(3)\n    assert not done.is_set(),\'native contender crossed active config operation\'\n   assert done.wait(5);thread.join();assert not errors,errors\n  finally:Admission._lock=original\nelse:raise AssertionError(\'unknown fixture mode\')\nassert not raw._states and not storage._raw_operations\nassert config.application_owned_config_directory(selected)==parent\nassert (parent.stat().st_dev,parent.stat().st_ino,stat.S_IMODE(parent.stat().st_mode))==(parent_stat.st_dev,parent_stat.st_ino,stat.S_IMODE(parent_stat.st_mode))\nif mode==\'write\':\n import hashlib\n assert bootstrap._records(root)[1]==[dict(before[0],fingerprint=hashlib.sha256(selected.read_bytes()).hexdigest())]\nelse:assert bootstrap._records(root)[1]==before\nif mode!=\'registration\':assert bootstrap._registry(root)==registry_before\nprint(\'retired and reopened\')\n', 'pending', 'native'], returncode=1).returncode
+
+Tests\Backup_Recovery\test_home_citation_retirement.py:332: AssertionError
+============================== warnings summary ===============================
+Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[EventStateRepository]
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+2.89s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[generic]
+2.84s call     Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_config_lock_cleanup_restores_the_enclosing_repository_operation[failure]
+2.75s call     Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_config_lock_cleanup_restores_the_enclosing_repository_operation[success]
+2.19s call     Tests/Backup_Recovery/test_participant_lifetimes.py::test_pause_cancels_actual_pending_native_acquisition
+1.94s call     Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_pause_cancels_each_config_lock_wait_without_leaking_partial_locks[rebuild]
+1.90s call     Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_config_snapshot_and_public_capture_policy_finish_together[serialized]
+1.90s call     Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_pause_cancels_each_config_lock_wait_without_leaking_partial_locks[file]
+1.89s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[write]
+1.82s call     Tests/Backup_Recovery/test_config_native_lock_order.py::test_native_config_snapshot_and_public_capture_policy_finish_together[runtime]
+1.68s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[unsafe]
+1.68s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[snapshot]
+1.60s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_only_profile_creates_user_directory_inside_owned_root
+1.58s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_default_data_parent_is_verified_without_creation_authority
+1.54s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[pending]
+1.54s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[ambiguous]
+1.52s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[replaced]
+1.50s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[unsafe_active]
+1.49s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[registration]
+1.48s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[maintenance]
+1.47s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[missing]
+1.46s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[foreign]
+1.44s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[uncertain]
+1.40s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[alias]
+1.40s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[external]
+1.38s call     Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[cancel]
+=========================== short test summary info ===========================
+FAILED Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[EventStateRepository] - assert []
+FAILED Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_schema_connection_is_closed_on_return[SyncStateRepository] - assert []
+FAILED Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_worker_transaction_drains_after_commit_and_native_close[EventStateRepository] - Failed: DID NOT RAISE <class 'sqlite3.ProgrammingError'>
+FAILED Tests/Backup_Recovery/test_participant_lifetimes.py::test_actual_worker_transaction_drains_after_commit_and_native_close[SyncStateRepository] - assert False
+ +  where False = drain((126548.156 + 1))
+ +    where drain = <tldw_chatbook.Backup_Recovery.storage_admission._LocalPause object at 0x000002816F36AF30>.drain
+ +    and   126548.156 = <built-in function monotonic>()
+ +      where <built-in function monotonic> = time.monotonic
+FAILED Tests/Backup_Recovery/test_participant_lifetimes.py::test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[authority] - assert False
+ +  where False = drain((126549.312 + 1))
+ +    where drain = <tldw_chatbook.Backup_Recovery.storage_admission._LocalPause object at 0x000002816F368B30>.drain
+ +    and   126549.312 = <built-in function monotonic>()
+ +      where <built-in function monotonic> = time.monotonic
+FAILED Tests/Backup_Recovery/test_participant_lifetimes.py::test_pre_authority_attempt_stays_counted_until_return_and_cannot_allocate_late[startup] - assert False
+ +  where False = drain((126550.39 + 1))
+ +    where drain = <tldw_chatbook.Backup_Recovery.storage_admission._LocalPause object at 0x000002816F36BEF0>.drain
+ +    and   126550.39 = <built-in function monotonic>()
+ +      where <built-in function monotonic> = time.monotonic
+FAILED Tests/Backup_Recovery/test_participant_lifetimes.py::test_pause_cancels_actual_pending_native_acquisition - assert False
+ +  where False = drain((126551.625 + 2))
+ +    where drain = <tldw_chatbook.Backup_Recovery.storage_admission._LocalPause object at 0x000002816F3AE690>.drain
+ +    and   126551.625 = <built-in function monotonic>()
+ +      where <built-in function monotonic> = time.monotonic
+FAILED Tests/Backup_Recovery/test_participant_lifetimes.py::test_repository_transaction_rolls_back_and_closes_native_file[EventStateRepository] - Failed: DID NOT RAISE <class 'sqlite3.ProgrammingError'>
+FAILED Tests/Backup_Recovery/test_participant_lifetimes.py::test_ordinary_factory_exception_retains_a_real_native_handle - OSError: [WinError 10038] An operation was attempted on something that is not a socket
+FAILED Tests/Backup_Recovery/test_participant_lifetimes.py::test_constructor_close_cannot_retire_admission_before_constructor_returns - OSError: [WinError 10038] An operation was attempted on something that is not a socket
+FAILED Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_data_verification_never_repairs_or_selects_other_directories[alias] - AssertionError: Traceback (most recent call last):
+    File "<string>", line 20, in <module>
+    File "C:\Python312\Lib\pathlib.py", line 1386, in symlink_to
+      os.symlink(target, self, target_is_directory)
+  OSError: [WinError 1314] A required privilege is not held by the client: 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-60\\test_bound_data_verification_n2\\home\\preserved-data' -> 'C:\\Users\\GDesktop-1\\.tmp-windows-settings-tests\\pytest-of-GDesktop-1\\pytest-60\\test_bound_data_verification_n2\\home\\.local\\share\\tldw_cli\\fixture'
+
+assert 1 == 0
+ +  where 1 = CompletedProcess(args=['C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe', '-X', 'utf8', '-c', '\nimport os\nfrom pathlib import Path\nfrom tldw_chatbook.Backup_Recovery import bootstrap\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\nhome=Path.home();parent=home/\'.config\'/\'tldw_cli\';parent.mkdir(parents=True,mode=0o700)\nselected=parent/\'config.toml\';data=home/\'.local/share/tldw_cli/fixture\'\nfor folder in (home/\'.local\',home/\'.local/share\',data.parent,data):folder.mkdir(mode=0o700)\n(data/\'chat_dicts\').mkdir(mode=0o700)\nstore=data/\'existing-owned-file\';store.write_bytes(b\'original\');store.chmod(0o600)\nselected.write_text(f\'[general]\\nusers_name="fixture"\\n\')\nselected.chmod(0o600);selected.with_name(selected.name+\'.lock\').touch(mode=0o600)\nos.environ.pop(\'TLDW_CONFIG_PATH\',None)\nroot=bootstrap.default_bootstrap_root();authority=admission_authority(root)\nauthority.register(\'profile\',(selected,store,data/\'chat_dicts\'))\nbind_profile(root,selected,(\'profile\',),root/\'admission\')\nbefore=bootstrap._records(root)[1]\nassert str(parent) not in before[0][\'roots\']\nassert bootstrap.startup_permission(selected,root)==(True,\'startup_allowed\')\ndata.rename(home/\'preserved-data\');data.symlink_to(home/\'preserved-data\',target_is_directory=True)\n\ntry:\n from tldw_chatbook import config\n config.get_user_data_dir()\nexcept (bootstrap.RecoveryRequired,OSError,ValueError,SystemExit) as error:\n if isinstance(error,SystemExit):assert error.code not in (None,0)\nelse:raise AssertionError(\'unverified data directory admitted\')\nassert not (home/\'.tldw_cli-data-root.lock\').exists()\nassert data.is_symlink()\nprint(\'retired and reopened\')\n', 'alias', 'default-data'], returncode=1).returncode
+FAILED Tests/Backup_Recovery/test_bound_config_companions.py::test_bound_config_companion_operation_contract[pending] - AssertionError: dw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3887[0m - [34m[1mEnsured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-windows-settings-tests\pytest-of-GDesktop-1\pytest-60\test_bound_config_companion_op11\home\data\fixture\chat_dicts[0m
+  [32m2026-10-19 09:43:15.910[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3918[0m - [34m[1mload_settings: Configuration cached for future use[0m
+  [32m2026-10-19 09:43:15.910[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m11828[0m - [1mDefault API Endpoint (from config.py global scope): openai[0m
+  [32m2026-10-19 09:43:15.910[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m11851[0m - [34m[1mCRITICAL DEBUG: Database initialization is now lazy - will initialize on first access[0m
+  Traceback (most recent call last):
+    File "<string>", line 54, in <module>
+  AssertionError: pending authority was admitted
+
+assert 1 == 0
+ +  where 1 = CompletedProcess(args=['C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe', '-X', 'utf8', '-c', '\nimport os\nfrom pathlib import Path\nfrom tldw_chatbook.Backup_Recovery import bootstrap\nfrom tldw_chatbook.Backup_Recovery.control_records import admission_authority,bind_profile\nhome=Path.home();parent=home/\'.config\'/\'tldw_cli\';parent.mkdir(parents=True,mode=0o700)\nselected=parent/\'config.toml\';data=home/\'data\';data.mkdir(mode=0o700)\n(data/\'fixture\').mkdir(mode=0o700)\nselected.write_text(f\'[general]\\nusers_name="fixture"\\n[paths]\\ndata_dir="{data.as_posix()}"\\n\')\nselected.chmod(0o600);selected.with_name(selected.name+\'.lock\').touch(mode=0o600)\nos.environ.pop(\'TLDW_CONFIG_PATH\',None)\nfrom tldw_chatbook import config\nfrom tldw_chatbook.Backup_Recovery import storage_admission as storage\nassert not storage._raw_operations and not storage._operations\nstorage._shutdown()\nassert not storage._live_leases\nroot=bootstrap.default_bootstrap_root();authority=admission_authority(root)\nauthority.register(\'profile\',(selected,data))\nbind_profile(root,selected,(\'profile\',),root/\'admission\')\nbefore=bootstrap._records(root)[1]\nassert str(parent) not in before[0][\'roots\']\nassert bootstrap.startup_permission(selected,root)==(True,\'startup_allowed\')\n\nimport sys,stat,threading\nfrom contextlib import contextmanager\nfrom tldw_chatbook.Backup_Recovery import config_participants,raw_participants as raw,storage_admission as storage\nfrom tldw_chatbook.Backup_Recovery.admission import Admission\nfrom tldw_chatbook.Utils.platform_files import fcntl,os as native_os\nmode=sys.argv[1]\ninitial=selected.read_bytes();parent_stat=parent.stat()\nregistry_before=bootstrap._registry(root)\nassert config.application_owned_config_directory(selected)==parent\nif mode in (\'foreign\',\'alias\',\'pending\',\'cancel\',\'uncertain\'):\n if mode in (\'foreign\',\'alias\'):\n  backup=config._advanced_backup_path(selected)\n  if mode==\'alias\':os.link(selected,backup)\n  else:\n   backup.write_bytes(b\'foreign owned bytes\');backup.chmod(0o600)\n   authority.register(\'foreign-backup\',(backup,))\n  preserved=backup.read_bytes()\n  try:config.read_cli_config_serialized()\n  except (bootstrap.RecoveryRequired,OSError,ValueError):pass\n  else:raise AssertionError(\'foreign companion was admitted\')\n  assert backup.read_bytes()==preserved and selected.read_bytes()==initial\n elif mode==\'pending\':\n  from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout\n  replacement=home/\'new-config\';replacement.write_bytes(initial);replacement.chmod(0o600)\n  with storage.acquire_storage(selected):\n   try:authority.remap(\'profile\',(replacement,data),0.01)\n   except AdmissionTimeout:pass\n   else:raise AssertionError(\'remap unexpectedly crossed native owner\')\n  try:config.read_cli_config_serialized()\n  except (bootstrap.RecoveryRequired,OSError,ValueError):pass\n  else:raise AssertionError(\'pending authority was admitted\')\n  assert selected.read_bytes()==initial\n elif mode==\'cancel\':\n  ready=threading.Event();proceed=threading.Event();waiting=threading.Event();errors=[]\n  acquire=storage.acquire_storage;lock=Admission._lock\n  def observed_acquire(path=None,**kwargs):\n   lease=acquire(path,**kwargs)\n   if threading.current_thread().name==\'reader\' and path==selected:\n    ready.set();assert proceed.wait(3)\n   return lease\n  @contextmanager\n  def observed_lock(self,fd,name,lock_mode,*args,**kwargs):\n   if threading.current_thread().name==\'reader\' and name==\'registry.lock\' and kwargs.get(\'cancel\') is not None:waiting.set()\n   with lock(self,fd,name,lock_mode,*args,**kwargs) as value:yield value\n  storage.acquire_storage=observed_acquire;Admission._lock=observed_lock\n  def reader():\n   try:config.read_cli_config_serialized()\n   except BaseException as error:errors.append(error)\n  thread=threading.Thread(target=reader,name=\'reader\');thread.start()\n  try:\n   assert ready.wait(3)\n   with authority._directory() as fd,lock(authority,fd,\'registry.lock\',fcntl.LOCK_EX):\n    proceed.set();assert waiting.wait(3)\n    with storage._lock:\n     pending=[attempt for attempt in storage._pending_acquisitions if attempt.thread is thread]\n     assert pending\n     for attempt in pending:attempt.cancel.set()\n    thread.join(3);assert not thread.is_alive()\n   assert errors and not raw._states and not storage._raw_operations\n   assert not storage._live_leases and not storage._holds\n  finally:storage.acquire_storage=acquire;Admission._lock=lock;proceed.set()\n elif mode==\'uncertain\':\n  fd=None\n  try:\n   with config_participants.operation(config) as operation:\n    fd=os.open(selected,os.O_RDONLY)\n    raw._states[operation].descriptors.add(fd)\n  except bootstrap.RecoveryRequired:pass\n  else:raise AssertionError(\'unretired descriptor lost protection\')\n  assert operation in raw._states and storage._live_leases\n  with authority._directory() as parent_fd:\n   lock_fd=authority._open(parent_fd,\'registry.lock\',os.O_RDWR)\n   try:\n    try:fcntl.flock(lock_fd,fcntl.LOCK_EX|fcntl.LOCK_NB)\n    except BlockingIOError:pass\n    else:raise AssertionError(\'unretired companion released registry protection\')\n   finally:os.close(lock_fd)\n  os.close(fd)\n print(\'retired and reopened\');raise SystemExit(0)\nif mode in (\'write\',\'snapshot\',\'generic\',\'registration\',\'maintenance\',\'unsafe\',\'replaced\',\'missing\',\'unsafe_active\'):\n def make_parent_public():\n  assert native_os.stat(parent).st_mode & 0o077 == 0\n  if sys.platform==\'win32\':\n   import subprocess\n   subprocess.run([\'icacls\',str(parent),\'/grant\',\'*S-1-1-0:(R)\'],check=True,capture_output=True)\n  else:parent.chmod(0o755)\n  assert native_os.stat(parent).st_mode & 0o044\n if mode==\'unsafe\':make_parent_public()\n if mode in (\'unsafe\',\'replaced\',\'missing\',\'unsafe_active\'):\n  controls={p.relative_to(root):(p.stat().st_ino,p.read_bytes()) for p in root.rglob(\'*\') if p.is_file()}\n  damage_applied=mode==\'unsafe\';rename_prevented=False\n  try:\n   if mode in (\'replaced\',\'missing\',\'unsafe_active\'):\n    with config_participants.operation(config):\n     if mode==\'unsafe_active\':make_parent_public();damage_applied=True\n     else:\n      moved=home/\'old-parent\'\n      try:parent.rename(moved)\n      except OSError as error:\n       if sys.platform!=\'win32\' or getattr(error,\'winerror\',None) not in (5,32):raise\n       rename_prevented=True\n      else:\n       if mode==\'replaced\':\n        parent.mkdir(mode=0o700);selected.write_bytes(initial);selected.chmod(0o600)\n       damage_applied=True\n     if not rename_prevented:config._prepare_config_parent(selected)\n   else:config.read_cli_config_serialized()\n  except (bootstrap.RecoveryRequired,OSError,ValueError):\n   if not damage_applied:raise\n  else:assert rename_prevented,\'unsafe parent was admitted\'\n  if rename_prevented:\n   # Windows pins prevent damage while active; the same move must work after release.\n   assert not raw._states and not storage._raw_operations\n   assert not moved.exists() and selected.read_bytes()==initial\n   assert (parent.stat().st_dev,parent.stat().st_ino,parent.stat().st_mode)==(parent_stat.st_dev,parent_stat.st_ino,parent_stat.st_mode)\n   assert bootstrap._records(root)[1]==before and bootstrap._registry(root)==registry_before\n   assert {p.relative_to(root):(p.stat().st_ino,p.read_bytes()) for p in root.rglob(\'*\') if p.is_file()}==controls\n   parent.rename(moved);moved.rename(parent)\n   assert (parent.stat().st_dev,parent.stat().st_ino,parent.stat().st_mode)==(parent_stat.st_dev,parent_stat.st_ino,parent_stat.st_mode)\n   assert bootstrap._records(root)[1]==before and bootstrap._registry(root)==registry_before\n  elif mode in (\'unsafe\',\'unsafe_active\'):assert native_os.stat(parent).st_mode & 0o044\n  elif mode==\'replaced\':assert not (parent/\'recovery-bootstrap\').exists()\n  elif mode==\'missing\':assert not parent.exists()\n  observed_parent=moved if damage_applied and mode in (\'replaced\',\'missing\') else parent\n  observed_root=observed_parent/root.relative_to(parent)\n  assert (observed_parent/selected.name).read_bytes()==initial\n  assert {p.relative_to(observed_root):(p.stat().st_ino,p.read_bytes()) for p in observed_root.rglob(\'*\') if p.is_file()}==controls\n  print(\'retired and reopened\');raise SystemExit(0)\n if mode==\'write\':\n  loaded,backup=config.replace_cli_config_serialized(initial.decode()+\'[appearance]\\ntheme="textual-dark"\\n\')\n  assert loaded[\'appearance\'][\'theme\']==\'textual-dark\' and backup.read_bytes()==initial\n elif mode==\'snapshot\':\n  exported=config.export_cli_config_snapshot(timestamp=\'20260913_235900\')\n  assert exported.read_bytes()==initial\n elif mode==\'generic\':\n  with config_participants.operation(config):\n   assert config.application_owned_config_directory(selected) is None\n   refusals=[]\n   def unrelated():\n    for outside in (parent,parent/\'unrelated.txt\',root,root/\'admission\'/\'registry.json\'):\n     try:\n      with storage.acquire_storage(outside):pass\n     except bootstrap.RecoveryRequired:refusals.append(outside)\n   thread=threading.Thread(target=unrelated);thread.start();thread.join(5)\n   assert not thread.is_alive() and len(refusals)==4\n elif mode in (\'registration\',\'maintenance\'):\n  attempted=threading.Event();done=threading.Event();errors=[]\n  original=Admission._lock\n  @contextmanager\n  def observed(self,fd,name,lock_mode,*args,**kwargs):\n   if threading.current_thread().name==\'contender\' and (\n    name==\'registry.lock\' and lock_mode==fcntl.LOCK_EX\n    or mode==\'maintenance\' and name.endswith(\'.lease\') and lock_mode==fcntl.LOCK_EX\n   ):attempted.set()\n   with original(self,fd,name,lock_mode,*args,**kwargs) as value:yield value\n  Admission._lock=observed\n  def contender():\n   try:\n    if mode==\'registration\':authority.register(\'foreign-lock\',(selected.with_name(selected.name+\'.lock\'),))\n    else:\n     with authority.maintenance((\'profile\',),5):pass\n   except BaseException as error:errors.append(error)\n   finally:done.set()\n  thread=threading.Thread(target=contender,name=\'contender\')\n  try:\n   with config_participants.operation(config):\n    thread.start();assert attempted.wait(3)\n    assert not done.is_set(),\'native contender crossed active config operation\'\n   assert done.wait(5);thread.join();assert not errors,errors\n  finally:Admission._lock=original\nelse:raise AssertionError(\'unknown fixture mode\')\nassert not raw._states and not storage._raw_operations\nassert config.application_owned_config_directory(selected)==parent\nassert (parent.stat().st_dev,parent.stat().st_ino,stat.S_IMODE(parent.stat().st_mode))==(parent_stat.st_dev,parent_stat.st_ino,stat.S_IMODE(parent_stat.st_mode))\nif mode==\'write\':\n import hashlib\n assert bootstrap._records(root)[1]==[dict(before[0],fingerprint=hashlib.sha256(selected.read_bytes()).hexdigest())]\nelse:assert bootstrap._records(root)[1]==before\nif mode!=\'registration\':assert bootstrap._registry(root)==registry_before\nprint(\'retired and reopened\')\n', 'pending', 'native'], returncode=1).returncode
+============= 12 failed, 51 passed, 1 warning in 62.99s (0:01:02) =============

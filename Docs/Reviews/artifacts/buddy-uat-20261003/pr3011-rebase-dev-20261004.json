@@ -1,0 +1,73 @@
+{
+  "tested_head": "d82936ec975b25a2389a1b9903607bc6eccc660a",
+  "integrated_dev": "a78a9a900b4901e33c031f830dd2d80224d5147d",
+  "previous_published_head": "fca26fb12ccfe7c1ed12de96224ad23111b916d6",
+  "expected_combined_tree": "75f0f22190b5376abe0502d81951abca5e724edf",
+  "combined_tree_verified": true,
+  "method": "Local rebase after GitHub reported an append-only lesson conflict. Both sides retained; lesson order normalized to the exact combined tree.",
+  "buddy_product_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "be8d9daa47ba8fe5d6d7e025841f1eb953fa48f66809e007eb448f59d5f1034d",
+    "tldw_chatbook/UI/Screens/home_screen.py": "2ae1c5962527c6229d4e06868f11bf42dde57c9675982faf7aa799674f1755e0",
+    "tldw_chatbook/config.py": "8a156b9d3ee76953c76f1b2a79abc84281fd14611cdebf6ab27df64c6bf248c1",
+    "tldw_chatbook/app_service_wiring.py": "702f3d34193aeced083900874e7532f09c17da6afcc5d9f4ef0170e340a14daa",
+    "tldw_chatbook/app_lifecycle.py": "b1e79f198c67e84c1eaf5d020b196e586f44ca86d5b18003823251d8c89bb510",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "766bac674f4ca912ef0eaf535336c72b26fa3f0567b518308bd9234b5fe0b754",
+    "tldw_chatbook/app_destinations.py": "8ab50e78e651150e8f65fa25aef82b2921c251cd6ec81ac9d32bbca2d76645cc",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py": "929d00cc570fc9fbfa2747ac6fcaad2de68b0c3e615acf523b883634ab007d81"
+  },
+  "changed_owned_modules": [
+    "tldw_chatbook/UI/Navigation/buddy_management.py"
+  ],
+  "owned_module_change": "Incoming TASK34400 error notification uses markup=False. All other repaired Buddy modules unchanged.",
+  "unchanged_owned_tests": [
+    "Tests/LLM_Calls/test_openai_realtime_session.py",
+    "Tests/Persona_Buddy/test_buddy_interaction_config_projection.py",
+    "Tests/Persona_Buddy/test_buddy_management_coordinator.py",
+    "Tests/Persona_Buddy/test_persona_buddy_preferences.py",
+    "Tests/UI/test_buddy_conversation_layout.py",
+    "Tests/UI/test_buddy_conversation_modal.py",
+    "Tests/UI/test_buddy_management_journey.py",
+    "Tests/UI/test_chat_screen_resume_handoff_registration.py",
+    "Tests/UI/test_console_dictation_buddy.py",
+    "Tests/UI/test_console_realtime_controller.py",
+    "Tests/UI/test_console_realtime_wiring.py",
+    "Tests/UI/test_console_roleplay_resume_navigation.py",
+    "Tests/UI/test_console_shutdown_recompose.py",
+    "Tests/UI/test_home_console_resume.py",
+    "Tests/UI/test_persona_buddy_app_mount.py"
+  ],
+  "targeted_tests": {
+    "passed": 144,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "duration_seconds": 8.533,
+    "xml_sha256": "f9b879eb3140f52cc390dc8514b3435c1817fa3d297190ecfcf3cfd34d9898e6",
+    "log_sha256": "e0e978f057d73ead3195a9fb5a99fd56d8691e536bf6d64149aa77431881f602",
+    "scope": "Buddy coordinator and literal error toast; derived gate, queue pressure, merge queue actions/rules/workflow, dispatch safety and measurement contracts.",
+    "warnings": "Existing shared pytest temporary-directory cleanup warnings are retained in the private log; peer artifacts were not removed."
+  },
+  "guards": {
+    "backlog_ids_and_readability": 4998,
+    "profile_paths": "54/22/51",
+    "diagnostics": "649/1431/56/7614/16",
+    "compiled_modules": 8,
+    "coordinator_ruff_base": 0,
+    "coordinator_ruff_current": 0,
+    "introduced_ruff": 0,
+    "whitespace": "pass",
+    "coordinator_format": "pass"
+  },
+  "independent_review": "No actionable integration findings; executable trees and original assertions intact, three UI shards and required gate enforcement retained.",
+  "queue_mode": "MERGE_QUEUE unset: off. Auto-merge disabled before sync; normal protected merge awaits fresh required gates.",
+  "human_UAT_repeated": false,
+  "provider_or_audio_calls": false,
+  "fresh_hosted_gates": "pending at publication; prior runs keep their original source attribution",
+  "existing_ADRs": [
+    94,
+    139,
+    147,
+    103,
+    218
+  ]
+}

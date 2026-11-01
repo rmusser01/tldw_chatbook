@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from enum import StrEnum
 from math import ceil
 from typing import TYPE_CHECKING, Literal
@@ -52,15 +53,42 @@ def _row_effect(message: str) -> str:
 #: task-32535: DERIVED from Import once's own copy, not re-typed beside it —
 #: the guide now promises both paths skip the same files for the same reasons,
 #: so the two surfaces must not be able to drift.
-_ITEM_SKIP_EFFECTS = {
-    reason: _row_effect(message)
-    for reason, message in _DISCOVERY_MESSAGES.items()
-    if reason.startswith("obsidian_")
-} | {
-    # task-32605: Import once has no counterpart sentence for this -- it is
-    # the one skip that exists because the OTHER path already ran.
-    "already_imported": "Already imported by Import once — left as it is",
+#: TASK-34000.16: a file the walk could not read as sync text is a row that
+#: names the file, says what is wrong in plain words and what to do. Keyed
+#: by the filesystem's own gate codes (``FILE_GATE_REASON_CODES``); the
+#: equality test in ``Tests/Library/test_library_notes_lasting_sync_state.py``
+#: fails if either side grows alone.
+_FILE_GATE_SKIP_EFFECTS: dict[str, str] = {
+    "unsupported_encoding": (
+        "Not UTF-8 text — convert it to UTF-8 or move it out of the folder"
+    ),
+    "mixed_newlines": "Mixed line endings — save it with one style",
+    "unsupported_newline": (
+        "Older Mac line endings — save it with Unix or Windows line endings"
+    ),
+    "unsupported_metadata": "Not writable by you — make it writable",
+    "max_file_bytes_exceeded": "Larger than 10 MB — move it out of the folder",
+    "non_regular": "Not an ordinary file — move it out of the folder",
+    "multiple_links": "More than one name on disk — leave a single copy",
+    "link_or_reparse": "A link, not a file — move it out of the folder",
+    "target_changed_during_read": "Changed while it was being read — Check again",
+    "operation_failed": (
+        "Couldn't be read — check that you can open it, then Check again"
+    ),
 }
+_ITEM_SKIP_EFFECTS = (
+    {
+        reason: _row_effect(message)
+        for reason, message in _DISCOVERY_MESSAGES.items()
+        if reason.startswith("obsidian_")
+    }
+    | {
+        # task-32605: Import once has no counterpart sentence for this -- it is
+        # the one skip that exists because the OTHER path already ran.
+        "already_imported": "Already imported by Import once — left as it is",
+    }
+    | _FILE_GATE_SKIP_EFFECTS
+)
 _DESTINATION_MAX_CHARS = 1024
 
 LastingSyncReviewSource = Literal["setup", "root", "migration"]
@@ -346,10 +374,34 @@ class LastingSyncReview:
     can_apply: bool = False
     apply_blocker: LastingSyncApplyBlocker = LastingSyncApplyBlocker.NOTHING_SELECTED
     source: LastingSyncReviewSource | None = None
+    activation_blockers: tuple[str, ...] = ()
+    """TASK-34000.16 fix round 1 (I-2): one line per migrated candidate whose
+    OWN file the walk could not read (``<file> · <what is wrong — what to
+    do>``; the skip's ``bound`` marker, fix round 2). A migration cannot
+    activate while one exists -- the runtime would refuse it after creating
+    the folder -- so Activate is held and the status line names them. Always
+    empty for a setup review, and for a refused file no candidate is tied to.
+    The lines carry the user's file name RAW: a Rich-markup surface (a
+    tooltip) must ``escape_markup`` them; the ``markup=False`` status line
+    takes them as they are."""
+
+    @property
+    def can_activate(self) -> bool:
+        """Whether Activate reviewed root may be offered for this review."""
+
+        return (
+            self.activation
+            and self.attention_count == 0
+            and not self.activation_blockers
+        )
 
     def __post_init__(self) -> None:
         if type(self.root_id) is not str or type(self.observation_token) is not str:
             raise TypeError("review identifiers must be strings")
+        if type(self.activation_blockers) is not tuple or any(
+            type(item) is not str or not item for item in self.activation_blockers
+        ):
+            raise TypeError("activation_blockers must be a tuple of non-empty strings")
         if self.root_id:
             validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
         if self.observation_token:
@@ -768,6 +820,7 @@ def build_reconciliation_review(
     stale: bool = False,
     activation: bool = False,
     labels: Mapping[str, RuntimeBindingLabel] | None = None,
+    source: LastingSyncReviewSource | None = None,
 ) -> LastingSyncReview:
     """Translate a public reconciliation plan into bounded rows.
 
@@ -775,6 +828,9 @@ def build_reconciliation_review(
         labels: Binding labels keyed by binding id (``NotesSyncRuntime
             .binding_labels``). A labelled row names its file and destination
             folder; an unlabelled one degrades to the effect alone.
+        source: Which check produced the plan. A ``"migration"`` activation
+            review is held while a candidate's file is a per-file skip
+            (``activation_blockers``); nothing else reads it here.
     """
 
     if type(plan) is not ReconciliationPlan:
@@ -961,6 +1017,38 @@ def build_reconciliation_review(
         activation=activation,
         can_apply=blocker is LastingSyncApplyBlocker.NONE,
         apply_blocker=blocker,
+        source=source,
+        activation_blockers=(
+            tuple(
+                f"{skip.relative_path} · {_FILE_GATE_SKIP_EFFECTS[skip.reason_code]}"
+                for skip in plan.item_skips
+                # Fix round 2 (R2-2): only a migrated note's OWN file holds
+                # Activate; an unrelated refused file is a plain skip row.
+                if skip.bound and skip.reason_code in _FILE_GATE_SKIP_EFFECTS
+            )
+            if activation and source == "migration"
+            else ()
+        ),
+    )
+
+
+_MIGRATION_BLOCKED_LINE_NAMES = 3
+
+
+def migration_activation_blocked_line(blockers: tuple[str, ...]) -> str:
+    """The migration review's status line while Activate is held (I-2).
+
+    Names up to three files with what to do about each; the rest are counted.
+    """
+
+    count = len(blockers)
+    named = ", ".join(blockers[:_MIGRATION_BLOCKED_LINE_NAMES])
+    more = count - _MIGRATION_BLOCKED_LINE_NAMES
+    tail = f" and {more} more" if more > 0 else ""
+    return (
+        f"Activate is unavailable while {count} "
+        f"{'file' if count == 1 else 'files'} there can't be read — fix or remove "
+        f"{'it' if count == 1 else 'them'}, then Check again: {named}{tail}."
     )
 
 
@@ -1114,6 +1202,60 @@ _CHECK_REFUSAL_COPY: dict[str, str] = {
     "root_observation_mismatch": (
         "The folder changed while it was being checked. Check again."
     ),
+    # TASK-34000.2: what Recovery on an open sync entry can refuse with.
+    # Before these the row fell back to the exception class ("Recovery failed
+    # — RuntimeError") and sent the reader to Check changes, whose check
+    # refuses the very same open entry: a loop with no way out.
+    "postcondition_failed": (
+        "A sync write could not be confirmed on disk. Use Recovery to look again."
+    ),
+    "stale_observation": (
+        "The note or its file changed while sync was working. Use Recovery again."
+    ),
+    # TASK-34000.51: normally settled by the runtime itself with no click;
+    # surfaces only when that settle was refused and the entry stayed open.
+    "source_moved_on": (
+        "The note changed while it was being written. Use Recovery to settle it."
+    ),
+    "operation_needs_attention": (
+        "A leftover temporary file still needs cleaning up. Use Recovery again."
+    ),
+    "binding_authority_changed": (
+        "This note's sync record changed during recovery. Check again."
+    ),
+    # Fix round 1 (review Important #1): the code the finding's own Recovery
+    # raised, and the other refusals a sync-folder action can surface.
+    "recovery_authority_changed": (
+        "This entry can't be settled as it is. Check changes, then use Recovery again."
+    ),
+    "operation_already_completed": (
+        "This entry was already completed. Check changes to refresh the folder."
+    ),
+    "operation_root_mismatch": (
+        "This entry belongs to another folder. Check changes to refresh the list."
+    ),
+    "file_observation_failed": (
+        "The file could not be read while sync was working. Use Recovery again."
+    ),
+    "root_lease_required": (
+        "This folder isn't held by this window right now. Reconnect it, then check again."
+    ),
+    "root_authority_mismatch": (
+        "The folder changed while this action was running. Check again."
+    ),
+    "root_direction_changed": (
+        "The folder's sync direction changed meanwhile. Check again."
+    ),
+    "invalid_execution_result": (
+        "Sync returned an unusable result for this action. Check again."
+    ),
+    "changed_since_resolution": (
+        "The note or file changed after this resolution. Check changes to review it."
+    ),
+    "undo_expired": (
+        "This resolution can no longer be undone. Check changes to review the folder."
+    ),
+    "stale_operation_token": "This action refers to an older check. Check again.",
 }
 
 #: task-32534 AC#1: reason code -> (row phrase, the root row's next action).
@@ -1132,6 +1274,56 @@ _CHECK_FAILURE_ROW: dict[str, tuple[str, str]] = {
         "another Chatbook owns this profile",
         "close_other_process_and_restart",
     ),
+    # TASK-34000.2: Recovery refusals that Recovery itself can move forward.
+    "postcondition_failed": ("a sync write wasn't confirmed", "resolve_cleanup"),
+    "stale_observation": ("the note or file changed meanwhile", "resolve_cleanup"),
+    # TASK-34000.51: the rare case a runtime settle was refused.
+    "source_moved_on": (
+        "the note changed while it was being written",
+        "resolve_cleanup",
+    ),
+    "operation_needs_attention": (
+        "a temporary file still needs cleanup",
+        "resolve_cleanup",
+    ),
+    "binding_authority_changed": ("the sync record changed", "sync_now"),
+    # Fix round 1 (review Important #1).
+    "recovery_authority_changed": ("entry can't be settled as it is", "sync_now"),
+    "operation_already_completed": ("entry was already completed", "sync_now"),
+    "operation_root_mismatch": ("entry belongs to another folder", "sync_now"),
+    "file_observation_failed": ("the file couldn't be read", "resolve_cleanup"),
+    "root_lease_required": ("folder isn't held by this window", "reconnect_folder"),
+    "root_authority_mismatch": ("the folder changed meanwhile", "sync_now"),
+    "root_direction_changed": ("the sync direction changed", "sync_now"),
+    "invalid_execution_result": ("sync returned an unusable result", "sync_now"),
+    "changed_since_resolution": ("the note or file changed since", "sync_now"),
+    "undo_expired": ("undo is no longer available", "sync_now"),
+    "stale_operation_token": ("refers to an older check", "sync_now"),
+    # TASK-34000.16 AC#4: every code with refusal copy has a row phrase, so a
+    # root row can never fall back to an exception class name. The per-file
+    # codes are kept as a belt -- the runtime now records them as skips.
+    "private_path_overlap": ("folder is inside Chatbook's own data", "review_settings"),
+    "private_path_check_failed": (
+        "folder's location couldn't be confirmed",
+        "review_settings",
+    ),
+    "file_notes_overlap": ("folder is used by Folder files", "review_settings"),
+    "lasting_root_overlap": ("folder is already connected", "none"),
+    "passive_process": ("another Chatbook window has this folder", "open_active_process"),
+    "lock_unavailable": ("folder couldn't be claimed", "close_other_process_and_restart"),
+    "root_not_directory": ("folder isn't a folder", "reconnect_folder"),
+    "root_link_or_reparse": ("folder is a link, not a folder", "reconnect_folder"),
+    "writable_filesystem_unsupported": ("folder's disk can't be written", "reconnect_folder"),
+    "root_discovery_incomplete": ("some files there couldn't be listed", "sync_now"),
+    "unsupported_metadata": ("some files there aren't writable", "sync_now"),
+    "unsupported_encoding": ("some files there aren't UTF-8 text", "sync_now"),
+    "mixed_newlines": ("some files there mix line endings", "sync_now"),
+    "unsupported_newline": ("some files there use old Mac line endings", "sync_now"),
+    "max_file_bytes_exceeded": ("some files there are larger than 10 MB", "sync_now"),
+    "non_regular": ("some entries there aren't ordinary files", "sync_now"),
+    "multiple_links": ("some files there have more than one name on disk", "sync_now"),
+    "link_or_reparse": ("some entries there are links, not files", "sync_now"),
+    "target_changed_during_read": ("a file changed during the check", "sync_now"),
 }
 
 
@@ -1204,7 +1396,109 @@ def check_failure_row(
     return f"{verb} failed — {phrase}", next_action
 
 
+#: TASK-34000.2 fix round 1: root statuses under which Recovery's pass did
+#: not leave the folder healthy (the row says so; the line must agree).
+_UNHEALTHY_ROOT_STATUSES = frozenset({"failed", "needs_attention", "partial", "offline"})
+RECOVERY_FINISHED_HEALTHY = "Recovery finished; the folder was checked again."
+RECOVERY_FINISHED_UNHEALTHY = (
+    "Recovery finished, but the check found a problem — see the row."
+)
+
+
+def recovery_finished_line(runtime: object, root_id: str) -> str:
+    """Return Manage sync folders' status line after a Recovery that ran.
+
+    TASK-34000.2 fix round 1 (review Minor #1): Recovery settles the open entry
+    and re-checks the folder, and that check can itself end in a failed or
+    held status. The line reads the status the runtime published for this
+    root instead of asserting "checked again" over a row that says otherwise.
+    A runtime that cannot say (no snapshot, no such root) keeps the plain line.
+
+    Args:
+        runtime: The sync runtime owner (or a test double) with ``snapshot()``.
+        root_id: The folder Recovery ran on.
+
+    Returns:
+        One of the two ``RECOVERY_FINISHED_*`` sentences.
+    """
+
+    snapshot = getattr(runtime, "snapshot", None)
+    if not callable(snapshot):
+        return RECOVERY_FINISHED_HEALTHY
+    try:
+        roots = getattr(snapshot(), "roots", ())
+    except Exception:  # noqa: BLE001 - a status line, never the action
+        return RECOVERY_FINISHED_HEALTHY
+    for root in roots:
+        if getattr(root, "root_id", None) == root_id:
+            if getattr(root, "status", "") in _UNHEALTHY_ROOT_STATUSES:
+                return RECOVERY_FINISHED_UNHEALTHY
+            return RECOVERY_FINISHED_HEALTHY
+    return RECOVERY_FINISHED_HEALTHY
+
+
+#: Manage sync folders: one root row's status, in the user's terms. Moved
+#: here from ``library_notes_sync_controller.py`` (TASK-32633 slice) with the
+#: rest of this screen's presentation copy.
+ROOT_STATUS_LABELS = {
+    "up_to_date": "✓ Up to date",
+    "changes_available": "◌ Changes available",
+    "paused": "Ⅱ Paused",
+    "offline": "⚠ Offline",
+    "passive": "Ⅱ Open in another process",
+    "needs_attention": "⚠ Needs attention",
+    #: task-32604 fix round 2: not a runtime status -- the label a root wears
+    #: when the runtime stopped watching. "✓ Up to date" is the last thing
+    #: PUBLISHED, not the truth, once nothing is carrying changes either way.
+    "not_watching": "⚠ Sync stopped",
+    "partial": "⚠ Partial",
+    "failed": "✕ Failed",
+    "unsupported": "✕ Blocked",
+    "starting": "◌ Starting",
+}
+
+
+def root_status_label(
+    status: str, published_at: float | None, *, now: datetime | None = None
+) -> str:
+    """The status label for one root row, dated when it claims to be healthy.
+
+    TASK-32633 slice (review finding N-03): until every note-write path tells
+    lasting sync about its write, a live root's "✓ Up to date" can be stale.
+    The healthy label therefore says when the runtime last confirmed it --
+    "✓ Up to date as of HH:MM", the local wall clock of the publication that
+    carried the status (``NotesSyncRootRuntimeSnapshot.published_at``); a
+    confirmation from another day carries its date too ("as of 2026-10-03
+    08:25"), so yesterday's minute never reads as today's. The paint never
+    invents a time: a snapshot without one keeps the bare label (every
+    production publication carries one -- pinned by
+    ``Tests/Architecture/test_notes_sync_snapshot_construction.py``).
+
+    Args:
+        status: The runtime status code.
+        published_at: Epoch seconds of the publication, or ``None``.
+        now: The current moment, for tests; defaults to the wall clock.
+
+    Returns:
+        The label, in the codebase's local-time spelling (tz-aware, then
+        localised, like ``note_file_written_label``).
+    """
+
+    label = ROOT_STATUS_LABELS.get(status, status.replace("_", " ").title())
+    if status != "up_to_date" or published_at is None:
+        return label
+    confirmed = datetime.fromtimestamp(published_at, tz=UTC).astimezone()
+    today = (datetime.now(tz=UTC) if now is None else now).astimezone().date()
+    stamp = confirmed.strftime("%H:%M" if confirmed.date() == today else "%Y-%m-%d %H:%M")
+    return f"{label} as of {stamp}"
+
+
 __all__ = [
+    "ROOT_STATUS_LABELS",
+    "root_status_label",
+    "RECOVERY_FINISHED_HEALTHY",
+    "RECOVERY_FINISHED_UNHEALTHY",
+    "recovery_finished_line",
     "LASTING_SYNC_HISTORY_PAGE_SIZE",
     "LastingSyncApplyBlocker",
     "LastingSyncHistory",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -16,7 +17,9 @@ from textual.widgets import Button, Input, RadioButton, RadioSet, Static
 from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.Chat.trajectory import TrajectorySnapshot
 from tldw_chatbook.Chat.trajectory_export import (
+    TraceExportCredentialBlocked,
     TraceExportPreflight,
+    TrajectoryExportError,
     build_trace_export,
     preflight_trace_export,
     write_trajectory_export,
@@ -33,11 +36,47 @@ from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 # (TASK-22213; guard:
 # `Tests/Packaging/test_exchange_export_trajectory_deferral.py`).
 from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
+    EXPORT_STILL_WRITING,
     TRACE_EXPORT_PROFILE_COPY,
     TRACE_EXPORT_PROFILE_LABELS,
     full_trace_confirmation,
 )
 from tldw_chatbook.Widgets.status_line import set_status_line
+
+#: TASK-33621.8: what the dialog says when the bundle fails its own checks.
+#: The checker's text names internal event ids; it goes to the log instead.
+#: The failures left after the unrecorded-link repair come from stored data,
+#: so the same snapshot fails the same way every time: the copy offers the
+#: log for a report, never a retry.
+TRACE_EXPORT_VALIDATION_FAILED = (
+    "Export failed: part of this Trace could not be checked, so nothing was "
+    "written; the app log has the details to include in a bug report."
+)
+
+#: The final credential backstop keeps its own words: what stopped the
+#: export, never the field that tripped it. Field names survive every
+#: profile's scrubbing, so another profile is not offered as a fix.
+TRACE_EXPORT_CREDENTIAL_BLOCKED = (
+    "Export blocked: something in this Trace still looks like a password or "
+    "key after redaction, so nothing was written; the app log has the details "
+    "to include in a bug report."
+)
+
+
+def _validation_failure_copy(exc: Exception) -> str:
+    """Return the dialog's plain copy for a failed preflight or bundle check.
+
+    Args:
+        exc: What preflight or the bundle builder raised.
+
+    Returns:
+        The credential-block copy for the final credential check, else the
+        generic could-not-be-checked copy.
+    """
+    if isinstance(exc, TraceExportCredentialBlocked):
+        return TRACE_EXPORT_CREDENTIAL_BLOCKED
+    return TRACE_EXPORT_VALIDATION_FAILED
+
 
 __all__ = [
     "TRACE_EXPORT_PROFILE_COPY",
@@ -133,9 +172,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="trace-export-dialog"):
             yield Static("Export shared Trace", id="trace-export-title", markup=False)
-            yield Static(
-                "Analyzing privacy inventory…", id="trace-export-inventory"
-            )
+            yield Static("Analyzing privacy inventory…", id="trace-export-inventory")
             yield Static(
                 "Credentials are always blocked in every profile.",
                 id="trace-export-policy",
@@ -211,7 +248,8 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             )
         except Exception as exc:  # noqa: BLE001 - projection boundary
             self._preflight = None
-            self._set_status(f"Preflight failed: {exc}", error=True)
+            self._log_validation_failure(exc, profile)
+            self._set_status(_validation_failure_copy(exc), error=True)
             return
         if profile is not self._selected_profile:
             return
@@ -289,9 +327,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
 
     async def _confirm_full_export(self) -> bool:
         return bool(
-            await self.app.push_screen_wait(
-                full_trace_confirmation(noun="Trace")
-            )
+            await self.app.push_screen_wait(full_trace_confirmation(noun="Trace"))
         )
 
     @on(Button.Pressed, "#trace-export-submit")
@@ -350,13 +386,61 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             written = await asyncio.to_thread(
                 write_trajectory_export, destination, payload
             )
+        except TrajectoryExportError as exc:
+            self._writing = False
+            self._set_controls_disabled(False)
+            self._log_validation_failure(exc, self._selected_profile)
+            self._set_status(_validation_failure_copy(exc), error=True)
+            return
         except Exception as exc:  # noqa: BLE001 - actionable write boundary
             self._writing = False
             self._set_controls_disabled(False)
             self._set_status(f"Export failed: {exc}", error=True)
             return
         self._writing = False
-        self.dismiss(written)
+        # Covered (Ctrl+Q's quit-anyway question), the close is kept for when
+        # this dialog is on top again, so the export is still reported
+        # (TASK-33622.15).
+        self.dismiss_safe_once_when_on_top(written)
+
+    def _log_validation_failure(
+        self, exc: Exception, profile: TraceExportProfile
+    ) -> None:
+        """Log a failed preflight or bundle check with its conversation.
+
+        Runs inside the callers' except handlers: a snapshot too malformed
+        to name its conversation is logged as unreadable rather than raising
+        over the plain copy.
+
+        Args:
+            exc: What preflight or the bundle builder raised. Only the
+                exporter's own errors are logged with their text, which names
+                event ids and fields, never content; anything else logs its
+                type alone.
+            profile: The privacy profile being exported.
+        """
+        try:
+            conversation_ids = sorted(
+                {
+                    str(record.conversation_id)
+                    for turn in self._snapshot.turns
+                    for record in turn.records
+                    if record.conversation_id
+                }
+            )
+        except Exception:  # noqa: BLE001 - the copy must survive a bad snapshot
+            conversation_ids = ["<unreadable snapshot>"]
+        detail = (
+            str(exc)
+            if isinstance(exc, TrajectoryExportError)
+            else f"exception_type={type(exc).__name__}"
+        )
+        logger.error(
+            "Trace export failed validation conversation_ids={} profile={} error={}",
+            conversation_ids,
+            profile.value,
+            detail,
+        )
 
     def _set_controls_disabled(self, disabled: bool) -> None:
         for selector in (
@@ -378,3 +462,15 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             self._set_status("Export is finishing; the destination is still protected.")
             return
         self.dismiss_safe_once(None)
+
+    async def confirm_quit(self) -> bool:
+        """Stay while the export is written, as Escape does (TASK-33622.15).
+
+        Returns:
+            refuse_quit_while_working's answer mid-write; else True.
+        """
+        if not self._writing:
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(self, EXPORT_STILL_WRITING)

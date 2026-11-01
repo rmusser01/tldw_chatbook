@@ -1,0 +1,21 @@
+{
+  "head": "e021a376b2a8e8230556ca2cb235bd417f7ed951",
+  "source_diff_sha256": "3c85be9f1ab502a8f02e3494c2a5216b05bdd085417d727353bac88b25c834e2",
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/UI/test_console_tab_publication_read_barrier.py",
+    "-x",
+    "-v",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-review-02f5ccbf62bb",
+  "exit_code": 1,
+  "seconds": 69.67200000002049
+}

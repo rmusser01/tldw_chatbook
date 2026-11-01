@@ -111,37 +111,78 @@ async def _mount_models(
     assert app.CSS_PATH == TldwCli.CSS_PATH
     context = app.run_test(size=size)
     pilot = await context.__aenter__()
-    screen = LLMScreen(app)
-    await app.push_screen(screen)
-    for _ in range(4):
-        await pilot.pause()
-    window = screen.query_one(LLMManagementWindow)
-    await _settle_pilot_until(
-        pilot,
-        lambda: (
-            window.active_view == "llama-cpp"
-            and len(window.query("#llm-view-remote")) == 1
-        ),
-        message="deferred model views did not finish mounting",
-    )
-    # Most of this module compares both GGUF providers. Under the lazy-once
-    # lifecycle, visit llamafile once so those comparison tests retain their
-    # original two-pane fixture while the dedicated deferral tests cover the
-    # true first-arrival shape.
-    if mount_llamafile:
-        window.active_view = "llamafile"
+    try:
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        for _ in range(4):
+            await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
         await _settle_pilot_until(
             pilot,
-            lambda: len(window.query("#llamafile-gguf-source-mode")) == 1,
-            message="llamafile pane did not populate on first selection",
+            lambda: (
+                window.active_view == "llama-cpp"
+                and len(window.query("#llm-view-remote")) == 1
+            ),
+            message="deferred model views did not finish mounting",
         )
-        window.active_view = "llama-cpp"
-        await pilot.pause()
+        # Most of this module compares both GGUF providers. Under the lazy-once
+        # lifecycle, visit llamafile once so those comparison tests retain their
+        # original two-pane fixture while the dedicated deferral tests cover the
+        # true first-arrival shape.
+        if mount_llamafile:
+            window.active_view = "llamafile"
+            await _settle_pilot_until(
+                pilot,
+                lambda: len(window.query("#llamafile-gguf-source-mode")) == 1,
+                message="llamafile pane did not populate on first selection",
+            )
+            window.active_view = "llama-cpp"
+            await pilot.pause()
+    except BaseException:
+        await _close_context(context)
+        raise
     return app, pilot, context, screen, window, inventory_service
 
 
 async def _close_context(context: Any) -> None:
     await context.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("mount setup failed"),
+        asyncio.CancelledError("mount setup cancelled"),
+    ],
+    ids=("error", "cancelled"),
+)
+@private_profile_test
+async def test_mount_setup_exception_closes_its_app(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    failure: BaseException,
+) -> None:
+    app = _build_test_app()
+    context = app.run_test(size=(120, 40))
+    monkeypatch.setattr(app, "run_test", lambda **_kwargs: context)
+    monkeypatch.setattr(f"{__name__}._build_test_app", lambda: app)
+
+    async def fail_after_mount(pilot: Any, predicate: Any, *, message: str) -> None:
+        assert pilot.app is app
+        assert app.screen.query_one(LLMManagementWindow).is_mounted
+        raise failure
+
+    monkeypatch.setattr(f"{__name__}._settle_pilot_until", fail_after_mount)
+    try:
+        with pytest.raises(type(failure)) as raised:
+            await _mount_models(monkeypatch)
+        assert raised.value is failure
+        assert app._task.done()
+        assert not app.is_running
+    finally:
+        # The failing baseline must release its real app before pytest teardown.
+        await _close_context(context)
 
 
 def _select_values(select: Select) -> tuple[object, ...]:
@@ -595,27 +636,102 @@ async def test_lazy_mount_cached_inventory_preserves_handoff_awaiting_fresh_read
         monkeypatch, choices=(choice_a,), mount_llamafile=False
     )
     release = threading.Event()
+    waiting = threading.Event()
+    fresh_started = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    cached_hydration = False
 
     def wait_for_fresh_inventory():
-        assert release.wait(timeout=10), "fresh inventory was never released"
-        return ()
+        waiting.set()
+        try:
+            loop.call_soon_threadsafe(fresh_started.set)
+            assert release.wait(timeout=10), "fresh inventory was never released"
+            return ()
+        finally:
+            waiting.clear()
 
-    monkeypatch.setattr(service, "list_installed", wait_for_fresh_inventory)
-    monkeypatch.setattr(
-        window_module, "managed_gguf_choices", lambda _installed: (choice_a, choice_b)
-    )
     try:
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in app.workers
+                if worker.node is app and worker.group == "managed_gguf_inventory"
+            )
+        )
+        assert window._managed_gguf_choices == (choice_a,)
+        # Keep unrelated first-arrival work outside the held fresh inventory read.
+        window.active_view = "remote"
+        await _settle_pilot_until(
+            pilot,
+            lambda: bool(
+                window.query(
+                    "#remote-model-install-progress #model-install-progress-phase"
+                )
+            ),
+            message="Remote body did not finish its initial composition",
+        )
+        window.active_view = "llama-cpp"
+        await pilot.pause()
+        assert not window.query("#llamafile-gguf-managed-select")
+        original_apply = window._apply_managed_gguf_inventory
+        original_ready = window._view_population_ready
+
+        async def ready_after_fresh_entry(view_name):
+            if view_name == "llamafile":
+                # The cached callback and native worker have independent scheduling.
+                async with asyncio.timeout(10):
+                    await fresh_started.wait()
+            original_ready(view_name)
+
+        monkeypatch.setattr(window, "_view_population_ready", ready_after_fresh_entry)
+
+        def observe_cached_hydration(
+            generation, choices, error, *, settle_handoff=True
+        ):
+            nonlocal cached_hydration
+            result = original_apply(
+                generation, choices, error, settle_handoff=settle_handoff
+            )
+            managed = window.query("#llamafile-gguf-managed-select")
+            if (
+                not settle_handoff
+                and generation == window._managed_gguf_inventory_generation
+                and choices == (choice_a,)
+                and not error
+                and window_module.current_llm_destination(app) is window
+                and window.is_attached
+                and window.active_view == "remote"
+                and managed
+                and managed.first().is_mounted
+                and managed.first().value == REF_A
+                and waiting.is_set()
+                and not release.is_set()
+            ):
+                cached_hydration = True
+            return result
+
+        monkeypatch.setattr(
+            window, "_apply_managed_gguf_inventory", observe_cached_hydration
+        )
+        monkeypatch.setattr(service, "list_installed", wait_for_fresh_inventory)
+        monkeypatch.setattr(
+            window_module,
+            "managed_gguf_choices",
+            lambda _installed: (choice_a, choice_b),
+        )
         assert window.configure_managed_gguf("llamafile", REF_B)
         window.active_view = "remote"
         await _settle_pilot_until(
             pilot,
             lambda: (
-                len(window.query("#llamafile-gguf-managed-select")) == 1
+                cached_hydration
+                and len(window.query("#llamafile-gguf-managed-select")) == 1
                 and window.query_one("#llamafile-gguf-managed-select").is_mounted
                 and "llamafile" not in window._populating_views
             ),
-            message="inactive llamafile controls did not finish mounting",
+            message="inactive llamafile controls did not finish cached hydration",
         )
+        assert waiting.is_set()
         assert window._pending_managed_gguf_handoff == ("llamafile", REF_B)
         release.set()
         managed = window.query_one("#llamafile-gguf-managed-select", Select)
@@ -1314,6 +1430,46 @@ async def test_disabled_gguf_controls_keep_live_compositor_contrast(
                 assert release_server_claim(app, provider, claim)
                 window._sync_process_controls(provider)
                 await pilot.pause()
+    finally:
+        await _close_context(context)
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+@private_profile_test
+async def test_model_source_label_and_value_paint_on_one_row(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    size: tuple[int, int],
+) -> None:
+    """TASK-33641.2: the label sat one row below the compact Select's value."""
+    app, pilot, context, _screen, window, _service = await _mount_models(
+        monkeypatch, size=size, mount_llamafile=False
+    )
+    try:
+        mode = window.query_one("#llamacpp-gguf-source-mode", Select)
+        label = mode.parent.query_one(".gguf-source-label")
+        mode.scroll_visible(animate=False)
+        await pilot.pause()
+        value = next(
+            str(text) for text, option in mode._options if option == mode.value
+        )
+        strips = app.screen._compositor.render_strips()
+
+        def painted_rows(widget: Any, text: str) -> list[int]:
+            region = widget.region
+            return [
+                y
+                for y in range(region.y, region.bottom)
+                if text in strips[y].crop(region.x, region.right).text
+            ]
+
+        label_rows = painted_rows(label, "Model source:")
+        value_rows = painted_rows(mode, value)
+        assert len(label_rows) == 1 and label_rows == value_rows, (
+            f"@ {size}: 'Model source:' on rows {label_rows}, "
+            f"{value!r} on rows {value_rows}"
+        )
     finally:
         await _close_context(context)
 

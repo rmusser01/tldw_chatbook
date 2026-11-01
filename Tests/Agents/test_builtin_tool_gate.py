@@ -194,9 +194,7 @@ def test_named_profile_is_used_for_resolution_and_session_approval():
 
     assert state.state == "ask"
     assert svc.session_approved == [("calculator", "research")]
-    assert svc.session_reads == [
-        ("agent:builtin", "calculator", "research")
-    ]
+    assert svc.session_reads == [("agent:builtin", "calculator", "research")]
     assert approved is True
 
 
@@ -499,17 +497,16 @@ def _tools_all_on():
 def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypatch):
     import tldw_chatbook.config as config_module
     from tldw_chatbook.Agents.builtin_tool_gate import ToolGate, all_tool_gates
+    from tldw_chatbook.Agents.code_review_models import CODE_REVIEW_GATE_KEY
     from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
     _patch_gate_config(monkeypatch)
 
     gates = all_tool_gates()
-    # Derived, not a literal (TASK-16174): the arity is "every builtin row
-    # plus the local group's four" (master, web_deep_search, ask_user,
-    # character_tools -- TASK-32954), so adding a gateable built-in must not
-    # make this test the thing that fails.
-    assert len(gates) == len(_GATEABLE_BUILTINS) + 4
+    # Every table builtin, the hand-listed code-review gate, four local
+    # gates, and the Full agent tools gate retain their own contract.
+    assert len(gates) == len(_GATEABLE_BUILTINS) + 6
     assert all(isinstance(gate, ToolGate) for gate in gates)
 
     # The _GATEABLE_BUILTINS rows come first, in registration order,
@@ -526,9 +523,18 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     )  # real tool descriptions, never blank
     assert all(g.enabled is False for g in builtin_gates)  # no override -> all off
 
+    # Native multi-model review is not a Tool subclass: hand-listed right
+    # after the table rows, in the same Agent built-ins group, default ON.
+    review = gates[len(_GATEABLE_BUILTINS)]
+    assert (review.section, review.key) == ("tools", CODE_REVIEW_GATE_KEY)
+    assert review.tool_name == "code_review_guide"
+    assert review.group == "builtin"
+    assert review.enabled is True  # missing key -> ON by default
+    assert review.title.strip() and review.description.strip()
+
     # The local group: master switch FIRST, then web_deep_search, then
     # ask_user, then character_tools (PRD A12 / TASK-32954: both default ON).
-    local_gates = gates[len(_GATEABLE_BUILTINS) :]
+    local_gates = gates[len(_GATEABLE_BUILTINS) + 1 : len(_GATEABLE_BUILTINS) + 5]
     assert len(local_gates) == 4
     assert local_gates[0].section == "console"
     assert local_gates[0].key == "local_tools_enabled"
@@ -550,6 +556,14 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     assert local_gates[3].group == "local"
     assert local_gates[3].enabled is True  # missing key -> ON by default
     assert all(g.description for g in local_gates)
+
+    # TASK-34100.5.3: the agent group's one gate comes last and is off by
+    # default -- plain chat keeps the light surface until it is turned on.
+    agent_gate = gates[-1]
+    assert (agent_gate.section, agent_gate.key) == ("tools", "full_agent_tools_enabled")
+    assert agent_gate.group == "agent"
+    assert agent_gate.enabled is False
+    assert agent_gate.title == "Full agent tools"
 
 
 def test_all_tool_gates_carry_display_titles_from_the_shared_table(monkeypatch):
@@ -594,6 +608,105 @@ def test_only_externally_published_gates_are_flagged_restart_required(monkeypatc
     assert [g.key for g in gates if g.restart_required] == [WEB_DEEP_SEARCH_GATE_KEY]
 
 
+def test_all_tool_gates_rows_carry_an_effect_scope_from_one_table(monkeypatch):
+    """task-35153: every gate row names WHEN flipping it takes effect.
+
+    The scope is the truth the hub pane, the Settings Tools & MCP category
+    and the first-run Tools step all render; it lives HERE, on the row,
+    not in per-surface copy. From code: every provider is rebuilt per
+    Console agent run (next chat); the single restart gate is
+    ``web_deep_search_enabled`` -- the one `[tools]` key also read by
+    ``MCP/local_server_tools.py::build_server_local_provider()``, which
+    runs once when the external MCP server starts (``MCP/server.py``).
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_NEXT_CHAT,
+        EFFECT_SCOPE_RESTART,
+        LOCAL_TOOLS_MASTER_KEY,
+        all_tool_gates,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import (
+        ASK_USER_GATE_KEY,
+        WEB_DEEP_SEARCH_GATE_KEY,
+    )
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    _patch_gate_config(monkeypatch)
+
+    gates = all_tool_gates()
+    valid = {EFFECT_SCOPE_NEXT_CHAT, EFFECT_SCOPE_RESTART}
+    assert all(gate.effect_scope in valid for gate in gates), [
+        (gate.key, gate.effect_scope) for gate in gates
+    ]
+
+    # Pin the one restart gate, by name.
+    assert [
+        gate.key for gate in gates if gate.effect_scope == EFFECT_SCOPE_RESTART
+    ] == [WEB_DEEP_SEARCH_GATE_KEY]
+
+    # Representative next-chat gates, one per kind: a builtin row, the local
+    # group's master switch, and a default-ON local gate.
+    by_key = {gate.key: gate for gate in gates}
+    assert by_key[_GATEABLE_BUILTINS[0].gate_key].effect_scope == EFFECT_SCOPE_NEXT_CHAT
+    assert by_key[LOCAL_TOOLS_MASTER_KEY].effect_scope == EFFECT_SCOPE_NEXT_CHAT
+    assert by_key[ASK_USER_GATE_KEY].effect_scope == EFFECT_SCOPE_NEXT_CHAT
+
+    # The pre-task boolean is DERIVED from the field, never independent.
+    assert [gate.key for gate in gates if gate.restart_required] == [
+        WEB_DEEP_SEARCH_GATE_KEY
+    ]
+
+
+def test_tool_gate_effect_suffix_renders_one_short_label_per_scope():
+    """task-35153: one short human string per scope (TASK-35018/35019 copy
+    rules), rendered as the ONE suffix every surface appends."""
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_LABELS,
+        EFFECT_SCOPE_NEXT_CHAT,
+        EFFECT_SCOPE_RESTART,
+        tool_gate_effect_suffix,
+    )
+
+    assert set(EFFECT_SCOPE_LABELS) == {EFFECT_SCOPE_NEXT_CHAT, EFFECT_SCOPE_RESTART}
+    assert all(label and not label.isupper() for label in EFFECT_SCOPE_LABELS.values())
+    assert tool_gate_effect_suffix(EFFECT_SCOPE_NEXT_CHAT) == " (next chat)"
+    assert tool_gate_effect_suffix(EFFECT_SCOPE_RESTART) == " (restart to apply)"
+    # An unknown scope renders nothing rather than a wrong promise.
+    assert tool_gate_effect_suffix("nonsense") == ""
+
+
+def test_gate_effect_scopes_is_config_free_and_covers_every_gate(monkeypatch):
+    """task-35153: the scope table is ONE assignment the rows read from.
+
+    Config-free on purpose: the first-run wizard renders scope suffixes
+    from it without a disk read, and the assignment can never drift from
+    ``all_tool_gates()`` because the rows take their scope from this map.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_RESTART,
+        _gate_key_pairs,
+        all_tool_gates,
+        gate_effect_scopes,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("the scope table must not read config")
+
+    monkeypatch.setattr(config_module, "load_cli_config_and_ensure_existence", _boom)
+
+    scopes = gate_effect_scopes()
+    assert set(scopes) == set(_gate_key_pairs())
+    assert scopes[("tools", WEB_DEEP_SEARCH_GATE_KEY)] == EFFECT_SCOPE_RESTART
+
+    _patch_gate_config(monkeypatch)
+    assert {
+        (gate.section, gate.key): gate.effect_scope for gate in all_tool_gates()
+    } == scopes
+
+
 def test_tool_gate_breadcrumb_names_the_tool_gates_pane(monkeypatch):
     """task-32284 AC#4: the Permissions legend's gate-off count says WHERE
     the gates live -- "the built-in server detail" never named the pane."""
@@ -604,7 +717,10 @@ def test_tool_gate_breadcrumb_names_the_tool_gates_pane(monkeypatch):
         tool_gate_breadcrumb,
     )
 
-    assert TOOL_GATES_PANE_PATH == "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+    # TASK-36387, rewritten on purpose: MCP is a Settings category now.
+    assert TOOL_GATES_PANE_PATH == (
+        "Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+    )
 
     _patch_gate_config(monkeypatch)
     everything_but_the_master_off = tool_gate_breadcrumb()
@@ -695,7 +811,8 @@ def test_tool_gate_breadcrumb_names_the_off_count(monkeypatch):
 
     _patch_gate_config(monkeypatch)
     gates = all_tool_gates()  # master defaults on; every other gate defaults off
-    off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
+    # + web_deep_search + Full agent tools (TASK-34100.5.3), - the master
+    off_count = len(_GATEABLE_BUILTINS) + 2
     text = tool_gate_breadcrumb(gates)
     assert text is not None
     assert str(off_count) in text
@@ -722,6 +839,26 @@ def test_tool_gate_breadcrumb_names_expanded_principal_when_master_is_off(
     assert "local/web" not in text
 
 
+def test_code_review_gate_switch_reads_and_counts_the_tools_key(monkeypatch):
+    """The `[tools] code_review_enabled` gate has a hub switch like the rest."""
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        EFFECT_SCOPE_NEXT_CHAT,
+        all_tool_gates,
+        count_off_tool_gates,
+    )
+    from tldw_chatbook.Agents.code_review_models import CODE_REVIEW_GATE_KEY
+
+    _patch_gate_config(
+        monkeypatch,
+        tools=_tools_all_on() | {CODE_REVIEW_GATE_KEY: "false"},
+        console={"local_tools_enabled": True},
+    )
+    gate = next(g for g in all_tool_gates() if g.key == CODE_REVIEW_GATE_KEY)
+    assert gate.enabled is False
+    assert gate.effect_scope == EFFECT_SCOPE_NEXT_CHAT
+    assert count_off_tool_gates() == 1
+
+
 def test_gate_key_pairs_and_all_tool_gates_can_never_drift(monkeypatch):
     """Qodo PR #1453: the count path (`_gate_key_pairs`) and the full
     enumerator (`all_tool_gates`) hand-build the same key set in two
@@ -745,7 +882,8 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
 
     monkeypatch.setattr(tool_catalog, "build_gateable_tool", explode)
     _patch_gate_config(monkeypatch)
-    off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
+    # + web_deep_search + Full agent tools (TASK-34100.5.3), - the master
+    off_count = len(_GATEABLE_BUILTINS) + 2
     assert builtin_tool_gate.count_off_tool_gates() == off_count
     breadcrumb = builtin_tool_gate.tool_gate_breadcrumb()
     assert breadcrumb is not None
@@ -773,6 +911,7 @@ def test_tool_gate_breadcrumb_loads_config_once_not_per_gate(monkeypatch):
     monkeypatch.setattr(
         config_module, "load_cli_config_and_ensure_existence", counting_load
     )
+
     # And the per-key reader must not be consulted at all any more.
     def _no_per_key(*args, **kwargs):
         raise AssertionError("gate enumeration must not read keys one at a time")
@@ -844,9 +983,7 @@ def test_gate_lists_only_builtin_approvals_from_its_own_profile():
 
     assert gate.list_session_approvals() == [("agent:builtin", "write_thing")]
     assert gate.revoke_session_approval("local:docs", "search") is False
-    assert service.is_session_approved(
-        "local:docs", "search", profile_id="research"
-    )
+    assert service.is_session_approved("local:docs", "search", profile_id="research")
 
 
 def test_service_less_gate_has_nothing_to_list_or_revoke():

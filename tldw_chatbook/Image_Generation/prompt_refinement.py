@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 DEFAULT_PROMPT_REFINEMENT_MODE = "auto"
-DEFAULT_QUALITY_SUFFIX = "high detail, coherent composition, natural lighting, sharp focus"
+DEFAULT_QUALITY_SUFFIX = (
+    "high detail, coherent composition, natural lighting, sharp focus"
+)
 
 _KNOWN_MODES = {"off", "auto", "basic"}
 _QUALITY_CUES = (
@@ -22,7 +24,9 @@ _QUALITY_CUES = (
 )
 
 
-def normalize_prompt_refinement_mode(value: Any, *, default: str = DEFAULT_PROMPT_REFINEMENT_MODE) -> str:
+def normalize_prompt_refinement_mode(
+    value: Any, *, default: str = DEFAULT_PROMPT_REFINEMENT_MODE
+) -> str:
     """Normalize prompt refinement mode from bool/string input."""
     normalized_default = str(default or DEFAULT_PROMPT_REFINEMENT_MODE).strip().lower()
     if normalized_default not in _KNOWN_MODES:
@@ -89,4 +93,3 @@ def _needs_quality_guidance(prompt: str) -> bool:
 
 def _normalize_spaces(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
-

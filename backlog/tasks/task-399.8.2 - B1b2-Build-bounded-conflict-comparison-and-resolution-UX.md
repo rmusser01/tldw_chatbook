@@ -1,9 +1,10 @@
 ---
 id: TASK-399.8.2
 title: B1b2 Build bounded conflict comparison and resolution UX
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-23 15:36'
+updated_date: '2026-10-04'
 labels:
   - notes
   - filesystem
@@ -36,3 +37,16 @@ Provide a complete three-sided conflict experience that keeps base, draft, and d
 - [ ] #7 There is no automatic merge, timestamp winner, or silent reload of a dirty buffer; unresolved items remain in Needs attention.
 - [ ] #8 This child exposes no public writable mode transition or final B1 controls.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Done. The bounded Base/Draft/Disk compare and the resolution choices landed as
+TASK-15532 and TASK-15601 (PRs #1550 and #1551): off-thread bounded
+comparison, absent-disk representation, and exact copy/export fallbacks.
+
+Deliberate design decision, not a gap: the "Overwrite disk with draft" choice
+named in AC #5 above was removed. The shipped choice set — Keep editing, Save
+draft as new note, Discard draft and load disk (TASK-15601 implementation
+notes) — is intentionally narrower so no resolution can erase the only copy of
+a side. AC #8's "no public writable mode transition" holds trivially: no
+writable gate ever existed (see the TASK-399.8.3 closeout).

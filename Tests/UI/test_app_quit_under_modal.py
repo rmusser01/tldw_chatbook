@@ -19,7 +19,7 @@ before quitting -- a dirty ReminderForm, the generated-video choice and a
 memory-only profile interview -- and the walk reaches unsaved work on the
 destination BENEATH a hook-less modal (Settings' theme editor).
 
-The last group pins the orphaned-prompt hazard Ctrl+Q-under-a-modal exposes.
+The next group pins the orphaned-prompt hazard Ctrl+Q-under-a-modal exposes.
 ``Screen.dismiss()`` pops the app's TOP screen, whoever calls it, and
 ``App.pop_screen`` drops the popped screen's result callback unresolved. So a
 covered modal that closes itself from a timer or worker while a quit prompt
@@ -34,6 +34,10 @@ already spent, that modal's next close raised ``InvalidStateError`` and
 exited the app (review follow-up). A modal on ``SafeModalDismissMixin`` (the
 switcher, the video player, most Console modals) cannot pop the prompt at
 all: its covered dismiss is refused, which the switcher journey pins.
+
+The final group pins ruling C-N1 (TASK-33007): a Settings draft kept after
+leaving Settings is asked about from any screen, and only while Settings is
+not open to ask for itself; Keep editing under a modal stays in it.
 """
 
 from __future__ import annotations
@@ -754,3 +758,537 @@ async def test_ctrl_q_survives_a_covered_modal_popping_settings_theme_prompt(
         await _until_exited(app, cleanups, "Discard to reach the approved shutdown")
     assert cleanups == [True]
     assert app.return_code == 0
+
+
+# --- A Settings draft kept after leaving Settings (TASK-33007, ruling C-N1) --
+
+_SETTINGS_QUIT_TITLE = "Quit and discard unsaved Settings changes?"
+
+
+async def _settings_with_a_kept_draft(app, pilot):
+    """Stage a Providers & Models change, then leave Settings for Home.
+
+    Leaving keeps the draft in ``app.screen_state_store`` (the rail's * shows
+    it on return); Home is not Settings, so nothing on screen holds it.
+    """
+    from tldw_chatbook.UI.Screens.settings_config_models import (
+        SettingsCategoryId,
+        SettingsDraft,
+    )
+
+    await _until(
+        pilot,
+        lambda: type(app.screen).__name__ == "SettingsScreen",
+        "the Settings screen",
+    )
+    draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+    draft.set_value("provider", "openai", "anthropic")
+    app.screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+    await _go_home(app, pilot)
+
+
+async def _go_home(app, pilot) -> None:
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    app.post_message(NavigateToScreen("home"))
+    await _until(
+        pilot, lambda: type(app.screen).__name__ == "HomeScreen", "the Home screen"
+    )
+
+
+def _kept_provider_draft(app):
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    return app.screen._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
+
+
+async def test_ctrl_q_from_another_screen_asks_about_a_kept_settings_draft(
+    monkeypatch,
+):
+    """Ruling C-N1 (b): Ctrl+Q from Home quit at once and dropped a Settings
+    draft kept from an earlier visit. It now asks as a quit from Settings
+    does: Keep editing returns to Settings with the draft, Discard and quit
+    quits."""
+    app = _build_test_app(configured_default="settings")
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _settings_with_a_kept_draft(app, pilot)
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, _SETTINGS_QUIT_TITLE)) or bool(cleanups),
+            "Ctrl+Q on Home to ask about the kept Settings draft",
+            timeout=5.0,
+        )
+        assert cleanups == [], "quit straight past the kept Settings draft"
+        assert "Providers & Models" in app.screen.message
+
+        # Keep editing: back in Settings, the draft still staged.
+        await pilot.press("escape")
+        await _until(
+            pilot,
+            lambda: type(app.screen).__name__ == "SettingsScreen",
+            "Keep editing to return to Settings",
+        )
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after Keep editing",
+        )
+        kept = _kept_provider_draft(app)
+        assert kept is not None and kept.is_dirty
+        assert cleanups == [] and app.is_running
+
+        # Discard and quit from another screen: the quit runs.
+        await _go_home(app, pilot)
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, _SETTINGS_QUIT_TITLE)),
+            "the second Ctrl+Q to ask again",
+            timeout=5.0,
+        )
+        await pilot.click("#confirm-button")
+        await _until_exited(app, cleanups, "Discard and quit to reach the shutdown")
+    assert cleanups == [True]
+
+
+async def test_ctrl_q_on_settings_never_asks_about_its_own_stale_snapshot(
+    monkeypatch,
+):
+    """Back on Settings the store still holds the snapshot it left with; once
+    the draft is gone (saved or discarded) Ctrl+Q must not ask about it."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    app = _build_test_app(configured_default="settings")
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _settings_with_a_kept_draft(app, pilot)
+        app.post_message(NavigateToScreen("settings"))
+        await _until(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "SettingsScreen"
+                and _kept_provider_draft(app) is not None
+            ),
+            "Settings with the kept draft",
+        )
+        app.screen._settings_drafts.clear()  # as a Save leaves it
+
+        await pilot.press("ctrl+q")
+        # A prompt would hold the quit, so reaching the shutdown proves none.
+        await _until_exited(app, cleanups, "Ctrl+Q to quit without asking")
+    assert cleanups == [True]
+
+
+async def test_keep_editing_on_a_kept_draft_under_a_modal_keeps_the_modal(
+    monkeypatch,
+):
+    """Capture fix 3 round 1, finding 1: Keep editing on the kept-draft
+    prompt went back to Settings, and navigating dismisses every modal with
+    None, past its own close guard. Under a modal the user stays in it."""
+    app = _build_test_app(configured_default="settings")
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _settings_with_a_kept_draft(app, pilot)
+        home = app.screen
+        results: list[object] = []
+        modal = _HooklessModal()
+        await app.push_screen(modal, callback=results.append)
+        await _until(pilot, lambda: app.screen is modal, "the covering modal")
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, _SETTINGS_QUIT_TITLE)),
+            "Ctrl+Q under the modal to ask about the kept Settings draft",
+            timeout=5.0,
+        )
+        await pilot.press("escape")  # Keep editing
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after Keep editing",
+        )
+        # A navigation, were one posted, dismisses the modal within this.
+        for _ in range(50):
+            if modal not in app.screen_stack:
+                break
+            await pilot.pause(0.02)
+        assert results == [], "the modal was closed past its own guard"
+        assert app.screen is modal
+        assert app.screen_stack[-2] is home
+        assert cleanups == []
+
+
+async def test_a_raw_edit_left_before_its_change_lands_is_asked_about():
+    """Capture fix 3 round 1, finding 2: leaving Settings by a shortcut before
+    the raw editor's TextArea.Changed lands, save_state named the unsaved
+    categories before it captured the editor's text, so Ctrl+Q from another
+    screen quit without asking about Advanced Config and the edit was lost."""
+    from textual.widgets import TextArea
+
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
+        KEPT_UNSAVED_TITLES,
+    )
+
+    app = _build_test_app(configured_default="settings")
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _until(
+            pilot,
+            lambda: type(app.screen).__name__ == "SettingsScreen",
+            "the Settings screen",
+        )
+        settings = app.screen
+        settings._select_category(SettingsCategoryId.ADVANCED_CONFIG.value)
+        await _until(
+            pilot,
+            lambda: (
+                bool(settings.query("#settings-advanced-config-editor"))
+                and settings._advanced_config_settings is not None
+                and not settings._advanced_config_settings.busy
+            ),
+            "the raw editor to load",
+        )
+        assert not settings._category_has_unsaved_changes(
+            SettingsCategoryId.ADVANCED_CONFIG
+        )
+        editor = settings.query_one("#settings-advanced-config-editor", TextArea)
+        editor.text = editor.text + "\n# typed, its Changed still queued\n"
+        state = settings.save_state()  # no await: Changed is not delivered
+    assert "Advanced Config" in state[KEPT_UNSAVED_TITLES]
+
+
+async def _settings_snapshot_keep(app, pilot):
+    """Open Providers & Models and return its snapshot Keep count field."""
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    await _until(
+        pilot,
+        lambda: type(app.screen).__name__ == "SettingsScreen",
+        "the Settings screen",
+    )
+    app.screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
+    await _until(
+        pilot,
+        lambda: bool(app.screen.query("#settings-snapshot-keep")),
+        "the snapshot Keep count field",
+    )
+    return app.screen.query_one("#settings-snapshot-keep", Input)
+
+
+async def test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console(
+    monkeypatch,
+):
+    """Ruling cf3r1-N1 (b): leaving Settings dropped an unsaved Prompt-cache
+    snapshot preference without notice, and Ctrl+Q elsewhere quit past it.
+    Rewritten on purpose (it pinned that the edit was not kept, so not asked
+    about): the edit is kept with the draft, Ctrl+Q from Console names
+    Providers & Models, and Keep editing returns to the edit, still unsaved."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    app = _build_test_app(configured_default="settings")
+    _configure_native_ready_console(app)
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    async with app.run_test(size=(190, 55)) as pilot:
+        keep = await _settings_snapshot_keep(app, pilot)
+        edited = str(int(keep.value) + 1)
+        keep.value = edited
+        await _until(
+            pilot, app.screen._snapshot_preferences_dirty, "the edit to be staged"
+        )
+        app.post_message(NavigateToScreen("chat"))
+        await _mounted_console(app, pilot)
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, _SETTINGS_QUIT_TITLE)) or bool(cleanups),
+            "Ctrl+Q on Console to ask about the kept snapshot preference",
+            timeout=5.0,
+        )
+        assert cleanups == [], "quit straight past the kept snapshot preference"
+        assert "Providers & Models" in app.screen.message
+
+        await pilot.press("escape")  # Keep editing
+        await _until(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "SettingsScreen"
+                and bool(app.screen.query("#settings-snapshot-keep"))
+            ),
+            "Keep editing to return to Settings",
+        )
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after Keep editing",
+        )
+        settings = app.screen
+        assert settings.query_one("#settings-snapshot-keep", Input).value == edited
+        status = settings.query_one("#settings-selected-category-draft-status")
+        assert str(status.render()) == "Unsaved changes"
+        rail = settings.query_one(
+            f"#settings-category-{SettingsCategoryId.PROVIDERS_MODELS.value}"
+        )
+        assert str(rail.label).endswith(" *"), rail.label
+    assert cleanups == []
+
+
+def _in_memory_snapshot_preferences(monkeypatch, enabled: bool, keep_count: int):
+    """Keep the snapshot preferences in a list instead of the config.
+
+    The save refuses a stale ``expected`` as the real one does. Returns the
+    one-item list holding the saved value.
+    """
+    from tldw_chatbook.LLM_Management import snapshot_settings as preferences
+
+    saved = [preferences.SnapshotPreferences(enabled=enabled, keep_count=keep_count)]
+
+    def save(value, *, expected=None):
+        if expected is not None and expected != saved[0]:
+            raise preferences.SnapshotPreferencesConflict("changed")
+        saved[0] = value
+        return True
+
+    monkeypatch.setattr(preferences, "load_snapshot_preferences", lambda: saved[0])
+    monkeypatch.setattr(preferences, "save_snapshot_preferences", save)
+    return saved
+
+
+async def _back_to_settings_snapshot_keep(app, pilot):
+    """Leave Settings for Home, come back, and return the Keep count field."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    await _go_home(app, pilot)
+    app.post_message(NavigateToScreen("settings"))
+    keep = await _settings_snapshot_keep(app, pilot)
+    await pilot.pause(0.2)
+    return keep
+
+
+@pytest.mark.parametrize("resolve", ["revert", "save"])
+async def test_a_kept_snapshot_edit_is_forgotten_once_saved_or_reverted(
+    monkeypatch, resolve
+):
+    """Capture 13c: once a leave kept a snapshot edit, every later return
+    restored it, even after it was reverted or saved. save_state started from
+    the dict the visit was restored from, and the kept pair is written only
+    while unsaved, so it outlived its Revert or Save: Settings came back
+    "Unsaved changes" on the old value, and Save said it changed elsewhere."""
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
+        KEPT_SNAPSHOT_PREFERENCES,
+    )
+
+    saved = _in_memory_snapshot_preferences(monkeypatch, True, 30)
+    app = _build_test_app(configured_default="settings")
+    async with app.run_test(size=(190, 55)) as pilot:
+        keep = await _settings_snapshot_keep(app, pilot)
+        assert keep.value == "30"
+        keep.value = "25"
+        await _until(
+            pilot, app.screen._snapshot_preferences_dirty, "the edit to be staged"
+        )
+        keep = await _back_to_settings_snapshot_keep(app, pilot)
+        assert keep.value == "25" and app.screen._snapshot_preferences_dirty()
+
+        settings = app.screen
+        if resolve == "revert":
+            settings.action_settings_revert_category(allow_text_entry_focus=True)
+            await _until(
+                pilot,
+                lambda: (
+                    app.screen in _dialogs_titled(app, "Revert Settings changes")
+                    and bool(app.screen.query("#confirm-button"))
+                ),
+                "the Revert confirmation",
+            )
+            await pilot.click("#confirm-button")
+            expected = "30"
+        else:
+            settings.action_settings_save_category(allow_text_entry_focus=True)
+            expected = "25"
+        await _until(
+            pilot,
+            lambda: (
+                not settings._snapshot_preferences_dirty()
+                and settings.query_one("#settings-snapshot-keep", Input).value
+                == expected
+            ),
+            f"the {resolve} to settle",
+        )
+        assert saved[0].keep_count == int(expected)
+
+        keep = await _back_to_settings_snapshot_keep(app, pilot)
+        settings = app.screen
+        state = settings.save_state()
+        assert keep.value == expected, "a resolved snapshot edit came back"
+        assert not settings._snapshot_preferences_dirty()
+        status = settings.query_one("#settings-selected-category-draft-status")
+        assert str(status.render()) == "No unsaved changes"
+        rail = settings.query_one(
+            f"#settings-category-{SettingsCategoryId.PROVIDERS_MODELS.value}"
+        )
+        assert not str(rail.label).endswith(" *"), rail.label
+    assert KEPT_SNAPSHOT_PREFERENCES not in state
+
+
+async def test_a_snapshot_edit_left_before_its_change_lands_is_kept():
+    """Ruling cf3r1-N1 (b), as finding 2 of round 1 for the raw editor: left
+    by a shortcut before Input.Changed lands, the typed keep count must still
+    be what Settings keeps and names."""
+    from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
+        KEPT_UNSAVED_TITLES,
+    )
+
+    app = _build_test_app(configured_default="settings")
+    async with app.run_test(size=(190, 55)) as pilot:
+        keep = await _settings_snapshot_keep(app, pilot)
+        edited = str(int(keep.value) + 1)
+        keep.value = edited
+        state = app.screen.save_state()  # no await: Changed is not delivered
+        fresh = type(app.screen)(app)  # the next visit's screen
+        fresh.restore_state(state)
+    assert "Providers & Models" in state[KEPT_UNSAVED_TITLES]
+    assert fresh._snapshot_preferences_raw[1] == edited
+    assert fresh._snapshot_preferences_dirty()
+
+
+def _held_snapshot_write(monkeypatch):
+    """Hold the snapshot preferences' config write until ``release`` is set.
+
+    Returns ``(entered, release, writes)``; nothing reaches a real config.
+    """
+    import threading
+
+    from tldw_chatbook.LLM_Management import snapshot_settings as preferences
+
+    entered, release = threading.Event(), threading.Event()
+    writes: list = []
+
+    def save(value, **kwargs):
+        writes.append(value)
+        entered.set()
+        assert release.wait(5)
+        return True
+
+    monkeypatch.setattr(preferences, "save_snapshot_preferences", save)
+    return entered, release, writes
+
+
+async def _save_a_snapshot_edit(app, pilot, entered) -> None:
+    """Edit the snapshot Keep count and press Save; return once it writes."""
+    keep = await _settings_snapshot_keep(app, pilot)
+    keep.value = str(int(keep.value) + 1)
+    await _until(pilot, app.screen._snapshot_preferences_dirty, "the edit to be staged")
+    app.screen.action_settings_save_category(allow_text_entry_focus=True)
+    await _until(pilot, entered.is_set, "the snapshot write to start")
+
+
+async def test_leaving_settings_waits_for_a_snapshot_save_in_flight(monkeypatch):
+    """Post-rebase round 1, finding 1: Save, then leaving Settings before the
+    config write returned, kept the edit as unsaved (the saved value is noted
+    only once the write returns) and unmounting cancelled the save's report.
+    Back in Settings the edit read 'Unsaved changes' and Save said it had
+    changed elsewhere. Leaving now waits for the save, as for the theme's."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
+        KEPT_SNAPSHOT_PREFERENCES,
+        KEPT_UNSAVED_TITLES,
+    )
+
+    entered, release, writes = _held_snapshot_write(monkeypatch)
+    app = _build_test_app(configured_default="settings")
+    try:
+        async with app.run_test(size=(190, 55)) as pilot:
+            await _save_a_snapshot_edit(app, pilot, entered)
+            app.post_message(NavigateToScreen("home"))
+            await pilot.pause(0.2)
+            release.set()
+            await _until(
+                pilot, lambda: type(app.screen).__name__ == "HomeScreen", "Home"
+            )
+            state = (
+                app.screen_state_store.restore(
+                    "settings", app._current_runtime_identity()
+                )
+                or {}
+            )
+            assert _notified(app, "Snapshot preferences saved.")
+    finally:
+        release.set()
+    assert len(writes) == 1
+    assert KEPT_SNAPSHOT_PREFERENCES not in state
+    assert "Providers & Models" not in state.get(KEPT_UNSAVED_TITLES, [])
+
+
+async def test_ctrl_q_on_settings_waits_for_a_snapshot_save_in_flight(monkeypatch):
+    """Post-rebase round 1, finding 1 on the quit path: Ctrl+Q while the
+    snapshot save was writing asked about Providers & Models, which was being
+    saved. The quit now waits for the save; with nothing else unsaved it
+    quits without asking."""
+    entered, release, writes = _held_snapshot_write(monkeypatch)
+    app = _build_test_app(configured_default="settings")
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    try:
+        async with app.run_test(size=(190, 55)) as pilot:
+            await _save_a_snapshot_edit(app, pilot, entered)
+            await pilot.press("ctrl+q")
+            await pilot.pause(0.2)
+            release.set()
+            # A prompt would hold the quit, so reaching the shutdown proves none.
+            await _until_exited(app, cleanups, "Ctrl+Q to quit without asking")
+    finally:
+        release.set()
+    assert cleanups == [True]
+    assert len(writes) == 1
+
+
+async def test_the_unsaved_work_check_reads_a_kept_settings_visit():
+    """Recovery mode and maintenance refuse while ``probe_unsaved_editors``
+    reports work. It knew four of the keys Settings' save_state writes, so
+    every kept visit (``hooks_snapshot`` is always written) read "Retained
+    screens: unknown-editor-state", which no save or discard clears. A clean
+    visit is now clean, and a kept snapshot preference edit is retained
+    Settings work to save or discard."""
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import (
+        UnsavedEditor,
+        probe_unsaved_editors,
+    )
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    app = _build_test_app(configured_default="settings")
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _settings_snapshot_keep(app, pilot)
+        await _go_home(app, pilot)
+        clean = probe_unsaved_editors(screen_state_store=app.screen_state_store)
+
+        app.post_message(NavigateToScreen("settings"))
+        keep = await _settings_snapshot_keep(app, pilot)
+        keep.value = str(int(keep.value) + 1)
+        await _until(
+            pilot, app.screen._snapshot_preferences_dirty, "the edit to be staged"
+        )
+        await _go_home(app, pilot)
+        kept = probe_unsaved_editors(screen_state_store=app.screen_state_store)
+    assert clean == ()
+    assert kept == (UnsavedEditor("Retained Settings", "needs-user-save-discard"),)

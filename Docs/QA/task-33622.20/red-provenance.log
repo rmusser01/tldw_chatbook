@@ -1,0 +1,13 @@
+F....                                                                    [100%]
+=================================== FAILURES ===================================
+___ test_presentation_refusal_is_identified_only_after_clean_rollback[None] ____
+Tests/Chat/test_console_conversation_activation.py:147: in test_presentation_refusal_is_identified_only_after_clean_rollback
+    assert getattr(result, "presentation_refused", False) is (fault is None)
+E   AssertionError: assert False is (None is None)
+E    +  where False = getattr(ConsoleConversationActivationResult(kind=<ConsoleActivationResultKind.FAILED: 'failed'>, target=LocalCharacterConversa...lCharacterKey(data_authority_id='authority-A', character_id=7), conversation_id='conversation-X'), commit_started=True), 'presentation_refused', False)
+============================= slowest 25 durations =============================
+
+(15 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_conversation_activation.py::test_presentation_refusal_is_identified_only_after_clean_rollback[None]
+1 failed, 4 passed, 30 deselected in 1.35s

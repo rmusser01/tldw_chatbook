@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings╭──────────────────────────────────────────────────────────╮
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│                                                          │──
+ Console — Chat, source handoffs, live runs, and control actions.                                                                         │ Provider key detected                                    │
+   New tab     Settings     ⚓      Context rail     Search Library     Help                                                              │ Found OPENAI_API_KEY — you're ready to chat. Run setup   │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│ any time: Settings ▸ Diagnostics ▸ Run setup wizard.     │──
+                                  │ Conversation | Chat 1                                                                                 │                                                          │
+                       Context ◂  │         Chat 1         ✕    New tab     Temporary                                                     ╰──────────────────────────────────────────────────────────╯
+   Terminal                       │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Workspaces                  ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Conversations               ▾    │                                                                                                                                                          │
+       Archive this chat          │                                                                                                                                                          │
+         Archived chats           │                                                                                                                                                          │
+       Search all chats…          │                                                                                                                                                          │
+   Chat 1                         │                             ╭──────────────────────────────────────────────────────────────────────╮                                                     │
+                                  │                             │                                                                      │                                                     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                             │  Check model lists online?                                           │                                                     │
+  ▊  Filter visible   ▎           │                             │                                                                      │                                                     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                             │  tldw can fetch up-to-date model lists from your configured cloud    │                                                     │
+                                  │                             │  providers (OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter,      │                                                     │
+  Chats                      ▾    │                             │  QwenCloud, ZAI) at startup. This contacts those endpoints over the  │                                                     │
+   Chat 1                   💬    │                             │  network using your configured API keys.                             │                                                     │
+                                  │                             │                                                                      │                                                     │◂ Inspect
+ ───────────────────────────────  │                             │  Allow this once and it stays on until you turn it off in Settings.  │                                                     │
+ Character · No chats        ▸    │                             │  Nothing is checked until you say yes.                               │                                                     │
+ ───────────────────────────────  │                             │                                                                      │                                                     │
+ Model                       ▸    │                             │                                                                      │                                                     │
+ ───────────────────────────────  │                             │                                     Don't check      Check online    │                                                     │
+ Agent                       ▸    │                             │                                                                      │                                                     │
+ ───────────────────────────────  │                             │                                                                      │                                                     │
+ Details                     ▸    │                             ╰──────────────────────────────────────────────────────────────────────╯                                                     │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-5.6-terra     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context unknown
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                         Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

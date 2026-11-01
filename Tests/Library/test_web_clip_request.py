@@ -59,7 +59,9 @@ class TestBuildWebClipKwargs:
         """Chunking is declared once, for every backend and every source type."""
         kwargs = build_web_clip_kwargs(
             "https://example.com/post",
-            options={"generic": {"chunk": True, "chunk_size": 1200, "chunk_overlap": 150}},
+            options={
+                "generic": {"chunk": True, "chunk_size": 1200, "chunk_overlap": 150}
+            },
         )
 
         assert kwargs["perform_chunking"] is True
@@ -260,8 +262,17 @@ def test_every_kwarg_this_builds_is_one_the_real_service_accepts() -> None:
     kwargs = build_web_clip_kwargs(
         "https://example.com/post",
         options={
-            "generic": {"chunk": True, "chunk_size": 900, "chunk_overlap": 50, "analyze": True},
-            "web": {"scrape_method": "recursive_scraping", "max_pages": 5, "max_depth": 2},
+            "generic": {
+                "chunk": True,
+                "chunk_size": 900,
+                "chunk_overlap": 50,
+                "analyze": True,
+            },
+            "web": {
+                "scrape_method": "recursive_scraping",
+                "max_pages": 5,
+                "max_depth": 2,
+            },
         },
         title="T",
         author="A",

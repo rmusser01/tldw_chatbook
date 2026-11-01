@@ -232,7 +232,8 @@ def test_mimo_sends_its_key_as_an_api_key_header(monkeypatch: pytest.MonkeyPatch
         hosted_provider_engine, "resolve_hosted_request", lambda _record, **_kw: resolution
     )
     session = _RecordingSession(_TransportResponse(_body()))
-    monkeypatch.setattr(hosted_chat, "create_default_session", lambda: session)
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda *a, **k: session, raising=False)
+    monkeypatch.setattr(hosted_chat, "create_pooled_default_session", lambda *a, **k: session, raising=False)
     handler = hosted_provider_engine.build_hosted_chat_handler(record)
     result = handler(
         input_data=[{"role": "user", "content": "Say ok."}], api_key="secret", streaming=False

@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                  Speak replies   ▌   Hands-free   ▌     Ready · reachable 09:56
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Workspaces                    ▸    │                                                                                                                                                                   │
+ ────────────────╭─────────────────╭─ Switch model · now: llama.cpp · model-a ────────────────────────────────────────────────────────────────────────────────────────────────╮─────────────────╮       │
+ Conversations   │  Chat settings ·│ Find type to search 3 models in 1 provider · Enter picks                                                                                 │                 │       │
+        Archive t│                 │ RECENT · your last 50 chats                                                                                                              │                 │       │
+          Archive│  ● Model and gen│ ▶ model-a                      llama.cpp                     ?  Ready · reachable 09:57      ● CURRENT                                   │                 │       │
+        Search al│ Applies to this │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │                 │       │
+   Chat 1        │  Response rules │   model-b                      llama.cpp                     ?  Ready · reachable 09:57                                                  │                 │       │
+                 │ Model           │   served-y                     llama.cpp                     ?  Ready · reachable 09:57                                                  │  Change Alt+M   │       │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔│ Temperature     │ NEEDS SETUP · set up in Settings first                                                                                                   │                 │       │
+  ▊  Filter visib│ Max tokens      │   (any model)                  Anthropic                        Not ready · no key                                                       │                 │       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁│ Streaming       │   (any model)                  Arcee AI                         Not ready · no key                                                       │                 │       │
+                 │ Reasoning effort│   (any model)                  Azure OpenAI                     Not ready · no key                                                       │                 │       │◂ Inspect
+   New conversati│ Thinking budget │   (any model)                  Baidu Qianfan                    Not ready · no key                                                       │                 │       │
+  Chats          │  ▶ Sampling · hi│   (any model)                  Baseten                          Not ready · no key                                                       │                 │       │
+    Today        │  ▶ Connection · │   (any model)                  ByteDance Seed (BytePlus)        Not ready · no key                                                       │                 │       │
+   Chat 1        │  ▶ Request estim│   (any model)                  Cerebras                         Not ready · no key                                                       │                 │       │
+                 │  ▶ Your name in │   (any model)                  Cloudflare Workers AI            Not ready · no key                                                       │                 │       │
+ ────────────────│                 │     … 39 more providers need setup · type a name to find one                                                                             │                 │       │
+ Character · No c│ Unavailable: lla│ NOT RUNNING · local servers never set up · rechecked on open                                                                             │                 │       │
+ ────────────────│                 │   Aphrodite Engine · Ollama · TabbyAPI · vLLM · Custom OpenAI-compatible · Custom OpenAI-compatible #2                                   │                 │       │
+ Model           │                 │   MLX-LM (Apple silicon) (not checked)                                                                                                   │                 │       │
+  Temperature 0.6│                 │ Enter picks · Esc cancel                                                                                                                 │at (Ctrl+Enter)  │       │
+  Max tokens  409╰─────────────────╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯─────────────────╯       │
+  Streaming   On                    │                                                                                                                                                                   │
+  Ready · reachable 09:56           │                                                                                                                ╭──────────────────────────────────────────────────────────╮
+  System: none ▸                    │                                                                                                                │                                                          │
+ ▼ Agent · Details                  │                                                                                                                │ Thinking controls on llama.cpp need llama-server started │
+                                    │                                                                                                                │ with --jinja; per-request reasoning_budget_tokens needs  │
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│ llama.cpp b9982 or newer.                                │──
+ Status ▾   Library · Auto off · Agent access off     Provider: llama.cpp     Model: model-a     System Prompt: off     Assistant: General     Source│                                                          │
+                                                                                                                                                     ╰──────────────────────────────────────────────────────────╯
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                                     Send disabled: type a message       Send         Dictate
+
+  Ctrl+P palette | Ctrl+Q quit

@@ -172,8 +172,14 @@ class TestTokenizerFailedCacheThreadSafety:
         # Run concurrent reads and writes
         threads = []
         for i in range(50):
-            threads.append(threading.Thread(target=add_failed_tokenizer, args=(f"tokenizer_{i}",)))
-            threads.append(threading.Thread(target=check_failed_tokenizer, args=(f"tokenizer_{i}",)))
+            threads.append(
+                threading.Thread(target=add_failed_tokenizer, args=(f"tokenizer_{i}",))
+            )
+            threads.append(
+                threading.Thread(
+                    target=check_failed_tokenizer, args=(f"tokenizer_{i}",)
+                )
+            )
 
         for t in threads:
             t.start()
@@ -190,7 +196,7 @@ class TestTokenizerFailedCacheThreadSafety:
     # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the
     # HF stack at the real (pre-sandbox) cache with offline mode forced, so
     # no network is touched. Skips if gpt2 is genuinely not cached.
-    @pytest.mark.usefixtures('real_hf_cache')
+    @pytest.mark.usefixtures("real_hf_cache")
     def test_tokenizer_property_concurrent_initialization(self):
         """Test concurrent tokenizer property access is thread-safe."""
         from tldw_chatbook.Chunking.engine.strategies.tokens import (
@@ -266,7 +272,9 @@ class TestRaceConditionScenarios:
             # init should not have been called after the initial configure
             assert init_count == 0
 
-    def test_chunk_text_generator_does_not_hold_shared_lock_while_paused(self, monkeypatch):
+    def test_chunk_text_generator_does_not_hold_shared_lock_while_paused(
+        self, monkeypatch
+    ):
         """A paused generator consumer should not block unrelated chunk_text calls."""
         from tldw_chatbook.Chunking.engine.chunker import Chunker
         from tldw_chatbook.Chunking.engine.base import ChunkerConfig
@@ -280,16 +288,22 @@ class TestRaceConditionScenarios:
             yield "chunk-1"
             yield "chunk-2"
 
-        monkeypatch.setattr(WordChunkingStrategy, "chunk_generator", controlled_chunk_generator)
+        monkeypatch.setattr(
+            WordChunkingStrategy, "chunk_generator", controlled_chunk_generator
+        )
 
         chunker = Chunker(ChunkerConfig(strategy_cache_mode="shared"))
-        generator = chunker.chunk_text_generator("one two three", method="words", max_size=2, overlap=0)
+        generator = chunker.chunk_text_generator(
+            "one two three", method="words", max_size=2, overlap=0
+        )
 
         assert next(generator) == "chunk-1"
 
         def run_competing_call():
             started.set()
-            result_holder["chunks"] = chunker.chunk_text("alpha beta gamma", method="words", max_size=2, overlap=0)
+            result_holder["chunks"] = chunker.chunk_text(
+                "alpha beta gamma", method="words", max_size=2, overlap=0
+            )
             completed.set()
 
         thread = threading.Thread(target=run_competing_call)
@@ -321,7 +335,9 @@ class TestThreadPoolExecutorAccess:
         def get_and_log():
 
             logger = get_security_logger()
-            logger.log_event(SecurityEventType.INVALID_INPUT, "test message")  # Use proper enum value
+            logger.log_event(
+                SecurityEventType.INVALID_INPUT, "test message"
+            )  # Use proper enum value
             return id(logger)
 
         # Use executor for concurrent access

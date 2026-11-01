@@ -1,0 +1,75 @@
+{
+  "label": "native798-integration01",
+  "actual_parent_cases": 4,
+  "actual_private_children": 3,
+  "reports": [
+    {
+      "path": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\native798-integration01\\result.xml",
+      "sha256": "45752dfb5a697094ac340cdadb3f2daec6fcb237f2d6d5b16882838746d56a90",
+      "cases": 4,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "nodes": [
+        "test_acknowledgement_replacement_keeps_committed_frame[echo]",
+        "test_acknowledgement_replacement_keeps_committed_frame[cancel]",
+        "test_enter_paints_a_sending_row_before_admission_and_validation",
+        "test_typing_census_excludes_elapsed_draft_pause_work"
+      ],
+      "properties": [
+        {},
+        {},
+        {},
+        {}
+      ]
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-4be84bcef80b45ae86e1b41557d41031\\pytest\\test_acknowledgement_replaceme0\\private-profile-process\\pytest.xml",
+      "sha256": "1fbda413572a01a571d2adef75d4da7c764cad56b52fa6dc73c9d35d4ae2ba1e",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "nodes": [
+        "test_acknowledgement_replacement_keeps_committed_frame[echo]"
+      ],
+      "properties": [
+        {}
+      ]
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-4be84bcef80b45ae86e1b41557d41031\\pytest\\test_acknowledgement_replaceme1\\private-profile-process\\pytest.xml",
+      "sha256": "5d1d917232f682b586049dd4d6079f41d92dbb3665f710fb4d62da7d8fdeb883",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "nodes": [
+        "test_acknowledgement_replacement_keeps_committed_frame[cancel]"
+      ],
+      "properties": [
+        {}
+      ]
+    },
+    {
+      "path": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-4be84bcef80b45ae86e1b41557d41031\\pytest\\test_typing_census_excludes_el0\\private-profile-process\\pytest.xml",
+      "sha256": "4244f19e2d3c19d0133287eac908825edbef04a210e490a79996d0c2247a5b44",
+      "cases": 1,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "nodes": [
+        "test_typing_census_excludes_elapsed_draft_pause_work"
+      ],
+      "properties": [
+        {
+          "controlled_pause_census": "{\"cleanup_candidate_queries_completed\": 0, \"context_estimate_max_rows\": 0, \"context_rows\": 0, \"cost_projection_estimate_rows\": 0, \"cost_rows\": 0, \"cost_snapshot_rows\": 0, \"messages_for_session\": 0, \"pause:cleanup_candidate_queries_completed\": 0, \"pause:context_estimate_max_rows\": 1, \"pause:context_rows\": 0, \"pause:cost_projection_estimate_rows\": 0, \"pause:cost_rows\": 0, \"pause:cost_snapshot_rows\": 0, \"pause:messages_for_session\": 0, \"pause:settings_readiness_builds\": 3, \"pause:snapshot_rows\": 0, \"pause:snapshots\": 0, \"pause:spend_history_rows\": 0, \"pause:template_default_builds\": 0, \"settings_readiness_builds\": 25, \"snapshot_rows\": 0, \"snapshots\": 0, \"spend_history_rows\": 0, \"template_default_builds\": 0}",
+          "native_timer_count": "24",
+          "delivered_pause_count": "0",
+          "runtime_sources": "{\"tldw_chatbook.UI.Console_Modules.console_spend_projection\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Console_Modules\\\\console_spend_projection.py\", \"tldw_chatbook.UI.Screens.chat_screen\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\UI\\\\Screens\\\\chat_screen.py\", \"tldw_chatbook.app\": \"C:\\\\Users\\\\GDesktop-1\\\\.codex\\\\worktrees\\\\textual-settings-patterns\\\\tldw_tui\\\\tldw_chatbook\\\\app.py\"}"
+        }
+      ]
+    }
+  ],
+  "private_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-4be84bcef80b45ae86e1b41557d41031"
+}

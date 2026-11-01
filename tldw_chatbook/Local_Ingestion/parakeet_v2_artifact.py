@@ -68,6 +68,7 @@ if TYPE_CHECKING:
         CredentialResolver,
         PreflightReport,
     )
+    from tldw_chatbook.Model_Artifacts.download_control import DownloadControl
 
 
 #: Canonical identity components for the managed Parakeet v2 artifact.
@@ -85,24 +86,80 @@ PARAKEET_VAD_REVISION = "b3e3ee3cce4c11ceb63b1a0b229d916069c1ddf6"
 PARAKEET_VAD_VARIANT = "f32"
 
 _V2_F32_FILES = (
-    _installer.BundleFile("config.json", 97, "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"),
-    _installer.BundleFile("vocab.txt", 9384, "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d"),
-    _installer.BundleFile("encoder-model.onnx", 41770866, "3987bcd28175d829d12888a996a84e8f62a0e374d9ffd640662c1515adc679d3"),
-    _installer.BundleFile("encoder-model.onnx.data", 2435420160, "4dab7362d4874d85965045b1e41b2d61dd2cc0fb25671a7f6b3dc47bf120cc41"),
-    _installer.BundleFile("decoder_joint-model.onnx", 35792059, "cbb52a07bd70ab5b67f8439d4b3cd8704b18467b4430bcacb5adabe154b8d191"),
+    _installer.BundleFile(
+        "config.json",
+        97,
+        "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+    ),
+    _installer.BundleFile(
+        "vocab.txt",
+        9384,
+        "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d",
+    ),
+    _installer.BundleFile(
+        "encoder-model.onnx",
+        41770866,
+        "3987bcd28175d829d12888a996a84e8f62a0e374d9ffd640662c1515adc679d3",
+    ),
+    _installer.BundleFile(
+        "encoder-model.onnx.data",
+        2435420160,
+        "4dab7362d4874d85965045b1e41b2d61dd2cc0fb25671a7f6b3dc47bf120cc41",
+    ),
+    _installer.BundleFile(
+        "decoder_joint-model.onnx",
+        35792059,
+        "cbb52a07bd70ab5b67f8439d4b3cd8704b18467b4430bcacb5adabe154b8d191",
+    ),
 )
 _V3_INT8_FILES = (
-    _installer.BundleFile("config.json", 97, "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"),
-    _installer.BundleFile("vocab.txt", 93939, "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"),
-    _installer.BundleFile("encoder-model.int8.onnx", 652183999, "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09"),
-    _installer.BundleFile("decoder_joint-model.int8.onnx", 18202004, "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70"),
+    _installer.BundleFile(
+        "config.json",
+        97,
+        "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+    ),
+    _installer.BundleFile(
+        "vocab.txt",
+        93939,
+        "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+    ),
+    _installer.BundleFile(
+        "encoder-model.int8.onnx",
+        652183999,
+        "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09",
+    ),
+    _installer.BundleFile(
+        "decoder_joint-model.int8.onnx",
+        18202004,
+        "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70",
+    ),
 )
 _V3_F32_FILES = (
-    _installer.BundleFile("config.json", 97, "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"),
-    _installer.BundleFile("vocab.txt", 93939, "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"),
-    _installer.BundleFile("encoder-model.onnx", 41770866, "98a74b21b4cc0017c1e7030319a4a96f4a9506e50f0708f3a516d02a77c96bb1"),
-    _installer.BundleFile("encoder-model.onnx.data", 2435420160, "9a22d372c51455c34f13405da2520baefb7125bd16981397561423ed32d24f36"),
-    _installer.BundleFile("decoder_joint-model.onnx", 72520893, "e978ddf6688527182c10fde2eb4b83068421648985ef23f7a86be732be8706c1"),
+    _installer.BundleFile(
+        "config.json",
+        97,
+        "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+    ),
+    _installer.BundleFile(
+        "vocab.txt",
+        93939,
+        "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+    ),
+    _installer.BundleFile(
+        "encoder-model.onnx",
+        41770866,
+        "98a74b21b4cc0017c1e7030319a4a96f4a9506e50f0708f3a516d02a77c96bb1",
+    ),
+    _installer.BundleFile(
+        "encoder-model.onnx.data",
+        2435420160,
+        "9a22d372c51455c34f13405da2520baefb7125bd16981397561423ed32d24f36",
+    ),
+    _installer.BundleFile(
+        "decoder_joint-model.onnx",
+        72520893,
+        "e978ddf6688527182c10fde2eb4b83068421648985ef23f7a86be732be8706c1",
+    ),
 )
 _VAD_FILES = (
     _installer.BundleFile(
@@ -307,7 +364,10 @@ def parakeet_descriptor(
         runtime_version_constraint="==0.12.0",
         supported_os=("linux", "darwin", "windows"),
         supported_architectures=("x86-64", "arm64"),
-        provenance=(ProvenanceClass.CHATBOOK_CURATED, ProvenanceClass.LOCAL_INTEGRITY_RECORDED),
+        provenance=(
+            ProvenanceClass.CHATBOOK_CURATED,
+            ProvenanceClass.LOCAL_INTEGRITY_RECORDED,
+        ),
         files=files,
         dependencies=(parakeet_vad_reference(),),
     )
@@ -560,8 +620,13 @@ async def run_parakeet_vad_provision(
     free_bytes_probe: Callable[[Path], int] | None = None,
     trusted_origins: frozenset[str] = frozenset(),
     progress: "Callable[[AcquisitionProgress], None] | None" = None,
+    control: "DownloadControl | None" = None,
 ) -> Path:
-    """Provision only the exact VAD dependency without activating a root."""
+    """Provision only the exact VAD dependency without activating a root.
+
+    ``control`` (TASK-34100.14 review F3) is forwarded to ``provision()``,
+    as in ``run_parakeet_provision``.
+    """
 
     from tldw_chatbook.Model_Artifacts.acquisition import (
         ArtifactAcquisitionService,
@@ -588,6 +653,7 @@ async def run_parakeet_vad_provision(
         sources={reference: parakeet_source_map()[reference]},
         progress=progress,
         activate=False,
+        control=control,
     )
     return service.artifact_path(installed)
 
@@ -602,8 +668,14 @@ async def run_parakeet_provision(
     free_bytes_probe: Callable[[Path], int] | None = None,
     trusted_origins: frozenset[str] = frozenset(),
     progress: "Callable[[AcquisitionProgress], None] | None" = None,
+    control: "DownloadControl | None" = None,
 ) -> Path:
-    """Provision and activate one exact Parakeet root closure."""
+    """Provision and activate one exact Parakeet root closure.
+
+    ``control`` (TASK-34100.14) is forwarded to ``provision()``: it names
+    this download for other installs, can wait in line for one already
+    running, and lets the caller cancel the transfer from its UI thread.
+    """
     from tldw_chatbook.Model_Artifacts.acquisition import (
         ArtifactAcquisitionService,
         EnvConfigCredentialResolver,
@@ -628,6 +700,7 @@ async def run_parakeet_provision(
         ParakeetCatalog(),
         sources=parakeet_source_map(),
         progress=progress,
+        control=control,
     )
     return service.artifact_path(activated)
 
@@ -671,7 +744,9 @@ async def run_parakeet_v2_preflight(
 
     service = core if core is not None else parakeet_v2_managed_service()
     resolver = (
-        credential_resolver if credential_resolver is not None else EnvConfigCredentialResolver()
+        credential_resolver
+        if credential_resolver is not None
+        else EnvConfigCredentialResolver()
     )
     acquisition = ArtifactAcquisitionService(
         service,
@@ -724,7 +799,9 @@ async def run_parakeet_v2_provision(
 
     service = core if core is not None else parakeet_v2_managed_service()
     resolver = (
-        credential_resolver if credential_resolver is not None else EnvConfigCredentialResolver()
+        credential_resolver
+        if credential_resolver is not None
+        else EnvConfigCredentialResolver()
     )
     acquisition = ArtifactAcquisitionService(
         service,

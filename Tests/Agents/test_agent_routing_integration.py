@@ -46,7 +46,11 @@ from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
+from tldw_chatbook.Chat import Chat_Functions as chat_functions
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+# Real agent prompt/config readers retain the private profile selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
 
 #: The resolver's app-config fixture (same shape as test_agent_routing.py's):
 #: one keyless-family custom endpoint, per-entry params, and a chat_default
@@ -197,16 +201,15 @@ def test_override_refusal_returns_tool_error_and_spawns_nothing(db):
         if step["kind"] == "tool_result" and step["tool_name"] == SPAWN_TOOL_NAME
     ]
     assert len(spawn_results) == 1
-    assert "[override_disabled]" in spawn_results[0]
+    assert "[override_disabled] (override)" in spawn_results[0]
     assert db.count_subagent_runs("c") == 0
 
 
-def test_refusal_consumes_no_fleet_slot(db, monkeypatch):
+@pytest.mark.parametrize("named_refusal", [False, True])
+def test_refusal_consumes_no_fleet_slot(db, monkeypatch, named_refusal):
     # max_subagents=1: had the refused spawn consumed the budget, the later
     # legal spawn would be refused with "sub-agent budget exhausted".
-    # A NAMED refusal keeps the loop's redundant secondary counter honest
-    # too (the unnamed path's unconditional increment is pre-existing,
-    # deliberate, and unreachable at cap 1 only for admitted spawns).
+    # Both named and unnamed admission refusals leave the secondary bound free.
     _pin_routing(monkeypatch, AgentsRoutingConfig())  # overrides disabled
     db.create_agent_definition(IMPLEMENTER)
     cfg = AgentConfig(
@@ -220,7 +223,8 @@ def test_refusal_consumes_no_fleet_slot(db, monkeypatch):
         [
             fence(
                 SPAWN_TOOL_NAME,
-                {"task": "t1", "agent": "implementer", "provider": "llama_cpp"},
+                {"task": "t1", "provider": "llama_cpp",
+                 **({"agent": "implementer"} if named_refusal else {})},
             ),
             fence(SPAWN_TOOL_NAME, {"task": "t2", "agent": "implementer"}),
             fence(WAIT_AGENTS_TOOL_NAME, {}),
@@ -245,7 +249,7 @@ def test_refusal_consumes_no_fleet_slot(db, monkeypatch):
     # One refusal, one admission — in that order — and the admitted child
     # produced the run row the refused one never got.
     assert len(spawn_results) == 2
-    assert "[override_disabled]" in spawn_results[0]
+    assert "[override_disabled] (override)" in spawn_results[0]
     assert db.count_subagent_runs("c") == 1
     assert "child answer" in str(chat.calls[-1]["messages_payload"])
 
@@ -278,6 +282,21 @@ def test_run_row_carries_resolved_snapshot(db):
     params = json.loads(row["resolved_params_json"])
     assert params["temperature"] == 0.2
     assert params["top_k"] == 40
+    # The live/finished rail authority retains the same frozen selection,
+    # even after the operator edits the preset used to start this child.
+    definition = db.list_agent_definitions()[0]
+    db.update_agent_definition(
+        definition["id"],
+        AgentDefinition(
+            name="implementer",
+            instructions="Edited.",
+            provider="llama_cpp",
+            model="edited-model",
+        ),
+    )
+    handle = service.fleet_snapshot()[0]
+    assert getattr(handle, "resolved_provider", None) == "custom-ep:qwen-local"
+    assert getattr(handle, "resolved_model", None) == "qwen3.8-27b"
 
 
 def test_plain_spawn_snapshot_matches_parent(db):
@@ -409,3 +428,54 @@ def test_spawn_without_raw_identity_keeps_legacy_family_inheritance(db):
     row = _child_row(db)
     assert row["resolved_provider"] == "llama_cpp"
     assert row["resolved_base_url"] is None
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "openai",
+        "groq",
+        "moonshot",
+        "zai",
+        "custom-openai-api",
+        *sorted(
+            provider
+            for provider, params in chat_functions.PROVIDER_PARAM_MAP.items()
+            if "topp" in params
+        ),
+    ],
+)
+def test_agent_top_p_reaches_real_provider_projection(
+    db, monkeypatch, inline_spawns, provider
+):
+    provider_calls = []
+
+    def handler(**kwargs):
+        provider_calls.append(kwargs)
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    monkeypatch.setitem(chat_functions.API_CALL_HANDLERS, provider, handler)
+    service = AgentService(
+        db=db,
+        registry=ToolCatalogRegistry(),
+        chat_call=chat_functions.chat_api_call,
+        app_config={},
+    )
+    _run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=AgentConfig(
+            model="probe-model",
+            system_prompt="You are helpful.",
+            sampling_params=(("top_p", 0.37),),
+            budget=RunBudget(max_subagents=0),
+            native_tools=False,
+        ),
+        api_endpoint=provider,
+    )
+
+    assert outcome.status == RUN_DONE, outcome
+    assert len(provider_calls) == 1
+    params_map = chat_functions.PROVIDER_PARAM_MAP[provider]
+    request_key = "topp" if "topp" in params_map else "maxp"
+    assert provider_calls[0].get(params_map[request_key]) == 0.37

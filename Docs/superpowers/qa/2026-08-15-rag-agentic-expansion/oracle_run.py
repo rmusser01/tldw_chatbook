@@ -59,6 +59,7 @@ Usage::
     python oracle_run.py --dry-run             # build the runtime + probe retrieval; NO model calls
     python oracle_run.py --live --confirm-billable
 """
+
 from __future__ import annotations
 
 import argparse
@@ -154,9 +155,7 @@ def verify_oracles() -> int:
         content_hits = [d["slug"] for d in corpus if pattern.search(d["content"])]
         title_hits = [d["slug"] for d in corpus if pattern.search(d["title"])]
         in_question = bool(pattern.search(question["question"]))
-        good = (
-            content_hits == [question["slug"]] and not title_hits and not in_question
-        )
+        good = content_hits == [question["slug"]] and not title_hits and not in_question
         ok = ok and good
         print(
             f"{'OK ' if good else 'BAD'} {question['slug']:32s} "
@@ -172,7 +171,9 @@ def verify_oracles() -> int:
 # --------------------------------------------------------------------------
 
 
-def _config_text(*, media_db: Path, chacha_db: Path, prompts_db: Path, gate_on: bool) -> str:
+def _config_text(
+    *, media_db: Path, chacha_db: Path, prompts_db: Path, gate_on: bool
+) -> str:
     """The scratch `config.toml`.
 
     `[database]` is what makes `expand_document` (which resolves its handles
@@ -194,7 +195,12 @@ def _config_text(*, media_db: Path, chacha_db: Path, prompts_db: Path, gate_on: 
 def prepare_scratch(scratch: Path, *, gate_on: bool) -> dict[str, Path]:
     """Create the scratch profile and set the isolation env. Call BEFORE imports."""
     home = scratch / "home"
-    for directory in (home, home / ".config", home / ".local" / "share", scratch / "run"):
+    for directory in (
+        home,
+        home / ".config",
+        home / ".local" / "share",
+        scratch / "run",
+    ):
         directory.mkdir(parents=True, exist_ok=True)
         os.chmod(directory, 0o700)
 
@@ -306,7 +312,9 @@ def build_rag_provider(runtime: Any) -> Any:
     return LibraryRagToolProvider(LibraryLocalRagSearchService(runtime.app))
 
 
-def probe_retrieval(runtime: Any, rag_provider: Any, questions: list[dict]) -> list[dict]:
+def probe_retrieval(
+    runtime: Any, rag_provider: Any, questions: list[dict]
+) -> list[dict]:
     """Run the retrieval tool for every question and inspect the projected rows.
 
     This is the pre-flight that costs nothing: it establishes that the target
@@ -358,7 +366,8 @@ def probe_retrieval(runtime: Any, rag_provider: Any, questions: list[dict]) -> l
             (
                 row
                 for row in record["rows"]
-                if row["source_type"] == expected_type and row["source_id"] == expected_id
+                if row["source_type"] == expected_type
+                and row["source_id"] == expected_id
             ),
             None,
         )
@@ -409,7 +418,9 @@ class SpendRecorder:
         if isinstance(usage, dict):
             self.input_tokens += int(usage.get("input_tokens") or 0)
             self.output_tokens += int(usage.get("output_tokens") or 0)
-            self.cache_write_tokens += int(usage.get("cache_creation_input_tokens") or 0)
+            self.cache_write_tokens += int(
+                usage.get("cache_creation_input_tokens") or 0
+            )
             self.cache_read_tokens += int(usage.get("cache_read_input_tokens") or 0)
         return response
 
@@ -433,7 +444,9 @@ class SpendRecorder:
         }
 
 
-def build_arm(paths: dict[str, Path], rag_provider: Any, chat_call: Any, arm: str) -> tuple[Any, Any, list, list[str]]:
+def build_arm(
+    paths: dict[str, Path], rag_provider: Any, chat_call: Any, arm: str
+) -> tuple[Any, Any, list, list[str]]:
     """Assemble one arm exactly as `console_chat_controller` does.
 
     Returns `(service, config, approval_rounds, offered_tool_names)`.
@@ -472,7 +485,9 @@ def build_arm(paths: dict[str, Path], rag_provider: Any, chat_call: Any, arm: st
         db=AgentRunsDB(paths["runs_db"], client_id=f"rag-16174-{arm}"),
         registry=registry,
         chat_call=chat_call,
-        review_tool_calls=build_tool_review_hook(gate, builtin, None, request_approvals),
+        review_tool_calls=build_tool_review_hook(
+            gate, builtin, None, request_approvals
+        ),
     )
     allowed = ("search_library_rag",)
     if arm == "on":
@@ -502,7 +517,9 @@ def run_arm(
     from tldw_chatbook.Agents.agent_models import STEP_TOOL_CALL, STEP_TOOL_RESULT
 
     recorder = SpendRecorder(api_key)
-    service, config, approval_rounds, offered = build_arm(paths, rag_provider, recorder, arm)
+    service, config, approval_rounds, offered = build_arm(
+        paths, rag_provider, recorder, arm
+    )
     print(f"[arm {arm}] builtin catalog offers: {offered}")
     print(f"[arm {arm}] allowed_tools: {list(config.allowed_tools)}")
 
@@ -549,7 +566,9 @@ def run_arm(
         )
         marker = "HIT " if hit else "miss"
         names = ",".join(call["name"] for call in calls) or "-"
-        print(f"  [{arm}] {question['id']:24s} {marker} tools={names} status={outcome.status}")
+        print(
+            f"  [{arm}] {question['id']:24s} {marker} tools={names} status={outcome.status}"
+        )
     return {
         "arm": arm,
         "offered_tools": offered,
@@ -597,7 +616,12 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--confirm-billable", action="store_true")
-    parser.add_argument("--limit", type=int, default=0, help="run only the first N questions (smoke test)")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="run only the first N questions (smoke test)",
+    )
     parser.add_argument("--scratch", default="")
     parser.add_argument("--out", default=str(HERE / "run-artifacts.json"))
     args = parser.parse_args()
@@ -628,7 +652,11 @@ def main() -> int:
 
     import tempfile
 
-    scratch = Path(args.scratch) if args.scratch else Path(tempfile.mkdtemp(prefix="rag16174-oracle-"))
+    scratch = (
+        Path(args.scratch)
+        if args.scratch
+        else Path(tempfile.mkdtemp(prefix="rag16174-oracle-"))
+    )
     scratch.mkdir(parents=True, exist_ok=True)
     print(f"[isolation] scratch profile -> {scratch}")
     paths = prepare_scratch(scratch, gate_on=False)
@@ -671,7 +699,9 @@ def main() -> int:
             gate_on = get_cli_setting("tools", "expand_document_enabled", False)
             print(f"[gate] before ON arm: expand_document_enabled={gate_on!r}")
             if not gate_on:
-                raise SystemExit("the [tools] gate did not flip on; aborting the ON arm")
+                raise SystemExit(
+                    "the [tools] gate did not flip on; aborting the ON arm"
+                )
             artifacts["on"] = run_arm("on", paths, rag_provider, questions, api_key)
 
             table = render_table(questions, artifacts["off"], artifacts["on"])
@@ -689,7 +719,9 @@ def main() -> int:
     artifacts["real_config_sha256"] = {"before": before, "after": after}
     print(f"[isolation] real config sha256(after)={after} unchanged={before == after}")
 
-    Path(args.out).write_text(json.dumps(artifacts, indent=2, default=str), encoding="utf-8")
+    Path(args.out).write_text(
+        json.dumps(artifacts, indent=2, default=str), encoding="utf-8"
+    )
     print(f"[artifacts] {args.out}")
     return 0
 

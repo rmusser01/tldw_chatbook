@@ -1,0 +1,27 @@
+# Protect step promises a Settings path that does not exist
+## Step copy (FirstRunSetupWizard.py:7440-7446)
+            yield Static(
+                "Encrypt the API keys in your config file with a password. "
+                "You'll be asked for this password each time chatbook starts. "
+                "Skip to leave keys as plain text (you can enable this later "
+                "in Settings ▸ Privacy & Security).",
+                classes="setup-subtitle",
+            )
+
+## Settings > Privacy & Security only READS encryption state (settings_screen.py:23007-23011)
+                yield Static("Privacy posture", classes="destination-section")
+                yield self._detail_row(
+                    "Config encryption",
+                    "enabled" if posture.encryption_enabled else "disabled",
+                )
+
+## Every reachable caller of enable/disable_config_encryption:
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-review/tldw_chatbook/UI/Tools_Settings_Window.py:3789:                        if enable_config_encryption(password):
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-review/tldw_chatbook/UI/Tools_Settings_Window.py:3829:                        if disable_config_encryption(password):
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-review/tldw_chatbook/UI/Tools_Settings_Window.py:6638:                if enable_config_encryption(password):
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-review/tldw_chatbook/UI/Tools_Settings_Window.py:6787:                if disable_config_encryption(password):
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-review/tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py:7427:    (setup mode) collects the password, enable_config_encryption(password)
+(Tools_Settings_Window is DEPRECATED (TASK-1346) and nav-unreachable per CLAUDE.md -> the wizard is the only live UI that can enable encryption; nothing live can disable it or change its password)
+
+## User guide concedes it (First_Run_Setup.md):
+73:| Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security is a read-out; encryption changes are password-gated and not editable there |

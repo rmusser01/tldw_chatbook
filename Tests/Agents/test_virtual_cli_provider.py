@@ -8,7 +8,7 @@ from loguru import logger
 import tldw_chatbook.Agents.virtual_cli_provider as virtual_cli_provider
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.local_tool_provider import (
-    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+    LOCAL_WORKER_FAILED_REFUSAL,
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
@@ -391,16 +391,16 @@ def test_provider_constructs_and_injects_real_executor_by_default(
 
 
 @pytest.mark.parametrize(
-    ("code", "expected"),
+    ("code", "expected", "outcome"),
     (
-        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL),
-        ("containment_unavailable", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-        ("protocol_failure", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-        ("spawn_failed", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+        ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL, "blocked"),
+        ("containment_unavailable", LOCAL_WORKER_FAILED_REFUSAL, None),
+        ("protocol_failure", LOCAL_WORKER_FAILED_REFUSAL, None),
+        ("spawn_failed", LOCAL_WORKER_FAILED_REFUSAL, None),
     ),
 )
 def test_virtual_cli_executor_boundary_failures_map_to_pinned_refusals(
-    tmp_path, code, expected
+    tmp_path, code, expected, outcome
 ):
     executor = RecordingWorkspaceExecutor(error=code)
     provider = make_provider(
@@ -414,7 +414,7 @@ def test_virtual_cli_executor_boundary_failures_map_to_pinned_refusals(
         {"command": "ls", "argv": ["."]},
     )
 
-    assert not result.ok and result.outcome == "blocked"
+    assert not result.ok and result.outcome == outcome
     assert result.error == expected
     assert executor.calls == [("fs_list", {"path": "."}, "read")]
 
@@ -988,7 +988,7 @@ def test_virtual_direct_callback_answer_authority(tmp_path, raw, unanswered, exp
     [
         ("tool_failure", "approved"),
         ("root_pin_failed", None),
-        ("authority_unavailable", None),
+        ("protocol_failure", "approved"),
     ],
 )
 def test_virtual_approved_execution_failure_is_distinct_from_authority_loss(

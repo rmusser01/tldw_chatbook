@@ -373,9 +373,7 @@ class TestZeroByteSourcesAreRefusedBeforeTheyAreSent:
         assert "empty.txt" in reason
         assert "empty" in reason
 
-    def test_the_submit_seam_refuses_it_with_the_same_reason(
-        self, tmp_path
-    ) -> None:
+    def test_the_submit_seam_refuses_it_with_the_same_reason(self, tmp_path) -> None:
         """The predicate the FORECAST reads and the builder the SUBMIT
         path calls must state the same thing about the same file -- a
         forecast that promises a refusal the submit path does not perform
@@ -390,9 +388,7 @@ class TestZeroByteSourcesAreRefusedBeforeTheyAreSent:
             build_server_ingest_kwargs(str(empty), options={})
         assert str(excinfo.value) == server_ingest_refusal(str(empty))
 
-    def test_a_zero_byte_file_of_a_mapped_type_is_refused_too(
-        self, tmp_path
-    ) -> None:
+    def test_a_zero_byte_file_of_a_mapped_type_is_refused_too(self, tmp_path) -> None:
         """The refusal is about the file's CONTENT, not its extension: a
         0-byte .mp3 maps to ``audio`` perfectly well and is still nothing
         to send."""
@@ -415,9 +411,9 @@ class TestZeroByteSourcesAreRefusedBeforeTheyAreSent:
         one_byte = tmp_path / "tiny.txt"
         one_byte.write_bytes(b" ")
         assert server_ingest_refusal(str(one_byte)) is None
-        assert build_server_ingest_kwargs(str(one_byte), options={})[
-            "file_paths"
-        ] == [str(one_byte)]
+        assert build_server_ingest_kwargs(str(one_byte), options={})["file_paths"] == [
+            str(one_byte)
+        ]
 
     def test_a_url_is_never_called_empty(self) -> None:
         """Guard: a URL has no local size to measure -- claiming one is

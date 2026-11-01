@@ -442,6 +442,22 @@ def vision_block_reason(
     )
 
 
+def vision_block_notice(model: str | None) -> str:
+    """Return the composer's short copy for a vision block (TASK-33620.2).
+
+    Args:
+        model: Selected model identifier, or None when no model is chosen.
+
+    Returns:
+        The model and the cause, e.g. ``"claude-2.1 can't accept images"``;
+        with no model chosen, what to do instead -- there is no model to
+        blame, and the Console hides the row then (setup copy owns the strip).
+    """
+    if not model:
+        return "choose a model that accepts images"
+    return f"{model} can't accept images"
+
+
 def max_history_images(provider: str, model: str | None) -> int:
     """Return how many recent session images to resend for this model.
 

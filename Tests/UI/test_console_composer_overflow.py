@@ -44,6 +44,7 @@ class _CssTrueConsoleHarness(ConsoleHarness):
 
     CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
+
 # PURE-FUNCTION width parameter only -- pass it to `_wrap_draft_line_slices`/
 # `_cell_wrap_line`/etc. below, where an explicit width argument is exactly
 # what's under test. Do NOT assume it equals the mounted widget's real
@@ -108,10 +109,35 @@ _ZWJ_EMOJI_STRING = "".join(
 _ZWJ_JOIN_BOUNDARY_TEXT = "".join(
     chr(c)
     for c in (
-        0x23, 0x5A, 0x58, 0x59, 0x20, 0x62, 0x39, 0x200D, 0x20,
-        0xFE0F, 0x1F600, 0x62, 0x63, 0x63, 0x33, 0x59, 0x59,
-        0x1F600, 0x33, 0x58, 0x5A, 0x58, 0x59, 0x23, 0x39, 0x30,
-        0x30, 0x59, 0x63,
+        0x23,
+        0x5A,
+        0x58,
+        0x59,
+        0x20,
+        0x62,
+        0x39,
+        0x200D,
+        0x20,
+        0xFE0F,
+        0x1F600,
+        0x62,
+        0x63,
+        0x63,
+        0x33,
+        0x59,
+        0x59,
+        0x1F600,
+        0x33,
+        0x58,
+        0x5A,
+        0x58,
+        0x59,
+        0x23,
+        0x39,
+        0x30,
+        0x30,
+        0x59,
+        0x63,
     )
 )
 
@@ -187,9 +213,7 @@ def test_prefixed_row_offsets_still_map_into_the_source_text():
     assert prefixed.text.startswith("... ")
     assert 0 <= prefixed.start <= prefixed.end <= len(_WINDOWED_BOUNDARY_TEXT)
     displayed_tail = prefixed.text[prefixed.synthetic_prefix_columns :]
-    assert (
-        _WINDOWED_BOUNDARY_TEXT[prefixed.start : prefixed.end] == displayed_tail
-    )
+    assert _WINDOWED_BOUNDARY_TEXT[prefixed.start : prefixed.end] == displayed_tail
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,13 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_authentication_mode,
     normalize_openai_compatible_endpoint,
 )
+from tldw_chatbook.TTS.pocket_tts_native import (
+    POCKET_TTS_DEFAULT_ENDPOINT,
+    POCKET_TTS_WAV_ONLY_COPY,
+    is_pocket_tts_native_url,
+    pocket_tts_form,
+    repair_streamed_wav,
+)
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.UI.Screens.settings_speech_tts import (
     ProcessProviderTestEvidenceStore,
@@ -28,12 +35,16 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     ProviderTestFingerprint,
 )
 
+#: TASK-34100.8: 'No voice for now' -- the step writes nothing.
+VOICE_PRESET_NONE = "none"
 VOICE_PRESET_POCKET_TTS = "pocket_tts"
 VOICE_PRESET_OFFICIAL_OPENAI = "official_openai"
 VOICE_PRESET_CUSTOM = "custom"
 VOICE_PRESET_OMNIVOICE = "omnivoice"
 
-POCKET_TTS_ENDPOINT = "http://127.0.0.1:8765/v1/audio/speech"
+#: TASK-34100.8: pocket-tts's own server speaks POST /tts on port 8000; the
+#: OpenAI route this preset used (:8765/v1/audio/speech) answers 404 there.
+POCKET_TTS_ENDPOINT = POCKET_TTS_DEFAULT_ENDPOINT
 OFFICIAL_OPENAI_TTS_ENDPOINT = "https://api.openai.com/v1/audio/speech"
 POCKET_TTS_MODEL = "pocket-tts"
 POCKET_TTS_VOICE = "alba"
@@ -41,7 +52,20 @@ OFFICIAL_OPENAI_TTS_MODEL = "tts-1-hd"
 OFFICIAL_OPENAI_TTS_VOICE = "shimmer"
 
 _RESPONSE_FORMATS = frozenset({"mp3", "opus", "aac", "flac", "wav"})
+RESPONSE_FORMATS: tuple[str, ...] = ("mp3", "opus", "aac", "flac", "wav")
+#: The voices the OpenAI backend accepts on the official endpoint (any other
+#: name is replaced with "alloy" there, so the picker offers only these).
+OFFICIAL_OPENAI_TTS_VOICES: tuple[str, ...] = (
+    "alloy",
+    "echo",
+    "fable",
+    "onyx",
+    "nova",
+    "shimmer",
+)
+DEFAULT_SAMPLE_TEXT = "Hello from Chatbook."
 _MAX_IDENTIFIER_CHARACTERS = 512
+replace_draft = replace
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,8 +142,16 @@ def _identifier(value: str, label: str) -> str:
     return trimmed
 
 
-def validate_voice_setup_draft(draft: VoiceSetupDraft) -> VoiceSetupValidation:
-    """Validate configuration without requiring network reachability."""
+def validate_voice_setup_draft(
+    draft: VoiceSetupDraft, *, require_sample: bool = True
+) -> VoiceSetupValidation:
+    """Validate configuration without requiring network reachability.
+
+    Args:
+        draft: The Voice draft.
+        require_sample: Whether the sample text must be valid. Only the test
+            sends it; a save falls back to the default sample (TASK-34100.8).
+    """
 
     if type(draft) is not VoiceSetupDraft:
         raise TypeError("Voice setup draft is invalid")
@@ -156,12 +188,17 @@ def validate_voice_setup_draft(draft: VoiceSetupDraft) -> VoiceSetupValidation:
         errors.append(str(error))
     if draft.response_format not in _RESPONSE_FORMATS:
         errors.append("Choose a supported response format.")
+    elif draft.response_format != "wav" and is_pocket_tts_native_url(
+        normalized_endpoint
+    ):
+        errors.append(POCKET_TTS_WAV_ONLY_COPY)
     if not 0.25 <= draft.speed <= 4.0:
         errors.append("Speed must be between 0.25 and 4.0.")
-    try:
-        validate_voice_sample_text(draft.sample_text)
-    except ValueError as error:
-        errors.append(str(error))
+    if require_sample:
+        try:
+            validate_voice_sample_text(draft.sample_text)
+        except ValueError as error:
+            errors.append(str(error))
     return VoiceSetupValidation(
         configuration_valid=not errors,
         connection_state="needs_test",
@@ -203,12 +240,37 @@ def build_voice_setup_save_event(
     *,
     request_id: int | None = None,
     reply_to: object | None = None,
+    credential: str | None = None,
 ) -> STTSSettingsSaveEvent:
-    """Build the canonical global settings event for one valid Voice draft."""
+    """Build the canonical global settings event for one valid Voice draft.
 
-    validation = validate_voice_setup_draft(draft)
+    TASK-34100.8 (voice-speech-01). With "Use as default" ticked, the draft's
+    own model, voice, format and speed become the default voice. Unticked, no
+    default selection is written (``persist_default_preferences=False`` stops
+    the handler materializing the current settings as defaults), and the
+    shared default axes stay the reply provider's. The step offers an
+    unticked save only while another provider reads replies: when the
+    OpenAI-compatible slot reads them, a save there IS the reply voice, so
+    the box is locked on (review round 1, F1) and a PocketTTS URL is never
+    left paired with tts-1-hd / shimmer / mp3.
+
+    Args:
+        draft: A valid Voice draft (a blank sample is allowed).
+        request_id: Correlates the save result.
+        reply_to: Widget receiving the save result.
+        credential: An OpenAI key the step staged; written where Settings
+            writes it (``api_settings.openai.api_key``).
+    """
+
+    validation = validate_voice_setup_draft(draft, require_sample=False)
     if not validation.configuration_valid or validation.normalized_endpoint is None:
         raise ValueError("Voice setup configuration is invalid")
+    settings: dict[str, object] = {
+        "OPENAI_BASE_URL": validation.normalized_endpoint,
+        "OPENAI_AUTH_MODE": draft.authentication_mode,
+    }
+    if credential:
+        settings["openai_api_key"] = credential
     preferences = (
         TTSPreferencesSnapshot(
             provider_id="openai",
@@ -223,19 +285,64 @@ def build_voice_setup_save_event(
         else None
     )
     return STTSSettingsSaveEvent(
-        {
-            "OPENAI_BASE_URL": validation.normalized_endpoint,
-            "OPENAI_AUTH_MODE": draft.authentication_mode,
-        },
+        settings,
         preferences=preferences,
         request_id=request_id,
         reply_to=reply_to,
         commit_defaults_after_handoff=draft.use_as_default,
+        persist_default_preferences=draft.use_as_default,
         # task-32266: the step awaits this save's result and renders every
         # outcome itself, so the app-level toast adds nothing and lands over
         # the docked actions of whichever step the wizard has advanced to.
         notify_outcome=False,
     )
+
+
+class VoiceSampleError(ValueError):
+    """A failed Voice sample, classified so the step can name the cause.
+
+    TASK-34100.8 (voice-speech-03): every failure used to collapse into
+    "Not tested yet — the sample failed." ``kind`` is one of ``not_running``
+    (nothing listening on a local address), ``unreachable``, ``key_rejected``,
+    ``no_endpoint``, ``bad_request``, ``http_status``, ``timeout``,
+    ``not_audio`` or ``too_large``.
+    """
+
+    def __init__(
+        self,
+        kind: str,
+        *,
+        host: str = "",
+        status_code: int | None = None,
+        timeout_seconds: float | None = None,
+    ) -> None:
+        super().__init__(f"Voice sample failed ({kind})")
+        self.kind = kind
+        self.host = host
+        self.status_code = status_code
+        self.timeout_seconds = timeout_seconds
+
+
+def endpoint_host(url: str) -> str:
+    """Host and port only: a URL's userinfo or path never reaches the screen."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{host}:{parts.port}" if parts.port else host
+
+
+def _status_failure(status_code: int, host: str) -> VoiceSampleError:
+    kind = (
+        "key_rejected"
+        if status_code in {401, 403}
+        else "no_endpoint"
+        if status_code in {404, 405}
+        else "bad_request"
+        if status_code in {400, 422}
+        else "http_status"
+    )
+    return VoiceSampleError(kind, host=host, status_code=status_code)
 
 
 async def run_voice_sample(
@@ -245,7 +352,15 @@ async def run_voice_sample(
     max_response_bytes: int = 8 * 1024 * 1024,
     timeout_seconds: float = 20.0,
 ) -> VoiceSampleResult:
-    """Send one exact OpenAI-compatible sample and accept playable audio only."""
+    """Send one exact sample and accept playable audio only.
+
+    An endpoint whose path is ``/tts`` speaks pocket-tts's native API (form
+    fields, streamed WAV); anything else the OpenAI speech API.
+
+    Raises:
+        ValueError: The draft is invalid or a needed key is missing.
+        VoiceSampleError: The request failed; ``kind`` names the cause.
+    """
 
     validation = validate_voice_setup_draft(draft)
     if not validation.configuration_valid or validation.normalized_endpoint is None:
@@ -254,6 +369,9 @@ async def run_voice_sample(
         raise ValueError("Voice sample response bound is invalid")
     if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
         raise ValueError("Voice sample timeout is invalid")
+    url = validation.normalized_endpoint
+    host = endpoint_host(url)
+    native = is_pocket_tts_native_url(url)
     headers = {"Accept": f"audio/{draft.response_format}"}
     if draft.authentication_mode == "api_key":
         if type(credential) is not str or not credential:
@@ -261,53 +379,69 @@ async def run_voice_sample(
                 "An existing OpenAI API key is required to test this voice."
             )
         headers["Authorization"] = f"Bearer {credential}"
-    payload = {
-        "input": validate_voice_sample_text(draft.sample_text),
-        "model": _identifier(draft.model_id, "Model"),
-        "voice": _identifier(draft.voice_id, "Voice"),
-        "response_format": draft.response_format,
-        "speed": draft.speed,
-    }
-    timeout = httpx.Timeout(float(timeout_seconds))
-    async with (
-        httpx.AsyncClient(
-            timeout=timeout,
-            follow_redirects=False,
-        ) as client,
-        client.stream(
-            "POST",
-            validation.normalized_endpoint,
-            headers=headers,
-            json=payload,
-        ) as response,
-    ):
-        if not 200 <= response.status_code < 300:
-            raise ValueError("The TTS service did not accept the sample request.")
-        content_length = response.headers.get("Content-Length")
-        if content_length is not None:
-            try:
-                declared_length = int(content_length)
-            except ValueError as error:
-                raise ValueError(
-                    "The TTS service returned invalid audio metadata."
-                ) from error
-            if not 0 < declared_length <= max_response_bytes:
-                raise ValueError("The TTS sample exceeded the response limit.")
-        chunks: list[bytes] = []
-        total = 0
-        async for chunk in response.aiter_bytes():
-            total += len(chunk)
-            if total > max_response_bytes:
-                raise ValueError("The TTS sample exceeded the response limit.")
-            chunks.append(chunk)
-        body = b"".join(chunks)
-        content_type = response.headers.get("Content-Type", "")
+    text = validate_voice_sample_text(draft.sample_text)
+    voice = _identifier(draft.voice_id, "Voice")
+    body_kwargs: dict[str, object] = (
+        {"data": pocket_tts_form(text, voice)}
+        if native
+        else {
+            "json": {
+                "input": text,
+                "model": _identifier(draft.model_id, "Model"),
+                "voice": voice,
+                "response_format": draft.response_format,
+                "speed": draft.speed,
+            }
+        }
+    )
+    try:
+        async with (
+            httpx.AsyncClient(
+                timeout=httpx.Timeout(float(timeout_seconds)),
+                follow_redirects=False,
+            ) as client,
+            client.stream("POST", url, headers=headers, **body_kwargs) as response,
+        ):
+            if not 200 <= response.status_code < 300:
+                raise _status_failure(response.status_code, host)
+            content_length = response.headers.get("Content-Length")
+            if content_length is not None:
+                try:
+                    declared_length = int(content_length)
+                except ValueError as error:
+                    raise VoiceSampleError("not_audio", host=host) from error
+                if not 0 < declared_length <= max_response_bytes:
+                    raise VoiceSampleError("too_large", host=host)
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in response.aiter_bytes():
+                total += len(chunk)
+                if total > max_response_bytes:
+                    raise VoiceSampleError("too_large", host=host)
+                chunks.append(chunk)
+            body = b"".join(chunks)
+            content_type = response.headers.get("Content-Type", "")
+    except httpx.TimeoutException:
+        raise VoiceSampleError(
+            "timeout", host=host, timeout_seconds=float(timeout_seconds)
+        ) from None
+    except httpx.ConnectError:
+        local = is_loopback_openai_compatible_endpoint(
+            normalize_openai_compatible_endpoint(url)
+        )
+        raise VoiceSampleError(
+            "not_running" if local else "unreachable", host=host
+        ) from None
+    except httpx.TransportError:
+        raise VoiceSampleError("unreachable", host=host) from None
+    if native:
+        body = repair_streamed_wav(body)
 
     fingerprint = ProviderTestFingerprint(
         provider_id="openai",
         normalized_fields=(
             ("authentication_mode", draft.authentication_mode),
-            ("base_url", validation.normalized_endpoint),
+            ("base_url", url),
             ("model_id", draft.model_id.strip()),
             ("response_format", draft.response_format),
             ("speed", str(draft.speed)),
@@ -324,7 +458,7 @@ async def run_voice_sample(
         max_bytes=max_response_bytes,
     )
     if not playable:
-        raise ValueError("The TTS service returned audio that could not be played.")
+        raise VoiceSampleError("not_audio", host=host)
     return VoiceSampleResult(
         body=body,
         content_type=content_type,
@@ -355,7 +489,8 @@ OMNIVOICE_READY_COPY = (
 OMNIVOICE_CHECKING_COPY = "Checking the OmniVoice model…"
 OMNIVOICE_GENERATING_COPY = "Generating locally (first run loads the model)…"
 OMNIVOICE_SAMPLE_FAILED_COPY = (
-    "Couldn't play a test sample — you can still save and test later in Speech Lab."
+    "Test failed — OmniVoice couldn't make a sample. You can still continue "
+    "with Next and test later in Speech Lab."
 )
 OMNIVOICE_DEFAULT_WITHOUT_MODEL_COPY = (
     "Install the OmniVoice model first, or uncheck Use as default."

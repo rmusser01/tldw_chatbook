@@ -158,11 +158,15 @@ async def test_rerun_after_failure_creates_new_run_group(view_model, db, task_id
     # No cross-run cache (spec "Execution"): the first run group's cells
     # are untouched by the second run.
     still_failed_grid = load_grid(db, failed.run_group_id)
-    assert all(isinstance(cell, CellError) for cell in still_failed_grid["cells"].values())
+    assert all(
+        isinstance(cell, CellError) for cell in still_failed_grid["cells"].values()
+    )
 
     succeeded_grid = load_grid(db, succeeded.run_group_id)
     assert len(succeeded_grid["cells"]) == 2
-    assert all(isinstance(cell, CellCapture) for cell in succeeded_grid["cells"].values())
+    assert all(
+        isinstance(cell, CellCapture) for cell in succeeded_grid["cells"].values()
+    )
 
 
 @pytest.mark.asyncio
@@ -244,12 +248,17 @@ def test_resolve_targets_carries_prefix_from_model_config(db):
     """create_model(config={"prefix": ...}) -> _resolve_targets reads it via
     storage.model_steering -> the built Target carries it."""
     steered_id = db.create_model(
-        name="steered", provider="llama_cpp", model_id="m",
+        name="steered",
+        provider="llama_cpp",
+        model_id="m",
         config={"prefix": "Be careful. "},
     )
     config = BenchConfig(
-        name="steering bench", prompt_mode="raw", top_k=5,
-        dataset_id="unused", target_ids=(steered_id,),
+        name="steering bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id="unused",
+        target_ids=(steered_id,),
     )
 
     targets = _resolve_targets(db, config)
@@ -260,12 +269,17 @@ def test_resolve_targets_carries_prefix_from_model_config(db):
 
 def test_resolve_targets_carries_system_prompt_from_model_config(db):
     steered_id = db.create_model(
-        name="steered-chat", provider="llama_cpp", model_id="m",
+        name="steered-chat",
+        provider="llama_cpp",
+        model_id="m",
         config={"system_prompt": "You are terse."},
     )
     config = BenchConfig(
-        name="steering bench", prompt_mode="chat", top_k=5,
-        dataset_id="unused", target_ids=(steered_id,),
+        name="steering bench",
+        prompt_mode="chat",
+        top_k=5,
+        dataset_id="unused",
+        target_ids=(steered_id,),
     )
 
     targets = _resolve_targets(db, config)
@@ -279,8 +293,11 @@ def test_resolve_targets_leaves_an_unsteered_row_unchanged(db):
     before task-1611) must still resolve to a plain, unsteered Target."""
     base_id = db.create_model(name="base", provider="llama_cpp", model_id="m")
     config = BenchConfig(
-        name="bench", prompt_mode="raw", top_k=5,
-        dataset_id="unused", target_ids=(base_id,),
+        name="bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id="unused",
+        target_ids=(base_id,),
     )
 
     targets = _resolve_targets(db, config)
@@ -296,12 +313,17 @@ async def test_steering_round_trips_from_model_config_to_the_request_body(db):
     actually sends it. Mirrors test_capture_client.py's own request-shape
     convention (a MockTransport handler recording the posted body)."""
     steered_id = db.create_model(
-        name="steered", provider="llama_cpp", model_id="m",
+        name="steered",
+        provider="llama_cpp",
+        model_id="m",
         config={"prefix": "Be careful. "},
     )
     config = BenchConfig(
-        name="steering bench", prompt_mode="raw", top_k=5,
-        dataset_id="unused", target_ids=(steered_id,),
+        name="steering bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id="unused",
+        target_ids=(steered_id,),
     )
     target = _resolve_targets(db, config)[0]
 
@@ -324,12 +346,17 @@ def test_resolve_targets_raises_when_a_models_config_sets_both_fields(db):
     is corrupt (both prefix and system_prompt set); _resolve_targets does
     not swallow or repair it."""
     corrupt_id = db.create_model(
-        name="corrupt", provider="llama_cpp", model_id="m",
+        name="corrupt",
+        provider="llama_cpp",
+        model_id="m",
         config={"prefix": "a", "system_prompt": "b"},
     )
     config = BenchConfig(
-        name="bench", prompt_mode="raw", top_k=5,
-        dataset_id="unused", target_ids=(corrupt_id,),
+        name="bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id="unused",
+        target_ids=(corrupt_id,),
     )
 
     with pytest.raises(ValueError, match=corrupt_id):
@@ -344,12 +371,17 @@ async def test_run_existing_bench_rejects_a_chat_mode_bench_with_a_prefix_target
     mode before any row is created; run_existing_bench re-raises it as a
     RuntimeError (task-1611) so this seam has one exception shape."""
     target_id = db.create_model(
-        name="raw-only target", provider="llama_cpp", model_id="m",
+        name="raw-only target",
+        provider="llama_cpp",
+        model_id="m",
         config={"prefix": "Note: "},
     )
     config = BenchConfig(
-        name="mismatched bench", prompt_mode="chat", top_k=5,
-        dataset_id=dataset_id, target_ids=(target_id,),
+        name="mismatched bench",
+        prompt_mode="chat",
+        top_k=5,
+        dataset_id=dataset_id,
+        target_ids=(target_id,),
     )
     task_id = save_bench(db, config)
 
@@ -377,12 +409,17 @@ async def test_run_existing_bench_persists_a_steered_targets_prefix_in_the_snaps
     test_storage.py's own snapshot tests (e.g.
     test_run_snapshot_carries_snippet_text_not_only_ids) already use."""
     target_id = db.create_model(
-        name="steered target", provider="llama_cpp", model_id="m",
+        name="steered target",
+        provider="llama_cpp",
+        model_id="m",
         config={"prefix": "Be careful. "},
     )
     config = BenchConfig(
-        name="steered bench", prompt_mode="raw", top_k=5,
-        dataset_id=dataset_id, target_ids=(target_id,),
+        name="steered bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id=dataset_id,
+        target_ids=(target_id,),
     )
     task_id = save_bench(db, config)
 
@@ -513,7 +550,11 @@ def test_run_groups_status_folds_a_pending_run_into_completed(
 
 
 def _group_with_cells(
-    db: EvalsDB, task_id: str, dataset_id: str, target_id: str, cell_outcomes: list[bool]
+    db: EvalsDB,
+    task_id: str,
+    dataset_id: str,
+    target_id: str,
+    cell_outcomes: list[bool],
 ) -> str:
     """Creates a one-target run group with one cell per entry in
     ``cell_outcomes`` (``True`` -> failed, ``False`` -> succeeded)."""
@@ -522,8 +563,11 @@ def _group_with_cells(
         for i in range(len(cell_outcomes))
     ]
     config = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset_id, target_ids=(target_id,),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(target_id,),
     )
     targets = [Target(id=target_id, name="base", provider="llama_cpp", model_id="m")]
     group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
@@ -532,9 +576,13 @@ def _group_with_cells(
             CellError(reason="unreachable", detail="connection refused")
             if failed
             else CellCapture(
-                prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+                prompt_mode="raw",
+                k_requested=5,
+                k_returned=1,
+                content_offset=0,
                 top_k=(TokenProb(token=" a", logprob=-0.1, token_id=1),),
-                canary="unchecked", captured_at="2026-07-30T00:00:00Z",
+                canary="unchecked",
+                captured_at="2026-07-30T00:00:00Z",
             )
         )
         save_cell(db, run_ids[target_id], snippet, result)

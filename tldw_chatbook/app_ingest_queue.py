@@ -17,7 +17,6 @@ import concurrent.futures
 import contextlib
 import functools
 import hashlib
-import inspect
 import multiprocessing
 import multiprocessing.connection
 import os
@@ -68,6 +67,7 @@ from tldw_chatbook.Library.library_ingest_jobs import (
     normalize_active_ingest_source,
 )
 from tldw_chatbook.Library.server_ingest_reconcile import (
+    accepts_keyword as _accepts_keyword,
     pending_remote_batches,
     reconcile_remote_ingest_jobs,
 )
@@ -101,6 +101,7 @@ from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
 from tldw_chatbook.Local_Ingestion.stt_batch_routing import (
     PARAKEET_V2_MODEL,
     BatchSTTRoutingError,
+    resolve_batch_stt_model,
     resolve_batch_stt_route,
 )
 from tldw_chatbook.Research_Workspace.source_operation_store import (
@@ -128,9 +129,11 @@ from tldw_chatbook.STT.executor import (
     ExecutorUnavailableError,
     LocalSTTExecutor,
     ModelIdentity,
+    URLIngestSource,
     WorkerPhase,
     snapshot_local_source,
 )
+from tldw_chatbook.Utils.egress import UrlProvenance
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Model_Artifacts.service import ArtifactRef
@@ -458,36 +461,6 @@ def _response_field(payload: Any, name: str) -> Any:
     if isinstance(payload, Mapping):
         return payload.get(name)
     return getattr(payload, name, None)
-
-
-def _accepts_keyword(func: Any, name: str) -> bool:
-    """Report whether ``func`` can be called with the ``name`` keyword.
-
-    Asked up front instead of calling and catching ``TypeError``: that pattern
-    cannot tell "this callable has no such parameter" from "a ``TypeError`` was
-    raised inside it", so a genuine bug downstream reads as a missing feature
-    and degrades silently. That is exactly how the remote ingest poller shipped
-    asking for an ``offset`` the client did not yet accept, and paginated
-    nothing for it (task-684.2).
-
-    A callable whose signature cannot be read (a C builtin, an exotic mock) is
-    reported as accepting the keyword, so real services are not downgraded by
-    an unreadable signature; ``**kwargs`` counts as accepting it.
-    """
-    try:
-        parameters = inspect.signature(func).parameters
-    except (TypeError, ValueError):
-        return True
-    if any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters.values()
-    ):
-        return True
-    parameter = parameters.get(name)
-    return parameter is not None and parameter.kind in {
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        inspect.Parameter.KEYWORD_ONLY,
-    }
 
 
 class LibraryIngestQueueMixin:
@@ -2282,6 +2255,21 @@ class LibraryIngestQueueMixin:
             "author": job.author or None,
             "keywords": list(job.keywords) or None,
             "perform_analysis": perform_analysis,
+            # (TASK-20973) Mint the URL-provenance fact HERE, where the
+            # submission's lineage is known, so each URL arm's egress
+            # check trusts a private host only for a URL the user actually
+            # entered. A general Library-import submission IS user entry
+            # (the source string came from the import form); a
+            # research-source job's URL is agent-discovered catalog
+            # content, NOT user entry, and must fail closed. Deriving
+            # this from the job's own field -- rather than from "who
+            # happens to call" -- is what makes adding a caller unable to
+            # silently change the trust decision.
+            "url_provenance": (
+                UrlProvenance.UNKNOWN
+                if job.research_source_operation_id
+                else UrlProvenance.USER_ENTERED
+            ),
             # These generic fields intentionally travel independently of the
             # detected type-group branch. The downstream local overwrite/RAG
             # behavior is owned by later work; this seam only makes the form
@@ -2432,17 +2420,11 @@ class LibraryIngestQueueMixin:
                 else ""
             )
             options["transcription_model_dir"] = selected_model_dir or None
-            selected_model = route.model
-            if selected_model is None and route.requested_provider not in {
-                "default",
-                "transcribe-cpp",
-            }:
-                selected_model = flat_opts.get("model") or flat_opts.get(
-                    "transcription_model"
-                )
-                if route.requested_provider == "faster-whisper" and not selected_model:
-                    selected_model = "base"
-            options["transcription_model"] = selected_model
+            options["transcription_model"] = resolve_batch_stt_model(
+                route,
+                selected_model=flat_opts.get("model")
+                or flat_opts.get("transcription_model"),
+            )
             options["language"] = route.requested_language
             options["translation_target_language"] = route.target_language
             options["transcription_precision"] = route.precision
@@ -2490,7 +2472,10 @@ class LibraryIngestQueueMixin:
                 "retry_of_attempt_id": failed_attempt.get("attempt_id")
                 if failed_attempt
                 else None,
-                "retry_of_job_id": job.retry_of_job_id,
+                # A Library retry may follow a download/preparation failure
+                # that produced no STT attempt. Keep that job link in the
+                # registry without inventing an incomplete STT lineage.
+                "retry_of_job_id": job.retry_of_job_id if failed_attempt else None,
                 "retry_source_failure_provenance": failed_attempt,
             }
             external_scope_id = str(
@@ -2804,7 +2789,11 @@ class LibraryIngestQueueMixin:
             generation = coordinator.submit_library(
                 attempt_id=attempt_id,
                 job_id=job.job_id,
-                source=FileAudioSource(Path(job.source_path)),
+                source=(
+                    URLIngestSource(job.source_path)
+                    if job.source_path.lower().startswith(("http://", "https://"))
+                    else FileAudioSource(Path(job.source_path))
+                ),
                 identity=dispatch["identity"],
                 options=options,
                 local_source=dispatch["local_source"],
@@ -2828,6 +2817,13 @@ class LibraryIngestQueueMixin:
         except Exception as exc:
             provider = str(options.get("transcription_provider") or "")
             code, actions = self._classify_local_stt_dispatch_error(provider, exc)
+            message = None
+            if provider == "parakeet-onnx" and not isinstance(
+                exc, (ExecutorBusyError, ExecutorUnavailableError)
+            ):
+                from tldw_chatbook.Library.transcription_readiness import parakeet_readiness_error
+
+                message = str(parakeet_readiness_error(exc))
             self._marshal_local_stt_call(
                 self._on_ingest_local_stt_dispatch_failure,
                 job.job_id,
@@ -2835,6 +2831,7 @@ class LibraryIngestQueueMixin:
                 code,
                 actions,
                 type(exc).__name__,
+                message,
             )
             return
         self._marshal_local_stt_call(
@@ -2854,10 +2851,15 @@ class LibraryIngestQueueMixin:
             ParakeetSourceErrorCode,
         )
 
-        missing_model = isinstance(error, ParakeetSourceError) and error.code in {
-            ParakeetSourceErrorCode.VAD_UNAVAILABLE,
-            ParakeetSourceErrorCode.MANAGED_UNAVAILABLE,
-        }
+        missing_model = (
+            provider == "parakeet-onnx" and isinstance(error, FileNotFoundError)
+        ) or (
+            isinstance(error, ParakeetSourceError)
+            and error.code in {
+                ParakeetSourceErrorCode.VAD_UNAVAILABLE,
+                ParakeetSourceErrorCode.MANAGED_UNAVAILABLE,
+            }
+        )
         unavailable = isinstance(error, (ExecutorBusyError, ExecutorUnavailableError))
         if missing_model:
             code = TranscriptionFailureCode.MODEL_NOT_INSTALLED
@@ -3008,6 +3010,7 @@ class LibraryIngestQueueMixin:
         code: TranscriptionFailureCode,
         actions: tuple[str, ...],
         error_type: str,
+        message: str | None = None,
     ) -> None:
         if self._ingest_shutdown or self._ingest_local_stt_jobs.get(job_id) != (
             0,
@@ -3015,7 +3018,7 @@ class LibraryIngestQueueMixin:
         ):
             return
         self._ingest_local_stt_jobs.pop(job_id, None)
-        message = TRANSCRIPTION_FAILURE_CONTRACT[code][0]
+        message = message or TRANSCRIPTION_FAILURE_CONTRACT[code][0]
         logger.error(
             "Library local STT dispatch failed "
             f"(job_id={job_id}, error_type={error_type})."
@@ -3165,6 +3168,8 @@ class LibraryIngestQueueMixin:
         if failure.code is TranscriptionFailureCode.CANCELLED:
             self.library_ingest_jobs.mark_cancelled(job_id, reason=message)
         else:
+            from tldw_chatbook.STT.failure_diagnostics import STTFailureDiagnostic
+
             # Worker log sinks are silenced; this parent owns the application
             # log. Preserve correlation and stage without native exception text
             # or caller-controlled paths/progress messages.
@@ -3177,14 +3182,28 @@ class LibraryIngestQueueMixin:
                 phase = WorkerPhase(phase_value).value
             except (TypeError, ValueError):
                 phase = "unknown"
+            diagnostic = failure.diagnostic
+            failure_stage = (
+                diagnostic.stage.value
+                if type(diagnostic) is STTFailureDiagnostic
+                else "unknown"
+            )
+            exception_category = (
+                diagnostic.exception_category.value
+                if type(diagnostic) is STTFailureDiagnostic
+                else "unknown"
+            )
             logger.error(
                 "Library local STT failed "
-                "(job_id={}, attempt_id={}, generation={}, phase={}, code={}).",
+                "(job_id={}, attempt_id={}, generation={}, phase={}, code={}, "
+                "failure_stage={}, exception_category={}).",
                 job_id,
                 failure.attempt_id,
                 failure.generation,
                 phase,
                 failure.code.value,
+                failure_stage,
+                exception_category,
             )
             self.library_ingest_jobs.mark_failed(
                 job_id,
@@ -3195,6 +3214,8 @@ class LibraryIngestQueueMixin:
                     "code": failure.code.value,
                     "message": message,
                     "actions": list(failure.recovery_actions),
+                    "failure_stage": failure_stage,
+                    "exception_category": exception_category,
                 },
                 stt_failure_provenance=failure.failed_attempt,
             )

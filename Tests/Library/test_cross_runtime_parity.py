@@ -186,9 +186,27 @@ class StubLibraryBackend:
             }
         ]
         self.messages = [
-            {"id": "msg-1", "sender": "user", "timestamp": "2026-08-01T10:00:00.000Z", "version": 1, "text": "first"},
-            {"id": "msg-2", "sender": "assistant", "timestamp": "2026-08-01T10:01:00.000Z", "version": 1, "text": "second"},
-            {"id": "msg-3", "sender": "user", "timestamp": "2026-08-01T10:02:00.000Z", "version": 1, "text": "third"},
+            {
+                "id": "msg-1",
+                "sender": "user",
+                "timestamp": "2026-08-01T10:00:00.000Z",
+                "version": 1,
+                "text": "first",
+            },
+            {
+                "id": "msg-2",
+                "sender": "assistant",
+                "timestamp": "2026-08-01T10:01:00.000Z",
+                "version": 1,
+                "text": "second",
+            },
+            {
+                "id": "msg-3",
+                "sender": "user",
+                "timestamp": "2026-08-01T10:02:00.000Z",
+                "version": 1,
+                "text": "third",
+            },
         ]
         self.collection_members = [
             {
@@ -341,7 +359,9 @@ class StubLibraryBackend:
             },
         }
 
-    async def get_library_prompt_section(self, prompt_uuid, section, *, start, max_chars):
+    async def get_library_prompt_section(
+        self, prompt_uuid, section, *, start, max_chars
+    ):
         self._maybe_raise("get_library_prompt_section")
         if prompt_uuid != PROMPT_UUID or section != "system_prompt":
             return None
@@ -682,9 +702,12 @@ def test_direct_and_mcp_cannot_forge_lesson_authority_against_real_notes(
     payload = _assert_parity(service, "library_save_note", arguments)
 
     assert payload["error"]["code"] == "approval_required"
-    assert chacha_db.get_connection().execute(
-        "SELECT COUNT(*) FROM notes WHERE deleted = 0"
-    ).fetchone()[0] == 0
+    assert (
+        chacha_db.get_connection()
+        .execute("SELECT COUNT(*) FROM notes WHERE deleted = 0")
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_organization_changed_error_is_byte_equivalent_across_runtimes():
@@ -699,9 +722,7 @@ def test_organization_changed_error_is_byte_equivalent_across_runtimes():
     arguments = {"title": "private", "content": "private"}
 
     console = provider.invoke("library:library_save_note", arguments)
-    payload = asyncio.run(
-        delegate.execute_tool("library_save_note", arguments)
-    )
+    payload = asyncio.run(delegate.execute_tool("library_save_note", arguments))
 
     assert console.ok is False
     assert console.content == ""
@@ -724,7 +745,11 @@ GET_CASES = [
         {"id": make_public_id("prompt", PROMPT_UUID), "section": "system_prompt"},
         "prompt-section",
     ),
-    ("library_get_skill", {"id": make_public_id("skill", SKILL_NAME)}, "skill-manifest"),
+    (
+        "library_get_skill",
+        {"id": make_public_id("skill", SKILL_NAME)},
+        "skill-manifest",
+    ),
     (
         "library_get_skill",
         {"id": make_public_id("skill", SKILL_NAME), "file_token": "tok-guide"},
@@ -931,9 +956,7 @@ def test_real_notes_backend_round_trip_parity(chacha_db):
     keyword_id = chacha_db.add_keyword("parity-kw")
     chacha_db.link_note_to_keyword(note_id, keyword_id)
     chacha_db.add_note("Other note", "unrelated body")
-    service = _service(
-        StubLibraryBackend(), notes_service=_NotesAdapter(chacha_db)
-    )
+    service = _service(StubLibraryBackend(), notes_service=_NotesAdapter(chacha_db))
 
     listed = _assert_parity(service, "library_list_notes", {})
     assert listed["total"] == 2

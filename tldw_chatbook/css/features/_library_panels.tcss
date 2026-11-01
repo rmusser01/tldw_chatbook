@@ -454,6 +454,32 @@
     padding: $ds-space-0;
 }
 
+/* TASK-34000.25 (fix round 1): the primary row holds two label-sized groups
+   (Find · Note · Read later | Use in Console · More). Wide enough for the
+   whole row they sit side by side; narrower than the derived threshold (`library-media-reader-toolbar-stacked`)
+   (`LibraryMediaViewer._primary_toolbar_one_row_min_width`, applied from the
+   viewer's own `on_resize`) the second group drops under the first, so
+   "More ▴" never clips. The `.ds-toolbar` gutter is untouched. */
+#library-media-reader-primary-toolbar {
+    height: auto;
+}
+
+#library-media-reader-primary-toolbar.library-media-reader-toolbar-stacked {
+    layout: vertical;
+}
+
+.library-media-reader-primary-group {
+    width: auto;
+    height: auto;
+}
+
+.library-media-reader-primary-group > Button {
+    width: auto;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+}
+
 /* task-4025: the Trash view's rows share the media list's row contract
    verbatim (one comma-joined rule, not a forked copy) -- the trash rows
    keep their OWN class only so `_focus_library_list_entry`'s
@@ -493,7 +519,7 @@
    task-31983 (critique #6 P1): `-selected` above uses this SAME background,
    so focus and selection were indistinguishable -- the row the keyboard was
    ON looked exactly like the open row and arrow-nav read as a dead key. The
-   `border-left: thick $ds-action-focus` bar is the focus-only, non-colour
+   `border-left: thick $ds-active-fg` bar is the focus-only, non-colour
    cue `-selected` does NOT carry, so the two stay distinct even when a row
    is both focused AND selected (arrow onto the open row). The left edge
    replaces the 1-column left padding (`padding: 0 1` -> `0 1 0 0`), so the
@@ -503,7 +529,7 @@
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -532,7 +558,7 @@
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -547,13 +573,41 @@
     max-width: $ds-width-full;
 }
 
+/* TASK-34000.7 (review N-04): the list IS the scroll owner at every width.
+   `#library-notes-list` is a plain Vertical, whose Textual default is
+   `overflow: hidden`; only the compact rule (`_library.tcss`,
+   `.library-notes-compact #library-notes-list`) ever gave it `overflow-y:
+   auto`. At 120+ columns the tree therefore ignored the wheel, and Down/Tab
+   moved focus onto rows painted below the pane border (`focus()` asks each
+   ancestor to scroll the row in; a hidden owner declines), so Enter opened
+   notes the user never saw. Same contract as the compact rule, no per-size
+   numbers: the rows left after the toolbars, scrolling vertically, never
+   horizontally. The one-cell scrollbar matches `#library-rail` so the two
+   overflow cues read as one. */
+#library-notes-list {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 /* task-32127/32128: Button's own 16-cell minimum made "New / Sort: Newest /
    Select" 48 cells wide -- wider than the list pane itself, so Select, the
    Title sort option and the delete receipt's Undo were painted past the
    pane edge. The compact stage already sized these to their content; the
    ordinary stage does the same now, since the pane is never wide enough to
-   justify a 16-cell "New". */
-#library-notes-canvas .library-canvas-action {
+   justify a 16-cell "New".
+   TASK-34000.8 (review N-05): the editor header's buttons in the WORK pane
+   are content-sized by the same rule. Scoped to the list canvas alone, the
+   header's six compact Buttons each kept the 16-cell minimum -- about 40
+   cells of padding on a row whose pane has 48 cells at 120x36 -- which is
+   what pushed Save and Use in Console past the pane edge. */
+#library-notes-canvas .library-canvas-action,
+#library-note-work-pane .library-canvas-action {
     width: auto;
     min-width: $ds-size-0;
 }
@@ -620,7 +674,7 @@
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -701,7 +755,7 @@
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -731,7 +785,7 @@
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
-    border-left: thick $ds-action-focus;
+    border-left: thick $ds-active-fg;
     padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
     outline: none;
 }
@@ -777,14 +831,7 @@
     text-style: bold;
 }
 
-#library-notes-status {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    color: $ds-text-muted;
-}
-
+#library-notes-status,
 #library-notes-empty {
     width: $ds-width-full;
     height: auto;
@@ -1185,6 +1232,21 @@
 
 #library-note-context-region {
     border: solid $ds-grid-line;
+}
+
+/* TASK-34000.13 (review N-10): the delete prompt is a Vertical inside the
+   Info VerticalScroll, and only the compact rule (`_library.tcss`) ever
+   gave it a height. On the wide stage it kept Textual's default
+   `height: 1fr; overflow: hidden`, which inside a scrolling parent means
+   "the rows left over": one row at 120x36 (the copy clipped, Cancel and
+   Delete painted on the screen's last row, outside the Info border) and
+   eleven at 160x45. Size it by its content at every width -- the copy may
+   wrap and the button row under it must still paint. The compact rule's
+   two-row box still outranks this one by specificity. */
+#library-note-delete-confirmation {
+    height: auto;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
 }
 
 #library-note-preview-region:focus,
@@ -1757,6 +1819,49 @@
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
+/* TASK-34000.24: the "Use in Console" workspace-link receipt row under the
+   Reader's primary toolbar ("Linked to Local Default · staged in Console" +
+   "Undo link"). One row at every width: the receipt text ellipsises, the
+   Undo keeps its own label-sized cells (the conversation reader stacks its
+   receipt and Undo on two rows; the Media Reader at 80x24 has no second row
+   to give). Library-prefixed tokens only, so the block lands on the lazily
+   loaded Library sheet (ADR-097). */
+#library-media-viewer #library-media-link-receipt-row {
+    width: $ds-width-full;
+    height: $ds-home-control-button-height;
+    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+}
+
+/* Id-scoped on purpose: `#library-media-viewer Static { width: 100% }`
+   (specificity 1,0,1) beat a bare class here and gave the receipt the whole
+   row, pushing "Undo link" off the pane -- found live at 160x45 while the
+   button's `.display` was True (the separator in the viewer's DEFAULT_CSS
+   lost its width the same way). */
+#library-media-viewer #library-media-link-receipt {
+    width: $ds-width-fill;
+    height: $ds-home-control-button-height;
+    color: $ds-text-muted;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+    /* Left gutter only, and an Undo with neither margin nor padding:
+       measured at 160x45 (fix round 1, M-9) the Reader pane gives this row
+       56 cells; "Linked to Local Default · staged in Console" is 43, the
+       gutter 1, and the compact Undo paints 9 + 2 intrinsic = 11, so the
+       default receipt fits with one cell to spare (receipt 45, Undo 11).
+       With the canvas-action padding the Undo took 13 and the receipt
+       clipped to "staged in Conso…". The "Already linked to …" spelling
+       (51) cannot fit beside the Undo at this width and ellipsises after
+       the workspace name; a long custom name ellipsises at the name. */
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+}
+
+#library-media-viewer #library-media-link-undo {
+    width: auto;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+}
+
 #library-media-title {
     width: $ds-width-full;
     min-width: $ds-size-0;
@@ -1792,14 +1897,8 @@
    Horizontal clipped Undo to "Und" at the Items pane's real width (live
    2026-09-04) -- the one recovery control was unreadable exactly where it
    renders. Same multi-row grammar as the toolbars (task-30043). */
-#library-media-canvas .library-media-receipt {
-    width: $ds-width-full;
-    height: auto;
-}
-#library-media-canvas .library-media-receipt > .library-media-receipt-copy {
-    width: $ds-width-full;
-    height: auto;
-}
+#library-media-canvas .library-media-receipt,
+#library-media-canvas .library-media-receipt > .library-media-receipt-copy,
 #library-media-canvas .library-media-receipt > .library-media-receipt-actions {
     width: $ds-width-full;
     height: auto;
@@ -2463,6 +2562,18 @@ Input.library-media-speaker-input:focus {
     color: $ds-text-muted;
 }
 
+/* TASK-34000.21: the query row's reserved quiet line now names the model
+ * that will be billed ("To openai · gpt-4.1-mini: question + evidence").
+ * The row is one cell high (`h-1`), so a sentence wider than the panel --
+ * a real `claude-sonnet-4-5-20250929` at 80 columns, not only a contrived
+ * name -- used to word-wrap onto a clipped second row, leaving the user
+ * with "To openai ·" and no model at all. Clip on one row with an ellipsis
+ * instead: the recipient and the start of the model stay readable. */
+#library-rag-query-quiet-line {
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 .library-rag-empty-guidance {
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     padding: $ds-space-0 $ds-space-1;
@@ -2809,105 +2920,4 @@ LibraryIngestCanvas .library-ingest-batch-header {
 LibraryIngestCanvas #library-ingest-latest-batch {
     height: auto;
     text-style: bold;
-}
-
-/* Presentation-only row wrappers keep the established wide stacked
-   workbench. Compact rules below switch only these wrappers to rows. */
-#library-notes-filter-row,
-#library-notes-status-row,
-#library-note-heading,
-#library-note-title-row,
-#library-note-keywords-row,
-#library-note-context-keywords-row,
-#library-notes-create-heading {
-    layout: vertical;
-    height: auto;
-    min-height: $ds-size-0;
-}
-
-#library-notes-create-viewport {
-    height: $ds-height-fill;
-    min-height: $ds-size-0;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-/* TASK-19010: lasting Notes sync inherits the retained Neon Workbench canvas.
-   Authority/status and the nearest valid action stay fixed; setup, review, and
-   recovery effects share one bounded scroll owner at the 60x20 floor. */
-.library-notes-lasting-sync-canvas {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-0;
-    padding: $ds-space-0 $ds-space-1;
-    overflow: hidden;
-}
-
-#notes-sync-authority,
-#notes-sync-roots-authority,
-.library-notes-lasting-status {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    max-height: $ds-size-2;
-    text-wrap: wrap;
-    text-overflow: clip;
-}
-
-.library-notes-sync-review-row,
-.library-notes-sync-root-row,
-.library-notes-sync-root-actions {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-}
-
-.library-notes-sync-attention-actions {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-}
-
-/* TASK-32625: safe review rows have no body requiring a trailing gap.
-   Both class tokens stay in the same Library-owned split as the base row. */
-.library-notes-sync-review-row.library-notes-sync-review-plain {
-    margin: $ds-space-0;
-}
-
-.library-notes-sync-conflict-choices,
-.library-notes-sync-comparison,
-.library-notes-sync-receipt,
-.library-notes-sync-history-row {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    min-height: $ds-size-1;
-    overflow: hidden;
-}
-
-.library-notes-sync-comparison,
-.library-notes-sync-receipt,
-.library-notes-sync-history-row {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    background: $surface-darken-1;
-}
-
-.notes-sync-conflict-view,
-.library-notes-sync-attention-actions > .notes-sync-conflict-choice {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-}
-
-.library-notes-sync-root-status {
-    color: $text-muted;
-}
-
-.library-notes-sync-root-actions > Button {
-    width: $ds-width-full;
-}
-
-.library-notes-sync-attention-actions > Button {
-    width: $ds-width-full;
 }

@@ -14,9 +14,13 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from numbers import Real
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from ..STT.failure_diagnostics import STTFailureDiagnostic
+    from ..Utils.egress import UrlProvenance
 
 # Per-format processing libraries (process_pdf/process_document/process_ebook/
 # LocalAudioProcessor/LocalVideoProcessor) are intentionally NOT imported at
@@ -237,9 +241,16 @@ class DirectLocalSTTIngestError(FileIngestionError):
         *,
         error_detail: dict[str, Any],
         failed_attempt: dict[str, Any],
+        diagnostic: "STTFailureDiagnostic | None" = None,
     ) -> None:
         self.error_detail = error_detail
         self.stt_failure_provenance = failed_attempt
+        self.stt_diagnostic: "STTFailureDiagnostic | None" = None
+        if diagnostic is not None:
+            from ..STT.failure_diagnostics import STTFailureDiagnostic
+
+            if type(diagnostic) is STTFailureDiagnostic:
+                self.stt_diagnostic = diagnostic
         super().__init__(message)
 
 
@@ -511,9 +522,7 @@ def get_supported_extensions() -> Dict[str, List[str]]:
 # the form's size/overlap govern it. The image branch calls
 # ``process_image`` with ``chunk_options=None`` and clears its convenience
 # single chunk so exactly one layer chunks.
-_TEXT_CHUNK_TYPES = frozenset(
-    {"plaintext", "html", "document", "article", "image"}
-)
+_TEXT_CHUNK_TYPES = frozenset({"plaintext", "html", "document", "article", "image"})
 
 # Text-shaped types whose branch produces no analysis of its own. The
 # ``document`` type is excluded: ``process_document`` runs its own
@@ -629,9 +638,7 @@ def read_ingest_file_bytes(file_path: Union[str, Path]) -> bytes:
     return data
 
 
-def _decode_ingest_text(
-    raw: bytes, encoding: Optional[str]
-) -> tuple[str, list[str]]:
+def _decode_ingest_text(raw: bytes, encoding: Optional[str]) -> tuple[str, list[str]]:
     """Decode raw text-file bytes per the ingest form's Encoding selection.
 
     (task-3301) The Encoding select (auto / utf-8 / utf-16 / latin-1 /
@@ -754,9 +761,7 @@ def _chunk_text_for_ingest(
 
 
 #: Default analysis instruction when the caller supplies no custom prompt.
-_DEFAULT_ANALYSIS_PROMPT = (
-    "Please provide a comprehensive summary of this document."
-)
+_DEFAULT_ANALYSIS_PROMPT = "Please provide a comprehensive summary of this document."
 
 #: (task-3301 xhigh review round 2, F7) Sentinel distinguishing "caller never
 #: passed chunk_options" from an explicit ``None``. When task-3301 made
@@ -771,6 +776,43 @@ _DEFAULT_ANALYSIS_PROMPT = (
 #: ``setdefault`` into the dict they receive -- a shared mutable default
 #: would accrete state across calls.
 _CHUNK_WITH_DEFAULTS: Any = object()
+
+#: (B15) Upper bound on concurrently in-flight ``parse_local_file_for_ingest``
+#: calls in ``batch_ingest_files``' default (continue-on-error) path. Only the
+#: parse/analyze sub-stage runs in the pool -- persistence stays serial on the
+#: calling thread (see ``batch_ingest_files``' docstring for the safety-gate
+#: reasoning).
+_BATCH_PARSE_MAX_WORKERS = 4
+
+
+def _ingest_result_dict(payload: Dict[str, Any], media_id: Optional[int]) -> Dict[str, Any]:
+    """
+    Shape ``ingest_local_file``'s historical return dict from a parse payload.
+
+    Shared by ``ingest_local_file`` and ``batch_ingest_files``' staged path so
+    both produce byte-identical success results.
+
+    Args:
+        payload: The dict returned by ``parse_local_file_for_ingest``.
+        media_id: The id returned by ``persist_parsed_media`` (may be ``None``
+            on a duplicate-skip).
+
+    Returns:
+        The historical result dict (media_id/title/author/content_length/
+        chunks_created/keywords/analysis/file_type/file_path).
+    """
+    chunks = payload["chunks"]
+    return {
+        "media_id": media_id,
+        "title": payload["title"],
+        "author": payload["author"],
+        "content_length": len(payload["content"]),
+        "chunks_created": len(chunks) if chunks else 0,
+        "keywords": payload["keywords"],
+        "analysis": payload["analysis_content"],
+        "file_type": payload["file_type"],
+        "file_path": payload["file_path"],
+    }
 
 
 def _analysis_failure_reason(analysis: Any) -> Optional[str]:
@@ -795,7 +837,7 @@ def _analysis_failure_reason(analysis: Any) -> Optional[str]:
     if not stripped.lower().startswith("error:"):
         return None
     first_line = stripped.splitlines()[0].strip()
-    reason = first_line[len("error:"):].strip() or first_line
+    reason = first_line[len("error:") :].strip() or first_line
     return reason[:200]
 
 
@@ -918,6 +960,7 @@ def parse_local_file_for_ingest(
     *,
     transcription_runner: Optional[Callable[..., Dict[str, Any]]] = None,
     progress_callback: Callable[[str, str, float | None], None] | None = None,
+    url_provenance: Optional["UrlProvenance"] = None,
 ) -> Dict[str, Any]:
     """
     Parse a local file into a picklable payload, performing no database I/O.
@@ -968,6 +1011,18 @@ def parse_local_file_for_ingest(
         progress_callback: Optional best-effort callback receiving a controlled
             phase, user-facing message, and truthful stage percentage when one
             is observable.
+        url_provenance: (TASK-20973) How this process came to hold the
+            source when it is a URL. Only
+            ``Utils.egress.UrlProvenance.USER_ENTERED`` lets a private
+            host through the egress check of any URL arm (video, audio,
+            article); ``None`` (the default) means UNKNOWN and fails
+            closed. This function is a
+            shared pipeline, not a trust boundary -- it never mints trust
+            itself. The Library ingest queue is the caller that knows the
+            answer, and the spawn-pool worker transports it here through
+            ``options["url_provenance"]`` (translated by
+            ``ingest_parse_worker.run_parse_job``, which accepts the enum
+            only).
 
     Returns:
         A payload dict consumed by ``persist_parsed_media``:
@@ -1014,6 +1069,14 @@ def parse_local_file_for_ingest(
         "inspecting",
         "Inspecting source",
     )
+    # (TASK-20973) Normalize the threaded provenance ONCE, lazily (this
+    # module's import weight is budgeted -- see the import-deferral block
+    # above): ``None`` (direct callers, or a worker that found nothing in
+    # ``options``) means UNKNOWN and fails closed at the egress check.
+    if url_provenance is None:
+        from ..Utils.egress import UrlProvenance as _UrlProvenance
+
+        url_provenance = _UrlProvenance.UNKNOWN
     raw_source = str(file_path)
     is_url = _is_http_url(raw_source)
     if is_url:
@@ -1407,6 +1470,9 @@ def parse_local_file_for_ingest(
                 ),
                 custom_title=title,
                 author=author,
+                # (TASK-20973) Same rule as the video arm: only a URL the
+                # user entered may vouch for its own private origin.
+                url_provenance=url_provenance,
                 **(
                     {"transcription_progress_callback": transcription_progress}
                     if progress_callback is not None
@@ -1426,6 +1492,7 @@ def parse_local_file_for_ingest(
                             result_data.get("error", "Speech-to-text failed."),
                             error_detail=result_data["error_detail"],
                             failed_attempt=result_data["stt_failure_provenance"],
+                            diagnostic=result_data.get("stt_diagnostic"),
                         )
                     raise FileIngestionError(
                         f"Audio processing failed: {result_data.get('error', 'Unknown error')}"
@@ -1468,6 +1535,14 @@ def parse_local_file_for_ingest(
             results = video_processor.process_videos(
                 inputs=[str(file_path)],
                 download_video_flag=False,  # Extract audio only for transcription
+                # (TASK-20973) A URL source here is an ingest source, and
+                # the trust question for it is answered by the CALLER, not
+                # by this shared pipeline: ``url_provenance`` arrives from
+                # the ingest queue (USER_ENTERED for form submissions,
+                # UNKNOWN for research-catalog URLs) or defaults to
+                # UNKNOWN for direct programmatic callers -- the pipeline
+                # itself never mints trust.
+                url_provenance=url_provenance,
                 transcription_provider=options.get(
                     "transcription_provider", "faster-whisper"
                 ),
@@ -1552,6 +1627,7 @@ def parse_local_file_for_ingest(
                             result_data.get("error", "Speech-to-text failed."),
                             error_detail=result_data["error_detail"],
                             failed_attempt=result_data["stt_failure_provenance"],
+                            diagnostic=result_data.get("stt_diagnostic"),
                         )
                     raise FileIngestionError(
                         f"Video processing failed: {result_data.get('error', 'Unknown error')}"
@@ -1648,7 +1724,9 @@ def parse_local_file_for_ingest(
             )
             from .web_article_ingestion import extract_article_for_ingest
 
-            result = extract_article_for_ingest(raw_source, options)
+            result = extract_article_for_ingest(
+                raw_source, options, url_provenance=url_provenance
+            )
             source_url = result.get("url", source_url)  # canonical post-redirect URL
 
         # Check if processing was successful. NOTE: some processors (e.g.
@@ -1677,8 +1755,8 @@ def parse_local_file_for_ingest(
         # (task-3301) ``process_document`` reports its internal analysis
         # under ``summary``; surface it as the payload's analysis rather
         # than dropping it on the floor.
-        if not analysis and isinstance(result.get('summary'), str):
-            analysis = result['summary']
+        if not analysis and isinstance(result.get("summary"), str):
+            analysis = result["summary"]
 
         # (task-3301 xhigh review round, F4) A processor "analysis" that is
         # an in-band error string (``analyze()`` RETURNS its failures as
@@ -1687,9 +1765,7 @@ def parse_local_file_for_ingest(
         # and the import itself stays successful.
         analysis_failed_reason = _analysis_failure_reason(analysis)
         if analysis_failed_reason:
-            warnings = list(warnings) + [
-                f"Analysis failed: {analysis_failed_reason}"
-            ]
+            warnings = list(warnings) + [f"Analysis failed: {analysis_failed_reason}"]
             analysis = ""
 
         if not perform_chunking:
@@ -1699,11 +1775,7 @@ def parse_local_file_for_ingest(
             # consistency fallback); storing it would make the OFF state
             # indistinguishable from a one-chunk ON state in the DB.
             chunks = []
-        elif (
-            file_type in _TEXT_CHUNK_TYPES
-            and not chunks
-            and content
-        ):
+        elif file_type in _TEXT_CHUNK_TYPES and not chunks and content:
             # (task-3301) Chunk ON must chunk text types too. These
             # branches produce no chunks of their own, and no deferred
             # pass exists downstream (``add_media_with_keywords`` ignores
@@ -1759,9 +1831,7 @@ def parse_local_file_for_ingest(
                 analysis_call=analysis_call,
             )
             if tail_failure:
-                logger.warning(
-                    f"Analysis failed for {file_path}: {tail_failure}"
-                )
+                logger.warning(f"Analysis failed for {file_path}: {tail_failure}")
                 warnings = list(warnings) + [f"Analysis failed: {tail_failure}"]
                 analysis_failed_reason = tail_failure
             else:
@@ -1988,9 +2058,7 @@ def _persist_chunking_template_columns(
     if auto_decision is not None:
         config["mode"] = "auto"
         config["auto_tier"] = str(auto_decision.get("tier") or "").strip()
-        config["auto_rationale"] = list(
-            auto_decision.get("rationale") or []
-        )
+        config["auto_rationale"] = list(auto_decision.get("rationale") or [])
     if template_name:
         config["template"] = template_name
     if "method" in params:
@@ -2121,6 +2189,7 @@ def persist_parsed_media(
                 if template_name:
                     chunk.setdefault("chunking_template", template_name)
                     chunk.setdefault("chunking_params", chunking_params_json)
+
         # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
         def _persist() -> tuple[Optional[int], Optional[str], str]:
             return media_db.add_media_with_keywords(
@@ -2263,18 +2332,7 @@ def ingest_local_file(
     payload = parse_local_file_for_ingest(str(file_path), options)
     media_id, _media_uuid, _message = persist_parsed_media(payload, media_db)
 
-    chunks = payload["chunks"]
-    return {
-        "media_id": media_id,
-        "title": payload["title"],
-        "author": payload["author"],
-        "content_length": len(payload["content"]),
-        "chunks_created": len(chunks) if chunks else 0,
-        "keywords": payload["keywords"],
-        "analysis": payload["analysis_content"],
-        "file_type": payload["file_type"],
-        "file_path": payload["file_path"],
-    }
+    return _ingest_result_dict(payload, media_id)
 
 
 def batch_ingest_files(
@@ -2290,6 +2348,21 @@ def batch_ingest_files(
     """
     Ingest multiple files in batch.
 
+    Concurrency (B15): by default the EXPENSIVE, DB-free parse/analyze stage
+    (``parse_local_file_for_ingest``) fans out under a bounded
+    ``ThreadPoolExecutor`` (``_BATCH_PARSE_MAX_WORKERS``). A window of that
+    many pending slots bounds parsed payload retention while results are
+    consumed and persisted serially, in input order, on the calling thread.
+    The DB stage is deliberately NOT parallelized: ``ingest_local_file``
+    writes through the caller's shared ``MediaDatabase`` (thread-local
+    connections; per-thread private databases for ``:memory:``, and
+    ``persist_parsed_media`` is documented to run on the single ingest writer
+    thread), so parallelizing it would either serialize on SQLite's writer
+    lock anyway or silently split ``:memory:`` writes across private
+    databases. ``stop_on_error=True`` keeps the historical strictly serial
+    loop: the first failure halts the batch so later files are never parsed
+    (and never incur analysis spend).
+
     Args:
         file_paths: List of file paths to ingest
         media_db: MediaDatabase instance
@@ -2303,7 +2376,7 @@ def batch_ingest_files(
         stop_on_error: Whether to stop on first error or continue
 
     Returns:
-        List of ingestion results (one per file)
+        List of ingestion results (one per file, in input order)
 
     Raises:
         FileIngestionError: If stop_on_error is True and an error occurs
@@ -2319,36 +2392,135 @@ def batch_ingest_files(
     success_count = 0
     error_count = 0
 
-    for file_path in file_paths:
-        try:
-            result = ingest_local_file(
-                file_path=file_path,
-                media_db=media_db,
-                keywords=common_keywords,
-                perform_analysis=perform_analysis,
-                api_name=api_name,
-                api_key=api_key,
-                chunk_options=chunk_options,
-            )
-            results.append(result)
-            success_count += 1
+    if stop_on_error:
+        # Historical strictly serial semantics: halt at the first failure so
+        # later files are never even parsed (no analysis spend past the
+        # failure). Deliberately unchanged by B15.
+        for file_path in file_paths:
+            try:
+                result = ingest_local_file(
+                    file_path=file_path,
+                    media_db=media_db,
+                    keywords=common_keywords,
+                    perform_analysis=perform_analysis,
+                    api_name=api_name,
+                    api_key=api_key,
+                    chunk_options=chunk_options,
+                )
+                results.append(result)
+                success_count += 1
 
-        except Exception as e:
-            error_count += 1
-            error_result = {
-                "file_path": str(file_path),
-                "error": str(e),
-                "success": False,
-            }
-            results.append(error_result)
+            except Exception as e:
+                error_count += 1
+                error_result = {
+                    "file_path": str(file_path),
+                    "error": str(e),
+                    "success": False,
+                }
+                results.append(error_result)
 
-            if stop_on_error:
                 log_counter("local_file_ingestion_batch_stopped_on_error")
                 raise FileIngestionError(f"Batch ingestion stopped: {e}")
+    else:
+        # --- B15 staged path: parse concurrently, persist serially ---------
+        # Results are assembled strictly in input order below, so the return
+        # value is identical to the historical serial loop's (including per-
+        # file error entries); only wall time changes.
+        from collections import deque
+        from concurrent.futures import ThreadPoolExecutor
+
+        file_paths_list = list(file_paths)
+
+        def _build_options(explicit_chunk_options: Any) -> Dict[str, Any]:
+            # Mirrors ``ingest_local_file``'s options dict exactly. The
+            # chunk_options dict is COPIED per file: the historical serial
+            # loop shared one dict object across files (processors
+            # ``setdefault`` into it, so file 1 could contaminate file 2);
+            # under concurrency that shared-object behavior would be a data
+            # race, so each parse gets its own copy of the caller's starting
+            # options instead.
+            if explicit_chunk_options is _CHUNK_WITH_DEFAULTS:
+                resolved_chunk_options: Any = {}
+            elif explicit_chunk_options is not None:
+                resolved_chunk_options = dict(explicit_chunk_options)
             else:
-                logger.error(
-                    f"Error ingesting {file_path}, continuing with next file: {e}"
-                )
+                resolved_chunk_options = None  # explicit None: disable chunking
+            return {
+                "title": None,
+                "author": None,
+                "keywords": common_keywords,
+                "custom_prompt": None,
+                "system_prompt": None,
+                "perform_analysis": perform_analysis,
+                "api_name": api_name,
+                "api_key": api_key,
+                "chunk_options": resolved_chunk_options,
+                "metadata": None,
+            }
+
+        if file_paths_list:
+            workers = min(_BATCH_PARSE_MAX_WORKERS, len(file_paths_list))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                remaining_paths = iter(file_paths_list)
+                pending = deque()
+
+                def _parse_to_holder(
+                    file_path: str,
+                    options: dict[str, Any],
+                    payload_holder: list[dict[str, Any]],
+                ) -> None:
+                    # Futures and late-retiring workers must not own payloads.
+                    payload_holder.append(
+                        parse_local_file_for_ingest(file_path, options)
+                    )
+
+                def _submit_next() -> None:
+                    try:
+                        file_path = next(remaining_paths)
+                    except StopIteration:
+                        return
+                    payload_holder = []
+                    pending.append(
+                        (
+                            file_path,
+                            pool.submit(
+                                _parse_to_holder,
+                                str(file_path),
+                                _build_options(chunk_options),
+                                payload_holder,
+                            ),
+                            payload_holder,
+                        )
+                    )
+
+                for _ in range(workers):
+                    _submit_next()
+                while pending:
+                    file_path, future, payload_holder = pending.popleft()
+                    payload = None
+                    try:
+                        future.result()
+                        payload = payload_holder.pop()
+                        media_id, _media_uuid, _message = persist_parsed_media(
+                            payload, media_db
+                        )
+                        results.append(_ingest_result_dict(payload, media_id))
+                        success_count += 1
+                    except Exception as ingest_err:  # noqa: BLE001 - historical per-file isolation
+                        error_count += 1
+                        results.append(
+                            {
+                                "file_path": str(file_path),
+                                "error": str(ingest_err),
+                                "success": False,
+                            }
+                        )
+                        logger.error(
+                            f"Error ingesting {file_path}, continuing with next file: {ingest_err}"
+                        )
+                    finally:
+                        del future, payload, payload_holder
+                    _submit_next()
 
     # Log batch completion metrics
     duration = time.time() - start_time

@@ -140,9 +140,7 @@ def _brief(identifier: str = "prompt-1", *, artifact_type: str = "prompt"):
 def _choose_save_action(root: Any, action: str) -> None:
     """Choose one currently offered action from the editor's Save menu."""
     menu = root.query_one("#prompt-editor-save-menu", Select)
-    offered = [
-        value for _label, value in menu._options if value is not Select.NULL
-    ]
+    offered = [value for _label, value in menu._options if value is not Select.NULL]
     assert action in offered
     menu.value = action
 
@@ -926,9 +924,8 @@ async def test_filled_prompt_footer_paints_apply_checkboxes_at_supported_sizes(
             apply_reason.render_line(row).text
             for row in range(apply_reason.region.height)
         )
-        assert (
-            "System changes only on Apply in this active session"
-            in " ".join(painted_apply_explanation.split())
+        assert "System changes only on Apply in this active session" in " ".join(
+            painted_apply_explanation.split()
         )
         assert lane_options.region.bottom <= actions.region.y
         assert editor.region.bottom <= outer_footer.region.y
@@ -1643,9 +1640,7 @@ async def test_recipe_save_as_prompt_becomes_the_guarded_saved_prompt() -> None:
         )
         save_menu = modal.query_one("#prompt-editor-save-menu", Select)
         assert "update" in [
-            value
-            for _label, value in save_menu._options
-            if value is not Select.NULL
+            value for _label, value in save_menu._options if value is not Select.NULL
         ]
         assert (
             str(modal.query_one("#prompt-editor-update-reason", Static).renderable)
@@ -1707,9 +1702,7 @@ async def test_existing_prompt_save_recipe_does_not_retarget_prompt_working_copy
         assert warning.display is True
         save_menu = modal.query_one("#prompt-editor-save-menu", Select)
         assert "update" in [
-            value
-            for _label, value in save_menu._options
-            if value is not Select.NULL
+            value for _label, value in save_menu._options if value is not Select.NULL
         ]
         assert notifications == ["Recipe saved as a new artifact."]
 
@@ -1774,9 +1767,7 @@ async def test_recipe_derived_prompt_save_recipe_stays_unsaved_and_not_updatable
         assert modal._decoded is original_decoded
         save_menu = modal.query_one("#prompt-editor-save-menu", Select)
         assert "update" not in [
-            value
-            for _label, value in save_menu._options
-            if value is not Select.NULL
+            value for _label, value in save_menu._options if value is not Select.NULL
         ]
         assert notifications == ["Recipe saved as a new artifact."]
 
@@ -1828,9 +1819,7 @@ async def test_name_only_prompt_save_response_warns_and_keeps_working_copy_unpro
         assert modal._selected_record is original_record
         save_menu = modal.query_one("#prompt-editor-save-menu", Select)
         assert "update" not in [
-            value
-            for _label, value in save_menu._options
-            if value is not Select.NULL
+            value for _label, value in save_menu._options if value is not Select.NULL
         ]
 
     assert notifications == [
@@ -2037,19 +2026,23 @@ async def test_recipe_chooser_explains_each_starting_point_before_selection() ->
             "Outcome-first starts with Goal, context and evidence, constraints, "
             "and output; reveal optional guidance when useful."
         )
-        assert str(
-            app.screen.query_one(
-                "#console-prompts-recipe-saved-description", Static
-            ).renderable
-        ) == "Saved Recipe reuses a format from Library > Prompts."
-        assert str(
-            app.screen.query_one(
-                "#console-prompts-recipe-blank-description", Static
-            ).renderable
-        ) == "Blank starts with empty System and User lanes for your own blocks."
-        outcome = app.screen.query_one(
-            "#console-prompts-recipe-outcome-first", Button
+        assert (
+            str(
+                app.screen.query_one(
+                    "#console-prompts-recipe-saved-description", Static
+                ).renderable
+            )
+            == "Saved Recipe reuses a format from Library > Prompts."
         )
+        assert (
+            str(
+                app.screen.query_one(
+                    "#console-prompts-recipe-blank-description", Static
+                ).renderable
+            )
+            == "Blank starts with empty System and User lanes for your own blocks."
+        )
+        outcome = app.screen.query_one("#console-prompts-recipe-outcome-first", Button)
         blank = app.screen.query_one("#console-prompts-recipe-blank", Button)
         outcome.focus()
         await pilot.pause()
@@ -2079,7 +2072,9 @@ async def test_recipe_chooser_explains_each_starting_point_before_selection() ->
 
 
 @pytest.mark.asyncio
-async def test_recipe_save_confirms_library_destination_and_opens_saved_identity() -> None:
+async def test_recipe_save_confirms_library_destination_and_opens_saved_identity() -> (
+    None
+):
     backend = _PromptBackend()
     backend.save_result = {
         **_detail(artifact_type="recipe", identifier="77", version=1),
@@ -2108,9 +2103,7 @@ async def test_recipe_save_confirms_library_destination_and_opens_saved_identity
         await app.screen.enter_mode("improve")
         app.screen.query_one("#console-prompts-structured-recipe", Button).press()
         await pilot.pause()
-        app.screen.query_one(
-            "#console-prompts-recipe-outcome-first", Button
-        ).press()
+        app.screen.query_one("#console-prompts-recipe-outcome-first", Button).press()
         await pilot.pause()
 
         _choose_save_action(app.screen, "recipe")
@@ -2151,9 +2144,7 @@ async def test_recipe_saved_confirmation_disables_unsupported_library_target() -
         await pilot.pause()
         modal = app.screen
         await modal.enter_mode("recipe")
-        modal.query_one(
-            "#console-prompts-recipe-outcome-first", Button
-        ).press()
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
         await pilot.pause()
         modal._show_recipe_saved_confirmation(
             {
@@ -2164,9 +2155,7 @@ async def test_recipe_saved_confirmation_disables_unsupported_library_target() -
         )
         await pilot.pause()
 
-        open_library = modal.query_one(
-            "#console-prompts-open-saved-recipe", Button
-        )
+        open_library = modal.query_one("#console-prompts-open-saved-recipe", Button)
         assert open_library.display is True
         assert open_library.disabled is True
         assert modal._saved_recipe_library_target is None
@@ -2188,9 +2177,7 @@ async def test_recipe_library_open_keeps_modal_when_navigation_declines() -> Non
         await pilot.pause()
         modal = app.screen
         await modal.enter_mode("recipe")
-        modal.query_one(
-            "#console-prompts-recipe-outcome-first", Button
-        ).press()
+        modal.query_one("#console-prompts-recipe-outcome-first", Button).press()
         await pilot.pause()
         modal._show_recipe_saved_confirmation(
             {
@@ -2303,9 +2290,7 @@ async def test_improvement_system_read_permission_is_request_only(
         elif mode == "review":
             app.screen.query_one("#console-prompts-review-improve", Button).press()
         else:
-            app.screen.query_one(
-                "#console-prompts-structured-recipe", Button
-            ).press()
+            app.screen.query_one("#console-prompts-structured-recipe", Button).press()
             await pilot.pause()
             app.screen.query_one(
                 "#console-prompts-recipe-outcome-first", Button
@@ -2941,7 +2926,12 @@ async def test_stale_apply_completion_cannot_dismiss_a_new_top_screen() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_completion_keeps_nested_top_and_reports_committed_state() -> None:
+async def test_apply_completion_keeps_nested_top_then_closes_once_uncovered() -> None:
+    """An apply that lands while another screen covers the modal never pops
+    that screen and says it applied; once uncovered the modal closes with
+    its result, as an uncovered apply does (TASK-33622.15: Ctrl+Q's
+    quit-anyway question is such a cover, and staying open after Wait left
+    the modal over a finished apply)."""
     backend = _PromptBackend()
     driver = _ImprovementDriver(
         PromptImprovementOutcome(
@@ -2972,13 +2962,13 @@ async def test_apply_completion_keeps_nested_top_and_reports_committed_state() -
         overlay = _ApplyOverlay()
         await app.push_screen(overlay)
         release.set()
-        await pilot.pause()
+        for _ in range(50):
+            if not modal._apply_in_progress:
+                break
+            await pilot.pause(0.02)
         await pilot.pause()
 
         assert app.screen is overlay
-        overlay.dismiss(None)
-        await pilot.pause()
-        assert app.screen is modal
         assert modal._apply_in_progress is False
         assert (
             str(
@@ -2988,6 +2978,17 @@ async def test_apply_completion_keeps_nested_top_and_reports_committed_state() -
             )
             == "Applied to the Console."
         )
+        assert app.results == []
+
+        overlay.dismiss(None)
+        for _ in range(50):
+            if modal not in app.screen_stack and app.results:
+                break
+            await pilot.pause(0.02)
+        assert modal not in app.screen_stack
+        assert len(app.results) == 1
+        assert app.results[0].kind == "apply"
+        assert app.results[0].user_text == "Committed candidate"
 
 
 @pytest.mark.asyncio
@@ -3416,9 +3417,7 @@ async def test_mapped_context_blocks_recipe_save_until_deleted(
         await modal._save_editor_state(editor.state, artifact_type="recipe")
 
         assert "recipe" not in [
-            value
-            for _label, value in save_menu._options
-            if value is not Select.NULL
+            value for _label, value in save_menu._options if value is not Select.NULL
         ]
         assert backend.save_calls == []
         assert notifications == [
@@ -3432,9 +3431,7 @@ async def test_mapped_context_blocks_recipe_save_until_deleted(
         await pilot.pause()
 
         assert "recipe" in [
-            value
-            for _label, value in save_menu._options
-            if value is not Select.NULL
+            value for _label, value in save_menu._options if value is not Select.NULL
         ]
         _choose_save_action(modal, "recipe")
         await pilot.pause()

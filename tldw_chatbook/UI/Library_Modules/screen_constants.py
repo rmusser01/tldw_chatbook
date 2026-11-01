@@ -14,6 +14,7 @@ ingest-options functions in ``library_screen.py`` instead.
 from __future__ import annotations
 
 from ...Library.library_conversation_reader_state import LIBRARY_CONVERSATION_PAGE_SIZE
+from ..Screens.study_scope_models import STUDY_MATERIAL_TITLES_NAMED_LIMIT
 from ...Library.library_shell_state import (
     LIBRARY_CANVAS_KIND_NOTES_CREATE,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
@@ -175,6 +176,11 @@ LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
 #: arm's own generation check once the user takes control.
 LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS = 0.05
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
+#: TASK-34000.1 (review N-01): the debounce above re-arms on every keystroke,
+#: so one key every 1.2 s was never saved at all. A burst of unsaved typing
+#: is persisted at least this often, measured from its first keystroke
+#: (``library_note_autosave.library_note_autosave_delay``).
+LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS = 10.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 # The literal title a just-created "Blank note" row is seeded with (LIB-14,
 # task-4021). The editor presents it placeholder-only (empty Input,
@@ -208,6 +214,17 @@ LIBRARY_PROMPT_SAVE_STATUS_COPY = {
 LIBRARY_SKILL_TEXT_MAX_CHARS = LIBRARY_NOTE_CONTENT_MAX_CHARS
 LIBRARY_PROMPT_DIRTY_VETO_COPY = (
     "Unsaved Prompt changes — Save or Discard changes first."
+)
+# TASK-34000.22 (ADR-055 Pattern D): the Media reader's two authoring forms
+# refuse every exit (Escape, Back, another row, a rail row, the nav bar)
+# while their typed text differs from the saved value, in the prompt veto's
+# own shape; the copy names the UNSAVED work. Dropped only by the form's own
+# "Discard changes" press (the relabelled Cancel).
+LIBRARY_MEDIA_EDIT_DIRTY_VETO_COPY = (
+    "Unsaved media details — Save or Discard changes first."
+)
+LIBRARY_MEDIA_ANALYSIS_DIRTY_VETO_COPY = (
+    "Unsaved analysis — Save or Discard changes first."
 )
 # task-32461: the same veto, refusing a deep link INTO a prompt
 # (``_open_library_item_by_id``, the Search/RAG "Open" and entry-reconcile
@@ -361,8 +378,18 @@ LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = (
 )
 
 # How many carried-forward source titles the handoff canvas names before
-# collapsing the rest into an "and N more" count.
-LIBRARY_STUDY_HANDOFF_TITLES_CAP = 3
+# collapsing the rest into an "and N more" count. TASK-34000.6: the same
+# constant Study's banner uses, so the two descriptions cannot drift.
+LIBRARY_STUDY_HANDOFF_TITLES_CAP = STUDY_MATERIAL_TITLES_NAMED_LIMIT
+
+# Readiness line under the carries-forward line. Local mode cannot generate a
+# study pack from the snapshot (Study's own dashboard says "Source generation
+# requires server mode."), so the canvas must not promise it (S-05).
+LIBRARY_STUDY_HANDOFF_READY_COPY = "Source snapshot is ready."
+LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY = (
+    "Generating a pack from sources needs a tldw server; "
+    "you can still make cards by hand in Study."
+)
 
 
 # Maps a Library navigation-context ``mode`` value to the shell rail row
@@ -400,6 +427,7 @@ LIBRARY_NAV_MODE_TO_ROW_ID = {
     "artifacts-all": "artifacts-all",
     "artifacts-reports": "artifacts-reports",
     "artifacts-chatbooks": "artifacts-chatbooks",
+    "artifacts-dreams": "artifacts-dreams",
     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
     "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
     "search": LIBRARY_ROW_BROWSE_SEARCH,
@@ -447,6 +475,16 @@ _LIBRARY_LIST_ROW_CLASSES = (
     # full-width ``library_row_button`` the four above use
     # (``library_conversations_canvas.py``), so Up/Down now walks them too.
     "library-conversation-row",
+    # TASK-34000.28 N-22: the Notes TREE composes its folder rows, note rows
+    # and "more" pagers as siblings under ``#library-notes-list``
+    # (``library_notes_canvas._compose_tree_rows``). Only the note rows were
+    # listed here, so ``g`` landed on a folder row where Down then did
+    # nothing (Textual's Button ignores the key), and the first note was ~17
+    # Tab stops away. Listing the other two kinds makes the tree ONE walk in
+    # visual order; the Right/Left folder rule lives in ``LibraryScreen.
+    # on_key`` beside the Up/Down branch.
+    "library-notes-folder-row",
+    "library-notes-tree-pager",
 )
 
 #: task-32225 (re-review N4): the canvas filters "/" prefers over the rail's

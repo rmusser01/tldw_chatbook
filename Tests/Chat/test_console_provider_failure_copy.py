@@ -11,7 +11,16 @@ j3-provider-error-discards-detail-poisons-conversation, REGRESSION).
 import httpx
 import pytest
 
-from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatProviderError
+from tldw_chatbook.Agents.hook_permissions import HookPermissions
+
+from tldw_chatbook.Chat.Chat_Deps import (
+    ChatAPIError,
+    ChatAuthenticationError,
+    ChatBadRequestError,
+    ChatModelUnavailableError,
+    ChatProviderError,
+    ChatRateLimitError,
+)
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_chat_controller import (
     ConsoleChatController,
@@ -136,7 +145,7 @@ async def test_stream_chat_provider_400_reports_one_consistent_status() -> None:
         ConsoleProviderSelection(provider="openai", explicit_model="gpt-4.1")
     )
 
-    with pytest.raises(ChatProviderError) as exc_info:
+    with pytest.raises(ChatBadRequestError) as exc_info:
         _ = [
             item
             async for item in gateway.stream_chat(
@@ -150,7 +159,10 @@ async def test_stream_chat_provider_400_reports_one_consistent_status() -> None:
     assert err.status_code == 400
 
     copy = describe_stream_failure(err)
-    assert "HTTP 400" in copy
+    # One status, stated once: the gateway's copy already names it, so it is
+    # not wrapped in a second "HTTP 400" (review round 2, V2-F6).
+    assert copy.count("400") == 1, copy
+    assert "Status: 400." in copy
     assert "502" not in copy
 
 
@@ -180,3 +192,200 @@ async def test_stream_chat_generic_failure_without_status_still_defaults_502() -
         ]
 
     assert exc_info.value.status_code == 502
+
+
+@pytest.fixture
+def provider_failure_hooks():
+    """Use the admitted private profile's real permission owner, without retargeting."""
+    owner = HookPermissions()
+    assert owner.snapshot().ready
+    try:
+        yield owner
+    finally:
+        owner.close()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_type", "status"),
+    [
+        (ChatBadRequestError, 400),
+        (ChatAuthenticationError, 401),
+        (ChatBadRequestError, 404),
+        (ChatModelUnavailableError, 404),
+        (ChatRateLimitError, 429),
+    ],
+)
+async def test_typed_gateway_error_reaches_console_without_changing_diagnostics(
+    error_type, status, provider_failure_hooks
+):
+    """Actual Console copy survives typed projection; diagnostics stay content-free."""
+    model = "claude-3-haiku-20240307"
+    raw_message = "retired model; Authorization: Bearer SECRET-CANARY"
+    if error_type is ChatRateLimitError:
+        original = error_type(raw_message, provider="anthropic", retry_after=17)
+    elif error_type is ChatAuthenticationError:
+        original = error_type(raw_message, provider="anthropic")
+    else:
+        original = error_type(raw_message, provider="anthropic", status_code=status)
+
+    def fail(**_kwargs):
+        raise original
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {"anthropic": {"api_key": "test-key"}}
+        },
+        chat_api_call_fn=fail,
+    )
+    store = ConsoleChatStore()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="anthropic",
+        model=model,
+        agent_runtime_enabled=False,
+        hook_permissions_accessor=lambda: provider_failure_hooks,
+    )
+    session = store.create_session(title="Provider failure", ephemeral=True)
+    toasts = []
+    controller.notify_run_failure = toasts.append
+    result = await controller.submit_draft("hello")
+    rows = [
+        message.content
+        for message in store.messages_for_session(session.id)
+        if message.role is ConsoleMessageRole.SYSTEM
+    ]
+    assert result.accepted
+    assert rows
+    visible = rows[-1]
+    assert toasts == [visible]
+    assert "Provider error from Anthropic" in visible
+    assert f"Status: {status}" in visible
+    assert "SECRET-CANARY" not in visible
+    if status in (400, 404):
+        assert model in visible
+        assert "choose another model from the model picker" in visible
+    if status == 404:
+        assert "The provider could not find this model or endpoint" in visible
+        assert "Check the model name and the key" in visible
+
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="anthropic", explicit_model=model)
+    )
+    with pytest.raises(ChatAPIError) as caught:
+        _ = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hello"}]
+            )
+        ]
+    projected = caught.value
+    assert type(projected) is error_type
+    assert projected.provider == "anthropic"
+    assert projected.status_code == status
+    assert str(projected) == str(error_type())
+    assert projected.message == str(error_type())
+    assert model not in describe_stream_failure(projected)
+    assert "SECRET-CANARY" not in describe_stream_failure(projected)
+    assert "Provider error from Anthropic" not in describe_stream_failure(projected)
+    if error_type is ChatRateLimitError:
+        assert projected.retry_after == 17
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 404])
+async def test_typed_console_presentation_never_enters_durable_agent_error(
+    tmp_path, provider_failure_hooks, status
+):
+    """A real gateway projection must retain content-free STEP_ERROR persistence."""
+
+    def fail(**_kwargs):
+        raise ChatBadRequestError(
+            "Authorization: Bearer SECRET-CANARY",
+            provider="anthropic",
+            status_code=status,
+        )
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {"anthropic": {"api_key": "test-key"}}
+        },
+        chat_api_call_fn=fail,
+    )
+    model = "claude-3-haiku-20240307"
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="anthropic", explicit_model=model)
+    )
+    with pytest.raises(ChatBadRequestError) as caught:
+        _ = [
+            chunk
+            async for chunk in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "hello"}]
+            )
+        ]
+    assert model in caught.value.console_copy
+
+    class ProjectedGateway(_ExplodingGateway):
+        async def stream_chat(self, _resolution, _messages, **_kwargs):
+            raise caught.value
+            yield  # pragma: no cover
+
+    projected_gateway = ProjectedGateway()
+    store = ConsoleChatStore()
+    db = AgentRunsDB(tmp_path / "typed-runs.db", client_id="typed-copy")
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db, store=store, provider_gateway=projected_gateway
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=projected_gateway,
+        provider="llama_cpp",
+        model="test-model",
+        agent_bridge=bridge,
+        agent_runtime_enabled=True,
+        hook_permissions_accessor=lambda: provider_failure_hooks,
+    )
+    session = store.create_session(title="Typed failure", ephemeral=True)
+    result = await controller.submit_draft("hello")
+    assert result.accepted
+    visible = [
+        message.content
+        for message in store.messages_for_session(session.id)
+        if message.role is ConsoleMessageRole.SYSTEM
+    ][-1]
+    assert "Provider error from Anthropic" in visible
+    assert model in visible
+    assert "choose another model from the model picker" in visible
+    assert f"Status: {status}" in visible
+    assert "SECRET-CANARY" not in visible
+    runs = db.list_runs(session.id)
+    assert runs
+    steps = [step for run in runs for step in run["steps"]]
+    errors = [step for step in steps if step["kind"] == "error"]
+    assert errors
+    summary = errors[-1]["summary"]
+    assert f"HTTP {status}" in summary
+    assert summary == (
+        f"provider returned HTTP {status} (Invalid request sent to the chat provider)"
+    )
+    assert model not in summary
+    assert "Provider error from Anthropic" not in summary
+    assert "SECRET-CANARY" not in summary
+
+    from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
+
+    authority = bridge._run_log_authority_for(runs[0]["id"])
+    assert authority is not None
+    with authority.access_scope():
+        log_dir = resolve_existing_log_dir(runs[0]["id"], root=authority.root)
+        assert log_dir is not None
+        records = [path.read_text() for path in log_dir.iterdir() if path.is_file()]
+    assert records
+    durable = "\n".join(records)
+    assert model not in durable
+    assert "Provider error from Anthropic" not in durable
+    assert "SECRET-CANARY" not in durable
+    db.close()

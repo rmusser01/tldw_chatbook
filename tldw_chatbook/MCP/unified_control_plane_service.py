@@ -5,9 +5,10 @@ import inspect
 import json
 import math
 import secrets
+import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -294,6 +295,21 @@ def _refusal_decision_for_hub_test(reason: str | None, final_gate: str | None) -
     # or crashed test): nothing resolved, so neither a person nor a setting
     # refused this.
     return UNRESOLVED_DENIED_DECISION
+
+
+def _resolve_tool_states_from_payload(
+    payload: dict[str, Any],
+    tools: Sequence[HubTool],
+    *,
+    profile_id: str,
+) -> dict[tuple[str, str], EffectiveToolState]:
+    """Project policy from one observation without source reads or mutations."""
+    return {
+        (tool.server_key, tool.name): resolve_effective_state(
+            payload, tool, profile_id=profile_id
+        )
+        for tool in tools
+    }
 
 
 class UnifiedMCPControlPlaneService:
@@ -2416,20 +2432,79 @@ class UnifiedMCPControlPlaneService:
 
     @producer_call
     async def local_external_catalog(self) -> list[dict]:
-        # Records (profile fields + discovery_snapshot + is_connected) still
-        # come from the local service so governance enforcement and
-        # is_connected (read from the live client sessions) are unchanged.
-        # `runtime_state` is merged in from a single store bundle load
-        # rather than one `get_profile_runtime_state()` load per record.
-        records = list(self.local_service.get_external_servers() or [])
-        store = getattr(self.local_service, "store", None)
-        runtime_state_by_profile: dict[str, Any] = (
-            store.get_catalog_bundle()["profile_runtime_state"] if store else {}
+        from .console_snapshot import (
+            _CapturedLocalCatalog,
+            _owned_worker,
+            standard_local_catalog_sources,
         )
+
+        local = self.local_service
+        store = getattr(local, "store", None)
+        if standard_local_catalog_sources(local, store):
+            from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+            captured = _CapturedLocalCatalog(local, store)
+
+            def require_current():
+                if self.local_service is not local:
+                    raise RecoveryRequired("mcp_source_selection_changed")
+                captured.require_current()
+
+            local._require_allowed("mcp.external_profiles.list.local")
+            require_current()
+            bundle = await _owned_worker(captured.read_bundle)
+            require_current()
+            local._require_allowed("mcp.external_profiles.list.local")
+            require_current()
+            catalog = [
+                {
+                    **profile,
+                    "discovery_snapshot": bundle["discovery_snapshots"].get(
+                        str(profile["profile_id"]).strip()
+                    ),
+                }
+                for profile in bundle["profiles"]
+            ]
+            client = local.client
+            active_sessions = (
+                getattr(client, "sessions", {}) if client is not None else {}
+            )
+            records = captured.projector(catalog, active_sessions=active_sessions)
+            require_current()
+            runtime_state_by_profile = bundle["profile_runtime_state"]
+        else:
+            records = list(local.get_external_servers() or [])
+            runtime_state_by_profile = (
+                store.get_catalog_bundle()["profile_runtime_state"] if store else {}
+            )
         for record in records:
             profile_id = str(record.get("profile_id") or "")
             record["runtime_state"] = runtime_state_by_profile.get(profile_id)
         return records
+
+    @producer_call
+    async def run_catalog_fingerprint(self, profiles: tuple = ()) -> tuple:
+        """Everything a run's catalog composition reads, as of now (TASK-33620.15.1).
+
+        Behind the same producer fence as :meth:`local_external_catalog`: the
+        permission store's and the local service's admission-checked
+        identities (a refusal raises, as the composition's reads would).
+
+        Each store read is its own storage-admission scope, and a Console run
+        start makes them on the UI loop, so the loop gets a turn between them
+        (TASK-33620.15.5), and before the first: a Console provider entry
+        reads the response rules' bindings just before it calls this, and the
+        two reads shared run start's longest callback (TASK-33620.15.8).
+
+        Args:
+            profiles: ``(profile_id, plugin_owned)`` pairs whose connection
+                state to include (the servers a cached composition used).
+        """
+        await asyncio.sleep(0)
+        store = self.permission_store
+        permission = None if store is None else store.catalog_fingerprint()
+        await asyncio.sleep(0)
+        return (permission, self.local_service.catalog_fingerprint(profiles))
 
     # ---- Typed tool-execution seam (Phase 3) ---------------------------
     # Shared by the Hub Tools mode now and by the Phase 5 chat bridge /
@@ -2464,6 +2539,7 @@ class UnifiedMCPControlPlaneService:
         result: Any,
         initiator: str = "test",
         decision: str = "allowed",
+        approval_definition_hash: str | None = None,
         _audit_observation: MCPDispatchObservation | None = None,
     ) -> None:
         # Recording is best-effort: it must never mask the tool result or
@@ -2492,6 +2568,11 @@ class UnifiedMCPControlPlaneService:
                 tool_name=tool_name,
                 initiator=initiator,
                 decision=decision,
+                definition_hash=(
+                    approval_definition_hash
+                    if initiator == "agent" and decision == "approved"
+                    else None
+                ),
                 ok=ok,
                 status=status,
                 duration_ms=duration_ms,
@@ -2590,6 +2671,7 @@ class UnifiedMCPControlPlaneService:
         decision: str = "allowed",
         timeout_seconds: float | None = None,
         registered_argument_names: set[str] | None = None,
+        approval_definition_hash: str | None = None,
     ) -> MCPToolResult | dict[str, Any]:
         """Typed external results through the shared execution/audit owner.
 
@@ -2604,6 +2686,7 @@ class UnifiedMCPControlPlaneService:
             decision=decision,
             timeout_seconds=timeout_seconds,
             registered_argument_names=registered_argument_names,
+            approval_definition_hash=approval_definition_hash,
             _typed_result=True,
         )
 
@@ -2619,6 +2702,7 @@ class UnifiedMCPControlPlaneService:
         decision: str = "allowed",
         timeout_seconds: float | None = None,
         registered_argument_names: set[str] | None = None,
+        approval_definition_hash: str | None = None,
         _typed_result: bool = False,
     ) -> MCPToolResult | dict[str, Any]:
         """Execute one tool call against a local or built-in server.
@@ -2720,6 +2804,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=None,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                approval_definition_hash=approval_definition_hash,
                 _audit_observation=observation,
                 result=None,
                 initiator=initiator,
@@ -2742,6 +2827,7 @@ class UnifiedMCPControlPlaneService:
                     status_code=None,
                     arguments=normalized_arguments,
                     registered_argument_names=registered_argument_names,
+                    approval_definition_hash=approval_definition_hash,
                     _audit_observation=observation,
                     result=None,
                     initiator=initiator,
@@ -2788,6 +2874,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=None,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                approval_definition_hash=approval_definition_hash,
                 _audit_observation=observation,
                 result=None,
                 initiator=initiator,
@@ -2822,6 +2909,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=status_code,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                approval_definition_hash=approval_definition_hash,
                 _audit_observation=observation,
                 result=None,
                 initiator=initiator,
@@ -2848,6 +2936,7 @@ class UnifiedMCPControlPlaneService:
             status_code=None,
             arguments=normalized_arguments,
             registered_argument_names=registered_argument_names,
+            approval_definition_hash=approval_definition_hash,
             _audit_observation=observation,
             result=(
                 project_tool_result(result)
@@ -4668,24 +4757,61 @@ class UnifiedMCPControlPlaneService:
         *,
         min_approved_count: int,
         limit: int,
+        profile_id: str = "default",
     ) -> tuple[PermissionPromptReport, dict[tuple[str, str], HubTool]]:
         """Build a report and tool lookup from one live catalog snapshot."""
         records = self._recent_execution_records(limit)
         tools = await self._local_prompt_reduction_tools()
-        states = self.effective_tool_states(tools)
+        states = self.effective_tool_states(tools, profile_id=profile_id)
         report = build_permission_prompt_report(
             records,
             tools,
             states,
             min_approved_count=min_approved_count,
         )
+        # TASK-18928: one choke point -- dismissed suggestions are absent
+        # from every surface of this engine (report, apply, the Settings
+        # review list), so "dismissed" cannot mean different things in
+        # different places.
+        dismissed = self._suggestion_dismissal_ids()
+        if dismissed:
+            report = replace(
+                report,
+                recommendations=[
+                    item
+                    for item in report.recommendations
+                    if item.tool_id not in dismissed
+                ],
+            )
         return report, {(tool.server_key, tool.name): tool for tool in tools}
+
+    def _suggestion_dismissal_ids(self) -> frozenset[str]:
+        """Read dismissed suggestion ids defensively (bookkeeping only)."""
+        try:
+            store = self.permission_store
+        except Exception as exc:
+            logger.warning(
+                "MCP suggestion dismissal store access failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return frozenset()
+        if store is None:
+            return frozenset()
+        try:
+            return frozenset(store.list_suggestion_dismissals())
+        except Exception as exc:
+            logger.warning(
+                "MCP suggestion dismissal read failed (exception_type={})",
+                type(exc).__name__,
+            )
+            return frozenset()
 
     async def permission_prompt_recommendations(
         self,
         *,
         min_approved_count: int = DEFAULT_MIN_APPROVED_COUNT,
         limit: int = 200,
+        profile_id: str = "default",
     ) -> PermissionPromptReport:
         """Return local MCP permission prompt-reduction recommendations.
 
@@ -4693,6 +4819,7 @@ class UnifiedMCPControlPlaneService:
             min_approved_count: Minimum prompted approvals required for a
                 recommendation.
             limit: Maximum recent local execution records to analyze.
+            profile_id: Permission profile whose current eligibility is reviewed.
 
         Returns:
             A telemetry-free report based on local MCP metadata and current
@@ -4701,6 +4828,7 @@ class UnifiedMCPControlPlaneService:
         report, _tools = await self._permission_prompt_recommendation_snapshot(
             min_approved_count=min_approved_count,
             limit=limit,
+            profile_id=profile_id,
         )
         return report
 
@@ -4710,6 +4838,11 @@ class UnifiedMCPControlPlaneService:
         tool_name: str,
         *,
         min_approved_count: int = DEFAULT_MIN_APPROVED_COUNT,
+        profile_id: str = "default",
+        expected_definition_hash: str | None = None,
+        expected_profile_digest: str | None = None,
+        expected_revision: int | None = None,
+        expected_policy_chain_digest: str | None = None,
     ) -> PermissionPromptRecommendation:
         """Persist a currently recommended tool-level allow.
 
@@ -4718,13 +4851,19 @@ class UnifiedMCPControlPlaneService:
             tool_name: Name of the recommended tool.
             min_approved_count: Minimum prompted approvals required for a
                 recommendation.
+            profile_id: The reviewed permission profile to update.
+            expected_definition_hash: Fingerprint retained by the displayed suggestion.
+            expected_profile_digest: Policy digest retained by that review.
+            expected_revision: Imported-profile revision retained by that review.
+            expected_policy_chain_digest: Reviewed inheritance chain; required
+                for a named profile and atomically checked by the store writer.
 
         Returns:
             The recommendation whose hash-safe tool-level allow was persisted.
 
         Raises:
             KeyError: If the requested server and tool pair is not a current
-                prompt-reduction recommendation.
+                prompt-reduction recommendation or reviewed authority is missing.
             RuntimeError: If the MCP permission store is unavailable.
         """
         normalized_key = str(server_key or "").strip()
@@ -4732,9 +4871,18 @@ class UnifiedMCPControlPlaneService:
         store = self.permission_store
         if store is None:
             raise RuntimeError("MCP permission store unavailable")
+        if (
+            not expected_definition_hash
+            or not expected_profile_digest
+            or (profile_id != "default" and not expected_policy_chain_digest)
+        ):
+            raise KeyError(
+                "Review the current suggestion and permission profile before accepting"
+            )
         report, tools_by_key = await self._permission_prompt_recommendation_snapshot(
             min_approved_count=min_approved_count,
             limit=200,
+            profile_id=profile_id,
         )
         recommendation = next(
             (
@@ -4745,7 +4893,10 @@ class UnifiedMCPControlPlaneService:
             ),
             None,
         )
-        if recommendation is None:
+        if (
+            recommendation is None
+            or recommendation.definition_hash != expected_definition_hash
+        ):
             raise KeyError(
                 "No prompt-reduction recommendation for "
                 f"{normalized_key}/{normalized_tool}"
@@ -4756,8 +4907,62 @@ class UnifiedMCPControlPlaneService:
             raise KeyError(
                 f"No live MCP tool found for {normalized_key}/{normalized_tool}"
             )
-        self.set_tool_state(normalized_key, normalized_tool, "allow", tool=tool)
+        self.set_tool_state(
+            normalized_key,
+            normalized_tool,
+            "allow",
+            tool=tool,
+            profile_id=profile_id,
+            expected_profile_digest=expected_profile_digest,
+            expected_revision=expected_revision,
+            expected_policy_chain_digest=expected_policy_chain_digest,
+        )
         return recommendation
+
+    # -- suggestion dismissals (TASK-18928) ----------------------------------
+
+    def _suggestion_store(self):
+        """The permission store for suggestion bookkeeping, or None."""
+        try:
+            return self.permission_store
+        except Exception:
+            return None
+
+    def dismiss_permission_suggestion(self, server_key: str, tool_name: str) -> None:
+        """Remember a dismissed "Always allow" suggestion (not re-proposed).
+
+        Args:
+            server_key: The suggestion's server key.
+            tool_name: The suggestion's tool name.
+
+        Raises:
+            RuntimeError: If the MCP permission store is unavailable.
+        """
+        store = self._suggestion_store()
+        if store is None:
+            raise RuntimeError("MCP permission store unavailable")
+        store.dismiss_suggestion(server_key, tool_name)
+
+    def restore_permission_suggestion(self, server_key: str, tool_name: str) -> None:
+        """Forget one dismissal so the suggestion may be proposed again."""
+        store = self._suggestion_store()
+        if store is None:
+            raise RuntimeError("MCP permission store unavailable")
+        store.restore_suggestion(server_key, tool_name)
+
+    def clear_permission_suggestion_dismissals(self) -> None:
+        """Forget every dismissal (the surface's review/clear action)."""
+        store = self._suggestion_store()
+        if store is None:
+            raise RuntimeError("MCP permission store unavailable")
+        store.clear_suggestion_dismissals()
+
+    def list_permission_suggestion_dismissals(self) -> dict[str, str]:
+        """Return the dismissed-suggestion map (tool id -> dismissed-at)."""
+        store = self._suggestion_store()
+        if store is None:
+            return {}
+        return store.list_suggestion_dismissals()
 
     @staticmethod
     def _normalize_batch_requests(requests: list[Any]) -> list[dict[str, Any]]:
@@ -5044,18 +5249,18 @@ class UnifiedMCPControlPlaneService:
             return 60.0
 
     def approval_timeout_seconds(self) -> float:
-        """Resolve how long the chat bridge waits for a human approval.
+        """Resolve the human-approval ceiling; nonpositive values have no deadline.
 
         Mirrors :meth:`_lifecycle_timeout`'s config-read/fallback guard.
 
         Returns:
             The configured ``[mcp] approval_timeout_seconds`` value in
-            seconds, falling back to ``120.0`` when unset or unparsable.
+            seconds, falling back to ``0.0`` when unset or unparsable.
         """
         try:
-            return float(get_cli_setting("mcp", "approval_timeout_seconds", 120.0))
+            return float(get_cli_setting("mcp", "approval_timeout_seconds", 0.0))
         except (TypeError, ValueError):
-            return 120.0
+            return 0.0
 
     def approve_for_session(
         self,
@@ -5313,8 +5518,7 @@ class UnifiedMCPControlPlaneService:
                         # task-32280 fix round: the cancelled-mid-approval
                         # row moved to "denied-unresolved" (nobody answered
                         # the card), and it is still exactly this category.
-                        if error
-                        and decision in ("denied", UNRESOLVED_DENIED_DECISION)
+                        if error and decision in ("denied", UNRESOLVED_DENIED_DECISION)
                         else "denied"
                         # task-32280 split the permissions-Off refusal out of
                         # plain "denied" into its own decision token; it is
@@ -5367,7 +5571,12 @@ class UnifiedMCPControlPlaneService:
         return self._permission_store
 
     def effective_tool_states(
-        self, tools: list[HubTool], *, profile_id: str = "default"
+        self,
+        tools: list[HubTool],
+        *,
+        profile_id: str = "default",
+        _captured_permission_store: MCPPermissionStore | None = None,
+        _captured_execution_log: Callable[[], MCPExecutionLog | None] | None = None,
     ) -> dict[tuple[str, str], EffectiveToolState]:
         """Resolve the effective allow/ask/deny state for every tool in ``tools``.
 
@@ -5401,7 +5610,11 @@ class UnifiedMCPControlPlaneService:
         `EffectiveToolState(state="ask", origin="global_default")` (fail
         closed).
         """
-        store = self.permission_store
+        store = (
+            _captured_permission_store
+            if _captured_permission_store is not None
+            else self.permission_store
+        )
         if store is None:
             return {
                 (tool.server_key, tool.name): EffectiveToolState(
@@ -5413,14 +5626,31 @@ class UnifiedMCPControlPlaneService:
         payload = store.load()
         results: dict[tuple[str, str], EffectiveToolState] = {}
         for tool in tools:
-            effective = resolve_effective_state(payload, tool, profile_id=profile_id)
+            # Retain per-tool audit order for the public/custom route. Stock
+            # shared preparation projects the whole catalog from its one payload.
+            effective = _resolve_tool_states_from_payload(
+                payload, (tool,), profile_id=profile_id
+            )[(tool.server_key, tool.name)]
             results[(tool.server_key, tool.name)] = effective
             if effective.config_changed:
-                self._audit_downgrade_if_fresh(store, tool, profile_id=profile_id)
+                if _captured_execution_log is None:
+                    self._audit_downgrade_if_fresh(store, tool, profile_id=profile_id)
+                else:
+                    self._audit_downgrade_if_fresh(
+                        store,
+                        tool,
+                        profile_id=profile_id,
+                        _captured_execution_log=_captured_execution_log,
+                    )
         return results
 
     def _audit_downgrade_if_fresh(
-        self, store: MCPPermissionStore, tool: HubTool, *, profile_id: str = "default"
+        self,
+        store: MCPPermissionStore,
+        tool: HubTool,
+        *,
+        profile_id: str = "default",
+        _captured_execution_log: Callable[[], MCPExecutionLog | None] | None = None,
     ) -> None:
         # Best-effort, same never-raise contract as `_record_tool_execution`:
         # a persistence/logging failure here must never propagate out of
@@ -5432,7 +5662,11 @@ class UnifiedMCPControlPlaneService:
             )
             if not newly_marked:
                 return
-            log = self.execution_log
+            log = (
+                _captured_execution_log()
+                if _captured_execution_log is not None
+                else self.execution_log
+            )
             if log is None:
                 return
             record = build_record(
@@ -5462,6 +5696,7 @@ class UnifiedMCPControlPlaneService:
         profile_id: str = "default",
         expected_profile_digest: str | None = None,
         expected_revision: int | None = None,
+        expected_policy_chain_digest: str | None = None,
     ) -> None:
         """Set (or clear, when ``ui_state`` is None) a tool-level override.
 
@@ -5482,6 +5717,8 @@ class UnifiedMCPControlPlaneService:
                 compare-and-set boundary.
             expected_revision: Captured imported-profile revision, when
                 applicable.
+            expected_policy_chain_digest: Reviewed selected/fallback policy
+                identity for the final store compare-and-set boundary.
 
         Raises:
             ValueError: ``ui_state`` is ``"allow"``, ``tool`` is None, and
@@ -5505,6 +5742,7 @@ class UnifiedMCPControlPlaneService:
             profile_id=profile_id,
             expected_profile_digest=expected_profile_digest,
             expected_revision=expected_revision,
+            expected_policy_chain_digest=expected_policy_chain_digest,
         )
 
     def set_server_default(
@@ -5748,3 +5986,69 @@ class UnifiedMCPControlPlaneService:
         return resolve_effective_state_by_key(
             payload, server_key, tool_name, profile_id=profile_id
         )
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("permission_store", UnifiedMCPControlPlaneService.permission_store),
+    ("execution_log", UnifiedMCPControlPlaneService.execution_log),
+    ("get_kill_switch", UnifiedMCPControlPlaneService.get_kill_switch),
+    ("effective_tool_states", UnifiedMCPControlPlaneService.effective_tool_states),
+    ("local_external_catalog", UnifiedMCPControlPlaneService.local_external_catalog),
+    ("_audit_downgrade_if_fresh", UnifiedMCPControlPlaneService._audit_downgrade_if_fresh),
+)
+
+
+# TASK-34561: definition-time provenance of the omitted controller callback.
+# These are callable inputs only; the provider still reads live native policy.
+_CONSOLE_CONTROLLER_SWITCH_MODULE = sys.modules[__name__]
+_CONSOLE_CONTROLLER_SWITCH_CLASS = UnifiedMCPControlPlaneService
+
+
+def _capture_controller_inputs(function):
+    keyword_defaults = function.__kwdefaults__
+    closure = function.__closure__
+    return (
+        function.__defaults__,
+        keyword_defaults,
+        tuple(dict.items(keyword_defaults)) if keyword_defaults is not None else (),
+        closure,
+        tuple((cell, cell.cell_contents) for cell in closure or ()),
+    )
+
+
+_CONSOLE_CONTROLLER_SWITCH_METHODS = tuple(
+    (
+        name,
+        descriptor,
+        function,
+        function.__code__,
+        function.__globals__,
+        _capture_controller_inputs(function),
+    )
+    for name in ("get_kill_switch", "permission_store")
+    for descriptor in (vars(UnifiedMCPControlPlaneService)[name],)
+    for function in (descriptor.fget if type(descriptor) is property else descriptor,)
+)
+
+
+# Definition-time provenance for pure policy projection moved to the owner loop.
+# Replaced helpers keep the public worker route; this table carries no authority.
+_CONSOLE_TOOL_STATE_RESOLVER_BINDINGS = tuple(
+    (
+        function.__globals__, name, function, function.__code__,
+        _capture_controller_inputs(function),
+    )
+    for name, function in (
+        ("_resolve_tool_states_from_payload", _resolve_tool_states_from_payload),
+        *(
+            (name, vars(sys.modules[resolve_effective_state.__module__])[name])
+            for name in (
+                "resolve_effective_state", "_as_mapping", "_profile_chain",
+                "_profile_chain_ids", "_lifecycle_resolution_block",
+                "profile_lifecycle_disposition", "_has_exact_keys", "_is_sha256",
+                "_is_positive_int", "_is_nonnegative_int", "_is_utc_timestamp",
+                "definition_hash",
+            )
+        ),
+    )
+)

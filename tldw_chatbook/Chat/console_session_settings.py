@@ -7,18 +7,18 @@ import json
 import math
 import os
 import re
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Callable,
+    Collection,
     Literal,
     Mapping,
     Sequence,
     get_args,
-    overload,
 )
 from urllib.parse import urlparse, urlunparse
 
@@ -30,6 +30,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
     supported_console_provider_catalog,
     supported_console_provider_readiness_keys,
+    supported_generation_fields,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
     DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
@@ -50,13 +51,14 @@ from tldw_chatbook.Chat.provider_catalog import (
 from tldw_chatbook.Chat.provider_endpoint_contract import canonical_connection_identity
 from tldw_chatbook.Chat.provider_readiness import (
     KEYLESS_PROVIDER_KEYS,
+    STILL_ENCRYPTED_REASON,
     ProviderReadiness,
     configured_provider_credential_source,
+    custom_endpoint_family_readiness,
     get_provider_readiness,
     provider_config_key,
     safe_provider_label,
 )
-from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_test_evidence import (
     ConfigurationFacet,
     ConfigurationIssueCode,
@@ -66,6 +68,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     EndpointFacet,
     GenerationFailureCategory,
     GenerationFacet,
+    LISTING_UNAVAILABLE_CATEGORIES,
     ModelFacet,
     PUBLIC_MODEL_LISTING_PROVIDER_KEYS,
     ProviderConnectionEvidence,
@@ -76,6 +79,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     provider_readiness_verdict,
 )
 from tldw_chatbook.Chat.sampling_params import (
+    TEMPERATURE_RANGE,
     _is_blank_value,
     _parse_optional_int,
     _string_value,
@@ -84,6 +88,7 @@ from tldw_chatbook.Chat.sampling_params import (
     optional_float_setting_from_sources as _optional_float_setting_from_sources,
     optional_int_setting_from_sources as _optional_int_setting_from_sources,
     optional_string_setting_from_sources as _optional_string_setting_from_sources,
+    temperature_range,
 )
 # The enum sets canonicalize in sampling_params.py (ADR-147's shared leaf)
 # so presets, registry entries, and Console settings validate against ONE
@@ -97,6 +102,7 @@ from tldw_chatbook.Chat.sampling_params import (
 from tldw_chatbook.config import (
     DEFAULT_CONFIG_FROM_TOML,
     ProviderSettingsError,
+    is_encrypted_config_value,
     provider_settings_for_key,
     resolve_provider_api_key,
 )
@@ -149,6 +155,8 @@ CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS = frozenset(
         "kilo",
         "koboldcpp",
         "llama_cpp",
+        "strata",
+        "polystrata",
         "local-llm",
         "local_llamacpp",
         "local_llamafile",
@@ -586,6 +594,11 @@ class ConsoleSettingsReadiness:
     connection: ProviderDraftIdentity | None = None
     observed_at: datetime | None = None
     generation_observed_at: datetime | None = None
+    #: TASK-33005.11: the evidence behind ``connection``, so one provider's
+    #: readiness can word each of its models (``model_readiness_words``).
+    evidence: ProviderTestEvidence | None = field(
+        default=None, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         """Normalize legacy construction and reject contradictory typed states."""
@@ -677,7 +690,7 @@ class ConsoleSettingsReadiness:
         if self.endpoint == "unreachable":
             pass
         elif self.endpoint == "model_listing_unavailable":
-            if self.endpoint_category not in {None, "http_status"}:
+            if self.endpoint_category not in LISTING_UNAVAILABLE_CATEGORIES:
                 raise ValueError("Console endpoint category conflicts with its facet.")
         elif self.endpoint_category is not None:
             raise ValueError("Console endpoint category conflicts with its facet.")
@@ -1220,6 +1233,63 @@ def _value_from_source(source: Mapping[str, object], name: str) -> object:
     return _optional_float_setting_from_sources((source,), name)
 
 
+def chat_defaults_value(app_config: Mapping[str, object], name: str) -> object:
+    """Read one generation field from ``[chat_defaults]`` as a new chat does.
+
+    That one layer, under the default chain's own reading (legacy
+    ``enable_streaming`` bridged, the builder's coercion), so Settings shows
+    the value a new chat would take from there (TASK-33007.7).
+
+    Args:
+        app_config: The configuration snapshot the default chain reads.
+        name: A generation field, e.g. ``"temperature"``.
+
+    Returns:
+        The usable value, or ``None`` when ``[chat_defaults]`` holds none.
+    """
+    chat_defaults = _chat_defaults_with_streaming_compat(
+        _mapping_value(app_config, "chat_defaults")
+    )
+    return _value_from_source(chat_defaults, name)
+
+
+def model_default_value(profile: Mapping[str, object], name: str) -> object:
+    """Read one generation field from a model's defaults profile as a new chat does.
+
+    The ``chat_defaults_value`` twin for Settings ▸ Model defaults: the
+    builder's own coercion, so a hand-edited ``streaming = "0"`` reads Off
+    and a ``top_k = 2.5`` a new chat ignores reads as unset (TASK-33007.7).
+
+    Args:
+        profile: One ``[api_settings.<provider>.model_defaults.<model>]``
+            table.
+        name: A generation field, e.g. ``"temperature"``.
+
+    Returns:
+        The usable value, or ``None`` when the profile holds none.
+    """
+    return _value_from_source(profile, name)
+
+
+def chat_defaults_held_fields(
+    app_config: Mapping[str, object], names: Sequence[str]
+) -> frozenset[str]:
+    """Name the generation fields ``[chat_defaults]`` holds a usable value for.
+
+    Settings says "Console Behavior" only for these (TASK-33007.7).
+
+    Args:
+        app_config: The configuration snapshot the default chain reads.
+        names: Generation fields to check.
+
+    Returns:
+        The names ``chat_defaults_value`` reads a value for.
+    """
+    return frozenset(
+        name for name in names if chat_defaults_value(app_config, name) is not None
+    )
+
+
 def resolve_console_value_layers(
     app_config: Mapping[str, object],
     provider: str | None,
@@ -1229,6 +1299,7 @@ def resolve_console_value_layers(
     edited: frozenset[str] = frozenset(),
     chat_settings: ConsoleSessionSettings | None = None,
     extra_sources: Sequence[Mapping[str, object]] = (),
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
 ) -> dict[str, ConsoleValueLayer]:
     """Name the parameter-stack layer each shown value comes from (spec §6).
 
@@ -1243,16 +1314,28 @@ def resolve_console_value_layers(
         chat_settings: This chat's committed settings when the shown pair is
             its pair; a value that differs from the default chain is the chat's.
         extra_sources: ADR-147 registry params, as the builder takes them.
+        excluded_model_profile_fields: Model-default fields to skip, so a
+            blank Settings model default names the layer it inherits from
+            (TASK-33007.5), as the builder takes them. The chain the chat is
+            compared with skips them too.
 
     Returns:
         ``{name: layer}`` for every name.
     """
     _effective, layers = _console_default_layers(
-        app_config, provider, model, extra_sources=extra_sources
+        app_config,
+        provider,
+        model,
+        excluded_model_profile_fields=excluded_model_profile_fields,
+        extra_sources=extra_sources,
     )
     defaults = (
         build_default_console_session_settings(
-            app_config, provider, model, extra_sources=extra_sources
+            app_config,
+            provider,
+            model,
+            excluded_model_profile_fields=excluded_model_profile_fields,
+            extra_sources=extra_sources,
         )
         if chat_settings is not None
         else None
@@ -1291,6 +1374,8 @@ def build_default_console_session_settings(
         app_config: The live app configuration snapshot.
         provider: An explicit provider override, or ``None``.
         model: An explicit model override, or ``None``.
+        excluded_model_profile_fields: Exact model-profile fields to skip so
+            inherited controls can re-resolve lower-precedence defaults.
         extra_sources: Optional param-name → value mappings slotted between
             the saved console provider defaults and ``chat_defaults`` in the
             precedence walk (ADR-147: registry entry params ride this seam).
@@ -1508,23 +1593,15 @@ def resolve_effective_chat_configuration(
         model (``None`` when nothing is configured), the provider's base URL,
         and ``model_source`` naming which layer supplied the model.
     """
-    # Lazy import: custom_endpoint_registry imports this module (see
-    # _canonical_chat_provider_id).
-    from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
-
     chat_defaults = _chat_defaults_with_streaming_compat(
         _mapping_value(app_config, "chat_defaults")
-    )
-    defaults_provider_id = _canonical_chat_provider_id(
-        _string_setting(chat_defaults, "provider"), app_config
     )
     provider_id = _canonical_chat_provider_id(
         _string_value(provider) or _string_setting(chat_defaults, "provider"),
         app_config,
     )
-    # Identity spelling: a registry id may arrive as ``custom_ep:<slug>``.
-    owns_defaults_model = provider_identity_key(provider_id) == provider_identity_key(
-        defaults_provider_id
+    owns_defaults_model = owns_chat_defaults_model(
+        provider_id, chat_defaults, app_config
     )
     provider_settings = console_provider_settings(app_config, provider_id)
     candidates = (
@@ -1546,6 +1623,36 @@ def resolve_effective_chat_configuration(
         base_url=_default_base_url(provider_id, provider_settings),
         model_source=model_source,
     )
+
+
+def owns_chat_defaults_model(
+    provider: object,
+    chat_defaults: Mapping[str, object],
+    app_config: Mapping[str, object] | None = None,
+) -> bool:
+    """Whether ``chat_defaults.model`` belongs to ``provider`` (ADR-006).
+
+    It belongs only to ``chat_defaults.provider``, compared as canonical
+    provider identities (case, legacy aliases, registry-id spelling).
+
+    Args:
+        provider: The provider a model is being resolved for.
+        chat_defaults: The persisted ``chat_defaults`` mapping.
+        app_config: The app config, so a registry id resolves as itself.
+
+    Returns:
+        True when ``provider`` canonically is ``chat_defaults.provider``.
+    """
+    # Lazy import: custom_endpoint_registry imports this module (see
+    # _canonical_chat_provider_id).
+    from tldw_chatbook.Chat.custom_endpoint_registry import provider_identity_key
+
+    def identity(value: object) -> str:
+        # Identity spelling: a registry id may arrive as ``custom_ep:<slug>``.
+        canonical = _canonical_chat_provider_id(_string_value(value) or "", app_config)
+        return provider_identity_key(canonical)
+
+    return identity(provider) == identity(chat_defaults.get("provider"))
 
 
 def build_canonical_chat_defaults_mutation(
@@ -1636,8 +1743,22 @@ def console_settings_warnings(settings: ConsoleSessionSettings) -> list[str]:
 
 def _console_session_settings_structural_errors(
     settings: ConsoleSessionSettings,
+    *,
+    blank_ok: Collection[str] = (),
+    temperature_bounds: tuple[float, float] = TEMPERATURE_RANGE,
 ) -> list[str]:
-    """Return pure shape/range errors shared by live and persisted settings."""
+    """Return pure shape/range errors shared by live and persisted settings.
+
+    Args:
+        settings: The settings to check.
+        blank_ok: Required samplers that may be blank: the ones the provider
+            does not accept, which the draft rebase commits blank.
+        temperature_bounds: The Temperature range to hold it to; the
+            provider's own range when the caller knows the provider.
+
+    Returns:
+        User-facing errors, empty when the settings are well formed.
+    """
     errors: list[str] = []
     if (
         type(settings.provider) is not str
@@ -1648,9 +1769,14 @@ def _console_session_settings_structural_errors(
     if settings.source not in CONSOLE_SESSION_SETTINGS_SOURCES:
         errors.append("Settings source must be derived or user.")
 
-    if not _float_in_range(settings.temperature, 0.0, 2.0):
-        errors.append("Temperature must be between 0 and 2.")
-    if not _float_in_range(settings.top_p, 0.0, 1.0):
+    low, high = temperature_bounds
+    if not (
+        settings.temperature is None and "temperature" in blank_ok
+    ) and not _float_in_range(settings.temperature, low, high):
+        errors.append(f"Temperature must be between {low:g} and {high:g}.")
+    if not (settings.top_p is None and "top_p" in blank_ok) and not _float_in_range(
+        settings.top_p, 0.0, 1.0
+    ):
         errors.append("Top P must be between 0 and 1.")
     if not _is_blank_value(settings.min_p) and not _float_in_range(
         settings.min_p, 0.0, 1.0
@@ -1719,8 +1845,17 @@ def validate_console_session_settings(
     app_config: Mapping[str, object],
 ) -> list[str]:
     """Return user-facing validation errors for Console settings."""
-    errors = _console_session_settings_structural_errors(settings)
+    unaccepted = {"temperature", "top_p"} - supported_generation_fields(
+        settings.provider, settings.model, app_config
+    )
     provider_key = provider_config_key(settings.provider)
+    # Capture finding 11: the provider's own Temperature range (Anthropic's
+    # is 0 to 1), as Settings ▸ Providers & Models holds it.
+    errors = _console_session_settings_structural_errors(
+        settings,
+        blank_ok=unaccepted,
+        temperature_bounds=temperature_range(provider_key),
+    )
     provider_settings = console_provider_settings(app_config, provider_key)
 
     if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(
@@ -1792,7 +1927,14 @@ def build_console_settings_readiness(
             settings.provider if entry is not None else provider_key,
         )
     )
-    readiness = get_provider_readiness(
+    # TASK-34100.4 review (F3): an entry rides its family's readiness with
+    # the family slot's own stranded key lifted (never the entry's key).
+    family_readiness = (
+        custom_endpoint_family_readiness
+        if entry is not None
+        else get_provider_readiness
+    )
+    readiness = family_readiness(
         provider_key,
         app_config,
         environ=environ,
@@ -1836,7 +1978,15 @@ def build_console_settings_readiness(
             "environment" if readiness.api_key_source.startswith("env:") else "stored"
         )
 
-    if not readiness.requires_api_key and declared_credential is None:
+    if (
+        not readiness.requires_api_key
+        and declared_credential is None
+        # TASK-34100.4 review round 2: a keyless provider whose saved key is
+        # still encrypted is blocked on that credential (readiness reports
+        # credential_missing); "not_required" would leave the blocked
+        # readiness without a blocker.
+        and readiness.configuration_issue != "credential_missing"
+    ):
         credential: CredentialFacet = "not_required"
         credential_source = "none"
     elif not readiness.ready:
@@ -2017,6 +2167,7 @@ def build_console_settings_readiness(
         connection=current_identity if evidence_is_current else None,
         observed_at=evidence.observed_at if evidence_is_current and evidence else None,
         generation_observed_at=generation_at,
+        evidence=evidence if evidence_is_current else None,
     )
 
 
@@ -2249,8 +2400,8 @@ def build_console_context_estimate(
         )
 
     label = f"{used_tokens:,} / {token_limit:,} tokens"
-    if not token_limit_verified:
-        label = f"{label} (estimated; model unverified)"
+    if not token_limit_verified:  # TASK-33007 #12: Settings' words for a fallback
+        label = f"{label} (assumed; window unknown)"
     if max_tokens_response is not None:
         label = f"{label}; {max_tokens_response:,} response tokens reserved"
     if staged_source_count:
@@ -2561,9 +2712,14 @@ def _custom_endpoint_missing_key_readiness(
         if entry.api_key_env
         else None
     )
-    if not entry.api_key_env and stored_key is None:
-        return None
     if env_key is not None or stored_key is not None:
+        return None
+    # TASK-34100.4 AC #10 (part 2): a stored key that is still `enc:`
+    # ciphertext is declared but unreadable. Letting it ride the keyless
+    # family read "Ready · not tested" and sent no key to a server that
+    # evidently wants one (a bare HTTP 401).
+    stranded = is_encrypted_config_value(entry.api_key)
+    if not entry.api_key_env and not stranded:
         return None
     # Lazy import: custom_endpoint_registry imports this module.
     from tldw_chatbook.Chat.custom_endpoint_registry import (
@@ -2593,12 +2749,21 @@ def _custom_endpoint_missing_key_readiness(
                 f"{ENV_VAR_NAME_RULE_COPY} Fix it under Custom endpoints."
             ),
         )
-    if entry.api_key_env:
+    if stranded:
+        reason = STILL_ENCRYPTED_REASON
+        recovery = (
+            f"Re-enter or clear the stored api_key for the '{label}' endpoint "
+            "under Custom endpoints; it was encrypted with a master password "
+            "this session does not have."
+        )
+    elif entry.api_key_env:
+        reason = "Missing API key"
         recovery = (
             f"Set {entry.api_key_env} or update the stored api_key for the "
             f"'{label}' endpoint."
         )
     else:
+        reason = "Missing API key"
         recovery = f"Update the stored api_key for the '{label}' endpoint."
     return ProviderReadiness(
         provider=label,
@@ -2608,7 +2773,7 @@ def _custom_endpoint_missing_key_readiness(
         api_key=None,
         api_key_source=None,
         env_var=entry.api_key_env,
-        reason="Missing API key",
+        reason=reason,
         recovery=recovery,
     )
 
@@ -2687,6 +2852,9 @@ _FAILURE_REASONS: Mapping[str, str] = MappingProxyType(
         "http_status": "server error",
         "invalid_payload": "bad response",
         "connection_error": "unreachable",
+        # TASK-34100.6 (review coverage-19, provider-15).
+        "tls_untrusted": "untrusted cert",
+        "tls_plain_http": "plain http",
     }
 )
 #: A Claude subscription has a login, not a key.
@@ -2729,6 +2897,7 @@ def readiness_words(readiness: ConsoleSettingsReadiness) -> str:
             readiness.generation,
             readiness.observed_at,
             readiness.generation_observed_at,
+            readiness.model,
         )
     return _not_ready_words(
         readiness.blocker or "readiness_unknown",
@@ -2777,6 +2946,7 @@ def verdict_readiness_words(
             getattr(evidence, "generation", "not_tested"),
             getattr(evidence, "observed_at", None),
             getattr(evidence, "generation_observed_at", None),
+            snapshot.model,
         )
     if reads == "provider_configuration_invalid":
         reads = _CONFIGURATION_ISSUE_BLOCKER.get(snapshot.configuration_issue, reads)
@@ -2786,6 +2956,41 @@ def verdict_readiness_words(
         issue=snapshot.configuration_issue,
         subscription=subscription_status,
         connection=connection,
+    )
+
+
+def model_readiness_words(
+    readiness: ConsoleSettingsReadiness, model: str | None
+) -> str:
+    """Return the readiness word for ``model`` on ``readiness``'s connection.
+
+    TASK-33005.11: Switch model builds one readiness per provider and lists
+    many of its models. A key check's listing verifies only the models it
+    returned, and a paid test only the model it sent, so each row is worded
+    from the evidence for its own model.
+
+    Args:
+        readiness: One provider's built readiness.
+        model: The row's model id (``None`` reads ``readiness`` as built).
+
+    Returns:
+        The same word ``readiness_words`` gives a readiness built for
+        ``model``.
+    """
+    evidence = readiness.evidence
+    if readiness.operability != "ready_to_send" or evidence is None or not model:
+        return readiness_words(readiness)
+    tested = evidence.for_model(model)
+    return _ready_words(
+        readiness.connection,
+        readiness.endpoint,
+        readiness.credential,
+        tested.generation,
+        readiness.observed_at,
+        tested.generation_observed_at,
+        "confirmed"
+        if readiness.endpoint == "reachable" and model in evidence.model_ids
+        else "unconfirmed",
     )
 
 
@@ -2799,14 +3004,18 @@ def _ready_words(
     generation: str,
     endpoint_at: datetime | None,
     generation_at: datetime | None,
+    model: str,
 ) -> str:
     """Qualify Ready by what was observed, and when (local HH:MM).
 
     'verified': a successful paid test (its time), or a cloud key its
-    authenticated listing accepted (the listing's time). 'reachable': a
-    local, URL or custom endpoint answered its listing -- even with a key,
-    since a self-hosted server may ignore it. A public cloud listing
-    (OpenRouter) proves nothing: 'not tested'.
+    authenticated listing accepted (the listing's time) for a model that
+    listing returned (``model`` facet 'confirmed', TASK-33005.11). Another
+    model under that accepted key reads 'reachable': the server answered, but
+    nothing says this model will. 'reachable': a local, URL or custom
+    endpoint answered its listing -- even with a key, since a self-hosted
+    server may ignore it. A public cloud listing (OpenRouter) proves
+    nothing: 'not tested'.
     """
     if connection is None:
         return READY_NOT_TESTED
@@ -2827,7 +3036,7 @@ def _ready_words(
         and connection.provider_key not in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
     )
     if accepted and not local:
-        return f"Ready · verified {when}"
+        return f"Ready · {'verified' if model == 'confirmed' else 'reachable'} {when}"
     if endpoint == "reachable" and local:
         return f"Ready · reachable {when}"
     return READY_NOT_TESTED
@@ -2853,7 +3062,9 @@ def _not_ready_words(
     elif blocker == "credential_missing" and subscription in _SUBSCRIPTION_REASONS:
         reason = _SUBSCRIPTION_REASONS[subscription]
     elif blocker == "endpoint_invalid" and issue == "endpoint_missing":
-        reason = "no URL"
+        # The row to fill, as "no key" and "no model" do: "no URL" read as
+        # something else beside Azure's "your resource host" (#3057).
+        reason = "no endpoint"
     return f"Not ready · {reason}"
 
 
@@ -3214,7 +3425,17 @@ def normalize_console_model_value(value: object) -> str | None:
     return text
 
 
-def _format_summary_float(value: float) -> str:
+def _format_summary_float(value: float | None) -> str:
+    """Format a sampler for the summary; blank means the provider decides.
+
+    Args:
+        value: The sampler, None when the provider does not accept it.
+
+    Returns:
+        Two decimals, or the field rows' Source word for a blank row.
+    """
+    if value is None:
+        return CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
     return f"{float(value):.2f}"
 
 

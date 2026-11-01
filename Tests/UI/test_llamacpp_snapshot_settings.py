@@ -7,6 +7,7 @@ import pytest
 from textual.widgets import Button, Checkbox, Collapsible, Input
 
 from Tests.app_module_patches import set_app_global
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.LLM_Management import snapshot_settings as preferences
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
@@ -280,7 +281,8 @@ async def test_f9_stale_snapshot_draft_requires_revert_before_save(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (140, 45)])
-async def test_f9_snapshot_controls_paint_and_keyboard_save(size, monkeypatch):
+@private_profile_test
+async def test_f9_snapshot_controls_paint_and_keyboard_save(request, size, monkeypatch):
     from Tests.UI.test_llamacpp_snapshot_manager import frame, painted_text
     from tldw_chatbook.config import get_cli_setting
 
@@ -297,8 +299,17 @@ async def test_f9_snapshot_controls_paint_and_keyboard_save(size, monkeypatch):
         await pilot.pause()
         screen.query_one("#settings-snapshot-controls", Collapsible).collapsed = False
         checkbox = screen.query_one("#settings-snapshot-enabled", Checkbox)
+        # The opened disclosure is laid out on a later refresh, and focusing a
+        # widget that has no region yet scrolls nowhere: wait for the row,
+        # then for the focus to bring it into view (failed 2 of 3 under load).
+        async with asyncio.timeout(10):
+            while checkbox.region.height == 0:
+                await pilot.pause(0.01)
         checkbox.focus()
         await pilot.wait_for_scheduled_animations()
+        async with asyncio.timeout(10):
+            while checkbox not in screen._compositor.visible_widgets:
+                await pilot.pause(0.01)
         await pilot.press("space")
         await pilot.pause()
         assert checkbox.value
@@ -317,7 +328,33 @@ async def test_f9_snapshot_controls_paint_and_keyboard_save(size, monkeypatch):
         save = screen.query_one("#settings-save-category", Button)
         save.focus()
         await pilot.wait_for_scheduled_animations()
+        before_enter = (
+            save.has_focus,
+            save.disabled,
+            screen._snapshot_preferences_dirty(),
+            screen._snapshot_preferences_saving,
+        )
         await pilot.press("enter")
-        async with asyncio.timeout(5):
-            while not preferences.load_snapshot_preferences().enabled:
-                await pilot.pause(0.01)
+        try:
+            async with asyncio.timeout(5):
+                while not preferences.load_snapshot_preferences().enabled:
+                    await pilot.pause(0.01)
+        except TimeoutError as exc:
+            after_timeout = (
+                save.has_focus,
+                save.disabled,
+                screen._snapshot_preferences_dirty(),
+                screen._snapshot_preferences_saving,
+            )
+            save_workers = [
+                worker.state.name for worker in app.workers
+                if worker.group == "settings-snapshot-save"
+            ]
+            loaded_enabled = getattr(screen._snapshot_preferences_loaded, "enabled", None)
+            exc.add_note(
+                f"Snapshot Save before Enter (focused, disabled, dirty, saving): "
+                f"{before_enter}; after timeout: "
+                f"{after_timeout}; checkbox enabled: {checkbox.value}; "
+                f"loaded enabled: {loaded_enabled}; save workers: {save_workers}"
+            )
+            raise

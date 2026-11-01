@@ -404,9 +404,7 @@ async def handle_ingest_notes_import_now_button_pressed(
             # between notes.
             for file_path in note_files_snapshot:
                 if cancel_event.is_set():
-                    logger.info(
-                        "Note import cancelled; stopping at file boundary."
-                    )
+                    logger.info("Note import cancelled; stopping at file boundary.")
                     break
                 notes_in_file = _parse_single_note_file_for_preview(file_path, app)
                 file_cancelled = False
@@ -659,22 +657,42 @@ def _import_template_files(app, note_files_snapshot, cancel_event, selected):
     for file_path in note_files_snapshot:
         if cancel_event.is_set():
             break
-        notes = _parse_single_note_file_for_preview(file_path, app, import_as_template=True)
+        notes = _parse_single_note_file_for_preview(
+            file_path, app, import_as_template=True
+        )
         for note_data in notes:
             if cancel_event.is_set():
                 break
-            result = {"file_path": str(file_path), "note_title": note_data.get("title", file_path.stem)}
-            if "error" in note_data or not note_data.get("title") or not note_data.get("content"):
-                result.update(status="failure", message=note_data.get("error", "Missing title or content."))
+            result = {
+                "file_path": str(file_path),
+                "note_title": note_data.get("title", file_path.stem),
+            }
+            if (
+                "error" in note_data
+                or not note_data.get("title")
+                or not note_data.get("content")
+            ):
+                result.update(
+                    status="failure",
+                    message=note_data.get("error", "Missing title or content."),
+                )
             else:
                 base = note_data["title"].lower().replace(" ", "_").replace("-", "_")
                 key = "".join(c for c in base if c.isalnum() or c == "_")
-                entries.append((key, {
-                    "title": note_data["title"], "content": note_data["content"],
-                    "keywords": note_data.get("keywords", ""),
-                    "description": f"Imported template: {note_data['title']}",
-                }))
-                result.update(status="pending", message="Template awaiting persistence.")
+                entries.append(
+                    (
+                        key,
+                        {
+                            "title": note_data["title"],
+                            "content": note_data["content"],
+                            "keywords": note_data.get("keywords", ""),
+                            "description": f"Imported template: {note_data['title']}",
+                        },
+                    )
+                )
+                result.update(
+                    status="pending", message="Template awaiting persistence."
+                )
             results.append(result)
     if entries:
         try:
@@ -683,11 +701,18 @@ def _import_template_files(app, note_files_snapshot, cancel_event, selected):
             for result in results:
                 if result["status"] == "pending":
                     key = next(committed)
-                    result.update(status="success", template_key=key, message=f"Template imported successfully. Key: {key}")
+                    result.update(
+                        status="success",
+                        template_key=key,
+                        message=f"Template imported successfully. Key: {key}",
+                    )
             logger.info(f"Saved {count} note templates")
         except Exception as error:
             logger.error(f"Error saving templates file: {error}")
             for result in results:
                 if result["status"] == "pending":
-                    result.update(status="failure", message=f"Template failed to save: {type(error).__name__}")
+                    result.update(
+                        status="failure",
+                        message=f"Template failed to save: {type(error).__name__}",
+                    )
     return results

@@ -1,0 +1,7 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+11.38s call     Tests/UI/test_console_native_chat_flow.py::test_console_native_blocked_send_preserves_composer_text_and_shows_recovery
+6.21s call     Tests/UI/test_console_native_chat_flow.py::test_console_rejected_regenerate_preserves_original_attempt_preview
+
+(4 durations < 1s hidden.)
+2 passed in 25.24s

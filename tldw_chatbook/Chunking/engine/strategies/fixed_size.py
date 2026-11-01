@@ -33,7 +33,9 @@ class FixedSizeChunkingStrategy(BaseChunkingStrategy):
             List of text chunks
         """
         if max_size is None or max_size <= 0:
-            raise ChunkingError(f"Fixed-size chunking requires positive max_size, got {max_size}")
+            raise ChunkingError(
+                f"Fixed-size chunking requires positive max_size, got {max_size}"
+            )
         if overlap < 0:
             raise ChunkingError(f"Overlap cannot be negative, got {overlap}")
         if overlap >= max_size:

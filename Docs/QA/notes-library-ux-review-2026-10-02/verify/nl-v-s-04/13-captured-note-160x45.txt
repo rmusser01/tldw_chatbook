@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically.                            │
+│   a  │ Library notes · Ready                                        │  o      ‹ Notes      *(mock reply)* You said: "Evidence: [S1] NOTES — Experiment log:  │
+│   v  │ Notes (123)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     S                                                                                  │
+│      │                                                              │              Edit           Preview            Info               Save         Use in  │
+│      │ Filter                                                       │                                                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                                              │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ *(mock reply)* You said: "Evidence: [S1] NOTES — Experiment log: chunk size sw ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Newest     Select                           │                                                                                        │
+│ ---> │    Add from files…     Export                                │     Keywords                                                                           │
+│      │ Folders & placement                                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     ○ Add to folder     ○ Move note            │     ▊ console, conversation:2f51b5a7-3b85-41de-a4d5-b7c3188e0009, message:5dc0e0c1-0 ▎ │
+│      │    ○ Remove placement                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │ Note actions unavailable — select a note in the list         │                                                                                        │
+│      │                                                              │<--- Body                                                                               │
+│      │                                                              │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▸ Agent_Lessons                                             │     ┃ *(mock reply)* You said: "Evidence: [S1] NOTES — Experiment log: chunk size    ┃ │
+│      │  ▸ Journal                                                   │     ┃ sweep                                                                          ┃ │
+│      │  ▸ Meetings                                                  │     ┃ # Chunk size sweep Ran on the chemistry corpus (412 docs). | chu". Staying     ┃ │
+│ ---> │  ▸ Projects                                                  │     ┃ in character as You are a capable assistant with optional tools. Answer        ┃ │
+│      │  ▸ Recipes                                                   │     ┃ dire. The wind shifts, a lantern flickers, and the story moves forward one     ┃ │
+│      │  ▸ Research                                                  │     ┃ beat.                                                                          ┃ │
+│      │  ▸ Study                                                     │     ┃                                                                                ┃ │
+│      │  ▾ Unfiled                                                   │     ┃                                                                                ┃ │
+│      │    *(mock reply)* You said: "Evidence: [S1] NOTES — Experi…  │     ┃                                                                                ┃ │
+│      │    Ideas inbox · 5h                                          │     ┃                                                                                ┃ │
+│      │    Reading list · 6h                                         │     ┃                                                                                ┃ │
+│      │    Index — start here · 1d                                   │     ┃                                                                                ┃ │
+│      │    Meeting Notes 2026-09-30 · 2d                             │     ┃                                                                                ┃ │
+│      │    Gardening log · 4d                                        │     ┃                                                                                ┃ │
+│      │    📚 Reading queue 2026 ✨ · 1w                             │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │    A very long note title that keeps going so we can test …  │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                        53 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc back to list | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

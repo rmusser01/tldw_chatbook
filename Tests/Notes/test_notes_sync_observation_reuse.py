@@ -302,9 +302,7 @@ async def test_added_file_is_observed_after_a_warm_pass(world: _World) -> None:
     request = await _observe(world.adapter, world.root)
 
     assert "brand-new.md" in world.fs_observe_calls
-    added = [
-        item for item in request.bindings if item.relative_path == "brand-new.md"
-    ]
+    added = [item for item in request.bindings if item.relative_path == "brand-new.md"]
     assert len(added) == 1 and added[0].file_digest == _digest("fresh\n")
     await _assert_matches_cold(world, request)
 
@@ -358,9 +356,7 @@ async def test_db_side_note_edit_is_selected_after_a_warm_pass(
 ) -> None:
     await _observe(world.adapter, world.root)
     snapshot = await world.authority.observe(_note_id(0))
-    await world.authority.replace(
-        snapshot, title="Note 0", content="db edited body\n"
-    )
+    await world.authority.replace(snapshot, title="Note 0", content="db edited body\n")
     world.reset_counters()
 
     request = await _observe(world.adapter, world.root)
@@ -440,9 +436,7 @@ async def test_skip_then_real_change_never_stays_skipped(world: _World) -> None:
     world.reset_counters()
     settled = await _observe(world.adapter, world.root)
     assert world.fs_observe_calls == []
-    assert _by_binding(settled)["binding-0000"].file_digest == _digest(
-        "changed now\n"
-    )
+    assert _by_binding(settled)["binding-0000"].file_digest == _digest("changed now\n")
 
 
 async def test_failed_pass_leaves_reuse_and_store_usable(world: _World) -> None:

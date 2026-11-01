@@ -1,0 +1,27 @@
+{
+  "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+    "baseline_diagnostics": 618,
+    "current_diagnostics": 618,
+    "added": []
+  },
+  "tldw_chatbook/DB/recovery_core.py": {
+    "baseline_diagnostics": 3,
+    "current_diagnostics": 2,
+    "added": []
+  },
+  "tldw_chatbook/DB/recovery_core_schema.py": {
+    "baseline_diagnostics": 1,
+    "current_diagnostics": 1,
+    "added": []
+  },
+  "Tests/Backup_Recovery/test_core_owners.py": {
+    "baseline_diagnostics": 44,
+    "current_diagnostics": 43,
+    "added": []
+  },
+  "Tests/ChaChaNotesDB/test_canvas_migration.py": {
+    "baseline_diagnostics": 0,
+    "current_diagnostics": 0,
+    "added": []
+  }
+}

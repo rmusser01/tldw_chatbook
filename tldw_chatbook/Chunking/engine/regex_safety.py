@@ -12,9 +12,11 @@ import re
 try:  # pragma: no cover
     from loguru import logger as _logger
 except ImportError:  # pragma: no cover
+
     class _N:
         def warning(self, *a, **k):
             pass
+
     _logger = _N()
 import time
 
@@ -30,11 +32,11 @@ _REGEX_SAFETY_NONCRITICAL_EXCEPTIONS = (
 
 # Pre-compiled heuristics to catch catastrophic backtracking risks
 _DANGEROUS_CHECKS = [
-    re.compile(r"\([^)]*[+*]\)[+*?]"),        # (a+)+, (a*)*, (a+)?
-    re.compile(r"\([^)]*[+*]\){"),            # (a+){n,m}
-    re.compile(r"\(\w+\+\)\+"),             # (word+)+
-    re.compile(r"\(\w+\*\)\*"),             # (word*)*
-    re.compile(r"\(\w+\?\)\?"),             # (word?)?
+    re.compile(r"\([^)]*[+*]\)[+*?]"),  # (a+)+, (a*)*, (a+)?
+    re.compile(r"\([^)]*[+*]\){"),  # (a+){n,m}
+    re.compile(r"\(\w+\+\)\+"),  # (word+)+
+    re.compile(r"\(\w+\*\)\*"),  # (word*)*
+    re.compile(r"\(\w+\?\)\?"),  # (word?)?
 ]
 
 
@@ -67,7 +69,9 @@ def check_pattern(pattern: str, *, max_len: int = 256) -> str | None:
     return None
 
 
-def compile_flags(flags_str: str, *, allowed: set[str] | None = None, max_len: int = 10) -> tuple[int, str | None]:
+def compile_flags(
+    flags_str: str, *, allowed: set[str] | None = None, max_len: int = 10
+) -> tuple[int, str | None]:
     """Map a flags string (e.g., "im") to re flags, enforcing an allowlist.
 
     Returns (flags_value, error_message). error_message is None if ok.
@@ -83,9 +87,9 @@ def compile_flags(flags_str: str, *, allowed: set[str] | None = None, max_len: i
     for f in s:
         if f not in allowed:
             return (0, "Only 'i' and 'm' flags are allowed")
-        if f == 'i':
+        if f == "i":
             flags |= re.IGNORECASE
-        elif f == 'm':
+        elif f == "m":
             flags |= re.MULTILINE
     return (flags, None)
 
@@ -116,7 +120,9 @@ except ImportError:  # pragma: no cover - absence is fine
     _re2 = None
 
 
-def safe_search(compiled_pat: re.Pattern, text: str, *, timeout_env: str = "CHUNKING_REGEX_TIMEOUT") -> bool:
+def safe_search(
+    compiled_pat: re.Pattern, text: str, *, timeout_env: str = "CHUNKING_REGEX_TIMEOUT"
+) -> bool:
     """Perform a safe regex search with optional timeout and RE2 fallback.
 
     - If python-re is used, we cannot enforce hard timeouts; this function measures elapsed time
@@ -130,9 +136,10 @@ def safe_search(compiled_pat: re.Pattern, text: str, *, timeout_env: str = "CHUN
     # Read timeout from config.txt [Chunking] regex_timeout_seconds; do not rely on env
     try:
         from tldw_chatbook.Chunking._shims.config import load_comprehensive_config
+
         _cp = load_comprehensive_config()
-        if hasattr(_cp, 'has_section') and _cp.has_section('Chunking'):
-            _val = _cp.get('Chunking', 'regex_timeout_seconds', fallback='0')
+        if hasattr(_cp, "has_section") and _cp.has_section("Chunking"):
+            _val = _cp.get("Chunking", "regex_timeout_seconds", fallback="0")
             try:
                 timeout_s = float(str(_val) or 0.0)
             except (TypeError, ValueError):
@@ -140,7 +147,7 @@ def safe_search(compiled_pat: re.Pattern, text: str, *, timeout_env: str = "CHUN
     except _REGEX_SAFETY_NONCRITICAL_EXCEPTIONS:
         timeout_s = 0.0
     # Fast path: optional RE2 search (only when flags are zero to preserve semantics)
-    if _re2 is not None and getattr(compiled_pat, 'flags', 0) == 0:
+    if _re2 is not None and getattr(compiled_pat, "flags", 0) == 0:
         try:
             rp = _re2.compile(compiled_pat.pattern)
             return rp.search(text) is not None
@@ -153,7 +160,9 @@ def safe_search(compiled_pat: re.Pattern, text: str, *, timeout_env: str = "CHUN
         found = compiled_pat.search(text) is not None
         if timeout_s > 0 and (time.perf_counter() - t0) > timeout_s:
             # Consider this a timeout condition from caller's perspective
-            _logger.warning("Regex search exceeded configured timeout; treating as no match")
+            _logger.warning(
+                "Regex search exceeded configured timeout; treating as no match"
+            )
             return False
         return found
     except _REGEX_SAFETY_NONCRITICAL_EXCEPTIONS:

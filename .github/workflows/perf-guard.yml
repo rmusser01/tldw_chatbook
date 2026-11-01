@@ -18,11 +18,14 @@ on:
       - 'tldw_chatbook/**.py'
       - 'tldw_chatbook/css/**'
       - 'Tests/Performance/**'
+      - 'Tests/Packaging/test_console_rename_import_closure.py'
       # The stall-persistence tests run in this workflow too, and the job
       # installs from pyproject.toml -- a dependency bump (e.g. the pinned
       # Textual version) or a change to those tests must not merge without
       # this guard's verdict (Qodo finding on PR #1827).
       - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
+      # The speculative-voice gates the voice step below imports.
+      - 'Packaging/speculative_voice_*.py'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
   push:
@@ -31,13 +34,18 @@ on:
       - 'tldw_chatbook/**.py'
       - 'tldw_chatbook/css/**'
       - 'Tests/Performance/**'
+      - 'Tests/Packaging/test_console_rename_import_closure.py'
       # The stall-persistence tests run in this workflow too, and the job
       # installs from pyproject.toml -- a dependency bump (e.g. the pinned
       # Textual version) or a change to those tests must not merge without
       # this guard's verdict (Qodo finding on PR #1827).
       - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
+      # The speculative-voice gates the voice step below imports.
+      - 'Packaging/speculative_voice_*.py'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
+  # For manual runs; the merge queue approves the held pull_request run instead (ADR-218 amendment 2026-10-06).
+  workflow_dispatch:
 
 # One run per workflow per ref (obsolete runs must not queue up competing
 # for scarce runners).
@@ -65,6 +73,17 @@ jobs:
             Tests/Utils/test_ui_responsiveness_stall_persist.py \
             -v --timeout=300
 
+      # TASK-33620.15.3 (2026-10-20): ADR-198's GC policy and its idle heap
+      # re-freeze. The leak-bound tests (the real collector and real Textual
+      # widgets, each with a negative control) ran only in the full-tree runs,
+      # so a PR that broke the compaction bound would merge with every PR
+      # check green. About 15 s together.
+      - name: Run GC policy and idle re-freeze tests
+        run: |
+          pytest Tests/Performance/test_gc_policy.py \
+            Tests/Performance/test_gc_idle_refreeze.py \
+            -v --timeout=300
+
       # task-24461: the ADR-097 boot budgets ran ONLY in the slow full suite,
       # so for three review cycles running they were re-breached within ~24h of
       # every paydown and each breach was found by a periodic review rather
@@ -89,6 +108,7 @@ jobs:
       - name: Run boot budget ratchets
         run: |
           pytest Tests/Performance/test_app_import_weight.py \
+            Tests/Packaging/test_console_rename_import_closure.py \
             Tests/Performance/test_ui_ready_module_census.py \
             Tests/Performance/test_boot_worker_census.py \
             Tests/Performance/test_textual_css_fastpath.py \
@@ -96,13 +116,45 @@ jobs:
             Tests/Performance/test_screen_preimport_payload_budget.py \
             -v --timeout=300
 
+      # TASK-36390: these ran in no PR lane and went red on dev unseen. The
+      # tab-publication controls compile ChatScreen's own method bodies; the
+      # voice latency gate runs on a synthetic clock; the locator inventory
+      # pins the voice-pair reconciler's schema census. About 4 s together.
+      # The completed-pair history node is a strict xfail until TASK-36510:
+      # eight message-locator columns have no leading index, so promotion
+      # scans them. Its XPASS fails this step, so the fix removes the marker.
+      # Not here: the 14 compact-setup gate nodes. Their 100 ms loop probe
+      # fails while Console attach holds the UI thread 180-270 ms; they wait
+      # for TASK-36511 (owner ruling 2026-10-23: keep 100 ms, fix the attach).
+      - name: Run Console tab-publication and voice gates
+        run: |
+          pytest Tests/Performance/test_console_tab_sync_source_ownership.py \
+            Tests/Performance/test_speculative_voice_latency.py \
+            -v --timeout=300
+
+      # TASK-36390: typing must not snapshot the transcript (TASK-24300) or
+      # cost more in a long chat. Both are call counts, not wall clock.
+      - name: Run Console keystroke work census
+        run: |
+          pytest "Tests/Performance/test_console_keystroke_work_census.py::test_typing_never_snapshots_the_transcript" \
+            "Tests/Performance/test_console_keystroke_work_census.py::test_keystroke_work_does_not_scale_with_transcript_length" \
+            "Tests/Performance/test_console_keystroke_work_census.py::test_typing_census_excludes_elapsed_draft_pause_work" \
+            -v --timeout=300
+
       # The Console storage-unit ratchet joined with TASK-33260 after review
       # on #2888: without it here, a per-call admission or a per-connection
       # SQLite helper merges with every perf guard green -- the failure the
-      # ratchet exists to catch. On this Linux runner it gates the admission
-      # and helper counts; its os.open ceilings are macOS measurements. Same
-      # rule as above: never remove it from here.
+      # ratchet exists to catch. Same rule as above: never remove it from
+      # here. TASK-33643: every run prints its measured census (pass or
+      # fail), the record Linux os.open ceilings are pinned from.
       - name: Run Console storage-unit ratchet
+        env:
+          TLDW_STORAGE_UNIT_CENSUS_LOG: ${{ runner.temp }}/storage-unit-census.jsonl
         run: |
+          status=0
           pytest "Tests/Performance/test_console_keystroke_work_census.py::test_console_storage_units_stay_within_their_ratchets" \
-            -v --timeout=300
+            -v --timeout=300 || status=$?
+          echo "::group::Console storage-unit census"
+          cat "$TLDW_STORAGE_UNIT_CENSUS_LOG" 2>/dev/null || echo "(no census written)"
+          echo "::endgroup::"
+          exit "$status"

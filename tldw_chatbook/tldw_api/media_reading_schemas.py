@@ -278,8 +278,6 @@ class MediaUpdateRequest(BaseModel):
         ]
 
 
-
-
 class MediaKeywordsResponse(BaseModel):
     media_id: int
     keywords: list[str] = Field(default_factory=list)
@@ -487,10 +485,6 @@ class MediaIngestSubmitResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
-
-
-
-
 class IngestWebContentResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -529,10 +523,6 @@ class MediaKeywordsUpdateRequest(BaseModel):
         return [
             _normalize_nonempty_string(entry, field_name="keyword") for entry in value
         ]
-
-
-
-
 
 
 class MediaIngestJobCancelResponse(BaseModel):
@@ -847,14 +837,6 @@ class WebProcessResponse(BaseModel):
     media_ids: list[int | str] | None = None
 
 
-
-
-
-
-
-
-
-
 class DocumentAnnotationCreateRequest(BaseModel):
     location: str
     text: str
@@ -869,24 +851,6 @@ class DocumentAnnotationUpdateRequest(BaseModel):
     text: str | None = None
     color: DocumentAnnotationColor | None = None
     note: str | None = None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 class DocumentVersionCreateRequest(BaseModel):
@@ -1000,20 +964,6 @@ class ReadingSaveRequest(BaseModel):
         return value
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class ItemsBulkRequest(BaseModel):
     item_ids: list[int]
     action: ItemsBulkAction
@@ -1079,16 +1029,6 @@ class UnifiedItemsListResponse(BaseModel):
     size: int | None = None
 
 
-
-
-
-
-
-
-
-
-
-
 class ReadingExportResponse(BaseModel):
     content: bytes
     content_type: str | None = None
@@ -1108,36 +1048,12 @@ class MediaFileAvailabilityResponse(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
 
 
-
-
 class ReadingTTSResponse(BaseModel):
     item_id: int
     content: bytes
     content_type: str | None = None
     content_disposition: str | None = None
     filename: str | None = None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 class ReadingItem(BaseModel):

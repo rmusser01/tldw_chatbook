@@ -47,9 +47,7 @@ def _compatibility_text(record: Mapping[str, Any]) -> tuple[str, str]:
 
 def _decoded(
     *,
-    state: Literal[
-        "foreign_v1", "unsupported", "malformed", "mismatched"
-    ],
+    state: Literal["foreign_v1", "unsupported", "malformed", "mismatched"],
     record: Mapping[str, Any],
     artifact_type: ArtifactType,
     raw: Mapping[str, Any] | None,
@@ -113,7 +111,9 @@ def _parse_lane(raw: Mapping[str, Any]) -> PromptLane:
         raise ValueError("Every lane requires a blocks array.")
     if "id" not in raw:
         raise ValueError("Every lane requires an id.")
-    return PromptLane(id=raw["id"], blocks=tuple(_parse_block(block) for block in blocks))
+    return PromptLane(
+        id=raw["id"], blocks=tuple(_parse_block(block) for block in blocks)
+    )
 
 
 def decode_console_v2(
@@ -163,7 +163,8 @@ def decode_console_v2(
         raw_definition=raw,
         compiled_system=compiled_system,
         compiled_user=compiled_user,
-        compatibility_stale=(stored_system, stored_user) != (compiled_system, compiled_user),
+        compatibility_stale=(stored_system, stored_user)
+        != (compiled_system, compiled_user),
     )
 
 

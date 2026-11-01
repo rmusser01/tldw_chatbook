@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "tmux",
+    "-S",
+    "/private/tmp/console-dev-live-01a0fa6c/tmux.sock",
+    "new-session",
+    "-d",
+    "-s",
+    "consoledev",
+    "-x",
+    "235",
+    "-y",
+    "52",
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python /private/tmp/console-dev-live-01a0fa6c/launch.py boot1"
+  ],
+  "time": 1791058383.1112819,
+  "returncode": 0,
+  "stdout": "",
+  "stderr": ""
+}

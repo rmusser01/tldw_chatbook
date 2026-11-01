@@ -1,0 +1,24 @@
+╭─────────╮
+│ ⌃1 Home │ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Hom█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█
+┌───█                                                                      █───┐
+│ ┌─█                           Continue setup?                            █─┐ │
+│ │ █                                                                      █ │ │
+│ │ █  A previous setup stopped before it finished. Resume from the last   █ │ │
+│ │ █  completed step, start over, or continue later. Credentials are not  █ │ │
+│ │ █  retained in setup recovery and may need to be re-entered.           █ │ │
+│ │ █                                                                      █ │ │
+│ │ █                                                                      █ │ │
+│ │ █                                Resume                                █ │ │
+│ │ █                                                                      █ │ │
+│ │ █                              Start over                              █ │ │
+│ │ █                                                                      █ │ │
+│ │ █                                Later                                 █ │ │
+│ │ █                                                                      █ │ │
+│ │ █                           Restore a backup                           █ │ │
+│ │ █                                                                      █ │ │
+│ │ █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█ │ │
+│ └──────────────────────┘└──────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────┘
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -19,8 +19,14 @@ from typing import Any, Callable
 from unittest.mock import Mock
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from textual.widgets import Button
 
+from Tests.UI.hands_free_consent_support import (
+    accept_hands_free_consent,
+    wait_for_hands_free_consent,
+)
 from Tests.UI.test_console_dictation import (
     FakeDictationSession,
     _mounted_console,
@@ -92,9 +98,7 @@ def _spy_get_cli_setting(monkeypatch, value):
         calls.append((args, kwargs))
         return value
 
-    monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_voice_input.get_cli_setting", _fake
-    )
+    monkeypatch.setattr("tldw_chatbook.Chat.console_voice_input.get_cli_setting", _fake)
     return calls
 
 
@@ -158,12 +162,22 @@ class _FakeHandsFreeTtsHandler:
     def __init__(self, mode: str = "immediate") -> None:
         self.mode = mode
         self.calls: list[tuple[str, bool]] = []
+        self.presentations = []
 
     async def speak_utterance(
-        self, text: str, *, on_finished: Callable[[bool], None], quiet: bool = False
+        self,
+        text: str,
+        *,
+        on_finished: Callable[[bool], None],
+        quiet: bool = False,
+        presentation=None,
+        validator=None,
     ) -> None:
         self.calls.append((text, quiet))
+        self.presentations.append(presentation)
         on_finished(self.mode != "fail")
+        if self.mode == "duplicate":
+            on_finished(False)
 
 
 def _install_fake_tts_handler(app, mode: str = "immediate") -> _FakeHandsFreeTtsHandler:
@@ -199,9 +213,9 @@ def _make_active_conversation_temporary(console) -> None:
 
     store = console._ensure_console_chat_store()
     active_id = store.active_session_id
-    next(session for session in store.sessions() if session.id == active_id).ephemeral = (
-        True
-    )
+    next(
+        session for session in store.sessions() if session.id == active_id
+    ).ephemeral = True
 
 
 def _fast_countdown(monkeypatch, seconds: float = 0.3) -> None:
@@ -217,8 +231,12 @@ def _fast_countdown(monkeypatch, seconds: float = 0.3) -> None:
 
 
 @pytest.mark.asyncio
-async def test_key_binding_starts_loop_from_idle_and_opens_capture(monkeypatch):
+@pytest.mark.bootstrap_profile
+async def test_key_binding_asks_consent_then_starts_loop_from_idle_and_opens_capture(
+    monkeypatch,
+):
     fake = FakeDictationSession()
+    _patch_availability(monkeypatch)
     monkeypatch.setattr(
         dictation_module.ConsoleDictationController,
         "_create_console_dictation_session",
@@ -233,7 +251,13 @@ async def test_key_binding_starts_loop_from_idle_and_opens_capture(monkeypatch):
         )
         assert console._console_hands_free is None
 
-        console.action_toggle_console_hands_free()
+        # The real binding: Ctrl+Shift+H asks the Speak replies consent
+        # (TASK-33626.1) and nothing starts until Enable.
+        await pilot.press("ctrl+shift+h")
+        await wait_for_hands_free_consent(host, pilot)
+        assert fake.start_calls == 0
+        assert console._console_hands_free is None
+        await accept_hands_free_consent(host, pilot)
         await _wait_for_mic_label(composer, pilot, "Dictating")
 
         assert console._console_hands_free is not None
@@ -242,12 +266,13 @@ async def test_key_binding_starts_loop_from_idle_and_opens_capture(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_spoken_hands_free_command_adopts_live_capture_as_first_turn(
     monkeypatch,
 ):
     service = FakeDictationService()
     _patch_availability(monkeypatch)
-    _install_streaming_session(monkeypatch, service)
+    sessions = _install_streaming_session(monkeypatch, service)
     _, host = _ready_host()
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -259,15 +284,42 @@ async def test_spoken_hands_free_command_adopts_live_capture_as_first_turn(
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free is None
+        capture = console._dictation._console_dictation_session
+        assert capture is not None
+        created = len(sessions)
 
         service.emit_final("Console, hands free.")
+        # TASK-33626.1: the spoken command turns Hands-free on, so it asks
+        # the Speak replies consent first; the capture keeps running.
+        await wait_for_hands_free_consent(host, pilot)
+        # The modal suspends the Console. Let that suspend's own cleanup
+        # finish, then prove it left the live capture alone (a plain suspend
+        # stops dictation; the consent's suspend must not).
+        flush = [
+            task
+            for task in getattr(console, "_console_suspend_flush_tasks", ())
+            if not task.done()
+        ]
+        if flush:
+            await asyncio.wait(flush, timeout=_ASYNC_SETTLE_TIMEOUT)
         await pilot.pause()
+        assert console._console_hands_free is None
+        assert console._console_dictation_state == "recording", (
+            "the consent's suspend stopped the live capture: "
+            f"{console._console_dictation_state!r}"
+        )
+        assert console._dictation._console_dictation_session is capture
+        await accept_hands_free_consent(host, pilot)
 
         assert console._console_hands_free is not None
         assert console._console_hands_free.controller.state == "listening"
         # The capture that was already open is adopted, not restarted.
+        assert console._dictation._console_dictation_session is capture
+        assert len(sessions) == created, "accepting opened a second capture"
         assert service.stop_calls == 0
-        assert str(composer.query_one("#console-dictation", Button).label) == "Dictating"
+        assert (
+            str(composer.query_one("#console-dictation", Button).label) == "Dictating"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -276,8 +328,10 @@ async def test_spoken_hands_free_command_adopts_live_capture_as_first_turn(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
     monkeypatch,
+    request,
 ):
     """The load-bearing end-to-end wiring test.
 
@@ -295,7 +349,7 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
     app = _build_test_app()
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway
-    tts = _install_fake_tts_handler(app)
+    tts = _install_fake_tts_handler(app, mode="duplicate")
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 48)) as pilot:
@@ -308,7 +362,7 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
 
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         assert console._console_hands_free is not None
 
@@ -348,6 +402,12 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
             await pilot.pause(0.02)
         assert tts.calls, "the reply never reached speak_utterance"
         assert any("First sentence" in text for text, _quiet in tts.calls)
+        observed = tts.presentations[0]
+        assert observed is not None
+        assert observed.owner.session_id == store.active_session_id
+        assert store.get_message(observed.owner.message_id).role == "assistant"
+        assert type(observed.owner.utterance_token) is int
+        assert observed.owner.scope_token is app.chachanotes_db
 
         # Drained -> back to listening, mic reopened.
         deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
@@ -357,14 +417,14 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
         ):
             await pilot.pause(0.02)
         assert console._console_hands_free.controller.state == "listening"
+        assert session.utterances_failed == 0
         await _wait_for_mic_label(composer, pilot, "Dictating")
 
         # A completed assistant message actually landed in the store.
         session_id = store.active_session_id
         messages = store.messages_for_session(session_id)
         assert any(
-            m.role == "assistant" and "First sentence" in m.content
-            for m in messages
+            m.role == "assistant" and "First sentence" in m.content for m in messages
         )
 
 
@@ -388,7 +448,7 @@ async def test_countdown_cancel_restores_the_chip(monkeypatch):
         )
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         session = console._console_hands_free
 
@@ -401,9 +461,7 @@ async def test_countdown_cancel_restores_the_chip(monkeypatch):
         assert session.controller.state == "listening"
         await pilot.pause()
 
-        assert "sending in" not in _visible_text(console), _visible_text(
-            console
-        )
+        assert "sending in" not in _visible_text(console), _visible_text(console)
 
 
 @pytest.mark.asyncio
@@ -437,7 +495,7 @@ async def test_segment_no_final_consumes_latch_so_the_next_real_final_still_arms
         )
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         session = console._console_hands_free
 
@@ -464,9 +522,7 @@ async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
             return False
         return default
 
-    monkeypatch.setattr(
-        chat_screen_module, "get_cli_setting", _fake_cli_setting
-    )
+    monkeypatch.setattr(chat_screen_module, "get_cli_setting", _fake_cli_setting)
     service = FakeDictationService()
     _patch_availability(monkeypatch)
     _install_streaming_session(monkeypatch, service)
@@ -487,7 +543,7 @@ async def test_spoken_feedback_false_still_speaks_reply(monkeypatch):
 
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         service.emit_final("please reply")
@@ -555,7 +611,7 @@ async def test_two_sequential_replies_both_drain_through_the_real_wiring(
         )
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         service.emit_final("turn one")
@@ -563,8 +619,10 @@ async def test_two_sequential_replies_both_drain_through_the_real_wiring(
         await _wait_for(lambda: len(tts.calls) >= 1, pilot)
         assert any("Reply one sentence" in text for text, _q in tts.calls)
         await _wait_for(
-            lambda: console._console_hands_free is not None
-            and console._console_hands_free.controller.state == "listening",
+            lambda: (
+                console._console_hands_free is not None
+                and console._console_hands_free.controller.state == "listening"
+            ),
             pilot,
         )
         await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -577,8 +635,10 @@ async def test_two_sequential_replies_both_drain_through_the_real_wiring(
             pilot,
         )
         await _wait_for(
-            lambda: console._console_hands_free is not None
-            and console._console_hands_free.controller.state == "listening",
+            lambda: (
+                console._console_hands_free is not None
+                and console._console_hands_free.controller.state == "listening"
+            ),
             pilot,
         )
         await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -617,7 +677,7 @@ async def test_spoken_send_mid_loop_drives_a_real_send_and_speaks_the_reply(
         )
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         assert console._console_hands_free.controller.state == "listening"
 
@@ -640,8 +700,10 @@ async def test_spoken_send_mid_loop_drives_a_real_send_and_speaks_the_reply(
 
         # Drains back to listening once the reply completes.
         await _wait_for(
-            lambda: console._console_hands_free is not None
-            and console._console_hands_free.controller.state == "listening",
+            lambda: (
+                console._console_hands_free is not None
+                and console._console_hands_free.controller.state == "listening"
+            ),
             pilot,
         )
 
@@ -663,7 +725,7 @@ async def test_discard_mid_loop_exits_cleanly_instead_of_desyncing(monkeypatch):
         )
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         assert console._console_hands_free is not None
 
@@ -697,9 +759,7 @@ async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
         "_create_console_dictation_session",
         lambda self: fake,
     )
-    monkeypatch.setattr(
-        hands_free_module, "acoustic_barge_in_enabled", lambda: True
-    )
+    monkeypatch.setattr(hands_free_module, "acoustic_barge_in_enabled", lambda: True)
     _, host = _ready_host()
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -707,7 +767,7 @@ async def test_spoken_send_mid_reply_acoustic_mode_ends_capture_and_exits(
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
         assert session.controller._acoustic_barge_in is True
@@ -790,7 +850,7 @@ async def test_keypress_in_speaking_silences_and_reopens_capture(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
         assert session is not None
@@ -815,7 +875,8 @@ async def test_keypress_in_speaking_silences_and_reopens_capture(monkeypatch):
 
         assert session.controller.state == "listening"
         posted_actions = [
-            getattr(call.args[0], "action", None) for call in post_message.call_args_list
+            getattr(call.args[0], "action", None)
+            for call in post_message.call_args_list
         ]
         assert "stop" in posted_actions
 
@@ -836,7 +897,7 @@ async def test_esc_exits_loop_and_restores_normal_esc_semantics(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free is not None
 
@@ -880,7 +941,7 @@ async def test_barge_in_and_esc_work_with_focus_off_the_composer(monkeypatch):
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
         console._hands_free._console_hands_free_request_stop_and_send = lambda: None
@@ -891,9 +952,7 @@ async def test_barge_in_and_esc_work_with_focus_off_the_composer(monkeypatch):
             session.controller.on_first_utterance()
             assert session.controller.state == "speaking"
 
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.focus()
         await pilot.pause()
         assert console.app.focused is transcript
@@ -1197,7 +1256,7 @@ async def test_typed_enter_during_listening_sends_normally_once(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
         assert console._console_hands_free.controller.state == "listening"
 
@@ -1247,7 +1306,7 @@ async def test_typed_enter_cancels_an_armed_countdown_first(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
         session.controller.on_voice_final()
@@ -1412,7 +1471,9 @@ async def test_reply_identity_rejects_a_stale_same_session_reply():
         )
         spoken: list[str] = []
         session.sequencer.feed = lambda text: spoken.append(text)
-        console._hands_free._on_console_hands_free_delta(old_reply.id, "Old reply first sentence.")
+        console._hands_free._on_console_hands_free_delta(
+            old_reply.id, "Old reply first sentence."
+        )
         assert session.reply_id == old_reply.id
         assert spoken == ["Old reply first sentence."]
 
@@ -1428,7 +1489,9 @@ async def test_reply_identity_rejects_a_stale_same_session_reply():
 
         # The OLD reply's generation is still streaming its next sentence
         # -- this must NOT be claimed as turn 2's reply.
-        console._hands_free._on_console_hands_free_delta(old_reply.id, "Old reply second sentence.")
+        console._hands_free._on_console_hands_free_delta(
+            old_reply.id, "Old reply second sentence."
+        )
         assert session.reply_id is None
         assert spoken == ["Old reply first sentence."]
 
@@ -1436,7 +1499,9 @@ async def test_reply_identity_rejects_a_stale_same_session_reply():
         new_reply = store.append_message(
             sending_session_id, role=ConsoleMessageRole.ASSISTANT, content=""
         )
-        console._hands_free._on_console_hands_free_delta(new_reply.id, "New reply sentence.")
+        console._hands_free._on_console_hands_free_delta(
+            new_reply.id, "New reply sentence."
+        )
         assert session.reply_id == new_reply.id
         assert spoken == ["Old reply first sentence.", "New reply sentence."]
 
@@ -1501,7 +1566,9 @@ async def test_awaiting_reply_watchdog_disarms_at_row_creation_not_first_token()
         # completes the turn normally -- nothing was abandoned.
         fed: list[str] = []
         session.sequencer.feed = fed.append
-        console._hands_free._on_console_hands_free_delta(real.id, "Finally, some text. ")
+        console._hands_free._on_console_hands_free_delta(
+            real.id, "Finally, some text. "
+        )
         assert fed == ["Finally, some text. "]
 
         finished: list[Any] = []
@@ -1563,7 +1630,7 @@ async def test_exit_loop_intent_emits_silence_and_close_capture_itself(monkeypat
         composer = console.query_one(
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
 
@@ -1589,7 +1656,8 @@ async def test_exit_loop_intent_emits_silence_and_close_capture_itself(monkeypat
 
         assert session.sequencer._inflight is False
         posted_actions = [
-            getattr(call.args[0], "action", None) for call in post_message.call_args_list
+            getattr(call.args[0], "action", None)
+            for call in post_message.call_args_list
         ]
         assert "stop" in posted_actions
         assert console._console_hands_free is None
@@ -1634,7 +1702,9 @@ async def test_open_and_close_capture_handlers_are_idempotent_no_ops(monkeypatch
 # ---------------------------------------------------------------------------
 
 
-async def _wait_for(condition, pilot, *, timeout: float = _ASYNC_SETTLE_TIMEOUT) -> None:
+async def _wait_for(
+    condition, pilot, *, timeout: float = _ASYNC_SETTLE_TIMEOUT
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if condition():
@@ -1663,7 +1733,7 @@ async def test_hands_free_limit_exits_without_reopen_until_a_physical_mic_press(
 
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         assert console._console_hands_free is not None
         assert service.start_calls == 1
@@ -1716,7 +1786,7 @@ async def test_hands_free_limit_never_auto_sends_the_retained_text(
         )
         await pilot.click("#console-dictation")
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         service.emit_final("dictated before the limit hit")
@@ -1774,7 +1844,9 @@ async def test_deferred_capture_ended_is_dropped_for_a_replaced_loop():
         console._console_dictation_state = "recording"  # not idle -- blocks the poll
 
         task = asyncio.create_task(
-            console._hands_free._deliver_console_hands_free_capture_ended(session_a, False)
+            console._hands_free._deliver_console_hands_free_capture_ended(
+                session_a, False
+            )
         )
         await asyncio.sleep(0)  # let the poll loop start and observe "not idle"
 
@@ -1800,9 +1872,7 @@ async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
         "_create_console_dictation_session",
         lambda self: fake,
     )
-    monkeypatch.setattr(
-        hands_free_module, "acoustic_barge_in_enabled", lambda: True
-    )
+    monkeypatch.setattr(hands_free_module, "acoustic_barge_in_enabled", lambda: True)
     _, host = _ready_host()
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1811,7 +1881,7 @@ async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await _wait_for_mic_label(composer, pilot, "Dictating")
         session = console._console_hands_free
         assert session.controller._acoustic_barge_in is True
@@ -1824,8 +1894,7 @@ async def test_acoustic_barge_in_opens_capture_on_reply_started(monkeypatch):
 
         deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
         while (
-            time.monotonic() < deadline
-            and console._console_dictation_state != "idle"
+            time.monotonic() < deadline and console._console_dictation_state != "idle"
         ):
             await pilot.pause(0.02)
         assert console._console_dictation_state == "idle"
@@ -1867,7 +1936,7 @@ async def test_vad_degraded_entry_warns_instead_of_promising_auto_send(monkeypat
         )
         assert console._console_hands_free_vad_degraded is True
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         assert any(
@@ -1910,7 +1979,7 @@ async def test_reply_with_only_failed_utterances_escalates_once(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         service.emit_final("hello from hands free")
@@ -1966,7 +2035,7 @@ async def test_dictation_start_failure_exits_hands_free_loop(monkeypatch):
             (message, kwargs)
         )
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         # The fake's start fails synchronously, so the loop may already
@@ -1975,19 +2044,14 @@ async def test_dictation_start_failure_exits_hands_free_loop(monkeypatch):
         assert fake.start_calls >= 1, "the loop must have attempted a capture"
 
         deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
-        while (
-            time.monotonic() < deadline
-            and console._console_hands_free is not None
-        ):
+        while time.monotonic() < deadline and console._console_hands_free is not None:
             await pilot.pause(0.02)
 
         assert console._console_hands_free is None, (
             "a failed capture start must exit the loop, not strand a "
             "switch-ON session with no live microphone"
         )
-        assert any(
-            "No microphone backend" in message for message, _ in notifications
-        )
+        assert any("No microphone backend" in message for message, _ in notifications)
 
 
 def test_degraded_entry_copy_does_not_recommend_spoken_stop():
@@ -2027,7 +2091,7 @@ async def test_entry_refused_when_dictation_probe_fails(monkeypatch):
             (message, kwargs)
         )
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         assert console._console_hands_free is None, "entry must be refused"
@@ -2061,7 +2125,7 @@ async def test_entry_warns_once_when_no_playback_path_exists(monkeypatch):
             (message, kwargs)
         )
 
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
         assert console._console_hands_free is not None, (
             "mic-only hands-free is legitimate: entry proceeds with a warning"
@@ -2127,7 +2191,7 @@ async def test_reply_with_no_tts_handler_escalates_once(monkeypatch):
             "#console-native-composer", chat_screen_module.ConsoleComposerBar
         )
         await _wait_for_mic_label(composer, pilot, "Dictating")
-        console.action_toggle_console_hands_free()
+        console._hands_free.action_toggle_console_hands_free()
         await pilot.pause()
 
         service.emit_final("hello from hands free")
@@ -2224,3 +2288,62 @@ def test_stale_utterance_worker_never_touches_a_replacement_session():
     assert replacement.utterances_dispatched == 0
     assert dispatching.utterances_failed == 0
     assert spoke == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["entry", "handler", "completion", "replaced_reply"])
+async def test_invalidated_presentation_settles_live_utterance(stage):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.reply_sentence_sequencer import SentenceSequencer
+
+    drained = []
+    sequencer = SentenceSequencer(
+        speak=lambda text: None,
+        stop_speech=lambda: None,
+    )
+    sequencer.on_drained = lambda: drained.append(True)
+    sequencer.feed("A complete sentence. ")
+    sequencer.reply_completed()
+    token = sequencer.current_utterance_token
+    session = hands_free_module.ConsoleHandsFreeSession(
+        controller=HandsFreeController(emit=lambda intent: None), sequencer=sequencer
+    )
+    current = stage != "entry"
+    calls = []
+
+    async def speak(text, *, on_finished, **kwargs):
+        nonlocal current
+        calls.append(text)
+        current = False
+        if stage == "replaced_reply":
+            sequencer.flush()
+            drained.clear()
+            sequencer.begin_reply()
+            sequencer.feed("Replacement sentence. ")
+            sequencer.reply_completed()
+        on_finished(False)
+        on_finished(False)
+
+    async def ensure():
+        nonlocal current
+        if stage == "handler":
+            current = False
+        return SimpleNamespace(speak_utterance=speak)
+
+    controller = SimpleNamespace(
+        _console_hands_free=session,
+        app_instance=SimpleNamespace(_ensure_tts_handler=ensure),
+    )
+    await hands_free_module.ConsoleHandsFreeController._speak_console_hands_free_utterance(
+        controller, "A complete sentence.", token, session, validator=lambda: current
+    )
+    if stage == "replaced_reply":
+        assert not sequencer.drained and not drained
+        assert session.utterances_failed == 0
+        sequencer.utterance_finished(True, token=sequencer.current_utterance_token)
+        assert drained == [True]
+    else:
+        assert sequencer.drained and drained == [True]
+        assert session.utterances_failed == 1
+        assert bool(calls) == (stage == "completion")

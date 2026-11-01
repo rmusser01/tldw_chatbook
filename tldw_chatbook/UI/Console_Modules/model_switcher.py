@@ -7,9 +7,17 @@ chat contributes only through its live session, so a workspace chat appears
 only while it is open. PREVIOUS per chat lives in process memory.
 
 It also opens the switcher (``open_model_switcher``), with its local-server
-probe (``connection_probe``, TASK-33005.5), and routes NEEDS SETUP rows to
-Settings (``open_provider_setup``), so ``chat_screen.py`` keeps one line per
-opener.
+probe (``connection_probe``, TASK-33005.5), opens it in pick-only mode for
+Chat settings' Change (``open_model_picker``, TASK-33006.4), and routes NEEDS
+SETUP rows to Settings (``open_provider_setup``), so ``chat_screen.py`` keeps
+one line per opener.
+
+The Get started card has its own way in (``open_setup_card_switcher``,
+TASK-33008.3): "Use detected <server>" opens the switcher on that provider,
+and Enter there adopts the picked model (``adopt_detected_local_server``).
+
+A NEEDS SETUP row's return from Settings reopens the switcher on that row's
+provider (``reopen_model_switcher``, TASK-33008.2).
 
 ADR-097: import this module lazily from the switcher's openers only; it is not
 on the boot path.
@@ -18,10 +26,11 @@ on the boot path.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from functools import partial
+from typing import TYPE_CHECKING, NoReturn, TypedDict
 
 from loguru import logger
 
@@ -29,17 +38,68 @@ from ...Chat.console_environment_state import relative_age
 from ...Chat.console_generation_settings_metadata import (
     parse_console_generation_settings,
 )
+from ...Chat.console_provider_endpoints import (
+    first_configured_endpoint,
+    normalize_generic_endpoint_for_compare,
+    safe_endpoint_display,
+    with_provider_endpoint,
+)
+from ...Chat.console_provider_gateway import normalize_llamacpp_base_url
+from ...Chat.provider_catalog import provider_display_name
+from ...Chat.provider_readiness import provider_config_key
+from ...config import DEFAULT_CONFIG_FROM_TOML, save_settings_to_cli_config
 from ...DB.base_db import run_owned_db_call
 from ...Utils.timestamps import as_utc
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_store import ConsoleChatSession
+    from ...Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        ConsoleSettingsReadiness,
+    )
+    from ...Chat.console_settings_apply import (
+        ConsoleSettingsDraftState,
+        ConsoleSettingsOrigin,
+    )
+    from ...Chat.local_server_discovery import DiscoveredLocalServer
     from ...DB.ChaChaNotes_DB import CharactersRAGDB
+    from ...Widgets.Console.console_model_popover import (
+        CatalogLoader,
+        ConnectionProber,
+        DefaultReadinessResolver,
+        DraftRebaser,
+        PairUse,
+        PreviousPairResolver,
+        RecentPairsLoader,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 RECENT_CONVERSATION_LIMIT = 50
 
+#: The switcher's scope line. A card-opened switcher that also sets the
+#: new-chat default says so before Enter (TASK-33008.3 AC#6).
+SCOPE_THIS_CHAT = "Applies to: this chat only"
+SCOPE_THIS_CHAT_AND_NEW_CHATS = "Applies to: this chat · also the default for new chats"
+#: The Get started card's recoveries that choose a provider·model pair, which
+#: is the switcher's job; endpoint and settings recoveries stay in Chat settings.
+_CARD_SWITCHER_RECOVERIES = frozenset(
+    {"select_provider", "select_supported_provider", "select_model"}
+)
+
 Pair = tuple[str, str | None]
+
+
+class SwitcherSources(TypedDict):
+    """The ``ConsoleModelPopover`` keyword arguments every mode lists from."""
+
+    app_config: Mapping[str, object]
+    providers_models: Mapping[str, Sequence[str]]
+    draft_rebaser: DraftRebaser
+    default_readiness_resolver: DefaultReadinessResolver
+    recent_pairs_loader: RecentPairsLoader
+    previous_pair: PreviousPairResolver
+    catalog_loader: CatalogLoader
+    connection_prober: ConnectionProber
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +113,11 @@ class ModelPairUse:
 
     @property
     def pair(self) -> tuple[str, str]:
+        """Return the row's pair.
+
+        Returns:
+            ``(provider, model)``.
+        """
         return (self.provider, self.model)
 
     def used_label(self, now: datetime) -> str:
@@ -106,6 +171,13 @@ def persisted_model_pair_uses(
     One listing capped at 50 and one batched metadata read. Snapshots
     that are malformed, missing, from a newer version or carry no model are
     skipped (fail closed).
+
+    Args:
+        db: The ChaChaNotes database to read.
+        skip_conversation_ids: Conversations already open as live sessions.
+
+    Returns:
+        One use per readable conversation, in the listing's order.
     """
     rows = [
         row
@@ -127,7 +199,14 @@ def persisted_model_pair_uses(
 
 
 def newest_distinct(uses: Iterable[ModelPairUse]) -> list[ModelPairUse]:
-    """Keep each pair's newest use and order the pairs newest first."""
+    """Keep each pair's newest use and order the pairs newest first.
+
+    Args:
+        uses: Pair uses, possibly repeating a pair.
+
+    Returns:
+        One use per pair, newest first.
+    """
     newest: dict[tuple[str, str], ModelPairUse] = {}
     for use in uses:
         kept = newest.get(use.pair)
@@ -145,6 +224,13 @@ async def read_recent_model_pairs(
     The live sessions are read before the first await, on the caller's (UI)
     thread; the database read runs in a worker thread. A failed read keeps
     the open sessions' pairs.
+
+    Args:
+        db: The ChaChaNotes database, or None when none is attached.
+        sessions: The open Console sessions.
+
+    Returns:
+        One use per pair, newest first.
     """
     sessions = list(sessions)
     uses = live_model_pair_uses(sessions)
@@ -183,7 +269,14 @@ class PreviousPairMemory:
     def record_switch(
         self, session_id: str, before: Pair, after: Pair, *, now: datetime | None = None
     ) -> None:
-        """Remember ``before`` as this chat's PREVIOUS when the pair changed."""
+        """Remember ``before`` as this chat's PREVIOUS when the pair changed.
+
+        Args:
+            session_id: The chat that switched.
+            before: The pair it switched from.
+            after: The pair it switched to.
+            now: The switch time (UTC); defaults to now.
+        """
         provider, model = before
         if not model or before == after:
             return
@@ -192,13 +285,24 @@ class PreviousPairMemory:
         )
 
     def previous(
-        self, session_id: str, current: Pair, recent: Sequence[ModelPairUse]
-    ) -> ModelPairUse | None:
-        """Return this chat's previous pair, else RECENT's newest other pair."""
+        self, session_id: str, current: Pair, recent: Sequence[PairUse]
+    ) -> PairUse | None:
+        """Return this chat's previous pair, else RECENT's newest other pair.
+
+        Args:
+            session_id: The chat Switch model opened for.
+            current: The chat's current pair.
+            recent: RECENT, newest first.
+
+        Returns:
+            The pair to offer as PREVIOUS, or None when there is none.
+        """
         remembered = self._by_session.get(session_id)
         if remembered is not None and remembered.pair != current:
             return remembered
-        return next((use for use in recent if use.pair != current), None)
+        return next(
+            (use for use in recent if (use.provider, use.model) != current), None
+        )
 
 
 #: The process-lifetime PREVIOUS memory the switcher reads and records into.
@@ -209,33 +313,94 @@ _SETUP_FIELDS = {
     "configure_credential": "api_key",
     "configure_endpoint": "endpoint",
     "save_endpoint": "endpoint",
+    # A key and no model. With no field named, Settings opens on Return to
+    # Console, whose Enter reopens the list on the same row.
+    "select_model": "model",
 }
 
 
 def open_provider_setup(
-    screen: ChatScreen, provider: str, model: str | None = None
+    screen: ChatScreen,
+    provider: str,
+    model: str | None = None,
+    *,
+    field: str | None = None,
+    reopen_switcher: bool = False,
 ) -> None:
     """Open Settings ▸ Providers & Models at one provider's fix (D4, ADR-012).
 
-    Uses the screen-context keys ``_open_console_provider_recovery`` uses; the
-    way back to Console waits for P8's handoff store. Settings keeps its own
-    model field when no model is routed, so the row's pair travels with it.
+    Every Console exit to Settings comes here: the switcher's NEEDS SETUP
+    rows, a cloud key check's Retry and the recovery action
+    (``_open_console_provider_recovery``). TASK-33008.1: it stages a return
+    to the active chat, so Settings offers "Return to Console". The return
+    names that chat and, for a NEEDS SETUP row, the row's provider and model
+    (TASK-33008.2); never a key or an endpoint. A provider or model the
+    return cannot name opens Settings one way, as before; a navigation that
+    never leaves takes its return back, and so does a Console the user
+    reaches again by hand (``provider_return.py``). Either way, with no model
+    routed Settings keeps its own model only for the provider it already
+    holds; any other provider shows its own configured model or none.
+
+    Args:
+        screen: The Console screen that opens Settings.
+        provider: The provider whose fix Settings opens at.
+        model: The row's model, when it has one.
+        field: The control to focus ("" for none); None reads it from the
+            pair's readiness.
+        reopen_switcher: Reopen Switch model on this provider after the
+            return (``reopen_model_switcher``): a NEEDS SETUP row's Enter.
     """
     from ...Constants import TAB_SETTINGS
+    from ..Navigation.conversation_settings_navigation import (
+        ConsoleProviderReturnIntent,
+        ProviderSettingsNavigationTarget,
+    )
     from ..Navigation.main_navigation import NavigateToScreen
+    from ..Navigation.pending_handoff_store import HandoffChannel, PendingHandoffStore
     from ..Screens.settings_config_models import SettingsCategoryId
 
-    readiness = screen._console_default_readiness(provider, model)
+    if field is None:
+        readiness = screen._console_default_readiness(provider, model)
+        field = _SETUP_FIELDS.get(str(readiness.recovery_action or ""))
     context: dict[str, object] = {
         "category": SettingsCategoryId.PROVIDERS_MODELS.value,
-        "provider": provider,
     }
+    if provider:
+        context["provider"] = provider
     if model:
         context["model"] = model
-    field = _SETUP_FIELDS.get(str(readiness.recovery_action or ""))
     if field:
         context["field"] = field
-    screen.post_message(NavigateToScreen(TAB_SETTINGS, screen_context=context))
+    handoffs = getattr(getattr(screen, "app_instance", None), "pending_handoffs", None)
+    session_id = screen._ensure_console_chat_store().active_session_id
+    try:
+        intent = ConsoleProviderReturnIntent(
+            session_id, *((provider, model or None) if reopen_switcher else ())
+        )
+        target = ProviderSettingsNavigationTarget(
+            "providers-models", provider, model or None, field or None, 1, session_id
+        )
+    except ValueError:  # No chat, or a provider or model Settings cannot name.
+        intent = None
+    if intent is None or not isinstance(handoffs, PendingHandoffStore):
+        screen.post_message(NavigateToScreen(TAB_SETTINGS, screen_context=context))
+        return
+    channel = HandoffChannel.CONVERSATION_SETTINGS_RETURN
+    revision = handoffs.stage(channel, intent)
+
+    def settle(succeeded: bool) -> None:
+        if succeeded:  # Settings has the screen: remember what to take back.
+            screen._pending_console_provider_return = (revision, intent)
+        else:
+            handoffs.discard_pending_exact(channel, revision, intent)
+
+    navigation = NavigateToScreen(
+        TAB_SETTINGS,
+        replace(target, return_revision=revision).to_context(),
+        on_completion=settle,
+    )
+    if screen.post_message(navigation) is False:
+        navigation.report_completion(False)
 
 
 async def load_provider_catalog(
@@ -249,6 +414,14 @@ async def load_provider_catalog(
     6 ms a provider, so 13 ready providers held the event loop for 110 ms
     in one block on every open. It runs in a worker thread; the options'
     warnings are remembered back on the UI thread.
+
+    Args:
+        screen: The Console screen whose catalog scope service is read.
+        providers_models: The configured models per provider.
+        provider: The provider whose catalog is loaded.
+
+    Returns:
+        The provider's model ids.
     """
     from ..Screens.provider_model_resolution import resolve_provider_model_options
 
@@ -265,17 +438,282 @@ async def load_provider_catalog(
     return [option.model_id for option in options]
 
 
+def _switcher_sources(
+    screen: ChatScreen,
+    session_id: str,
+    before: Pair,
+    app_config: Mapping[str, object] | None = None,
+    readiness: Callable[..., ConsoleSettingsReadiness] | None = None,
+    listing: tuple[str, Sequence[str]] | None = None,
+    *,
+    draft: ConsoleSettingsDraftState | None = None,
+    full_surface: bool = False,
+) -> SwitcherSources:
+    """Return the pair sources every Switch model mode lists from.
+
+    The Get started card's detected server passes the three optional
+    arguments, in memory only (``_open_switcher``): a configuration and a
+    readiness that read the detected endpoint, and the server's own listing,
+    which is that provider's catalog. Nothing here is saved.
+
+    A pick keeps a draft's Endpoint on llama.cpp, and a typed one in pick mode
+    on any provider (TASK-35190), so with ``draft`` the readiness and the
+    local probe read each provider at the Endpoint a pick on it lands on
+    (``pick_base_url``, the rebaser's own rule), in memory only, as R12 does
+    for a detected server. The rebaser keeps ``app_config``, so a default it
+    saves names no session Endpoint. Where that moves an endpoint off the
+    saved one, the probe checks the configured one too (not in pick mode,
+    which has no Ctrl+N): new chats use it, and Ctrl+N's check reads it.
+
+    Args:
+        screen: The Console screen that owns the chat.
+        session_id: The chat whose PREVIOUS pair the list offers.
+        before: The pair the chat (or the Chat settings draft) holds now.
+        app_config: The configuration the list reads; the saved one if None.
+        readiness: The readiness resolver; the saved defaults' if None.
+        listing: ``(provider, models)`` a server listed, if any.
+        draft: The draft the switcher opens on, whose picks it lists.
+        full_surface: Whether its picks carry an endpoint edit (pick mode).
+
+    Returns:
+        ``ConsoleModelPopover`` keyword arguments: the configuration, the
+        saved and cached catalogs, readiness, RECENT and PREVIOUS, the local
+        probe and the controller's rebaser.
+    """
+    from ...Chat.console_settings_apply import pick_base_url
+    from .connection_probe import SWITCHER_PROBES_IN_FLIGHT, switcher_connection_prober
+
+    store = screen._ensure_console_chat_store()
+    providers_models = screen._providers_models()
+    if app_config is None:
+        app_config = screen._provider_readiness_app_config()
+    readiness = readiness or screen._console_default_readiness
+    landing = app_config
+    if draft is not None:
+        drafts = (draft.settings.provider, *(d.provider for d in draft.model_drafts))
+        for provider in dict.fromkeys(drafts):
+            url = pick_base_url(draft, provider or "", full_surface=full_surface)
+            if not url:
+                continue
+            key = provider_config_key(provider)
+            api = landing.get("api_settings")
+            section = api.get(key) if isinstance(api, Mapping) else None
+            saved = (
+                first_configured_endpoint(section)
+                if isinstance(section, Mapping)
+                else None
+            )
+            if saved and not adoption_endpoints_differ(key, saved, url):
+                continue  # Not moved: a copy would read as moved (one prober).
+            landing = with_provider_endpoint(landing, key, url)
+    # One gate for both probers, so an open keeps its in-flight cap.
+    gate = asyncio.Semaphore(SWITCHER_PROBES_IN_FLIGHT)
+    probes = [switcher_connection_prober(screen.app, landing, gate=gate)]
+    if landing is not app_config:
+        readiness = partial(readiness, app_config=landing)
+        if not full_surface:
+            probes.append(switcher_connection_prober(screen.app, app_config, gate=gate))
+
+    async def connection_prober(
+        targets: Mapping[str, str | None], settled: Callable[[str], None]
+    ) -> None:
+        def settled_here_and_under(provider: str) -> None:
+            settled(provider)
+            if not screen.is_attached:  # A probe outlives a closed switcher.
+                return
+            # TASK-30011 AC#6: the Console under the switcher reads the same
+            # word now; its idle poll skips a covered screen.
+            with screen._console_derivation_scope():
+                screen._sync_console_settings_summary()
+                screen._sync_console_control_bar()
+
+        await asyncio.gather(*(run(targets, settled_here_and_under) for run in probes))
+
+    async def catalog_loader(provider: str) -> list[str]:
+        if listing is not None and provider == listing[0]:
+            # The server's own listing is its catalog: a saved model list or
+            # a cached catalog describes some other endpoint.
+            return list(listing[1])
+        return await load_provider_catalog(screen, providers_models, provider)
+
+    return {
+        "app_config": app_config,
+        "providers_models": providers_models,
+        "draft_rebaser": (
+            screen._ensure_console_chat_controller().rebase_console_settings_draft
+        ),
+        "default_readiness_resolver": readiness,
+        "recent_pairs_loader": lambda: read_recent_model_pairs(
+            getattr(screen.app_instance, "chachanotes_db", None), store.sessions()
+        ),
+        "previous_pair": lambda recent: PREVIOUS_PAIRS.previous(
+            session_id, before, recent
+        ),
+        "catalog_loader": catalog_loader,
+        "connection_prober": connection_prober,
+    }
+
+
 async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
     """Open Switch model for the active chat (Alt+M, chips, palette, /model).
 
     ``/model <query>`` passes its text here: it opens in Find, so the best
     match is highlighted and nothing applies until Enter (TASK-33004.7).
-    """
-    from ...Chat.console_settings_apply import QUICK_MODEL_DEFAULT_FIELDS
-    from ...Widgets.Console.console_model_popover import ConsoleModelPopover
-    from .connection_probe import switcher_connection_prober
 
+    Args:
+        screen: The Console screen whose active chat Switch model edits.
+        query: Text Find opens with ("" lists everything).
+    """
     if screen._console_setup_modal_blocking():
+        return
+    _open_switcher(screen, query=query.strip())
+
+
+def has_working_new_chat_default(screen: ChatScreen) -> bool:
+    """Whether new chats already start on a pair that can send.
+
+    Args:
+        screen: The Console screen whose saved defaults are read.
+
+    Returns:
+        False when ``chat_defaults`` names no provider or no model, or when
+        that pair is not ready to send.
+    """
+    defaults = screen._persisted_chat_defaults()
+    provider = str(defaults.get("provider") or "").strip()
+    model = str(defaults.get("model") or "").strip()
+    return bool(provider and model) and (
+        screen._console_default_readiness(provider, model).operability
+        == "ready_to_send"
+    )
+
+
+def open_setup_card_switcher(
+    screen: ChatScreen, server: DiscoveredLocalServer | None = None
+) -> None:
+    """Open Switch model from the Get started card (TASK-33008.3).
+
+    ``open_model_switcher`` returns at once while the card blocks, and Alt+M
+    stays that way; the card's own actions come here. It is the normal apply
+    mode, so a NEEDS SETUP row still opens its fix in Settings.
+
+    "Use detected <server>" passes ``server``: Find opens on that provider's
+    name, its rows are the models the server listed, the first of them is
+    highlighted, and Enter on one adopts it (``adopt_detected_local_server``).
+    Any other pick here, and every pick made while no new-chat default works,
+    also becomes the default for new chats; the scope line says so before
+    Enter. Esc saves nothing.
+
+    Args:
+        screen: The Console screen the card blocks.
+        server: The detected local server, for "Use detected <server>".
+    """
+    _open_switcher(screen, card=True, server=server)
+
+
+def open_card_recovery_switcher(screen: ChatScreen) -> bool:
+    """Send the card's Choose provider and Choose model to Switch model.
+
+    Only while the card blocks: the same recoveries from the transcript or
+    the prompts hook, and the card's endpoint and settings recoveries, keep
+    opening Chat settings. Choose model opens on the chat's provider, as
+    "… N more" does: unfiltered, another provider's row could come first and
+    one Enter would make it the default for new chats.
+
+    Args:
+        screen: The Console screen whose provider recovery was requested.
+
+    Returns:
+        Whether Switch model was opened; False leaves the caller's route.
+    """
+    if not screen._console_setup_modal_blocking():
+        return False
+    settings, readiness = screen._active_console_settings_readiness()
+    if readiness.recovery_action not in _CARD_SWITCHER_RECOVERIES:
+        return False
+    query = ""
+    if readiness.recovery_action == "select_model":
+        name = provider_display_name(
+            provider_config_key(settings.provider),
+            screen._provider_readiness_app_config(),
+        )
+        query = f"{name} "
+    _open_switcher(screen, query=query, card=True)
+    return True
+
+
+def reopen_model_switcher(screen: ChatScreen, provider: str, model: str | None) -> None:
+    """Reopen Switch model on the provider a NEEDS SETUP row left to fix.
+
+    TASK-33008.2: the row's Enter went to Settings, and the return comes back
+    here (``provider_return.py``). A chat that holds work keeps its own pair
+    after a Settings save (ADR-095), so the pick is still to make: Find holds
+    the provider's name, as "… N more" does, and the row's own pair is
+    highlighted when the list has it, so one Enter applies it. A row that
+    named no model reopens on the provider's saved model, such as one just
+    saved in Settings' Model field. When the list has no row for the pair (no
+    model is saved, or the catalog dropped the row's), the highlight is that
+    provider's first row or nothing, never another provider's match for the
+    name. With nothing saved the row is still under NEEDS SETUP and
+    nothing has changed.
+
+    It opens in the mode the chat is in now: the Get started card's while the
+    card still blocks, where Alt+M itself stays shut. In either mode, while
+    no new-chat default works, the pick also becomes that default.
+
+    Args:
+        screen: The Console screen the return landed on.
+        provider: The row's provider.
+        model: The row's model, when it had one.
+    """
+    from ...Chat.console_session_settings import resolve_effective_chat_configuration
+
+    key = provider_config_key(provider)
+    config = screen._provider_readiness_app_config()
+    name = provider_display_name(key, config)
+    model = model or resolve_effective_chat_configuration(config, provider=key).model
+    _open_switcher(
+        screen,
+        query=f"{name} ",
+        card=screen._console_setup_modal_blocking(),
+        highlight=(key, model) if model else None,
+        reopened=key,
+    )
+
+
+def _open_switcher(
+    screen: ChatScreen,
+    *,
+    query: str = "",
+    card: bool = False,
+    server: DiscoveredLocalServer | None = None,
+    highlight: tuple[str, str] | None = None,
+    reopened: str | None = None,
+) -> None:
+    """Push Switch model in apply mode for the active chat.
+
+    Args:
+        screen: The Console screen whose active chat Switch model edits.
+        query: Text Find opens with ("" lists everything).
+        card: Opened from the Get started card.
+        server: The card's detected local server, if that is what opened it.
+        highlight: The pair highlighted first when the list has it; a
+            detected server's first model takes its place.
+        reopened: The provider a return from Settings reopened the list on;
+            the highlight stays on its rows until Find changes, and, as on
+            the card, the pick also sets the new-chat default while none
+            works.
+    """
+    from ...Chat.console_settings_apply import (
+        QUICK_MODEL_DEFAULT_FIELDS,
+        ConsoleSettingsAction,
+    )
+    from ...Widgets.Console.console_model_popover import ConsoleModelPopover
+
+    if not screen._owns_console_screen_stack():
+        # A second press of a card action before the first one's Switch model
+        # had the screen: a second dialog would sit over it on stale state.
+        # Likewise a burst of Provider/Model segment keys (TASK-34720).
         return
     store = screen._ensure_console_chat_store()
     session_id = store.active_session_id
@@ -287,41 +725,89 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
         return
     session = store.switch_session(session_id)
     before = (settings.provider, settings.model)
-    providers_models = screen._providers_models()
-    app_config = screen._provider_readiness_app_config()
-
-    probe = switcher_connection_prober(screen.app, app_config)
-
-    async def connection_prober(targets, settled):  # type: ignore[no-untyped-def]
-        def settled_here_and_under(provider: str) -> None:
-            settled(provider)
-            if not screen.is_attached:  # A probe outlives a closed switcher.
-                return
-            # TASK-30011 AC#6: the Console under the switcher reads the same
-            # word now; its idle poll skips a covered screen.
-            with screen._console_derivation_scope():
-                screen._sync_console_settings_summary()
-                screen._sync_console_control_bar()
-
-        await probe(targets, settled_here_and_under)
+    draft = screen._console_settings_initial_draft(
+        settings,
+        store.session_context_policy_overrides(session_id),
+        exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
+    )
+    # A reopened list too: a save of a provider with no model leaves a
+    # new-chat default that cannot send, whatever the chat holds.
+    sets_default = (card or bool(reopened)) and (
+        server is not None or not has_working_new_chat_default(screen)
+    )
+    detected: str | None = None
+    app_config: Mapping[str, object] | None = None
+    readiness: Callable[..., ConsoleSettingsReadiness] = (
+        screen._console_default_readiness
+    )
+    if server is not None:
+        # R12: what discovery found describes the provider, in memory only.
+        # Saved configuration may hold no endpoint or model for it, or a
+        # different endpoint (task-16476) whose last test failed; either would
+        # list it under NEEDS SETUP.
+        detected = provider_config_key(server.provider_key)
+        app_config = with_provider_endpoint(
+            screen._provider_readiness_app_config(), detected, server.base_url
+        )
+        readiness = partial(readiness, app_config=app_config)
+        # Filtered to the provider: Find holds its name, as "… N more" does.
+        query = f"{provider_display_name(detected)} "
 
     def commit(submission):  # type: ignore[no-untyped-def]
+        chosen = submission.draft.settings
+        adopt = server is not None and provider_config_key(chosen.provider) == detected
+        if sets_default:
+            # As Ctrl+N: a pair that cannot send never becomes the default.
+            verdict = readiness(chosen.provider, chosen.model)
+            if not verdict.native_send_supported:
+                raise ValueError(f"Unavailable: {verdict.detail}")
+            if not adopt:
+                # Whichever action commits the pick, as the scope line says.
+                # Ctrl+N's writes the model's defaults too, so Save as model
+                # default loses nothing by running as it.
+                submission = replace(
+                    submission,
+                    action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
+                    default_field_mask=QUICK_MODEL_DEFAULT_FIELDS,
+                )
         live_commit = screen._commit_console_settings_submission_live(submission)
-        after = (submission.draft.settings.provider, submission.draft.settings.model)
-        PREVIOUS_PAIRS.record_switch(session.id, before, after)
+        if adopt:
+            try:
+                adopt_detected_local_server(screen, server, live_commit.settings)
+            except Exception as exc:  # noqa: BLE001 - the pair is applied
+                # The live commit stands, so the switcher must deliver it: a
+                # raise would report "nothing changed" over an applied pair.
+                logger.warning(
+                    "Detected local server adoption failed after the pair applied: {}",
+                    type(exc).__name__,
+                )
+                screen.app_instance.notify(
+                    "The detected server was not fully applied: check this "
+                    "chat's endpoint in Chat settings.",
+                    severity="warning",
+                )
+            except BaseException:
+                # Nothing delivers the result now, so nothing else would
+                # release the admission shutdown waits on.
+                if live_commit.durability_admission is not None:
+                    live_commit.durability_admission.release()
+                raise
+        elif not card:
+            # The pair the card replaces never worked: it is no PREVIOUS.
+            PREVIOUS_PAIRS.record_switch(
+                session.id, before, (chosen.provider, chosen.model)
+            )
         return live_commit
 
     screen.app.push_screen(
         ConsoleModelPopover(
             origin=origin,
-            app_config=app_config,
-            initial_draft=screen._console_settings_initial_draft(
-                settings,
-                store.session_context_policy_overrides(session_id),
-                exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
-            ),
-            providers_models=providers_models,
-            scope_copy="Applies to: this chat only",
+            initial_draft=draft,
+            scope_copy=SCOPE_THIS_CHAT_AND_NEW_CHATS
+            if sets_default
+            else SCOPE_THIS_CHAT,
+            # Enter's label says what the scope line says it reaches.
+            enter_sets_default=sets_default,
             durability_copy=(
                 "Temporary until this chat is promoted"
                 if session.ephemeral
@@ -329,25 +815,252 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
                 if session.persisted_conversation_id is None
                 else "Saved with this conversation"
             ),
-            draft_rebaser=(
-                screen._ensure_console_chat_controller().rebase_console_settings_draft
-            ),
             live_committer=commit,
-            default_readiness_resolver=screen._console_default_readiness,
-            recent_pairs_loader=lambda: read_recent_model_pairs(
-                getattr(screen.app_instance, "chachanotes_db", None), store.sessions()
-            ),
-            previous_pair=lambda recent: PREVIOUS_PAIRS.previous(
-                session.id, before, recent
-            ),
-            catalog_loader=lambda provider: load_provider_catalog(
-                screen, providers_models, provider
-            ),
             setup_opener=lambda provider, model: open_provider_setup(
-                screen, provider, model
+                screen, provider, model, reopen_switcher=True
             ),
-            query=query.strip(),
-            connection_prober=connection_prober,
+            query=query,
+            served_models=(
+                {detected: server.model_ids} if server is not None else None
+            ),
+            # AC#1: the server's first listed model, whatever RECENT holds.
+            highlight_pair=(
+                (detected, server.model_ids[0])
+                if server is not None and server.model_ids
+                else highlight
+            ),
+            reopened_provider=reopened,
+            # New chats use the configured endpoint, not the one the rows
+            # read (TASK-35190).
+            new_chat_readiness_resolver=readiness,
+            **_switcher_sources(
+                screen,
+                session.id,
+                before,
+                app_config,
+                readiness,
+                (detected, server.model_ids) if server is not None else None,
+                # R12: a detected server's endpoint stands for its provider.
+                draft=draft if server is None else None,
+            ),
         ),
         callback=screen._apply_console_model_popover_result,
+    )
+
+
+def adoption_endpoints_differ(
+    provider_key: str,
+    configured_endpoint: str,
+    detected_endpoint: str,
+) -> bool:
+    """Return whether adoption endpoints differ by connection identity.
+
+    Qodo review (PR #1720): raw string inequality treats a trailing
+    slash (or a llama.cpp endpoint-path suffix) as a different server,
+    warning and skipping the write for what is the same connection. Uses
+    the same normalization vocabulary as
+    ``_endpoint_differs_for_provider``.
+
+    Args:
+        provider_key: Normalized provider readiness key.
+        configured_endpoint: Persisted endpoint for the provider.
+        detected_endpoint: Discovered server base URL.
+
+    Returns:
+        ``True`` only when the two endpoints normalize to different
+        connection identities.
+    """
+    if provider_key in {"llama_cpp", "local_llamacpp"}:
+        configured_endpoint = normalize_llamacpp_base_url(configured_endpoint)
+        detected_endpoint = normalize_llamacpp_base_url(detected_endpoint)
+    return normalize_generic_endpoint_for_compare(
+        configured_endpoint
+    ) != normalize_generic_endpoint_for_compare(detected_endpoint)
+
+
+def adopt_detected_local_server(
+    screen: ChatScreen,
+    server: DiscoveredLocalServer,
+    settings: ConsoleSessionSettings,
+) -> None:
+    """Save a detected local server's picked pair and use it in this chat.
+
+    The Get started card's adoption writer (task-188), moved here from
+    ``ChatScreen`` and given the pair the user picked in Switch model
+    (TASK-33008.3) in place of the server's first model. Persists
+    ``chat_defaults.provider``/``model`` and the provider's ``api_settings``
+    endpoint and model, then puts ``settings`` on the detected endpoint in
+    the active session as an explicit user choice and re-evaluates the setup
+    card from the fresh on-disk config (task-177 mechanics; no boot-time
+    snapshots). The full Console sync follows from the switcher's committed
+    result, as after any apply.
+
+    An endpoint still at the shipped template's is not one the user chose
+    (every profile carries ``http://localhost:8080`` for llama.cpp), whatever
+    else in the provider's table was edited, so the detected one is saved.
+
+    task-16476: a provider that already has a DIFFERENT user-configured
+    endpoint keeps it -- the endpoint write fills only when absent, and the
+    detected endpoint is this chat's session-only endpoint instead
+    (``adopt_session_ephemeral_endpoint``, never conversation metadata), so
+    the adoption stays effective without clobbering persisted config
+    (discovery is loopback-only and can never see the LAN server the
+    configured endpoint may point at). A failed save uses the same
+    session-only endpoint: the detected one never reached disk.
+
+    Args:
+        screen: The Console screen that owns the chat.
+        server: The detected local server.
+        settings: The picked pair's settings as just applied to the chat.
+    """
+    from ...Chat.console_session_endpoint_policy import (
+        ConsoleEphemeralEndpointPolicy,
+    )
+
+    provider_key = provider_config_key(server.provider_key)
+    name = provider_display_name(provider_key)  # as every other line here says it
+
+    def endpoint_in(config: dict[str, object]) -> str | None:
+        return first_configured_endpoint(
+            screen._config_section(
+                screen._config_section(config, "api_settings"), provider_key
+            )
+        )
+
+    configured_endpoint = endpoint_in(screen._provider_readiness_app_config())
+    shipped_endpoint = endpoint_in(DEFAULT_CONFIG_FROM_TOML)
+    # Qodo review (PR #1720): compare connection identities, not raw
+    # strings -- a configured endpoint differing only by a trailing slash (or
+    # a llama.cpp endpoint-path suffix) is the SAME server and must not warn
+    # or skip the canonicalizing write.
+    keep_saved = (
+        configured_endpoint is not None
+        and adoption_endpoints_differ(
+            provider_key, configured_endpoint, server.base_url
+        )
+        and (
+            shipped_endpoint is None
+            or adoption_endpoints_differ(
+                provider_key, configured_endpoint, shipped_endpoint
+            )
+        )
+    )
+    provider_values: dict[str, object] = {"model": settings.model}
+    if keep_saved:
+        screen.app_instance.notify(
+            "Keeping the saved endpoint "
+            f"{safe_endpoint_display(configured_endpoint) or configured_endpoint} "
+            f"for {name}; using the detected "
+            "server for this session only.",
+            severity="warning",
+            markup=False,
+        )
+    else:
+        provider_values["api_url"] = server.base_url
+    try:
+        saved = save_settings_to_cli_config(
+            {
+                f"api_settings.{server.provider_key}": provider_values,
+                "chat_defaults": {
+                    "provider": server.provider_key,
+                    "model": settings.model,
+                },
+            }
+        )
+    except Exception:  # noqa: BLE001 - any failed save still applies to this chat
+        saved = False
+    if not saved:
+        logger.warning(
+            "Could not persist detected local server defaults to config; "
+            "applying to this session only"
+        )
+        screen.app_instance.notify(
+            f"Default not saved for {name}/{settings.model}; "
+            "it applies to this chat only.",
+            severity="warning",
+            markup=False,
+        )
+    chosen = replace(settings, source="user")
+    if keep_saved or not saved:
+        # The detected endpoint is not on disk. The send path skips its
+        # unsaved-endpoint guard for a session-only endpoint, and readiness
+        # reads it as configured (ChatScreen readiness).
+        store = screen._ensure_console_chat_store()
+        store.adopt_session_ephemeral_endpoint(
+            store.active_session_id,
+            settings=chosen,
+            policy=ConsoleEphemeralEndpointPolicy(
+                chosen.provider, chosen.model, server.base_url
+            ),
+        )
+        screen._sync_console_chat_core_state()
+        screen._sync_console_settings_summary()
+    else:
+        screen._session._replace_active_console_session_settings(
+            replace(chosen, base_url=server.base_url)
+        )
+    # The card unlocks now; the switcher's result runs the full Console sync.
+    screen._sync_console_transcript_guidance()
+
+
+def refuse_live_commit(submission: object) -> NoReturn:
+    """Pick mode's committer: it applies nothing, ever (TASK-33006.4).
+
+    Args:
+        submission: The submission pick mode must never commit.
+
+    Raises:
+        ValueError: Always; the switcher shows it and keeps the chat as is.
+    """
+    del submission
+    raise ValueError("Pick mode applies nothing; Chat settings' Apply does.")
+
+
+def open_model_picker(
+    screen: ChatScreen,
+    origin: ConsoleSettingsOrigin,
+    draft: ConsoleSettingsDraftState,
+    query: str,
+    on_pick: Callable[[tuple[str, str] | None], None],
+    served: Mapping[str, Sequence[str]],
+) -> None:
+    """Open Switch model in pick-only mode over Chat settings (TASK-33006.4).
+
+    It lists the pairs Alt+M lists, plus the models Chat settings' listings
+    found, and hands the chosen one to ``on_pick`` (``None`` on Esc); Chat
+    settings rebases its own draft, and nothing is applied until its Apply.
+    Pick mode never calls the rebaser, the committer or Settings, and its
+    committer refuses, so a regression there cannot reach the chat.
+
+    Args:
+        screen: The Console screen under Chat settings.
+        origin: The chat Chat settings edits.
+        draft: Chat settings' draft; its pair is marked current.
+        query: Text Find opens with ("" lists everything).
+        on_pick: Receives ``(provider, model)``, or ``None`` on Esc.
+        served: Models Chat settings' listings found, per provider, only
+            those whose pick lands on the connection that listed them.
+    """
+    from ...Widgets.Console.console_model_popover import ConsoleModelPopover
+
+    settings = draft.settings
+    screen.app.push_screen(
+        ConsoleModelPopover(
+            origin=origin,
+            initial_draft=draft,
+            scope_copy="",
+            durability_copy="",
+            live_committer=refuse_live_commit,
+            pick_only=True,
+            query=query,  # "<entry name> " keeps its space for the model id
+            served_models=served,
+            **_switcher_sources(
+                screen,
+                origin.session_id,
+                (settings.provider, settings.model),
+                draft=draft,
+                full_surface=True,
+            ),
+        ),
+        callback=on_pick,
     )

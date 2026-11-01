@@ -44,7 +44,11 @@ class _CoreAdapter:
                 status = "unavailable"
                 dependent_owners = ()
             else:
-                with closing(connect_private_sqlite("recovery.core.chachanotes", path, read_only=True)) as connection:
+                with closing(
+                    connect_private_sqlite(
+                        "recovery.core.chachanotes", path, read_only=True
+                    )
+                ) as connection:
                     optional_groups = {
                         "notes.file_notes": "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1",
                         "persona.assets": "SELECT 1 FROM persona_visual_assets LIMIT 1",
@@ -52,8 +56,14 @@ class _CoreAdapter:
                         "persona.visual_identity_builtin": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind = 'builtin' LIMIT 1",
                         "chat.dictionaries": "SELECT 1 FROM chat_dictionaries WHERE file_path IS NOT NULL LIMIT 1",
                     }
-                    absent = {owner for owner, query in optional_groups.items() if connection.execute(query).fetchone() is None}
-                    dependent_owners = tuple(owner for owner in dependent_owners if owner not in absent)
+                    absent = {
+                        owner
+                        for owner, query in optional_groups.items()
+                        if connection.execute(query).fetchone() is None
+                    }
+                    dependent_owners = tuple(
+                        owner for owner in dependent_owners if owner not in absent
+                    )
         elif self.owner_id == "db.library_collections" and status == "included":
             from .private_sqlite import connect_private_sqlite
 
@@ -104,7 +114,17 @@ class _CoreAdapter:
                         owner,
                         ""
                         if owner
-                        in ("config", "notes.file_notes", "notes.sync_bindings", "chat.attachments", "chat.dictionaries", "persona.assets", "persona.visual_identity", "persona.visual_identity_builtin", "skills")
+                        in (
+                            "config",
+                            "notes.file_notes",
+                            "notes.sync_bindings",
+                            "chat.attachments",
+                            "chat.dictionaries",
+                            "persona.assets",
+                            "persona.visual_identity",
+                            "persona.visual_identity_builtin",
+                            "skills",
+                        )
                         or owner.startswith("db.")
                         else "unresolved",
                     )
@@ -189,8 +209,12 @@ class _CoreAdapter:
                 metadata = VideoGenerationMetadata.from_json(encoded)
                 if metadata is None:
                     raise ValueError("temporary_reference_invalid")
-                relative = video_relative_path(message, metadata.name, metadata.container)
-                references.append((message, metadata.name, "video/" + relative.suffix[1:]))
+                relative = video_relative_path(
+                    message, metadata.name, metadata.container
+                )
+                references.append(
+                    (message, metadata.name, "video/" + relative.suffix[1:])
+                )
         return tuple(references)
 
     def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
@@ -436,7 +460,32 @@ class _CoreAdapter:
 
     def schema_policy(self) -> SchemaPolicy | None:
         from .recovery_core_schema import (
+            CHACHANOTES_BROWSE_V79_TO_V80_SQL,
+            CHACHANOTES_CANVAS_V81_TO_V82_SQL,
             CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+            CHACHANOTES_FLEET_V77_TO_V78_SQL,
+            CHACHANOTES_NATIVE_V76_TO_V77_SQL,
+            CHACHANOTES_PORTRAIT_V82_TO_V83_SQL,
+            CHACHANOTES_REGIONS_V83_TO_V84_SQL,
+            CHACHANOTES_RULES_V80_TO_V81_SQL,
+            CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
+            CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
+            CHACHANOTES_V75_SCHEMA,
+            CHACHANOTES_V76_NATIVE_SCHEMAS,
+            CHACHANOTES_V76_SHIPPED_SCHEMAS,
+            CHACHANOTES_V77_SCHEMAS,
+            CHACHANOTES_V78_SCHEMAS,
+            CHACHANOTES_V79_SCHEMAS,
+            CHACHANOTES_V80_SCHEMAS,
+            CHACHANOTES_V81_SCHEMAS,
+            CHACHANOTES_V82_SCHEMAS,
+            CHACHANOTES_V83_SCHEMAS,
+            CHACHANOTES_V84_SCHEMAS,
+            CHACHANOTES_V85_SCHEMAS,
+            CHACHANOTES_ARCHIVE_V84_TO_V85_SQL,
+            COLLECTIONS_V4_SCHEMA,
+            COLLECTIONS_V4_TO_V5_SQL,
+            COLLECTIONS_V5_SCHEMAS,
             CORE_SCHEMAS,
             PROMPTS_V4_SCHEMA,
             PROMPTS_V4_TO_V5_SQL,
@@ -447,7 +496,51 @@ class _CoreAdapter:
         versions = (version,)
         migrations = ()
         if self.owner_id == "db.chachanotes.primary":
-            schemas += ((version, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA),)
+            schemas += (
+                (version, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA),
+                (75, CHACHANOTES_V75_SCHEMA),
+                (75, CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA),
+            )
+            schemas += tuple(
+                (76, schema)
+                for schema in CHACHANOTES_V76_SHIPPED_SCHEMAS
+                + CHACHANOTES_V76_NATIVE_SCHEMAS
+            )
+            schemas += tuple((77, schema) for schema in CHACHANOTES_V77_SCHEMAS)
+            # ADR-224: the full v78 lineage stays acceptable at version 78
+            # (its [0]/[1] used to ride the pre-v79 head entries); the
+            # v78->v79 step migrates such candidates up to the v79 head,
+            # where every v78-lineage variant has its own v79 successor
+            # (head + dictionary cover V79[0]/[1]; these are V79[2:]).
+            # ADR-216: the v79 lineage rides the same pattern under the v80
+            # head (head + dictionary cover V80[0]/[1]; these are V79[2:]).
+            schemas += tuple((78, schema) for schema in CHACHANOTES_V78_SCHEMAS)
+            schemas += tuple((79, schema) for schema in CHACHANOTES_V79_SCHEMAS)
+            # ADR-216: every v79-lineage variant has its own v80 successor
+            # under the v80 head (head + dictionary cover V80[0]/[1]).
+            schemas += tuple((80, schema) for schema in CHACHANOTES_V80_SCHEMAS)
+            schemas += tuple((81, schema) for schema in CHACHANOTES_V81_SCHEMAS)
+            schemas += tuple((82, schema) for schema in CHACHANOTES_V82_SCHEMAS)
+            schemas += tuple((83, schema) for schema in CHACHANOTES_V83_SCHEMAS)
+            schemas += tuple((84, schema) for schema in CHACHANOTES_V84_SCHEMAS)
+            schemas += tuple((85, schema) for schema in CHACHANOTES_V85_SCHEMAS[2:])
+            versions += (84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
+            migrations = (
+                (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
+                (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
+                (78, 79, CHACHANOTES_SARGABLE_V78_TO_V79_SQL),
+                (79, 80, CHACHANOTES_BROWSE_V79_TO_V80_SQL),
+                (80, 81, CHACHANOTES_RULES_V80_TO_V81_SQL),
+                (81, 82, CHACHANOTES_CANVAS_V81_TO_V82_SQL),
+                (82, 83, CHACHANOTES_PORTRAIT_V82_TO_V83_SQL),
+                (83, 84, CHACHANOTES_REGIONS_V83_TO_V84_SQL),
+                (84, 85, CHACHANOTES_ARCHIVE_V84_TO_V85_SQL),
+            )
+        elif self.owner_id == "db.library_collections":
+            versions = (5, 4)
+            schemas = tuple((5, schema) for schema in COLLECTIONS_V5_SCHEMAS)
+            schemas += ((4, COLLECTIONS_V4_SCHEMA),)
+            migrations = ((4, 5, COLLECTIONS_V4_TO_V5_SQL),)
         elif self.owner_id == "db.prompts.primary":
             schemas += ((4, PROMPTS_V4_SCHEMA),)
             versions += (4,)

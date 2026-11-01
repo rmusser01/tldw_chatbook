@@ -75,9 +75,7 @@ _ERROR_MESSAGES: dict[NetworkContextErrorCode, str] = {
 _HEX_256 = re.compile(r"[0-9a-f]{64}")
 _CREDENTIAL_HELPER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 _OPENSSH_OPTION_PATH = re.compile(r"/[A-Za-z0-9/._-]+")
-_GIT_BOOLEAN = frozenset(
-    {"true", "false", "yes", "no", "on", "off", "1", "0"}
-)
+_GIT_BOOLEAN = frozenset({"true", "false", "yes", "no", "on", "off", "1", "0"})
 _SSH_SECRET = object()
 _DIRECTORY_MODE = 0o700
 _READ_ONLY_DIRECTORY_MODE = 0o500
@@ -215,9 +213,7 @@ class NetworkConfigAuthorization:
     __slots__ = ("__weakref__",)
 
     def __new__(cls) -> NetworkConfigAuthorization:
-        raise TypeError(
-            "Network config authorizations require validated facts"
-        )
+        raise TypeError("Network config authorizations require validated facts")
 
     def __setattr__(self, _name: str, _value: object) -> None:
         raise FrozenInstanceError("cannot change network config authorization")
@@ -228,14 +224,13 @@ class NetworkConfigAuthorization:
     @property
     def configuration_fingerprint(self) -> str:
         """Return the already-resolved source configuration fingerprint."""
-        return _read_network_config_authorization(
-            self
-        ).configuration_fingerprint
+        return _read_network_config_authorization(self).configuration_fingerprint
 
     @property
     def copy_fingerprint(self) -> str:
         """Return the ordered key/value/origin copy fingerprint."""
         return _read_network_config_authorization(self).copy_fingerprint
+
 
 @dataclass(frozen=True, slots=True)
 class _SourceObjectRecord:
@@ -254,9 +249,7 @@ class SourceObjectDirectoryAuthorization:
     __slots__ = ("__weakref__",)
 
     def __new__(cls) -> SourceObjectDirectoryAuthorization:
-        raise TypeError(
-            "Source object authorizations require a proved directory"
-        )
+        raise TypeError("Source object authorizations require a proved directory")
 
     def __setattr__(self, _name: str, _value: object) -> None:
         raise FrozenInstanceError("cannot change source object authorization")
@@ -325,10 +318,7 @@ def _validated_network_config_record(
                 raise NetworkContextError("invalid_configuration")
         elif lowered == "credential.usehttppath":
             use_http_path_count += 1
-            if (
-                use_http_path_count > 1
-                or fact.value.lower() not in _GIT_BOOLEAN
-            ):
+            if use_http_path_count > 1 or fact.value.lower() not in _GIT_BOOLEAN:
                 raise NetworkContextError("invalid_configuration")
         else:
             raise NetworkContextError("invalid_configuration")
@@ -383,9 +373,7 @@ def _authorize_network_config_snapshot(
             for fact in facts
             if (
                 fact.key.lower().startswith("credential.")
-                and fact.key.lower().endswith(
-                    ("helper", "usehttppath")
-                )
+                and fact.key.lower().endswith(("helper", "usehttppath"))
             )
         )
         if (
@@ -395,10 +383,7 @@ def _authorize_network_config_snapshot(
         else ()
     )
     ssh_policy = None
-    if (
-        type(destination) is PushDestinationProjection
-        and destination.scheme == "ssh"
-    ):
+    if type(destination) is PushDestinationProjection and destination.scheme == "ssh":
         if environment is None or type(repository) is not RepositoryIdentity:
             raise NetworkContextError("invalid_configuration")
         ssh_policy = _capture_ssh_network_policy(environment, repository)
@@ -524,9 +509,7 @@ def _make_authorization_registry():
             expected_identity,
             object_format,
         )
-        authorization = object.__new__(
-            SourceObjectDirectoryAuthorization
-        )
+        authorization = object.__new__(SourceObjectDirectoryAuthorization)
         source_records[authorization] = record
         return authorization
 
@@ -563,12 +546,9 @@ class NetworkCommandSettings:
 
     def __post_init__(self) -> None:
         copied = dict(self.environment)
-        if (
-            not self.cwd
-            or any(
-                not isinstance(key, str) or not isinstance(value, str)
-                for key, value in copied.items()
-            )
+        if not self.cwd or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in copied.items()
         ):
             raise NetworkContextError("invalid_context")
         object.__setattr__(
@@ -903,8 +883,10 @@ class _PrivateLayout:
                     allow_directory_link_drift=allow_partial_cleanup,
                 ):
                     return False
-                if entry.kind == "directory" and set(os.listdir(path)) != (
-                    expected_children[entry.relative_path]
+                if (
+                    entry.kind == "directory"
+                    and set(os.listdir(path))
+                    != (expected_children[entry.relative_path])
                 ):
                     return False
         except (OSError, RuntimeError):
@@ -918,11 +900,7 @@ class _PrivateLayout:
         ):
             return False
         files = sorted(
-            (
-                entry
-                for entry in self._entries
-                if entry.kind in {"file", "executable"}
-            ),
+            (entry for entry in self._entries if entry.kind in {"file", "executable"}),
             key=lambda entry: entry.relative_path.count("/"),
             reverse=True,
         )
@@ -992,9 +970,7 @@ class _LayoutBuilder:
         if mode is not None and executable:
             raise NetworkContextError("unsafe_filesystem")
         selected_mode = (
-            mode
-            if mode is not None
-            else (_ADAPTER_MODE if executable else _FILE_MODE)
+            mode if mode is not None else (_ADAPTER_MODE if executable else _FILE_MODE)
         )
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -1034,9 +1010,7 @@ class _ContextAuthority:
     git_executable: _PinnedExecutable = field(repr=False)
     git_exec_directory: _PinnedDirectory = field(repr=False)
     python_executable: _PinnedExecutable | None = field(repr=False)
-    dispatch_executables: tuple[_PinnedGitDispatchExecutable, ...] = field(
-        repr=False
-    )
+    dispatch_executables: tuple[_PinnedGitDispatchExecutable, ...] = field(repr=False)
     agent_socket: _PinnedSocket | None = field(repr=False)
     source_objects: _SourceObjectRecord = field(repr=False)
     configuration: _NetworkConfigRecord = field(repr=False)
@@ -1312,9 +1286,7 @@ def _make_network_context_registry():
         candidate_oid: str,
     ) -> tuple[str, ...]:
         authority = require_endpoint(context, endpoint)
-        expected_width = (
-            40 if authority.source_objects.object_format == "sha1" else 64
-        )
+        expected_width = 40 if authority.source_objects.object_format == "sha1" else 64
         if (
             not _object_id_matches_format(parent_oid, expected_width)
             or not _object_id_matches_format(candidate_oid, expected_width)
@@ -1538,8 +1510,7 @@ class NetworkContextFactory:
             or endpoint_projection != destination
             or not _repository_matches(repository)
             or not _source_record_matches(source_record)
-            or source_record.path
-            != Path(repository.git_common_dir) / "objects"
+            or source_record.path != Path(repository.git_common_dir) / "objects"
             or not self._git_executable.validate()
             or not self._git_exec_directory.validate()
             or any(
@@ -1572,9 +1543,7 @@ class NetworkContextFactory:
                 *dispatch_executables,
             )
         ssh_policy = config_record.ssh_policy
-        agent_socket = (
-            ssh_policy.agent_socket if ssh_policy is not None else None
-        )
+        agent_socket = ssh_policy.agent_socket if ssh_policy is not None else None
         if agent_socket is not None and not agent_socket.validate():
             raise NetworkContextError("invalid_context")
         python_executable = (
@@ -1606,9 +1575,7 @@ class NetworkContextFactory:
         root: Path | None = None
         builder: _LayoutBuilder | None = None
         try:
-            root = Path(
-                tempfile.mkdtemp(prefix=_CONTEXT_PREFIX, dir=str(parent))
-            )
+            root = Path(tempfile.mkdtemp(prefix=_CONTEXT_PREFIX, dir=str(parent)))
             root.chmod(_DIRECTORY_MODE)
             if (
                 root.parent != parent
@@ -1945,11 +1912,7 @@ def _environment_fingerprint(
 ) -> str:
     digest = hashlib.sha256()
     _digest_text(digest, "file-notes-network-environment-v1")
-    pairs = (
-        environment.items()
-        if isinstance(environment, Mapping)
-        else environment
-    )
+    pairs = environment.items() if isinstance(environment, Mapping) else environment
     for key, value in pairs:
         _digest_text(digest, key)
         _digest_text(digest, value)
@@ -2011,10 +1974,7 @@ def _render_private_config(
     facts: tuple[_AuthorizedConfigFact, ...],
     object_format: GitObjectFormat,
 ) -> bytes:
-    if (
-        type(object_format) is not str
-        or object_format not in {"sha1", "sha256"}
-    ):
+    if type(object_format) is not str or object_format not in {"sha1", "sha256"}:
         raise NetworkContextError("invalid_source_objects")
     lines = [
         "[core]\n",
@@ -2182,10 +2142,7 @@ def _pin_git_dispatch_executable(
         raise NetworkContextError("invalid_executable")
     if (
         exec_path_candidate.name != name
-        or not (
-            stat.S_ISREG(metadata.st_mode)
-            or stat.S_ISLNK(metadata.st_mode)
-        )
+        or not (stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode))
         or metadata.st_uid not in {os.geteuid(), 0}
         or (
             stat.S_ISREG(metadata.st_mode)
@@ -2260,9 +2217,8 @@ def _capture_safe_ancestors(path: Path) -> tuple[_PinnedAncestor, ...]:
             metadata = ancestor.stat(follow_symlinks=False)
         except OSError:
             raise NetworkContextError("unsafe_filesystem") from None
-        if (
-            not stat.S_ISDIR(metadata.st_mode)
-            or not _safe_owned_directory_mode(metadata)
+        if not stat.S_ISDIR(metadata.st_mode) or not _safe_owned_directory_mode(
+            metadata
         ):
             raise NetworkContextError("unsafe_filesystem")
         captured.append(
@@ -2740,14 +2696,9 @@ def _known_entry_matches(
             or (allow_directory_link_drift and entry.kind == "directory")
         )
         and (entry.kind == "directory") == stat.S_ISDIR(metadata.st_mode)
-        and (entry.kind in {"file", "executable"})
-        == stat.S_ISREG(metadata.st_mode)
+        and (entry.kind in {"file", "executable"}) == stat.S_ISREG(metadata.st_mode)
     )
-    if (
-        not matches
-        or entry.kind not in {"file", "executable"}
-        or not include_contents
-    ):
+    if not matches or entry.kind not in {"file", "executable"} or not include_contents:
         return matches
     return metadata.st_size == entry.size and _file_digest(path) == entry.digest
 
@@ -2801,10 +2752,7 @@ def _safe_environment_value(name: str, value: object) -> bool:
 
 def _safe_openssh_option_path(value: object) -> bool:
     """Reject OpenSSH option parsing, token expansion, and path lists."""
-    return (
-        isinstance(value, str)
-        and _OPENSSH_OPTION_PATH.fullmatch(value) is not None
-    )
+    return isinstance(value, str) and _OPENSSH_OPTION_PATH.fullmatch(value) is not None
 
 
 def _path_is_within(path: Path, parent: Path) -> bool:

@@ -81,6 +81,7 @@ WORKSPACE_OPERATIONS = frozenset(
         "fs_write",
         "fs_edit",
         "fs_patch",
+        "fs_mkdir",
         "fs_glob",
         "fs_grep",
         "stat_path",
@@ -96,7 +97,9 @@ WORKSPACE_OPERATIONS = frozenset(
         "ping",
     }
 )
-WORKSPACE_WRITE_OPERATIONS = frozenset({"fs_write", "fs_edit", "fs_patch"})
+WORKSPACE_WRITE_OPERATIONS = frozenset(
+    {"fs_write", "fs_edit", "fs_patch", "fs_mkdir"}
+)
 WORKSPACE_INTENTS = frozenset({"read", "write"})
 WORKSPACE_OUTCOMES = frozenset({"admitted", "success", "failure"})
 
@@ -104,7 +107,11 @@ WORKSPACE_OUTCOMES = frozenset({"admitted", "success", "failure"})
 ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
     "fs_list": (
         frozenset({"path", "sensitive_exclusions"}),
-        {"path": "path", "sensitive_exclusions": "sensitive_exclusions"},
+        {
+            "path": "path",
+            "long_format": "bool",
+            "sensitive_exclusions": "sensitive_exclusions",
+        },
     ),
     "fs_read": (
         frozenset({"path", "sensitive_exclusions"}),
@@ -144,6 +151,10 @@ ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {
             "targets": "patch_targets",
             "sensitive_exclusions": "sensitive_exclusions",
         },
+    ),
+    "fs_mkdir": (
+        frozenset({"path", "sensitive_exclusions"}),
+        {"path": "path", "sensitive_exclusions": "sensitive_exclusions"},
     ),
     "fs_glob": (
         frozenset({"pattern", "sensitive_exclusions"}),

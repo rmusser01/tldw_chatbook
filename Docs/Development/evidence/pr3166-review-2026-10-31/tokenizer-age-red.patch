@@ -1,0 +1,79 @@
+diff --git a/Tests/UI/test_console_checked_display_scope.py b/Tests/UI/test_console_checked_display_scope.py
+index ff60383a36..e4fa16cd9c 100644
+--- a/Tests/UI/test_console_checked_display_scope.py
++++ b/Tests/UI/test_console_checked_display_scope.py
+@@ -807,3 +807,74 @@ async def test_spoofed_bound_key_attributes_retain_fresh_native_scope(tmp_path):
+     finally:
+         await asyncio.gather(*tasks, return_exceptions=True)
+         database.close()
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("expire_during_tokenizer", [False, True])
++async def test_tokenizer_wait_never_renews_original_checked_display(
++    tmp_path, monkeypatch, expire_during_tokenizer
++):
++    """A tokenizer completion cannot grant a new config-read freshness window."""
++    from Tests.UI.test_console_tokenizer_preparation import HeldPreparation
++
++    database, _store, _controller, screen, tasks = _screen(tmp_path)
++    projection = spend.ConsoleReadinessConfigProjection.for_screen(screen)
++    request = HeldPreparation("model", "provider")
++    projection._tokenizer_request = request
++    original_current = spend._tokenizer_display.preparation_current
++    monkeypatch.setattr(
++        spend._tokenizer_display,
++        "preparation_current",
++        lambda candidate: candidate is request or original_current(candidate),
++    )
++    issued, rendered, retries = [], [], []
++    screen._request_console_control_bar_sync = lambda **_: retries.append(True)
++    monitor = sys.monitoring
++    tool = next(slot for slot in range(6) if monitor.get_tool(slot) is None)
++    code = projection.read_current.__code__
++
++    def observed(actual_code, _offset, result):
++        assert actual_code is code
++        if isinstance(result, spend.ConsoleReadinessConfigRead):
++            issued.append(result._display_proof)
++
++    monitor.use_tool_id(tool, "tokenizer-original-display-age")
++    monitor.register_callback(tool, monitor.events.PY_RETURN, observed)
++    monitor.set_local_events(tool, code, monitor.events.PY_RETURN)
++    try:
++        assert not projection.run(lambda: None)
++        assert await asyncio.to_thread(request.entered.wait, 3)
++        assert len(issued) == 1 and issued[0] in spend._checked_display_proofs
++        assert request.thread != threading.get_ident()
++        assert projection._reads, "tokenizer escaped the finite preparation owner"
++        if expire_during_tokenizer:
++            await asyncio.sleep(1.05)
++        request.release.set()
++        await asyncio.gather(*tasks)
++        assert not projection._reads
++        assert projection._tokenizer_prepared is request
++        with _actual_calls() as calls:
++            accepted = run_console_presentation_sync(
++                screen, lambda: rendered.append(True)
++            )
++        assert accepted is not expire_during_tokenizer
++        assert rendered == ([] if expire_during_tokenizer else [True])
++        assert retries == ([True] if expire_during_tokenizer else [])
++        assert calls["main_scopes"] == calls["main_opens"] == 0, calls
++        assert projection._display_proof.at == issued[0].at
++        assert projection.at == issued[0].at
++        if expire_during_tokenizer:
++            assert projection.pending
++            await asyncio.gather(*tasks)
++            assert len(issued) == 2 and issued[1].at > issued[0].at
++            assert run_console_presentation_sync(
++                screen, lambda: rendered.append(True)
++            )
++            assert rendered == [True]
++    finally:
++        request.release.set()
++        await asyncio.gather(*tasks, return_exceptions=True)
++        monitor.set_local_events(tool, code, 0)
++        monitor.register_callback(tool, monitor.events.PY_RETURN, None)
++        monitor.free_tool_id(tool)
++        database.close()

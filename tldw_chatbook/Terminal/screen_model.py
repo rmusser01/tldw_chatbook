@@ -34,7 +34,8 @@ STYLE_RUN_ACCOUNTING_BYTES = 32
 LINE_ACCOUNTING_BYTES = 16
 _OVERFLOW_CELL = "\udfff"
 
-_ALLOWED_PRIVATE_MODES = frozenset((1, 5, 6, 7, 25, 2004))
+_BRACKETED_PASTE_MODE = 2004
+_ALLOWED_PRIVATE_MODES = frozenset((1, 5, 6, 7, 25, _BRACKETED_PASTE_MODE))
 _ALLOWED_STANDARD_MODES = frozenset((4, 20))
 _DEC_ALTERNATE_SCREEN_MODE = 1049
 _SAFE_COLOR = re.compile(r"\A[0-9A-Za-z#_-]{1,32}\Z")
@@ -146,6 +147,7 @@ class TerminalScreenSnapshot:
     cursor_visible: bool = True
     cursor_savepoints: int = 0
     in_alternate: bool = False
+    bracketed_paste: bool = False
     generation: int = 0
     dirty_lines: tuple[int, ...] = ()
     scrollback_bytes: int = 0
@@ -621,6 +623,7 @@ class TerminalScreenModel:
             cursor_visible=not active.cursor.hidden,
             cursor_savepoints=len(active.savepoints),
             in_alternate=self._screens.in_alternate,
+            bracketed_paste=(_BRACKETED_PASTE_MODE << 5) in active.mode,
             generation=self._generation,
             dirty_lines=tuple(sorted(row + 1 for row in active.dirty)),
             scrollback_bytes=self._scrollback_bytes,

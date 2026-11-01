@@ -148,6 +148,31 @@ def test_app_import_does_not_load_legacy_feature_windows(tmp_path: Path) -> None
     assert payload["loaded"] == []
 
 
+def test_mcp_connection_health_import_keeps_native_cleanup_deferred(
+    tmp_path: Path,
+) -> None:
+    """Ordinary MCP session checks keep native plugin root custody deferred."""
+    result = _run_isolated_python(
+        tmp_path,
+        """
+        import sys
+        from types import SimpleNamespace
+        from Tests import network_guard, real_profile_guard
+
+        network_guard.install()
+        real_profile_guard.install()
+        assert "tldw_chatbook.MCP.connection_ownership" not in sys.modules
+        from tldw_chatbook.MCP.connection_ownership import ConnectionOwnership
+
+        assert not ConnectionOwnership._session_unavailable(SimpleNamespace())
+        assert ConnectionOwnership._session_unavailable(SimpleNamespace(_closed=True))
+        assert "tldw_chatbook.Plugins.data_cleanup" not in sys.modules
+        """,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_tool_pack_facade_export_is_lazy(tmp_path: Path) -> None:
     """Package symbols must not pull service owners in until first access."""
 
@@ -248,7 +273,14 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
             "before": before,
             "after": after,
             "attached": fake.tool_pack_service is not None and registry.guard is not None,
-            "root": str(fake.tool_pack_service.receipt_root),
+            "root": (
+                str(fake.tool_pack_service.receipt_root)
+                if fake.tool_pack_service is not None else None
+            ),
+            "unavailable_reason": fake.tool_pack_service_unavailable_reason,
+            "reconciliation_reason": fake.tool_pack_receipt_reconciliation_unavailable_reason,
+            "guard_active": bootstrap.active_guard is not None,
+            "guard_unchanged": registry.guard is bootstrap,
         }))
         """,
     )
@@ -265,6 +297,15 @@ def test_tool_pack_implementation_imports_only_in_deferred_worker(
         "tldw_chatbook.Tool_Packs.receipt_store",
         "tldw_chatbook.Tool_Packs.removal",
     ]
+    if os.name == "nt":
+        # Native Windows receipt durability remains unqualified (ADR-107).
+        assert payload["attached"] is False
+        assert payload["root"] is None
+        assert payload["unavailable_reason"] == "composition_unavailable"
+        assert payload["reconciliation_reason"] == "not_run"
+        assert payload["guard_active"] is False
+        assert payload["guard_unchanged"] is True
+        return
     assert payload["attached"] is True
     assert payload["root"] == str(tmp_path / "data" / "tool_pack_receipts")
 
@@ -490,6 +531,7 @@ async def test_deferred_migration_is_single_flight(monkeypatch) -> None:
 
     migration = SimpleNamespace(
         ready=True,
+        writes_enabled=True,  # TASK-33620.8: the driver gates on the switch
         migrate_idle_unit=lambda: LegacyMigrationBatchResult(
             state=LegacyMigrationState.COMPLETE
         ),
@@ -542,6 +584,7 @@ async def test_deferred_migration_retries_exceptions_with_bounded_backoff(
     fake_app = SimpleNamespace(
         citation_legacy_migration_service=SimpleNamespace(
             ready=True,
+            writes_enabled=True,  # TASK-33620.8
             migrate_idle_unit=migrate_idle_unit,
         ),
         loguru_logger=Mock(),
@@ -587,6 +630,7 @@ async def test_deferred_migration_backs_off_running_guard_failures(
     fake_app = SimpleNamespace(
         citation_legacy_migration_service=SimpleNamespace(
             ready=True,
+            writes_enabled=True,  # TASK-33620.8
             migrate_idle_unit=migrate_idle_unit,
         ),
         loguru_logger=Mock(),
@@ -650,6 +694,7 @@ async def test_deferred_migration_isolates_terminal_failures_and_drains_later_wo
     fake_app = SimpleNamespace(
         citation_legacy_migration_service=SimpleNamespace(
             ready=True,
+            writes_enabled=True,  # TASK-33620.8
             migrate_idle_unit=migrate_idle_unit,
         ),
         loguru_logger=logger,
@@ -686,7 +731,9 @@ async def test_deferred_migration_rechecks_disabled_policy_between_units() -> No
         calls = 0
 
         @property
-        def ready(self) -> bool:
+        def writes_enabled(self) -> bool:
+            # TASK-33620.8: the driver re-checks the canonical-write switch;
+            # key readiness is acquired inside each unit (first use).
             return self.enabled
 
         def migrate_idle_unit(self):

@@ -1,0 +1,329 @@
+{
+  "task": "TASK-32108.6",
+  "production_source_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "958552eeec74477bbc76b2891aa9239d9f8ac9a80fc5719e59d8a062a0856d54",
+    "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
+    "tldw_chatbook/config.py": "ae6542e60ecc3967b6f0d264ee2981a18cf0fca4ccdcff5542f12993b0f173d3",
+    "tldw_chatbook/app_service_wiring.py": "4224347adaaef849b5728c90dc5ae8769366ea64954b0ca30c9858e8519a5957",
+    "tldw_chatbook/app_lifecycle.py": "b5fd115b5868100378250370d94319c40e9b6269b3025f7a2532f7c993b9dc41",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba"
+  },
+  "executed_test_source_sha256": {
+    "Tests/UI/test_console_realtime_wiring.py": "dcda34ca065a6a1097279726df7a2110ca1f39590737534760e5c2ff60d78940",
+    "Tests/UI/test_console_realtime_controller.py": "254e78524f30c742af36a6198960ac33d4046d15d804b135ab1c6e9ce8153c7a",
+    "Tests/Audio/test_realtime_mic_tap.py": "36d2bd598445bf227c55364775502537f69dd0bdae1d04b6624013ba10b7b4da",
+    "Tests/Chat/test_console_realtime_loop.py": "f213c0cd41656b5e4bc488ce348b329fc84dd4c60ce08f76630ade5fa8a45998",
+    "Tests/LLM_Calls/test_openai_realtime_session.py": "7eb8ce27ad40171abb65ec497f0fcfc9dfe200fa258afa96b8466bab0a5040c3"
+  },
+  "executed_command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-p",
+    "pytest_asyncio.plugin",
+    "-p",
+    "pytest_timeout",
+    "-p",
+    "no:cacheprovider",
+    "-p",
+    "buddy_fd_summary",
+    "Tests/UI/test_console_realtime_wiring.py",
+    "Tests/UI/test_console_realtime_controller.py",
+    "Tests/Audio/test_realtime_mic_tap.py",
+    "Tests/Chat/test_console_realtime_loop.py",
+    "Tests/LLM_Calls/test_openai_realtime_session.py",
+    "--basetemp=/private/tmp/chatbook-buddy-realtime-clean-20261003",
+    "--junitxml=/private/tmp/chatbook-buddy-realtime-clean-20261003.xml",
+    "--timeout=120",
+    "-q"
+  ],
+  "command_receipt_sha256": "817d564059ea222c0ae25f9dda61f8d6184ce6cdac8729b99f8736a785900b8b",
+  "targeted_runs": {
+    "initial_profile_and_bind_failures": {
+      "tests": 109,
+      "failures": 41,
+      "errors": 0,
+      "skipped": 0,
+      "time_seconds": 20.139,
+      "xml_sha256": "753414dd4b77285e60b24f4a1925c5acc397aa99bd2ce4b65470222d695238dc",
+      "log_sha256": "a96595d1b0242cd1296ef425f64d81e99863f644312aa81d772174610f3f55b3",
+      "local_stem": "/private/tmp/chatbook-buddy-realtime-lifecycle-20261003"
+    },
+    "profile_failures_exposed_after_loopback_bind": {
+      "tests": 109,
+      "failures": 34,
+      "errors": 0,
+      "skipped": 0,
+      "time_seconds": 73.85,
+      "xml_sha256": "3470c767564fc1368880e8a63821f944cdbc96228579384ff853ca128924d56b",
+      "log_sha256": "a17f69625d4dcd0fc15a7f7deb56014981b1df1dedf40b8026daae5af940ea04",
+      "local_stem": "/private/tmp/chatbook-buddy-realtime-lifecycle-green-20261003"
+    },
+    "full_group_before_storage_cleanup": {
+      "tests": 181,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time_seconds": 471.953,
+      "xml_sha256": "f606cfd5a7205bb0311b470a42a158e095ee68288c0a0749e24b9a08bb450fe2",
+      "log_sha256": "2a618b4224d553136184e6d2c9a93ee8f9df0dd06dc64cebd35902ed2d5dd0b0",
+      "local_stem": "/private/tmp/chatbook-buddy-realtime-qualified-20261003"
+    },
+    "native_descriptor_census": {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time_seconds": 18.759,
+      "xml_sha256": "f18de7c93e5e00df3a117efa3f7b2f39defac9335511c722c0881cb44bf3643c",
+      "log_sha256": "623893c3a1fcbe08630302867494c64bd944b2af4a6a9de353eff63840e8f107",
+      "local_stem": "/private/tmp/chatbook-buddy-realtime-fd-native-census-20261003"
+    },
+    "storage_cleanup_census": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time_seconds": 22.627,
+      "xml_sha256": "4a437bfa9aea120f78f31c0047a91c423402490a05929f3fffc5e77001bb8976",
+      "log_sha256": "89285e38b3c7e70ecb4f850e7f54bf8e729ecd3b66ba2bf4ec2456a30aace347",
+      "local_stem": "/private/tmp/chatbook-buddy-realtime-fd-cleanup-census-20261003"
+    },
+    "final_realtime_group": {
+      "tests": 181,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "time_seconds": 340.879,
+      "xml_sha256": "b67724eb3b14880f54c207e48879aac134c36b4c98fe6f893ff6685805297183",
+      "log_sha256": "78419ad07d0422be87bcbd1a203fc1ab295547b6ae37fb597366ab3537c6d44a",
+      "local_stem": "/private/tmp/chatbook-buddy-realtime-clean-20261003"
+    }
+  },
+  "initial_failure_attribution": {
+    "raw_source_selection_changed": 7,
+    "sandbox_numeric_loopback_bind_refusals": 34
+  },
+  "intermediate_failure_attribution": {
+    "tls_settings_raw_source_selection_changed": 34
+  },
+  "storage_cleanup": {
+    "before_full_run_warning": "181 passed; fd sentinel grew 697 (14 to 711).",
+    "before_per_case_census": [
+      {
+        "phase": "start",
+        "node": null,
+        "process_fds": 13,
+        "sqlite_native_file_records_by_name": {}
+      },
+      {
+        "phase": "after",
+        "node": "Tests/UI/test_console_realtime_wiring.py::test_persona_buddy_realtime_fsm_replaces_generation_and_releases_on_exit",
+        "process_fds": 26,
+        "sqlite_native_file_records_by_name": {
+          "library_collections.sqlite-shm": 2,
+          "workspaces.sqlite-shm": 2,
+          "evals.db-shm": 2,
+          "library_collections.sqlite": 1,
+          "library_collections.sqlite-wal": 1,
+          "workspaces.sqlite": 2,
+          "workspaces.sqlite-wal": 1,
+          "evals.db": 1,
+          "evals.db-wal": 1
+        }
+      },
+      {
+        "phase": "after",
+        "node": "Tests/UI/test_console_realtime_wiring.py::test_missing_api_key_refuses_before_any_connect_attempt",
+        "process_fds": 39,
+        "sqlite_native_file_records_by_name": {
+          "library_collections.sqlite-shm": 4,
+          "workspaces.sqlite-shm": 4,
+          "evals.db-shm": 2,
+          "subscriptions.sqlite-shm": 2,
+          "library_collections.sqlite": 2,
+          "library_collections.sqlite-wal": 2,
+          "workspaces.sqlite": 4,
+          "workspaces.sqlite-wal": 2,
+          "evals.db": 2,
+          "evals.db-wal": 2,
+          "subscriptions.sqlite": 1,
+          "subscriptions.sqlite-wal": 1
+        }
+      },
+      {
+        "phase": "finish",
+        "node": null,
+        "process_fds": 39,
+        "sqlite_native_file_records_by_name": {
+          "library_collections.sqlite-shm": 4,
+          "workspaces.sqlite-shm": 4,
+          "evals.db-shm": 2,
+          "subscriptions.sqlite-shm": 2,
+          "library_collections.sqlite": 2,
+          "library_collections.sqlite-wal": 2,
+          "workspaces.sqlite": 4,
+          "workspaces.sqlite-wal": 2,
+          "evals.db": 2,
+          "evals.db-wal": 2,
+          "subscriptions.sqlite": 1,
+          "subscriptions.sqlite-wal": 1
+        }
+      }
+    ],
+    "after_per_case_census": [
+      {
+        "phase": "start",
+        "node": null,
+        "process_fds": 13,
+        "sqlite_native_file_records_by_name": {}
+      },
+      {
+        "phase": "after",
+        "node": "Tests/UI/test_console_realtime_wiring.py::test_persona_buddy_realtime_fsm_replaces_generation_and_releases_on_exit",
+        "process_fds": 17,
+        "sqlite_native_file_records_by_name": {}
+      },
+      {
+        "phase": "after",
+        "node": "Tests/UI/test_console_realtime_wiring.py::test_keypress_barge_in_stops_the_sink_and_cancels_with_played_ms",
+        "process_fds": 17,
+        "sqlite_native_file_records_by_name": {}
+      },
+      {
+        "phase": "after",
+        "node": "Tests/UI/test_console_realtime_wiring.py::test_missing_api_key_refuses_before_any_connect_attempt",
+        "process_fds": 17,
+        "sqlite_native_file_records_by_name": {}
+      },
+      {
+        "phase": "after",
+        "node": "Tests/LLM_Calls/test_openai_realtime_session.py::test_connect_sends_session_update_and_fires_ready",
+        "process_fds": 17,
+        "sqlite_native_file_records_by_name": {}
+      },
+      {
+        "phase": "finish",
+        "node": null,
+        "process_fds": 17,
+        "sqlite_native_file_records_by_name": {}
+      }
+    ],
+    "final_session_hook_fd_counts": {
+      "session_hook_start": 13,
+      "session_hook_end": 16,
+      "delta": 3
+    },
+    "fd_summary_plugin_sha256": "e305996e14f7c642697dcc524ff634860792fba812af1fb01804873fc71f8790",
+    "guard_threshold_changed": false,
+    "closure_scope": "After the mounted host settles, drain the backing app Console runtime; close evaluation, workspace, library collections and subscriptions stores on their creating UI thread."
+  },
+  "static": {
+    "files": {
+      "Tests/UI/test_console_realtime_wiring.py": {
+        "sha256": "dcda34ca065a6a1097279726df7a2110ca1f39590737534760e5c2ff60d78940",
+        "base_ruff_diagnostics": 8,
+        "current_ruff_diagnostics": 8,
+        "compiled": true,
+        "all_existing_top_level_definitions_unchanged": true,
+        "added_definitions": [
+          "_close_realtime_harness_owners"
+        ],
+        "assert_nodes_retained": 207
+      },
+      "Tests/UI/test_console_realtime_controller.py": {
+        "sha256": "254e78524f30c742af36a6198960ac33d4046d15d804b135ab1c6e9ce8153c7a",
+        "base_ruff_diagnostics": 1,
+        "current_ruff_diagnostics": 1,
+        "compiled": true,
+        "all_existing_top_level_definitions_unchanged": true,
+        "added_definitions": [],
+        "assert_nodes_retained": 77
+      },
+      "Tests/LLM_Calls/test_openai_realtime_session.py": {
+        "sha256": "7eb8ce27ad40171abb65ec497f0fcfc9dfe200fa258afa96b8466bab0a5040c3",
+        "base_ruff_diagnostics": 11,
+        "current_ruff_diagnostics": 11,
+        "compiled": true,
+        "all_existing_top_level_definitions_unchanged": true,
+        "added_definitions": [],
+        "assert_nodes_retained": 54
+      }
+    },
+    "introduced_diagnostics": [],
+    "format_check": {
+      "exit_code": 0,
+      "output": "3 files already formatted"
+    },
+    "whitespace_check": {
+      "exit_code": 0,
+      "output": ""
+    }
+  },
+  "independent_review": "No actionable findings; all five executed source hashes match, all181 unique cases pass without warnings, all74 original wiring test bodies and338 assertions are preserved.",
+  "credential_preflight": {
+    "normal_config_sha256": "15c6cb224a6a51c7de5c3f716fbe9dfaef7b7ca05cf9daa7e3ebe247df9310da",
+    "openai_modern_key_present": false,
+    "openai_legacy_key_present": false,
+    "normal_config_sha256_after": "15c6cb224a6a51c7de5c3f716fbe9dfaef7b7ca05cf9daa7e3ebe247df9310da",
+    "selected_openai_key_env_configured": true,
+    "selected_openai_key_env_present": false,
+    "common_openai_key_env_present": false,
+    "normal_config_unchanged": true,
+    "access_scope": "Read only credential-field presence, selected environment presence and byte fingerprint; no product import or normal-profile writes."
+  },
+  "restarted_preview": {
+    "observed_at_utc": "2026-10-04T06:38:24.442286+00:00",
+    "launch": {
+      "source": "/Users/macbook-dev/.codex/worktrees/buddy-audio-probe-auth/tldw_chatbook",
+      "revision": "789e2a0ba764806f033ed9873515dccf8b38f4f3",
+      "pid": 13705,
+      "port": 18770,
+      "profile": "/private/tmp/chatbook-buddy-interactive-20261003",
+      "runtime": "supported Chatbook textual-serve",
+      "source_sha256": {
+        "tldw_chatbook/UI/Screens/chat_screen.py": "958552eeec74477bbc76b2891aa9239d9f8ac9a80fc5719e59d8a062a0856d54",
+        "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
+        "tldw_chatbook/config.py": "ae6542e60ecc3967b6f0d264ee2981a18cf0fca4ccdcff5542f12993b0f173d3",
+        "tldw_chatbook/app_service_wiring.py": "4224347adaaef849b5728c90dc5ae8769366ea64954b0ca30c9858e8519a5957",
+        "tldw_chatbook/app_lifecycle.py": "b5fd115b5868100378250370d94319c40e9b6269b3025f7a2532f7c993b9dc41",
+        "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba"
+      },
+      "physical_microphone_opened": false
+    },
+    "launch_json_sha256": "5c34e4c2e8538c7a7890a7a7fd70abd42fdfb83c61f43a6edfbd088dfa3e6db3",
+    "browser_url": "http://127.0.0.1:18770/",
+    "observations": [
+      "Buddy visible on restarted Home with saved artwork and placement",
+      "Clicking artwork opens saved Buddy UAT A with its original synthetic history",
+      "Closing conversation returns to Home with Buddy visible"
+    ],
+    "physical_audio_opened": false,
+    "provider_requests_sent": false,
+    "normal_profile_used_by_runtime": false,
+    "screenshots_sha256": {
+      "/private/tmp/chatbook-buddy-preview-restored-20261003.png": "3b9c69d569eb7a394301adb97dca05779a77bb8ae3c4bd45cbe2d9a80d62c0ac",
+      "/private/tmp/chatbook-buddy-cold-conversation-20261003.png": "dd0d1f0af72937dbca01af6358bcff65b59a642dc303d0fe5071c857a57e57df",
+      "/private/tmp/chatbook-buddy-audio-ready-20261003.png": "e1389d5a3f6e35a8b11b2239121ead58e2f365ac55d397b22a222fa65cef383f"
+    }
+  },
+  "rendered_evidence_sha256": {
+    "buddy-realtime-preview-ready.png": "e1389d5a3f6e35a8b11b2239121ead58e2f365ac55d397b22a222fa65cef383f",
+    "buddy-realtime-cold-conversation.png": "dd0d1f0af72937dbca01af6358bcff65b59a642dc303d0fe5071c857a57e57df"
+  },
+  "aggregate_final_checks": {
+    "prior_unique_passes": 153,
+    "realtime_unique_passes": 181,
+    "overlap": 0,
+    "total_unique_passes": 334,
+    "test_id_set_sha256": "2ab31727136858edcf653e6f923a5f750228bf089356c3d433d2aa1ad51c81a1"
+  },
+  "coverage_limits": [
+    "Targeted checks only; no full test sweep.",
+    "Synthetic audio, injected recorders/playback and owned numeric-loopback protocol server; physical microphone/playback acceptance remains open.",
+    "Application-configured live OpenAI realtime acceptance remains open: no OpenAI key in the inspected config or selected/common environment.",
+    "Native Terminal acceptance remains open; prior Computer Use rejection was respected.",
+    "All runtime/tests use isolated profiles; normal config metadata was read only for credential preflight.",
+    "Descriptor census verifies the fixture stores on their creating UI thread; total session descriptor growth is3, not zero."
+  ]
+}

@@ -5,6 +5,9 @@ import asyncio
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.console_fixture_ownership import (
+    owned_console_apps as owned_console_apps,  # noqa: PLC0414
+)
 from Tests.UI.test_console_left_rail import make_console_pilot
 from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
@@ -19,11 +22,12 @@ from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
 
 @private_profile_test
 async def test_current_unread_survives_repaint_and_clears_after_tab_revisit(
-    request, tmp_path
+    request, tmp_path, owned_console_apps
 ):
     async with make_console_pilot(production_styles=True) as pilot:
         screen = pilot.app.screen
         db = CharactersRAGDB(str(tmp_path / "marks.sqlite"), client_id="unread")
+        owned_console_apps(screen.app_instance.console_runtime, db)
         marks = ConversationLocalMarksService(db)
         screen.app_instance.chachanotes_db = db
         screen.app_instance.conversation_local_marks_service = marks
@@ -69,16 +73,56 @@ async def test_current_unread_survives_repaint_and_clears_after_tab_revisit(
 import pytest
 
 
+@pytest.mark.parametrize("marked", [False, True])
+@private_profile_test
+async def test_explicit_return_reads_current_reminder_and_only_syncs_when_marked(
+    request,
+    tmp_path,
+    monkeypatch,
+    marked,
+    owned_console_apps,  # noqa: F811 - imported pytest fixture
+):
+    async with make_console_pilot(production_styles=True) as pilot:
+        screen = pilot.app.screen
+        db = CharactersRAGDB(str(tmp_path / "return.sqlite"), client_id="return")
+        owned_console_apps(screen.app_instance.console_runtime, db)
+        marks = ConversationLocalMarksService(db)
+        screen.app_instance.conversation_local_marks_service = marks
+        store = screen._ensure_console_chat_store()
+        active = store.ensure_session()
+        cid = ChatConversationService(db).create_conversation(title="Return")
+        active.persisted_conversation_id = cid
+        await screen._sync_native_console_chat_ui()
+        await pilot.pause()
+        if marked:
+            await asyncio.to_thread(marks.mark_unread, cid)
+        calls = []
+        original = screen._session._sync_native_console_chat_ui
+
+        async def sync():
+            calls.append("sync")
+            return await original()
+
+        monkeypatch.setattr(screen._session, "_sync_native_console_chat_ui_fn", sync)
+        await screen._session.acknowledge_explicit_console_return()
+        async with asyncio.timeout(5):
+            while await asyncio.to_thread(marks.unread_token, cid):
+                await asyncio.sleep(0.032)
+        assert calls == (["sync"] if marked else [])
+        assert screen._console_visible_send_session_id() == active.id
+
+
 @pytest.mark.parametrize(
     "change", ["remark", "profile", "service", "navigation", "unpainted", "wrong_chat"]
 )
 @private_profile_test
 async def test_late_read_acknowledgement_cannot_clear_a_new_or_unseen_reminder(
-    request, tmp_path, monkeypatch, change
+    request, tmp_path, monkeypatch, change, owned_console_apps
 ):
     async with make_console_pilot(production_styles=True) as pilot:
         screen = pilot.app.screen
         db = CharactersRAGDB(str(tmp_path / "marks.sqlite"), client_id="unread")
+        owned_console_apps(screen.app_instance.console_runtime, db)
         marks = ConversationLocalMarksService(db)
         screen.app_instance.conversation_local_marks_service = marks
         conversations = ChatConversationService(db)
@@ -122,11 +166,12 @@ async def test_late_read_acknowledgement_cannot_clear_a_new_or_unseen_reminder(
 
 @private_profile_test
 async def test_duplicate_tabs_and_cancelled_activation_preserve_manual_unread(
-    request, tmp_path
+    request, tmp_path, owned_console_apps
 ):
     async with make_console_pilot(production_styles=True) as pilot:
         screen = pilot.app.screen
         db = CharactersRAGDB(str(tmp_path / "marks.sqlite"), client_id="unread")
+        owned_console_apps(screen.app_instance.console_runtime, db)
         marks = ConversationLocalMarksService(db)
         screen.app_instance.conversation_local_marks_service = marks
         conversations = ChatConversationService(db)
@@ -157,7 +202,7 @@ async def test_duplicate_tabs_and_cancelled_activation_preserve_manual_unread(
 @pytest.mark.parametrize("ascii_mode", [False, True])
 @private_profile_test
 async def test_compact_row_keeps_action_geometry_and_keyboard_focus(
-    request, tmp_path, size, ascii_mode
+    request, tmp_path, size, ascii_mode, owned_console_apps
 ):
     from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
 
@@ -166,6 +211,7 @@ async def test_compact_row_keeps_action_geometry_and_keyboard_focus(
         async with make_console_pilot(size=size, production_styles=True) as pilot:
             screen = pilot.app.screen
             db = CharactersRAGDB(str(tmp_path / "marks.sqlite"), client_id="unread")
+            owned_console_apps(screen.app_instance.console_runtime, db)
             marks = ConversationLocalMarksService(db)
             screen.app_instance.conversation_local_marks_service = marks
             conversations = ChatConversationService(db)

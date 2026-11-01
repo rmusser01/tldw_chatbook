@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 M╭──────────────────────────────────────────────────────────╮
+──────────────────────────────────────────────────────────────────────────────────────────────────│                                                          │──
+ Console — Chat, source handoffs, live runs, and control actions.                                 │ A Console turn completed while hidden. Return to Console │
+   New tab     Settings     ⚓      Context rail     Search Library     Help                      │ to review.                                               │
+──────────────────────────────────────────────────────────────────────────────────────────────────│                                                          │──
+                             │ Conversation | Use this note as context an...                      ╰──────────────────────────────────────────────────────────╯
+                  Context ◂  │   Use this note as c…  ✕    New tab     Temporary                                              │  ▸ Inspect
+   Terminal                  │                                                                                                │     Choose folder · Project
+ ──────────────────────────  │                                                                                                │  What happens if I send now?
+ Workspaces             ▸    │                                                                                                │  Where: Default › Use this no…
+ ──────────────────────────  │                                                                                                │  Scope: Everything available
+ Conversations          ▾    │                                                                                                │  Run: Ready
+   New conversation          │                                                                                                │  Sources: 1 staged
+     Archive this chat       │                                                                                                │  Approvals: None pending
+      Archived chats         │                                                                                                │ Environment                 ▾
+     Search all chats…       │                                                                                                │   Changes aren't tracked for…
+   Use this note as          │                                                                                                │   Bind a folder and enable C…
+   context an...             │                                                                                                │            Refresh
+                             │                                                                                                │                               ▇
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                │ Agents          Run history ▸
+  ▊  Filter      ▎           │                                                                                                │         View all runs
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                │
+                             │                                                                                                │  Sources — next send        1
+  1 more conversation —      │  ────────────────────────────────────────────────────────────────────────────────────────────  │  Trip planning: Lisbon (note
+  search with Ctrl+K         │   User                                                                                         │    Ready · Trip planning:
+  Chats                 ▾    │   Use this note as context and help me work with it.What is the plan for day two?              │  Console has staged this liv
+   Use this note as …  💬 ▁  │  ────────────────────────────────────────────────────────────────────────────────────────────  │
+   Thesis: chapter 2…  💬    │  ▊ Assistant                                                                                   │  Sources: Notes, Media,
+   Release notes dra…  💬  ▄ │  ▊                                                                                             │  Conversations (Prompts off)
+   Refactor the inge…  💬    │  ▊  (mock reply) You said: "Use this note as context and help me work with it.What is the      │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+   Japanese practice…  💬    │  ▊  plan for day two?". Staying in character as You are a capable assistant with optional      │  ▊  Ask Library sources     ▎
+   Kubernetes crashl…  💬    │  ▊  tools. Answer dire. The wind shifts, a lantern flickers, and the story moves forward       │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+ ▼ more — scroll             │  ▊  one beat.                                                                                  │    Search Library
+ ──────────────────────────  │  ▊                                                                                             │
+ ▼ Model · Agent · Details   │  ▊                                                                                             │ ▼ more sections — scroll
+                             │  ────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Staged for next send · 1 source                                                                                                                     Un-stage
+ Trip planning: Lisbon — note
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-4.1-mini     System Prompt: off     Assistant: General     Sources: 1     To
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                 Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

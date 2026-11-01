@@ -36,7 +36,10 @@ from tldw_chatbook.Image_Generation.config import (
     DEFAULT_GEMINI_IMAGE_TIMEOUT_SECONDS,
     get_image_generation_config,
 )
-from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
+from tldw_chatbook.Image_Generation.exceptions import (
+    ImageBackendUnavailableError,
+    ImageGenerationError,
+)
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
 from tldw_chatbook.Utils.egress import origin_set
 
@@ -129,7 +132,8 @@ class GeminiImageAdapter:
                 url=url,
                 headers=self._headers(api_key),
                 json=payload,
-                timeout=self._config.gemini_image_timeout_seconds or DEFAULT_GEMINI_IMAGE_TIMEOUT_SECONDS,
+                timeout=self._config.gemini_image_timeout_seconds
+                or DEFAULT_GEMINI_IMAGE_TIMEOUT_SECONDS,
                 # url is built from the configured base_url plus a
                 # charset-validated model id, not API-returned data, so its
                 # host is trusted.
@@ -168,7 +172,9 @@ class GeminiImageAdapter:
             output_format,
             max_bytes=self._max_output_bytes(),
         )
-        return ImageGenResult(content=content, content_type=content_type, bytes_len=len(content))
+        return ImageGenResult(
+            content=content, content_type=content_type, bytes_len=len(content)
+        )
 
     def _max_output_bytes(self) -> int:
         return effective_inline_max_bytes(self._config)
@@ -176,7 +182,9 @@ class GeminiImageAdapter:
     def _resolve_api_key(self) -> str:
         api_key = (self._config.gemini_image_api_key or "").strip()
         if not api_key:
-            api_key = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
+            api_key = (
+                os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+            ).strip()
         if not api_key:
             raise ImageBackendUnavailableError("gemini image api key is not configured")
         return api_key
@@ -185,13 +193,19 @@ class GeminiImageAdapter:
         raw = self._config.gemini_image_base_url or DEFAULT_GEMINI_IMAGE_BASE_URL
         cleaned = str(raw).strip()
         if not cleaned:
-            raise ImageBackendUnavailableError("gemini image base URL is not configured")
+            raise ImageBackendUnavailableError(
+                "gemini image base URL is not configured"
+            )
         if not cleaned.startswith("http://") and not cleaned.startswith("https://"):
             cleaned = f"https://{cleaned}"
         return cleaned.rstrip("/")
 
     def _resolve_model(self, request: ImageGenRequest) -> str:
-        model = request.model or self._config.gemini_image_default_model or DEFAULT_GEMINI_IMAGE_MODEL
+        model = (
+            request.model
+            or self._config.gemini_image_default_model
+            or DEFAULT_GEMINI_IMAGE_MODEL
+        )
         return _validate_model_id(model)
 
     @staticmethod
@@ -225,7 +239,9 @@ class GeminiImageAdapter:
         }
 
     @staticmethod
-    def _reference_image_part(reference_image: ResolvedReferenceImage) -> dict[str, Any]:
+    def _reference_image_part(
+        reference_image: ResolvedReferenceImage,
+    ) -> dict[str, Any]:
         """Build the Gemini ``inline_data`` part for a validated reference image.
 
         Args:
@@ -256,7 +272,12 @@ class GeminiImageAdapter:
         if not content:
             raise ImageGenerationError("invalid reference image data")
 
-        mime_type = (reference_image.mime_type or "application/octet-stream").split(";", 1)[0].strip().lower()
+        mime_type = (
+            (reference_image.mime_type or "application/octet-stream")
+            .split(";", 1)[0]
+            .strip()
+            .lower()
+        )
         return {
             "inline_data": {
                 "mime_type": mime_type,
@@ -290,7 +311,9 @@ class GeminiImageAdapter:
                             return extracted
                         saw_undecodable = saw_undecodable or undecodable
         if saw_undecodable:
-            raise ImageGenerationError("Gemini returned image data that could not be decoded")
+            raise ImageGenerationError(
+                "Gemini returned image data that could not be decoded"
+            )
         raise ImageGenerationError(self._no_image_message(data))
 
     def _extract_inline_data(self, part: Any) -> tuple[tuple[bytes, str] | None, bool]:
@@ -318,11 +341,15 @@ class GeminiImageAdapter:
             return None, False
         mime_type = inline.get("mimeType") or inline.get("mime_type") or "image/png"
         try:
-            content = decode_base64_image(b64data.strip(), max_bytes=self._max_output_bytes())
+            content = decode_base64_image(
+                b64data.strip(), max_bytes=self._max_output_bytes()
+            )
         except ImageGenerationError as exc:
             # Never log the b64 payload itself -- only the decoder's generic
             # failure reason (e.g. "invalid base64 image data").
-            logger.debug(f"Gemini image adapter: skipping undecodable inline-data part ({exc})")
+            logger.debug(
+                f"Gemini image adapter: skipping undecodable inline-data part ({exc})"
+            )
             return None, True
         return (content, str(mime_type)), False
 

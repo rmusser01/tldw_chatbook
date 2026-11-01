@@ -26,12 +26,12 @@ async def test_badge_appears_on_a_mounted_bar_and_clears_at_zero():
     async with app.run_test(size=(140, 24)) as pilot:
         await pilot.pause()
         button = app.query_one("#nav-console", Button)
-        base = str(button.label)
+        base = str(button.label).rstrip()
         assert CONSOLE_ATTENTION_GLYPH not in base
         set_console_attention(app, 2)
         assert str(button.label) == f"{base} {CONSOLE_ATTENTION_GLYPH}"
         set_console_attention(app, 0)
-        assert str(button.label) == base
+        assert str(button.label).rstrip() == base
 
 
 @pytest.mark.asyncio

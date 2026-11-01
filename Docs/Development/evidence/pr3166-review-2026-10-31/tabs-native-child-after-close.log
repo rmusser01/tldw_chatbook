@@ -1,0 +1,113 @@
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+rootdir: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui
+configfile: pyproject.toml
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 1 item
+
+Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close] FAILED [100%]
+
+================================== FAILURES ===================================
+_ test_actual_close_publishes_real_tabs_before_stock_read_release[after_close] _
+Tests\UI\test_console_tab_publication_read_barrier.py:630: in test_actual_close_publishes_real_tabs_before_stock_read_release
+    assert await _settle(
+E   assert False
+---------------------------- Captured stderr setup ----------------------------
+2026-10-31 13:32:59.603 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-31 13:32:59.668 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available
+2026-10-31 13:32:59.670 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice
+2026-10-31 13:32:59.671 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+---------------------------- Captured stderr call -----------------------------
+2026-10-31 13:33:00.909 | INFO     | tldw_chatbook.app:__init__:1289 - Loaded app_config - strip_thinking_tags: True
+2026-10-31 13:33:01.333 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'prompts_service' completed in 0.000s
+2026-10-31 13:33:01.334 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'notes_service' completed in 0.000s
+2026-10-31 13:33:01.334 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'providers_models' completed in 0.000s
+2026-10-31 13:33:01.334 | INFO     | tldw_chatbook.app:__init__:1397 - Parallel init task 'media_db' completed in 0.000s
+2026-10-31 13:33:01.485 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - LibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-07f8ce0e1b64\temp\tldw-chatbook-test-zxcmpghh\library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-31 13:33:02.140 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - WorkspaceDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-07f8ce0e1b64\temp\tldw-chatbook-test-zxcmpghh\workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-31 13:33:03.320 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - SubscriptionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-07f8ce0e1b64\temp\tldw-chatbook-test-zxcmpghh\subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-31 13:33:03.638 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-10-31 13:33:03.643 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - EventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-07f8ce0e1b64\temp\tldw-chatbook-test-zxcmpghh\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-31 13:33:03.644 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - SyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-07f8ce0e1b64\temp\tldw-chatbook-test-zxcmpghh\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-31 13:33:04.157 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+2026-10-31 13:33:04.265 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-10-31 13:33:04.352 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-10-31 13:33:04.422 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-10-31 13:33:04.611 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+2026-10-31 13:33:04.703 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-10-31 13:33:04.704 | INFO     | tldw_chatbook.DB.base_db:__init__:1047 - ScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-07f8ce0e1b64\temp\tldw-chatbook-test-zxcmpghh\scheduled_tasks.sqlite [Client: default]
+2026-10-31 13:33:05.347 | DEBUG    | tldw_chatbook.app:__init__:1468 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-10-31 13:33:05.347 | DEBUG    | tldw_chatbook.app:__init__:1471 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-10-31 13:33:05.424 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from C:\Users\GDesktop-1\.tmp-pr3166-review-07f8ce0e1b64\config\config\eval_overrides.yaml
+2026-10-31 13:33:05.680 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:614 - Created EvalsDB schema version 7
+2026-10-31 13:33:05.680 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:242 - EvalsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-review-07f8ce0e1b64\config\home\.local\share\tldw_cli\default_user\evals.db
+2026-10-31 13:33:05.680 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-10-31 13:33:06.389 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-10-31 13:33:06.389 | INFO     | tldw_chatbook.app:_init_worker_handlers:2220 - Worker handler registry initialized with all handlers
+2026-10-31 13:33:06.389 | INFO     | tldw_chatbook.app:__init__:1662 - === STARTUP TIMING SUMMARY ===
+2026-10-31 13:33:06.389 | INFO     | tldw_chatbook.app:__init__:1663 - Total initialization time: 6.021 seconds
+2026-10-31 13:33:06.389 | INFO     | tldw_chatbook.app:__init__:1669 -   basic_init: 0.942s (15.6%)
+2026-10-31 13:33:06.389 | INFO     | tldw_chatbook.app:__init__:1669 -   attribute_init: 0.000s (0.0%)
+2026-10-31 13:33:06.389 | INFO     | tldw_chatbook.app:__init__:1669 -   parallel_init: 0.002s (0.0%)
+2026-10-31 13:33:06.389 | INFO     | tldw_chatbook.app:__init__:1682 -     - notes_service: 0.000s (0.5% of parallel_init)
+2026-10-31 13:33:06.389 | INFO     | tldw_chatbook.app:__init__:1682 -     - providers_models: 0.000s (0.2% of parallel_init)
+2026-10-31 13:33:06.390 | INFO     | tldw_chatbook.app:__init__:1682 -     - media_db: 0.000s (0.2% of parallel_init)
+2026-10-31 13:33:06.390 | INFO     | tldw_chatbook.app:__init__:1682 -     - prompts_service: 0.000s (0.1% of parallel_init)
+2026-10-31 13:33:06.390 | INFO     | tldw_chatbook.app:__init__:1686 - ==============================
+2026-10-31 13:33:07.362 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+2026-10-31 13:33:08.121 | DEBUG    | tldw_chatbook.Chat.console_runtime:ensure_chat_controller:5017 - ensure_chat_controller: ignoring runtime-owned kwargs supplied by caller: ['default_session_settings', 'global_user_display_name', 'library_provider_factory', 'provider_config', 'rag_capture_provider', 'turn_context_provider']
+2026-10-31 13:33:08.364 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:4037 - Local persisted conversation service is unavailable
+2026-10-31 13:33:08.365 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:12860 - No Console workspace context tray available for sync
+2026-10-31 13:33:08.366 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:12860 - No Console workspace context tray available for sync
+2026-10-31 13:33:08.366 | WARNING  | tldw_chatbook.Chat.console_fleet_wake:recover:1478 - wake recovery failed (exception_type=AttributeError)
+2026-10-31 13:33:08.366 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9795 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+2026-10-31 13:33:09.722 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:910 - Sidebar temperature input not found for sync
+2026-10-31 13:33:09.754 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:720 - Screen chat mounted
+2026-10-31 13:33:09.755 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:22830 - Chat screen resuming
+2026-10-31 13:33:11.530 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:9100 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+2026-10-31 13:33:11.647 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:9155 - Successfully replaced settings file at C:\Users\GDesktop-1\.tmp-pr3166-review-07f8ce0e1b64\config\config\config.toml
+2026-10-31 13:33:11.668 | INFO     | tldw_chatbook.config:_load_settings_uncached:2321 - Determined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook
+2026-10-31 13:33:11.668 | INFO     | tldw_chatbook.config:_load_settings_uncached:2324 - Determined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook
+2026-10-31 13:33:11.673 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2347 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-31 13:33:12.070 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3912 - Ensured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-pr3166-review-07f8ce0e1b64\config\home\.local\share\tldw_cli\default_user\chat_dicts
+2026-10-31 13:33:12.071 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3943 - load_settings: Configuration cached for future use
+2026-10-31 13:33:12.073 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:9185 - Global configuration caches invalidated and reloaded.
+2026-10-31 13:33:12.724 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 10 pricing patterns for provider anthropic
+2026-10-31 13:33:12.725 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 18 pricing patterns for provider openai
+2026-10-31 13:33:12.725 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 5 pricing patterns for provider cohere
+2026-10-31 13:33:12.725 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 5 pricing patterns for provider google
+2026-10-31 13:33:12.727 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 4 pricing patterns for provider mistral
+2026-10-31 13:33:12.727 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 4 pricing patterns for provider mistralai
+2026-10-31 13:33:12.727 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:716 - Compiled 2 pricing patterns for provider deepseek
+2026-10-31 13:33:12.727 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:689 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+2026-10-31 13:33:23.436 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:751 - Screen chat unmounted
+------------------------------ Captured log call ------------------------------
+INFO     root:app.py:1423 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1530 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1551 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+-------------------------- Captured stderr teardown ---------------------------
+2026-10-31 13:33:23.883 | INFO     | tldw_chatbook.Chat.console_runtime:_dispose_owned:6596 - Console trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+23.74s call     Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]
+
+(2 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]
+======================= 1 failed, 2 warnings in 37.52s ========================

@@ -1,0 +1,147 @@
+{
+  "scope": "PR3011 remaining review repairs; accepted human voice/native UAT reused",
+  "tested_parent": "0cac92b054b7548ffef04a38c8e294600478fadb",
+  "integrated_dev": "7d155170dc95557736a239a1ce7427981f4d50ec",
+  "production_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "bf10c248cd5056bafea87a8274333efa068335ed9cd8fa494e9284c29914ff21",
+    "tldw_chatbook/UI/Screens/home_screen.py": "2ae1c5962527c6229d4e06868f11bf42dde57c9675982faf7aa799674f1755e0",
+    "tldw_chatbook/config.py": "8a156b9d3ee76953c76f1b2a79abc84281fd14611cdebf6ab27df64c6bf248c1",
+    "tldw_chatbook/app_service_wiring.py": "702f3d34193aeced083900874e7532f09c17da6afcc5d9f4ef0170e340a14daa",
+    "tldw_chatbook/app_lifecycle.py": "b1e79f198c67e84c1eaf5d020b196e586f44ca86d5b18003823251d8c89bb510",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba",
+    "tldw_chatbook/app_destinations.py": "8ab50e78e651150e8f65fa25aef82b2921c251cd6ec81ac9d32bbca2d76645cc",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_conversation_modal.py": "929d00cc570fc9fbfa2747ac6fcaad2de68b0c3e615acf523b883634ab007d81"
+  },
+  "targeted_runs": [
+    {
+      "name": "chatbook-buddy-ordered-final-20261004",
+      "passed": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 108.1,
+      "test_identities": [
+        "Tests.UI.test_console_roleplay_resume_navigation::test_resume_navigation_context_captures_only_normalized_local_id",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_resume_navigation_context_ignores_invalid_ids[None]",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_resume_navigation_context_ignores_invalid_ids[7]",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_resume_navigation_context_ignores_invalid_ids[]",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_resume_navigation_context_ignores_invalid_ids[   ]",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_resume_navigation_context_ignores_invalid_ids[xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_resume_navigation_context_is_capture_only_before_mount",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_resume_navigation_context_has_class_level_unset_default",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_mounted_resume_orders_consumers_once_and_suppresses_competitors",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_mounted_global_resume_outranks_registry_active_workspace",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_mounted_missing_resume_falls_back_to_registry_active_workspace",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_mounted_resume_settles_first_chat_once_without_intermediate_presentation",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_mounted_resume_releases_transient_first_chat_without_rollback_focus",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_mounted_resume_never_focuses_setup_modal_before_final_opener",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_resume_navigation_continues_after_chat_handoff_release",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_resume_navigation_propagates_logged_chat_handoff_acquisition_failure",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_mounted_resume_worker_is_cancelled_and_timers_stop_on_unmount",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_mounted_no_resume_keeps_blocking_modal_focus_transfer",
+        "Tests.UI.test_console_roleplay_resume_navigation::test_mounted_no_resume_keeps_ordinary_startup_sync_timers_and_focus",
+        "Tests.UI.test_chat_screen_resume_handoff_registration::test_resume_timer_list_registers_every_expected_consumer",
+        "Tests.UI.test_chat_screen_resume_handoff_registration::test_resume_timers_use_the_shared_settle_hedge_constant"
+      ],
+      "junit_sha256": "bdd6491466f4ec88a0c1975aa31f880646cfad754f39d261214fea4aec5348c3",
+      "log_sha256": "efdcaa0903a074c292adac4fda61fe67f7b0961c04e9e263f74d60d5bd993073"
+    },
+    {
+      "name": "chatbook-buddy-review-complete-20261004",
+      "passed": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 292.73,
+      "test_identities": [
+        "Tests.UI.test_home_console_resume::test_home_resume_keeps_saved_identity_and_independent_buddy_draft[cold]",
+        "Tests.UI.test_home_console_resume::test_home_resume_keeps_saved_identity_and_independent_buddy_draft[reused]",
+        "Tests.UI.test_home_console_resume::test_shutdown_settles_resume_presentation_before_runtime_disposal",
+        "Tests.UI.test_home_console_resume::test_suspended_resume_settles_and_retries_exact_target[load]",
+        "Tests.UI.test_home_console_resume::test_suspended_resume_settles_and_retries_exact_target[presentation]",
+        "Tests.UI.test_home_console_resume::test_character_commit_supersedes_queued_home_resume",
+        "Tests.UI.test_home_console_resume::test_cancelled_resume_rollback_survives_later_navigation[ordinary_return]",
+        "Tests.UI.test_home_console_resume::test_cancelled_resume_rollback_survives_later_navigation[character_commit]",
+        "Tests.UI.test_console_shutdown_recompose::test_queued_automatic_rebuilds_crossing_shutdown_do_not_remount",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_saved_buddy_binding_and_static_mode_reach_loaded_settings[conversation]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_saved_buddy_binding_and_static_mode_reach_loaded_settings[workspace]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_missing_or_malformed_buddy_settings_keep_safe_defaults[None]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_missing_or_malformed_buddy_settings_keep_safe_defaults[raw1]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_loaded_motion_settings_drive_actual_visual_controller[missing]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_loaded_motion_settings_drive_actual_visual_controller[dynamic]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_loaded_motion_settings_drive_actual_visual_controller[static]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_loaded_motion_settings_drive_actual_visual_controller[zero]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_loaded_motion_settings_drive_actual_visual_controller[empty-string]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_loaded_motion_settings_drive_actual_visual_controller[empty-list]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_loaded_motion_settings_drive_actual_visual_controller[invalid-global-override]",
+        "Tests.Persona_Buddy.test_buddy_interaction_config_projection::test_loaded_motion_settings_drive_actual_visual_controller[dynamic-global-override]",
+        "Tests.Persona_Buddy.test_buddy_management_coordinator::test_cold_saved_binding_is_named_and_presentation_apply_keeps_it",
+        "Tests.Persona_Buddy.test_buddy_management_coordinator::test_cold_saved_binding_rejects_unavailable_or_repurposed_owner[missing]",
+        "Tests.Persona_Buddy.test_buddy_management_coordinator::test_cold_saved_binding_rejects_unavailable_or_repurposed_owner[deleted]",
+        "Tests.Persona_Buddy.test_buddy_management_coordinator::test_cold_saved_binding_rejects_unavailable_or_repurposed_owner[remote]",
+        "Tests.Persona_Buddy.test_buddy_management_coordinator::test_cold_saved_binding_rejects_unavailable_or_repurposed_owner[temporary]",
+        "Tests.Persona_Buddy.test_buddy_management_coordinator::test_cold_saved_binding_rejects_unavailable_or_repurposed_owner[repurposed]",
+        "Tests.UI.test_buddy_conversation_modal::test_deferred_transcript_scroll_after_close_keeps_draft"
+      ],
+      "junit_sha256": "a6bfdab88878c5e1f27ef496c14d981e432a4a48493bfbd70c8565707a6e9c0c",
+      "log_sha256": "5197299dc6f0f65eb02af96c9c961054b216795cf3b566775d548bd47788a6ba"
+    }
+  ],
+  "current_unique_passes": 49,
+  "roleplay_original_assertions_preserved": 81,
+  "static": {
+    "baseline_dev": "8f83422dde2a5b95da648882b8f7e09da5b41f08",
+    "compile": "eight product modules passed",
+    "ruff": {
+      "base_count": 516,
+      "current_count": 516,
+      "introduced": []
+    },
+    "bandit": {
+      "base_count": 24,
+      "current_count": 24,
+      "introduced": []
+    },
+    "comparison": "relative filename/code/message diagnostic multiplicity; shifted source locations and embedded line references excluded"
+  },
+  "negative_controls": [
+    {
+      "scope": "started Resume suspension at load/presentation",
+      "receipt": "chatbook-buddy-review-races-corrected-red-20261004.log",
+      "qualified_failures": 2,
+      "symptom": "hidden Console retained its Resume worker",
+      "other_failure": "initial character fixture search revision was stale; excluded from defect proof"
+    },
+    {
+      "scope": "delayed Home hedge after successful newer character activation",
+      "receipt": "chatbook-buddy-character-hedge-red-20261004.log",
+      "qualified_failures": 1,
+      "symptom": "OPENED character displaced by retained Home target"
+    },
+    {
+      "scope": "repeated cancellation during held rollback",
+      "receipt": "chatbook-buddy-rollback-control-20261004.log",
+      "qualified_failures": 2,
+      "symptom": "ordinary revisit and character retirement interrupted rollback"
+    },
+    {
+      "scope": "cold attach competing sync, private selected profiles",
+      "receipts": "chatbook-buddy-cold-sync-control-20261004/*.xml",
+      "qualified_failures": 2,
+      "symptoms": [
+        "intermediate sync before ordered consumers",
+        "two sessions instead of exact saved session"
+      ]
+    },
+    {
+      "scope": "deferred Buddy scroll after actual modal close",
+      "receipt": "chatbook-buddy-close-control-20261004.log",
+      "qualified_failures": 1,
+      "symptom": "NoMatches for removed Buddy transcript body"
+    }
+  ],
+  "retained_attempts": "Initial aggregate21passed/14failed retained in chatbook-buddy-review-final-20261004.*. The timer-wait stall and close callback were product defects; get_current_worker outside a Worker was a test seam defect. Published-baseline Roleplay comparison12passed/7failed matched its legacy ordering/setup failures, now repaired and passing in final19-case module. A wider character-navigation run had three journey failures; its agent-only profile scaffolding is preserved in /private/tmp and excluded from this PR; no passing claim is made for that unchanged module. Initial close attempt held dismissal too; corrected harness restores dismissal before releasing only scroll, and only the corrected negative control establishes the missing-widget defect.",
+  "model_validation_review": "load_settings projects a deep copy and preserves section absence. Both real Buddy behavioral consumers use existing strict parse_preferences with immutable validated bindings and strict boolean defaults. Adding a second Pydantic model would duplicate/change ADR139 normalization without an unsafe consumer. Existing final projection and management cases pass.",
+  "prior_evidence": "334 historical unique passes and earlier22 integration repeats retain their original tested-source attribution; these49 checks are not added to that total.",
+  "isolation": "private profiles, offline model artifacts, synthetic conversations and held controlled workers; no provider call, microphone, physical playback, native Terminal or full local sweep"
+}

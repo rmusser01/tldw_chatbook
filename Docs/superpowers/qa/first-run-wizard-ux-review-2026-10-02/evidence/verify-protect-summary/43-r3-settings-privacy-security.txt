@@ -1,0 +1,50 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Privacy & Security
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────────────┐
+│                              │  │  │                                                                                                                    │  │  │                                      │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Canvas availability and create auto-open are editable; hard quotas, privacy          │  │  │  Scope Inspector                     │
+│  No filter | / focus         │  │  │  posture, and secrets remain read-only and redacted.                                                               │  │  │                                      │
+│  category search             │  │  │                                                                                                                    │  │  │ Selected category: Privacy &         │
+│                              │  │  │  Privacy & Security                                                                                                │  │  │ Security                             │
+│  Core                        │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                   │
+│      Overview (view)         │  │  │ │                                                                                                               │  │  │  │  Guided edits: Canvas controls and   │
+│      Providers & Models      │  │  │ │  Privacy posture                                                                                              │  │  │  │  host-access unlock; quotas stay     │
+│      Web Search              │  │  │ │  Config encryption: disabled                                                                                  │  │  │  │  read-only.                          │
+│      Speech & TTS            │  │  │ │  Redaction: active; raw secret values hidden                                                                  │  │  │  │  Save (s) — no changes               │
+│  Interface                   │  │  │ │  Sensitive config fields: 10 present                                                                          │  │  │  │  Revert (r) — no changes             │
+│      Appearance              │  │  │ │  Provider config secrets: 0 present                                                                           │  │  │  │ Local-only: saves write your config  │
+│      Theme                   │  │  │ │                                                                                                               │  │  │  │ file.                                │
+│      Splash Screen           │  │  │ │  Credential sources                                                                                           │  │  │  │ Impact and boundaries                │
+│      Console Behavior        │  │  │ │  Provider env vars: 0 of 52 referenced env vars are set (52 unset)                                            │  │  │  │ Raw CLI host-access gate, secrets,   │
+│  Data & Privacy              │  │  │ │  Preferred source: environment variables                                                                      │  │  │  │ redaction, and local privacy         │
+│      Storage                 │  │  │ │  Config secrets: counted only; raw values are never displayed                                                 │  │  │  │ boundaries.                          │
+│      Workspaces              │  │  │ │  Recovery actions: Check Privacy | Open Providers & Models | Open Advanced Config                             │▇ │  │  │  Runtime owner: Canvas global        │
+│      Tool Profiles           │  │  │ │  Skill trust: uninitialized                                                                                   │  │  │  │  execution gate plus Settings        │
+│ █  > Privacy & Security      │  │  │ │  Skill trust keyring convenience: disabled                                                                    │  │  │  │  unlock and RawCliRuntime            │
+│      Network                 │  │  │ │  Skill trust rollback protection: reduced                                                                     │  │  │  │  launch-local arm state              │
+│      My Profile              │  │  │ │  Check Privacy    Open Providers & Models   Open Advanced Config                                              │  │  │  │  Writes allowed: Yes                 │
+│  Troubleshooting             │  │  │ │                                                                                                               │  │  │  │  Owns: canvas.enabled                │
+│      Diagnostics (view)      │  │  │ │  Data boundary                                                                                                │  │  │  │  canvas.auto_open_on_create          │
+│      About (view)            │  │  │ │  Local data: local data stays local unless explicit server handoff or sync is enabled                         │  │  │  │  console.raw_cli_permitted           │
+│      Agents                  │  │  │ │  Server tokens: server tokens are reported as configured/missing only                                         │  │  │  │  Affected config: Canvas             │
+│  Expert                      │  │  │ │  Credential mutation: not available yet - password-gated flow required                                        │  │  │  │  availability and auto-open plus     │
+│      Hooks                   │  │  │ │  Privacy check: not run                                                                                       │  │  │  │  the raw CLI host-access unlock      │
+│      Internal Prompts        │  │  │ │  Run Check Privacy or press t to verify redacted secret status.                                               │  │  │  │  Credential source: Environment      │
+│      Advanced Config         │  │  │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │  variables are preferred for         │
+│   Domain Defaults ▸ (11)     │  │  │                                                                                                                    │  │  │  provider credentials.               │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │  Recovery: save or revert Canvas     │
+│                              │  │  │ │                                                                                                               │  │  │  │  and host-access changes; use Check  │
+│                              │  │  │ │  Canvas                                                                                                       │  │  │  │  Privacy for posture verification    │
+│                              │  │  │ │  Strict zero-egress runtime: interactive HTML, CSS, and JavaScript cannot use the network, host filesystem,   │  │  │  │  Boundary: arming applies only to    │
+│                              │  │  │ │  cookies, Chatbook APIs, or the parent-page DOM.                                                              │  │  │  │  this launch; raw secrets remain     │
+│                              │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                   │  │  │  │  hidden                              │
+│                              │  │  │ │ ▊ ▐X▌ Enable Canvas tools, actions, and browser delivery  ▎                                                   │  │  │  │                                      │
+│                              │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                   │  │  │  │                                      │
+│                              │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                  │  │  │  │                                      │
+│                              │  │  │                                                                                                                    │  │  │                                      │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └──────────────────────────────────────┘
+
+  s save category | r revert category | t check privacy | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

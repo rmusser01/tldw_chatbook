@@ -29,8 +29,10 @@ class _PickerHost(App):
 
 @pytest.mark.asyncio
 async def test_picker_select_returns_string_id():
-    convs = [{"conversation_id": "c1", "title": "Alpha"},
-             {"conversation_id": "c2", "title": "Beta"}]
+    convs = [
+        {"conversation_id": "c1", "title": "Alpha"},
+        {"conversation_id": "c2", "title": "Beta"},
+    ]
     app = _PickerHost(convs)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -45,8 +47,10 @@ async def test_picker_select_returns_string_id():
 async def test_picker_filter_narrows_then_selects():
     # After filtering to "beta", index 0 must be Beta (c2) — proving the filter
     # rebuilt the row-id list. If the filter did nothing, index 0 would be c1.
-    convs = [{"conversation_id": "c1", "title": "Alpha"},
-             {"conversation_id": "c2", "title": "Beta"}]
+    convs = [
+        {"conversation_id": "c1", "title": "Alpha"},
+        {"conversation_id": "c2", "title": "Beta"},
+    ]
     app = _PickerHost(convs)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()

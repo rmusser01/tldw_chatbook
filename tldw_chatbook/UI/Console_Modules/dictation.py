@@ -90,59 +90,45 @@ needed zero edits: the attribute now lives on `self._dictation`, but
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from functools import partial
 import asyncio
 import logging
 import threading
 import time
 import uuid
-from typing import Any, Literal, TYPE_CHECKING
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from functools import partial
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
-from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.message import Message
 
-# Import-safe at module scope: `console_voice_input` reaches the optional
-# speech stack only through `importlib.util.find_spec` and a function-body
-# import inside `default_service_factory`, so nothing here drags
-# `tldw_chatbook.Audio` (and with it faster-whisper and NeMo) into app
-# start.
+from tldw_chatbook.Utils.input_validation import escape_markup
+
+# TASK-22504: `console_voice_input` (2,260 LOC + its closure: the STT
+# coordinator/registry/routing stack, config re-arm, Backup_Recovery
+# participants) used to ride the Chat first-paint leg through THIS module's
+# import. It is now loaded on FIRST VOICE USE by `_load_console_voice_input`
+# below, which imports the real module and binds every name this module
+# uses into its own globals -- so the call sites below keep using the bare
+# names unchanged (LOAD_GLOBAL cannot fall back to a module `__getattr__`,
+# so the names must be genuinely bound before use; every entry point that
+# touches one calls the loader first, and the loader is idempotent).
 #
-# The module itself is imported (not just the names below) so
-# `_sync_console_dictation_availability` can call `console_voice_input.
-# probe()` through the module's own namespace at call time -- the same
+# The module-level `console_voice_input` attribute stays a forwarding proxy
+# until the first load replaces it with the real module, so
+# `console_voice_input.probe()` keeps its call-time semantics -- the same
 # target tests already monkeypatch (`_patch_availability` in
 # `Tests/UI/test_console_dictation_streaming.py`) to make the controller's
-# own internal `probe()` call deterministic. Binding `probe` as a bare
-# name here instead would capture the unpatched function at import time
-# and silently stop tracking that monkeypatch. Moved verbatim from
-# `chat_screen.py`, which no longer references this import for itself.
-from ...Chat import console_voice_input
-from ...Chat.console_voice_input import (
-    NO_CAPTURE_MESSAGE,
-    NO_SPEECH_MESSAGE,
-    STATE_LISTENING,
-    TRANSCRIPTION_INCOMPLETE_REASON,
-    TRANSCRIPTION_INCOMPLETE_REMEDY,
-    VAD_UNAVAILABLE_MESSAGE,
-    ConsoleVoiceInputController,
-    VoiceCommand,
-    VoiceDictationModelDefaulted,
-    VoiceFailed,
-    VoiceFinal,
-    VoiceLocalSTTBusy,
-    VoiceModelPreparing,
-    VoiceModelWarmupFailed,
-    VoicePartial,
-    VoiceProviderOverridden,
-    VoiceSegmentNoFinal,
-    VoiceSegmentTranscribing,
-    VoiceSpeechResumed,
-    VoiceVadUnavailable,
-    default_service_factory,
-)
+# own internal `probe()` call deterministic. Binding `probe` as a bare name
+# instead would capture the unpatched function at load time and silently
+# stop tracking that monkeypatch.
+#
+# Import-safety of the real module is unchanged: it reaches the optional
+# speech stack only through `importlib.util.find_spec` and a function-body
+# import inside `default_service_factory`, so nothing drags
+# `tldw_chatbook.Audio` (and with it faster-whisper and NeMo) into app
+# start.
 from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
 from ...STT.dispatch_coordinator import DICTATION_MAX_SECONDS, pcm_byte_limit
 from ...Utils.persistent_diagnostics import persist_event
@@ -150,7 +136,85 @@ from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console import ConsoleComposerBar
 from ...Widgets.glyph_fallback import resolve_glyph
 
+#: Every `console_voice_input` name this module uses at call time.
+_CONSOLE_VOICE_INPUT_NAMES = (
+    "NO_CAPTURE_MESSAGE",
+    "NO_SPEECH_MESSAGE",
+    "STATE_LISTENING",
+    "TRANSCRIPTION_INCOMPLETE_REASON",
+    "TRANSCRIPTION_INCOMPLETE_REMEDY",
+    "VAD_UNAVAILABLE_MESSAGE",
+    "ConsoleVoiceInputController",
+    "VoiceCommand",
+    "VoiceDictationModelDefaulted",
+    "VoiceFailed",
+    "VoiceFinal",
+    "VoiceLocalSTTBusy",
+    "VoiceModelPreparing",
+    "VoiceModelWarmupFailed",
+    "VoicePartial",
+    "VoiceProviderOverridden",
+    "VoiceSegmentNoFinal",
+    "VoiceSegmentTranscribing",
+    "VoiceSpeechResumed",
+    "VoiceVadUnavailable",
+    "default_service_factory",
+)
+
+
+class _LazyConsoleVoiceInput:
+    """Forward attribute access to the real module, loading it on first use.
+
+    Kept as a class (not a function call) so `console_voice_input.probe()`
+    keeps working through this name before any `_load_...` call --
+    attribute access on the proxy triggers the load itself, so no caller
+    can observe a half-bound state.
+    """
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(_load_console_voice_input(), name)
+
+
+console_voice_input = _LazyConsoleVoiceInput()
+
+
+def _load_console_voice_input():
+    """Import `console_voice_input` and bind its names here (first voice use).
+
+    Idempotent: after the first call the names live in this module's
+    globals and the `sys.modules` hit makes repeat calls cheap.
+    """
+    from ...Chat import console_voice_input as _module
+
+    module_globals = globals()
+    for name in _CONSOLE_VOICE_INPUT_NAMES:
+        module_globals[name] = getattr(_module, name)
+    module_globals["console_voice_input"] = _module
+    return _module
+
+
 if TYPE_CHECKING:
+    from ...Chat.console_voice_input import (
+        NO_CAPTURE_MESSAGE,
+        NO_SPEECH_MESSAGE,
+        STATE_LISTENING,
+        TRANSCRIPTION_INCOMPLETE_REASON,
+        TRANSCRIPTION_INCOMPLETE_REMEDY,
+        VAD_UNAVAILABLE_MESSAGE,
+        VoiceCommand,
+        VoiceDictationModelDefaulted,
+        VoiceFailed,
+        VoiceFinal,
+        VoiceLocalSTTBusy,
+        VoiceModelPreparing,
+        VoiceModelWarmupFailed,
+        VoicePartial,
+        VoiceProviderOverridden,
+        VoiceSegmentNoFinal,
+        VoiceSegmentTranscribing,
+        VoiceSpeechResumed,
+        VoiceVadUnavailable,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
@@ -266,6 +330,7 @@ def _voice_command_chip_ack(name: str) -> str:
         return "¶"
     return name.replace("-", " ")
 
+
 def _join_segments(segments: list[str]) -> str:
     """Join transcript segments with single spaces, without padding breaks.
 
@@ -295,6 +360,7 @@ def _join_segments(segments: list[str]) -> str:
         else:
             out += segment
     return out
+
 
 class ConsoleStreamingDictationSession:
     """Drive `ConsoleVoiceInputController` through the one-shot session port.
@@ -339,7 +405,7 @@ class ConsoleStreamingDictationSession:
         self,
         *,
         on_event: Callable[[Any, Any], None],
-        service_factory: Callable[..., Any] = default_service_factory,
+        service_factory: Callable[..., Any] | None = None,
         max_buffer_bytes: int | None = CONSOLE_DICTATION_MAX_BYTES,
     ) -> None:
         """Build a session over a fresh controller.
@@ -348,6 +414,10 @@ class ConsoleStreamingDictationSession:
             on_event: Called with `(session, event)` for every controller
                 event, from whatever thread emitted it.
             service_factory: Builds the dictation service; injected by tests.
+                `None` (the default) resolves to `console_voice_input.
+                default_service_factory` at start time (TASK-22504) -- the
+                name is bound by `_load_console_voice_input` and this
+                constructor can run on the first-paint leg.
             max_buffer_bytes: Hard cap on the PCM the recorder retains for one
                 capture, passed through to the dictation service. `None`
                 leaves the recorder unbounded (the service default, which the
@@ -381,14 +451,29 @@ class ConsoleStreamingDictationSession:
         self._service_factory = service_factory
         self._max_buffer_bytes = max_buffer_bytes
         self._on_buffer_limit: Callable[[], None] | None = None
-        self._controller = ConsoleVoiceInputController(
-            emit=self._handle_event,
-            spawn=lambda thunk: thunk(),
-            # Not `service_factory` directly: the controller builds the service
-            # deep inside `start()`, long after the caller handed us its
-            # buffer-limit callback, so the bound has to be attached here.
-            service_factory=self._build_service,
-        )
+        # TASK-22504: the controller (and the `console_voice_input` import
+        # it names) is constructed lazily by the `_controller` property --
+        # sessions are created by the screen's controller on the
+        # first-paint leg, and only a real `start()` needs the machinery.
+        self._controller_impl: Any = None
+
+    @property
+    def _controller(self) -> Any:
+        """The voice controller, constructed on first use (TASK-22504)."""
+        controller = self._controller_impl
+        if controller is None:
+            controller = self._controller_impl = (
+                _load_console_voice_input().ConsoleVoiceInputController(
+                    emit=self._handle_event,
+                    spawn=lambda thunk: thunk(),
+                    # Not `service_factory` directly: the controller builds
+                    # the service deep inside `start()`, long after the
+                    # caller handed us its buffer-limit callback, so the
+                    # bound has to be attached here.
+                    service_factory=self._build_service,
+                )
+            )
+        return controller
 
     def _build_service(self, **kwargs: Any) -> Any:
         """Build the dictation service with this session's PCM bound attached.
@@ -404,7 +489,11 @@ class ConsoleStreamingDictationSession:
             kwargs.setdefault("max_buffer_bytes", self._max_buffer_bytes)
         if self._on_buffer_limit is not None:
             kwargs.setdefault("on_buffer_limit", self._on_buffer_limit)
-        service = self._service_factory(**kwargs)
+        service_factory = self._service_factory
+        if service_factory is None:
+            service_factory = _load_console_voice_input().default_service_factory
+            self._service_factory = service_factory
+        service = service_factory(**kwargs)
         # Custom service factories retain their existing protocol. Only the
         # installed lazy service owns the bounded-join processor tracked here.
         if type(service).__module__ == "tldw_chatbook.Audio.dictation_service_lazy":
@@ -420,7 +509,8 @@ class ConsoleStreamingDictationSession:
         """Retain installed processors even after the voice owner releases them."""
         with self._lock:
             self._maintenance_services = [
-                service for service in self._maintenance_services
+                service
+                for service in self._maintenance_services
                 if not service.maintenance_ready
             ]
             return not self._maintenance_services
@@ -451,6 +541,7 @@ class ConsoleStreamingDictationSession:
                 this is what closes the race for all four variants a stale
                 delivery can take: command, final, partial, and failed.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         try:
             if generation is not None and generation != self._capture_generation:
                 logger.debug(
@@ -539,6 +630,7 @@ class ConsoleStreamingDictationSession:
         Raises:
             RuntimeError: The controller refused or could not start capture.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         self._on_buffer_limit = on_buffer_limit
         with self._lock:
             self._segments.clear()
@@ -606,6 +698,7 @@ class ConsoleStreamingDictationSession:
                 and nothing was transcribed, or the transcription never
                 completed).
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         with self._blocking_call():
             self._controller.stop()
         failure = self._take_failure()
@@ -697,7 +790,8 @@ class ConsoleDictationController:
         run_pending_voice_action: Callable[[str | None], Any],
         undo_histories_accessor: Callable[[], dict[str, Any]],
         visible_draft_session_id_accessor: Callable[[], str | None],
-        dictation_service_factory: Callable[..., Any] = default_service_factory,
+        dictation_service_factory: Callable[..., Any] | None = None,
+        on_state_changed: Callable[[str], None] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -829,6 +923,9 @@ class ConsoleDictationController:
             visible_draft_session_id_accessor: Reads `ChatScreen._console_
                 visible_draft_session_id` -- the session id the mounted
                 composer's draft currently reflects, screen-owned.
+            on_state_changed: Told every lifecycle state change, after the
+                composer (TASK-33626.1: the header Hands-free control reads
+                "Starting…" while its capture is `starting`).
         """
         self._maintenance_paused = False
         self._maintenance_calls = 0
@@ -852,6 +949,7 @@ class ConsoleDictationController:
         self._undo_histories_accessor = undo_histories_accessor
         self._visible_draft_session_id_accessor = visible_draft_session_id_accessor
         self._dictation_service_factory = dictation_service_factory
+        self._on_state_changed_fn = on_state_changed
         self._buddy_listening: tuple[Any, str] | None = None
         self._retry_dialog: ConfirmationDialog | None = None
 
@@ -876,19 +974,22 @@ class ConsoleDictationController:
         """Wait for recording/retry state and native/UI publication tails."""
         if (
             self._console_dictation_state != "idle"
-            or self._maintenance_calls or self._maintenance_native
+            or self._maintenance_calls
+            or self._maintenance_native
         ):
             return False
         session = self._console_dictation_session
         self._maintenance_sessions = {
-            candidate for candidate in self._maintenance_sessions
+            candidate
+            for candidate in self._maintenance_sessions
             if not candidate.maintenance_ready
         }
         with self._maintenance_lock:
             pending_events = bool(self._maintenance_events)
         return not (
             (session is not None and session.retry_available)
-            or pending_events or self._maintenance_sessions
+            or pending_events
+            or self._maintenance_sessions
         )
 
     async def maintenance_drain(self, deadline: float) -> bool:
@@ -1092,7 +1193,8 @@ class ConsoleDictationController:
         composer = self._console_composer_or_none()
         if composer is not None:
             composer.sync_dictation_state(state)
-
+        if self._on_state_changed_fn is not None:
+            self._on_state_changed_fn(state)
 
     def _release_buddy_listening(self) -> None:
         """Release this capture's exact voice lease, even after context changes."""
@@ -1103,7 +1205,9 @@ class ConsoleDictationController:
 
         sink, owner = lease
         sink.publish(
-            BuddyLifecycleEvent(source="voice", owner=owner, state="idle", terminal=True)
+            BuddyLifecycleEvent(
+                source="voice", owner=owner, state="idle", terminal=True
+            )
         )
 
     def _sync_console_dictation_availability(self) -> None:
@@ -1131,6 +1235,18 @@ class ConsoleDictationController:
         probe cannot brick the button in a permanently unavailable-looking
         state with no way to recover.
         """
+        # TASK-22504: the probe pulls `console_voice_input` through the
+        # forwarding proxy, and this sync is scheduled from `on_mount`
+        # (twice: `call_after_refresh` and a 0.15s retry) -- inside the
+        # first-paint window this task keeps the module out of. The sync
+        # is the cosmetic tooltip half only (its own docstring: it never
+        # blocks starting dictation), so it waits for `_ui_ready` and
+        # re-arms on a short timer until then; the first activation
+        # attempt still re-probes synchronously regardless.
+        app = getattr(self._screen, "app", None)
+        if app is not None and not getattr(app, "_ui_ready", True):
+            self._screen.set_timer(0.1, self._sync_console_dictation_availability)
+            return
         composer = self._console_composer_or_none()
         if composer is None:
             return
@@ -1154,13 +1270,11 @@ class ConsoleDictationController:
             tooltip="" if availability.ok else availability.remedy,
         )
 
-
     def _cancel_console_dictation_timer(self) -> None:
         timer = self._console_dictation_timer
         self._console_dictation_timer = None
         if timer is not None:
             timer.stop()
-
 
     def _cancel_console_dictation_elapsed_timer(self) -> None:
         """Stop the chip's 1 s elapsed-time ticker if one is running."""
@@ -1169,13 +1283,11 @@ class ConsoleDictationController:
         if timer is not None:
             timer.stop()
 
-
     def _tick_console_dictation_elapsed(self) -> None:
         """Advance the voice chip's elapsed-time display by one second."""
         composer = self._console_composer_or_none()
         if composer is not None:
             composer.tick_voice_elapsed()
-
 
     def _notify_console_dictation_error(self, exc: Exception) -> None:
         """Return dictation to idle and show its actionable failure."""
@@ -1226,7 +1338,6 @@ class ConsoleDictationController:
         self.app_instance.notify(reason, severity="error")
         self._speak_status(reason)
 
-
     def _emit_console_dictation_event(self, session: Any, event: Any) -> None:
         """Hand a controller event to the UI thread. Safe from any thread.
 
@@ -1269,6 +1380,7 @@ class ConsoleDictationController:
         Args:
             message: The posted controller event.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         if message.session is not self._console_dictation_session:
             # A session the screen has already discarded; its events are stale.
             return
@@ -1316,7 +1428,10 @@ class ConsoleDictationController:
             # exist at all (a resume latch armed for a blank segment would
             # otherwise never be consumed, and would incorrectly swallow the
             # NEXT real segment's `VoiceFinal`/countdown).
-            if self._console_dictation_state == "recording" and self._console_hands_free is not None:
+            if (
+                self._console_dictation_state == "recording"
+                and self._console_hands_free is not None
+            ):
                 self._console_hands_free.controller.on_segment_no_final()
             return
         if isinstance(event, VoiceFinal):
@@ -1331,7 +1446,10 @@ class ConsoleDictationController:
             # final that drains after THIS capture already ended (e.g. the
             # wall-clock/buffer limit beat the recognizer to it) must not
             # arm a countdown for a turn that is no longer live.
-            if self._console_dictation_state == "recording" and self._console_hands_free is not None:
+            if (
+                self._console_dictation_state == "recording"
+                and self._console_hands_free is not None
+            ):
                 self._console_hands_free.controller.on_voice_final()
             return
         if isinstance(event, VoiceCommand):
@@ -1489,7 +1607,9 @@ class ConsoleDictationController:
             if composer is not None:
                 # The composer *holds* this, so an unrelated control-bar
                 # refresh cannot wipe it mid-download.
-                composer.set_voice_preparing_message(f"{resolve_glyph(GLYPH_VOICE_WORKING)} {event.message}")
+                composer.set_voice_preparing_message(
+                    f"{resolve_glyph(GLYPH_VOICE_WORKING)} {event.message}"
+                )
             # The chip is 42 cells and one row; the full explanation would be
             # cut mid-sentence there, taking the duration warning with it. Send
             # it somewhere with room, once.
@@ -1604,7 +1724,6 @@ class ConsoleDictationController:
                 self.app_instance.notify(VAD_UNAVAILABLE_MESSAGE, severity="warning")
             return
 
-
     def _on_console_dictation_buffer_limit(self, session: Any) -> None:
         """Marshal a recorder-thread memory-limit signal onto the UI thread.
 
@@ -1637,7 +1756,6 @@ class ConsoleDictationController:
             return
         self._handle_console_dictation_limit()
 
-
     def _handle_console_dictation_limit(self) -> None:
         """Stop and transcribe when the wall-clock or memory bound is reached."""
         if self._console_dictation_state != "recording":
@@ -1662,16 +1780,19 @@ class ConsoleDictationController:
         Constructing the controller costs nothing: the optional speech stack is
         only imported when `start()` actually reaches the service factory.
         """
+        service_factory = self._dictation_service_factory
+        if service_factory is None:
+            service_factory = _load_console_voice_input().default_service_factory
+            self._dictation_service_factory = service_factory
         return ConsoleStreamingDictationSession(
             on_event=self._emit_console_dictation_event,
-            service_factory=self._dictation_service_factory,
+            service_factory=service_factory,
             max_buffer_bytes=pcm_byte_limit(
                 sample_rate=CONSOLE_DICTATION_SAMPLE_RATE,
                 channels=CONSOLE_DICTATION_CHANNELS,
                 sample_width=CONSOLE_DICTATION_SAMPLE_WIDTH,
             ),
         )
-
 
     async def _start_console_dictation(self) -> None:
         """Retain the admitted worker through its final UI publication."""
@@ -1787,7 +1908,6 @@ class ConsoleDictationController:
                 insertion += " "
         return insertion
 
-
     def _insert_console_dictation(
         self,
         *,
@@ -1839,7 +1959,6 @@ class ConsoleDictationController:
                 severity="warning",
             )
 
-
     async def _stop_console_dictation(self, session: Any) -> None:
         """Retain the admitted worker through its final UI publication."""
         self._maintenance_calls += 1
@@ -1873,7 +1992,9 @@ class ConsoleDictationController:
             logger.debug("Console dictation stop skipped; the capture was torn down")
             return
         try:
-            transcript = await self._maintenance_native_call(session.stop_and_transcribe)
+            transcript = await self._maintenance_native_call(
+                session.stop_and_transcribe
+            )
         except Exception as exc:
             if not session.retry_available:
                 await self._maintenance_native_call(session.discard)
@@ -2022,16 +2143,21 @@ class ConsoleDictationController:
             exit_on_error=False,
         )
 
-
-    async def _discard_console_dictation_session(self, session: Any) -> None:
+    async def _discard_console_dictation_session(
+        self, session: Any, *, announce: bool = True
+    ) -> None:
         """Retain the admitted worker through its final UI publication."""
         self._maintenance_calls += 1
         try:
-            await self._discard_console_dictation_session_body(session)
+            await self._discard_console_dictation_session_body(
+                session, announce=announce
+            )
         finally:
             self._maintenance_calls -= 1
 
-    async def _discard_console_dictation_session_body(self, session: Any) -> None:
+    async def _discard_console_dictation_session_body(
+        self, session: Any, *, announce: bool = True
+    ) -> None:
         """Release a cancelled capture's microphone off the UI thread.
 
         `discard()` is documented as non-blocking (`abandon()` never joins), but
@@ -2042,6 +2168,8 @@ class ConsoleDictationController:
         Args:
             session: The session to abandon. Failures are logged, never raised
                 -- cancelling must not produce an error the user did not cause.
+            announce: Speak "Discarded." once released (False when the
+                cancel is a side effect of leaving Hands-free).
         """
         try:
             await self._maintenance_native_call(session.discard)
@@ -2054,10 +2182,10 @@ class ConsoleDictationController:
         # and `_speak_status`'s state check cannot see that -- so acking from
         # the caller talks straight into a still-open mic. Its check is still
         # what refuses if the user has opened a NEW capture in the meantime.
-        self._speak_status("Discarded.")
+        if announce:
+            self._speak_status("Discarded.")
 
-
-    def _request_console_dictation_cancel(self) -> None:
+    def _request_console_dictation_cancel(self, *, announce: bool = True) -> None:
         """Abandon a capture that is `starting` or `recording`, without waiting.
 
         The `starting` phase now covers a speech-model load, which is a
@@ -2089,6 +2217,11 @@ class ConsoleDictationController:
         refuses), but the clear immediately below still applies regardless:
         "Console, send." then "Console, discard." inside that same window
         must drop the queued `send` even though the capture finishes normally.
+
+        Args:
+            announce: Toast and speak the cancel. TASK-33626.1: leaving
+                Hands-free while its capture is `starting` cancels quietly;
+                the user asked to leave the mode, not to discard dictation.
         """
         # Unconditional, ahead of the guard below, for exactly that reason.
         self._console_pending_voice_action = None
@@ -2117,15 +2250,16 @@ class ConsoleDictationController:
             # The worker speaks "Discarded." once the microphone is actually
             # released; see `_discard_console_dictation_session`.
             self.run_worker(
-                self._discard_console_dictation_session(session),
+                self._discard_console_dictation_session(session, announce=announce),
                 group="console-dictation-cancel",
                 exit_on_error=False,
             )
+        if not announce:
+            return
         self.app_instance.notify("Dictation cancelled.", severity="information")
         if session is None:
             # Nothing to release, so nothing to wait for.
             self._speak_status("Discarded.")
-
 
     def _request_console_dictation_start(self) -> None:
         if self._maintenance_paused:

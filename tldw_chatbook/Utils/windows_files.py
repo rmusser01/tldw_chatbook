@@ -25,6 +25,7 @@ import os as _os
 import platform
 import stat as _stat
 import struct
+from pathlib import Path
 from types import SimpleNamespace
 
 _U32 = C.c_uint32
@@ -50,6 +51,9 @@ _WRITE_THROUGH = 2
 _REPARSE = 0x400
 _DIRECTORY = 0x10
 _SHARE_ALL = 7
+_FILE_RENAME_REPLACE_IF_EXISTS = 0x00000001
+_FILE_RENAME_POSIX_SEMANTICS = 0x00000002
+_FILE_RENAME_INFORMATION_EX = 65
 _EPOCH_100NS = 116444736000000000
 
 
@@ -98,8 +102,10 @@ class _BasicInfo(C.Structure):
 
 
 class _RenameInfo(C.Structure):
+    # Ex uses ULONG Flags; legacy BOOLEAN ReplaceIfExists occupies its low byte,
+    # followed by zero padding to the same RootDirectory alignment.
     _fields_ = [
-        ("replace", _U32),
+        ("flags", _U32),
         ("root", _HANDLE),
         ("length", _U32),
         ("name", _U16 * 1),
@@ -297,8 +303,10 @@ class _Native:
             (self.advapi, "ConvertSidToStringSidW", [_P, C.POINTER(_P)], _I32),
             (self.advapi, "GetSecurityDescriptorLength", [_P], _U32),
             (
-                self.advapi, "GetSecurityDescriptorOwner",
-                [_P, C.POINTER(_P), C.POINTER(_I32)], _I32,
+                self.advapi,
+                "GetSecurityDescriptorOwner",
+                [_P, C.POINTER(_P), C.POINTER(_I32)],
+                _I32,
             ),
             (
                 self.advapi,
@@ -452,7 +460,7 @@ class _Native:
         if device[1] & 0x10:
             raise OSError(errno.ENOTSUP, "remote_filesystem_refused")
 
-    def security(self, handle, is_directory):
+    def security(self, handle, is_directory, *, with_descriptor=False):
         """Read fresh security; reuse only decoding of byte-identical descriptors."""
         owner, dacl, descriptor = _P(), _P(), _P()
         result = self.advapi.GetSecurityInfo(
@@ -468,9 +476,13 @@ class _Native:
             if control & 0x8000:  # SE_SELF_RELATIVE
                 size = self.advapi.GetSecurityDescriptorLength(descriptor)
                 if 20 <= size <= 4096:
-                    return self._decoded_security(
-                        C.string_at(descriptor, size), is_directory, self.user_sid
+                    data = C.string_at(descriptor, size)
+                    projected = self._decoded_security(
+                        data, is_directory, self.user_sid
                     )
+                    return (*projected, data) if with_descriptor else projected
+            if with_descriptor:
+                raise OSError(errno.EACCES, "windows_admission_descriptor_unavailable")
             return self._decode_security(owner, dacl, is_directory, self.user_sid)
         finally:
             self.kernel.LocalFree(descriptor)
@@ -481,12 +493,16 @@ class _Native:
         descriptor = C.create_string_buffer(data)
         owner, dacl = _P(), _P()
         defaulted, present = _I32(), _I32()
-        self.check(self.advapi.GetSecurityDescriptorOwner(
-            descriptor, C.byref(owner), C.byref(defaulted)
-        ))
-        self.check(self.advapi.GetSecurityDescriptorDacl(
-            descriptor, C.byref(present), C.byref(dacl), C.byref(defaulted)
-        ))
+        self.check(
+            self.advapi.GetSecurityDescriptorOwner(
+                descriptor, C.byref(owner), C.byref(defaulted)
+            )
+        )
+        self.check(
+            self.advapi.GetSecurityDescriptorDacl(
+                descriptor, C.byref(present), C.byref(dacl), C.byref(defaulted)
+            )
+        )
         return self._decode_security(owner, dacl, is_directory, user_sid)
 
     def _decode_security(self, owner, dacl, is_directory, user_sid):
@@ -518,6 +534,7 @@ class _Native:
         directory=False,
         metadata=False,
         extra_access=0,
+        _metadata_record=None,
     ):
         access = _READ_CONTROL | _READ_ATTRIBUTES | _SYNCHRONIZE | extra_access
         if directory:
@@ -556,27 +573,35 @@ class _Native:
                 None,
             )
             handle, status = _HANDLE(), _IOStatus()
-            self.ntcheck(
-                self.nt.NtCreateFile(
-                    C.byref(handle),
-                    access,
-                    C.byref(attributes),
-                    C.byref(status),
-                    None,
-                    0x80,
-                    _SHARE_ALL,
-                    disposition,
-                    options,
-                    None,
-                    0,
-                )
+            created = self.nt.NtCreateFile(
+                C.byref(handle),
+                access,
+                C.byref(attributes),
+                C.byref(status),
+                None,
+                0x80,
+                _SHARE_ALL,
+                disposition,
+                options,
+                None,
+                0,
             )
+            if _metadata_record is not None and created >= 0:
+                # Capture the birth before status/metadata validation can fail.
+                _metadata_record.handle = handle.value
+            self.ntcheck(created)
         try:
-            self.info(handle)
+            info = self.info(handle)
+            if _metadata_record is not None:
+                _metadata_record.identity = (
+                    info.volume,
+                    (info.index_high << 32) | info.index_low,
+                )
             self.ntfs(handle)
             return handle.value
         except BaseException:
-            self.kernel.CloseHandle(handle)
+            if _metadata_record is None:
+                self.kernel.CloseHandle(handle)
             raise
 
     @contextlib.contextmanager
@@ -649,6 +674,23 @@ def _parent(path, dir_fd=None):
         yield handle, parts[-1] if parts else None
     finally:
         native.kernel.CloseHandle(handle)
+
+
+class _AdmissionMetadataHandle:
+    """One acquired native birth, retained when physical close is uncertain."""
+
+    def __init__(self, native, path):
+        self.native = native
+        self.path = path
+        self.handle = None
+        self.identity = None
+        self.close_error = None
+
+
+class _AdmissionMetadataCloseError(OSError):
+    def __init__(self, failed_handles):
+        self.failed_handles = tuple(failed_handles)
+        super().__init__(errno.EIO, "windows_admission_metadata_not_retired")
 
 
 class WindowsOS:
@@ -747,10 +789,141 @@ class WindowsOS:
         finally:
             native.kernel.CloseHandle(handle)
 
-    def _stat_handle(self, handle):
+    def stat_for_admission(self, path, *, follow_symlinks=False):
+        """Read fresh metadata/descriptor with checked named-handle retirement."""
+        if isinstance(path, int):
+            # The caller retains ownership of this borrowed CRT descriptor.
+            return self._stat_handle(_native().handle(path), with_descriptor=True)
+        selected = Path(ntpath.abspath(_os.fspath(path)))
+        observed = self.stat_many_for_admission((selected,))[selected]
+        if observed is None:
+            raise FileNotFoundError(errno.ENOENT, "windows_metadata_missing", path)
+        return observed
+
+    def stat_many_for_admission(self, paths):
+        """Read fresh named associations and retire each owned birth once.
+
+        Full component chains are validated before opening anything. Parents
+        remain pinned while names are rechecked bottom-up; uncertain closes
+        retain their exact birth records and refuse the observation.
+        """
+        selected = tuple(Path(path) for path in paths)
+        nodes = sorted(
+            {node for path in selected for node in (*path.parents, path)},
+            key=lambda node: (len(node.parts), str(node)),
+        )
+        for node in nodes:
+            if (
+                not node.is_absolute()
+                or len(node.drive) != 2
+                or node.drive[1] != ":"
+                or not node.drive[0].isalpha()
+            ):
+                raise ValueError("local_absolute_drive_path_required")
+            # The prerequisite keeps full validation; OPT74 is not selected.
+            for part in node.parts[1:]:
+                _component(part)
+        if not selected:
+            return {}
+        native = _native()
+        parents = {node.parent for node in nodes if node.parent != node}
+        handles, identities, observations = {}, {}, {}
+        opened, failed = [], []
+
+        def named_handle(node):
+            record = _AdmissionMetadataHandle(native, node)
+            opened.append(record)
+            if node.parent == node:
+                native.open_handle(
+                    "\\??\\" + node.drive + "\\",
+                    directory=True,
+                    _metadata_record=record,
+                )
+            else:
+                native.open_handle(
+                    node.name,
+                    parent=handles[node.parent].handle,
+                    metadata=True,
+                    directory=node in parents,
+                    _metadata_record=record,
+                )
+            return record
+
+        def close_handle(record):
+            # Remove custody before calling: false/raising close is never retried.
+            opened.remove(record)
+            if record.handle is None:
+                return
+            try:
+                closed = native.kernel.CloseHandle(record.handle)
+            except BaseException as error:  # noqa: BLE001 - retain the exact failed close and drain later births.
+                record.close_error = error
+                failed.append(record)
+            else:
+                if not closed:
+                    record.close_error = C.get_last_error()
+                    failed.append(record)
+
+        try:
+            for node in nodes:
+                if node.parent != node and handles[node.parent] is None:
+                    handles[node] = None
+                    continue
+                try:
+                    record = named_handle(node)
+                except FileNotFoundError:
+                    handles[node] = None
+                    continue
+                handles[node] = record
+                identities[node] = record.identity
+                if node not in parents:
+                    close_handle(record)
+                    handles[node] = None
+                    if failed:
+                        raise _AdmissionMetadataCloseError(failed)
+            for node in reversed(nodes):
+                if node.parent != node and handles[node.parent] is None:
+                    observations[node] = None
+                    continue
+                try:
+                    current = named_handle(node)
+                except FileNotFoundError:
+                    current = None
+                if current is None:
+                    observed = None
+                else:
+                    try:
+                        observed = self._stat_handle(
+                            current.handle, with_descriptor=True
+                        )
+                    finally:
+                        close_handle(current)
+                    if failed:
+                        raise _AdmissionMetadataCloseError(failed)
+                identity = (
+                    None
+                    if observed is None
+                    else (observed[0].st_dev, observed[0].st_ino)
+                )
+                if identity != identities.get(node):
+                    raise OSError(errno.ESTALE, "windows_admission_snapshot_changed")
+                observations[node] = observed
+            return {path: observations[path] for path in selected}
+        finally:
+            for record in reversed(tuple(opened)):
+                close_handle(record)
+            if failed:
+                raise _AdmissionMetadataCloseError(failed)
+
+    def _stat_handle(self, handle, *, with_descriptor=False):
         native = _native()
         info = native.info(handle)
-        uid, mode = native.security(handle, bool(info.attributes & _DIRECTORY))
+        if with_descriptor:
+            uid, mode, descriptor = native.security(
+                handle, bool(info.attributes & _DIRECTORY), with_descriptor=True
+            )
+        else:
+            uid, mode = native.security(handle, bool(info.attributes & _DIRECTORY))
         basic = _BasicInfo()
         native.check(
             native.kernel.GetFileInformationByHandleEx(
@@ -761,7 +934,7 @@ class WindowsOS:
         def ns(value):
             return (value - _EPOCH_100NS) * 100
 
-        return _os.stat_result(
+        result = _os.stat_result(
             (
                 (_stat.S_IFDIR if info.attributes & _DIRECTORY else _stat.S_IFREG)
                 | mode,
@@ -785,6 +958,7 @@ class WindowsOS:
                 "st_file_attributes": info.attributes,
             },
         )
+        return (result, descriptor) if with_descriptor else result
 
     def fchmod(self, fd, mode):
         if mode not in {0o600, 0o700}:
@@ -841,7 +1015,25 @@ class WindowsOS:
     def replace(self, src, dst, *, src_dir_fd=None, dst_dir_fd=None):
         self._rename(src, dst, src_dir_fd, dst_dir_fd, True)
 
-    def _rename(self, src, dst, src_fd, dst_fd, replace, *, link=False):
+    def replace_open_target(
+        self,
+        src: str | _os.PathLike[str],
+        dst: str | _os.PathLike[str],
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+    ) -> None:
+        """Atomically replace while callers retain a share-delete target handle.
+
+        Args:
+            src: Source name relative to its retained directory.
+            dst: Destination name relative to its retained directory.
+            src_dir_fd: Optional retained source directory descriptor.
+            dst_dir_fd: Optional retained destination directory descriptor.
+        """
+        self._rename(src, dst, src_dir_fd, dst_dir_fd, True, posix=True)
+
+    def _rename(self, src, dst, src_fd, dst_fd, replace, *, link=False, posix=False):
         native = _native()
         with (
             _parent(src, src_fd) as (source, name),
@@ -857,8 +1049,9 @@ class WindowsOS:
                 size = C.sizeof(_RenameInfo) + len(encoded)
                 buffer = C.create_string_buffer(size)
                 info = _RenameInfo.from_buffer(buffer)
-                info.replace, info.root, info.length = (
-                    int(replace),
+                info.flags, info.root, info.length = (
+                    (_FILE_RENAME_REPLACE_IF_EXISTS if replace else 0)
+                    | (_FILE_RENAME_POSIX_SEMANTICS if posix else 0),
                     target,
                     len(encoded),
                 )
@@ -872,7 +1065,7 @@ class WindowsOS:
                         C.byref(status),
                         buffer,
                         size,
-                        11 if link else 10,
+                        11 if link else (_FILE_RENAME_INFORMATION_EX if posix else 10),
                     )
                 )
 

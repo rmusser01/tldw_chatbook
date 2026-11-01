@@ -217,7 +217,9 @@ def _parse_run_timestamp(value: Any) -> datetime | None:
         return None
 
 
-def _run_duration_text(started_at: Any, finished_at: Any, stats: Mapping[str, Any]) -> str | None:
+def _run_duration_text(
+    started_at: Any, finished_at: Any, stats: Mapping[str, Any]
+) -> str | None:
     """How long a run took, as a short human string, or `None`.
 
     `None` (rendered `-` by the pane) is the honest answer for a run that has

@@ -1,0 +1,8 @@
+{
+  "HEAD": "6cd44c72ffef6d19fca21eab3a05bdcade7c1811",
+  "bundle": "/private/tmp/pr2995-task16-recovery-6cd44c72.bundle",
+  "bytes": 102185975,
+  "excluded_ancestor": "49206beea90d35ea9e6842ffa44e4b274db29d8a",
+  "ref": "refs/recovery/pr2995-task16-6cd44c72",
+  "sha256": "578e6ddd0ae1e30883a3a4c369a89f0734ef9b0fa92a0012e9ecd590156298f1"
+}

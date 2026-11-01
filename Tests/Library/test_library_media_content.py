@@ -264,9 +264,9 @@ async def test_match_index_sync_preserves_navigation_identity_and_focus() -> Non
         assert app.query_one("#library-media-content-search-prev") is previous
         assert app.query_one("#library-media-content-search-next") is next_button
         assert app.focused is next_button
-        assert str(app.query_one("#library-media-content-search-status", Static).renderable) == (
-            "Match 2 of 2"
-        )
+        assert str(
+            app.query_one("#library-media-content-search-status", Static).renderable
+        ) == ("Match 2 of 2")
 
 
 @pytest.mark.asyncio
@@ -289,11 +289,13 @@ async def test_active_query_sync_preserves_search_and_navigation_identity() -> N
 
         assert app.query_one("#library-media-content-search", Input) is search_input
         assert app.query_one("#library-media-content-search-prev", Button) is previous
-        assert app.query_one("#library-media-content-search-next", Button) is next_button
-        assert search_input.value == "cost"
-        assert str(app.query_one("#library-media-content-search-status", Static).renderable) == (
-            "Match 1 of 1"
+        assert (
+            app.query_one("#library-media-content-search-next", Button) is next_button
         )
+        assert search_input.value == "cost"
+        assert str(
+            app.query_one("#library-media-content-search-status", Static).renderable
+        ) == ("Match 1 of 1")
 
 
 @pytest.mark.asyncio
@@ -306,9 +308,9 @@ async def test_match_index_sync_displays_no_matches() -> None:
         controls.sync_match_index(matches=(), match_index=0)
         await pilot.pause()
 
-        assert str(app.query_one("#library-media-content-search-status", Static).renderable) == (
-            "No matches"
-        )
+        assert str(
+            app.query_one("#library-media-content-search-status", Static).renderable
+        ) == ("No matches")
 
 
 @pytest.mark.asyncio
@@ -321,9 +323,9 @@ async def test_match_index_sync_wraps_status_index() -> None:
         controls.sync_match_index(matches=(2, 8), match_index=3)
         await pilot.pause()
 
-        assert str(app.query_one("#library-media-content-search-status", Static).renderable) == (
-            "Match 2 of 2"
-        )
+        assert str(
+            app.query_one("#library-media-content-search-status", Static).renderable
+        ) == ("Match 2 of 2")
 
 
 @pytest.mark.asyncio
@@ -371,9 +373,12 @@ async def test_active_query_sync_reveals_controls_and_markdown_placeholder() -> 
         assert active_input.placeholder == "Search content (raw text)…"
         assert app.query_one("#library-media-content-search-prev", Button).display
         assert app.query_one("#library-media-content-search-next", Button).display
-        assert str(
-            app.query_one("#library-media-content-search-status", Static).renderable
-        ) == "Match 1 of 1"
+        assert (
+            str(
+                app.query_one("#library-media-content-search-status", Static).renderable
+            )
+            == "Match 1 of 1"
+        )
 
 
 @pytest.mark.asyncio
@@ -459,7 +464,11 @@ async def test_search_refresh_does_not_arm_a_layout_pass(monkeypatch) -> None:
         real_refresh = VirtualizedRawContent.refresh
 
         def recording_refresh(
-            self, *regions, repaint: bool = True, layout: bool = False, recompose: bool = False
+            self,
+            *regions,
+            repaint: bool = True,
+            layout: bool = False,
+            recompose: bool = False,
         ):
             if self is raw_widget:
                 seen.append(layout)
@@ -778,7 +787,9 @@ async def test_body_search_updates_reuse_the_same_raw_view() -> None:
 
 
 @pytest.mark.asyncio
-async def test_body_content_mutation_does_not_retroactively_change_the_mounted_raw_view() -> None:
+async def test_body_content_mutation_does_not_retroactively_change_the_mounted_raw_view() -> (
+    None
+):
     """The Raw view's document is frozen at construction (task-22500).
 
     ``VirtualizedRawContent`` builds its line lists once, in ``__init__``;

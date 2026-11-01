@@ -57,6 +57,18 @@ snapshot only via `scripts/update_boot_budget_snapshots.py`. When a diet
 drops a measured number well below its limit, LOWER the limit to measured
 + standard slack (ADR-097's tightening convention) in that same PR.
 
+The first-send warm-up (TASK-33620.15.13). Since TASK-33620.15.5 the same
+daemon thread also imports the Console's first-send modules
+(``Chat/console_first_send_modules.py``), which the route walk never ran.
+``test_first_send_warmup_payload_stays_within_budget`` walks that list from
+the same start (app + chat) in the warm-up's own order and pins its marginal
+module count as its own row, ``MAX_FIRST_SEND_WARMUP_ADDED_MODULES``
+(snapshot ``boot_budget_snapshots/first_send_warmup.json``). It also fails if
+the warm-up newly imports one of ``test_app_import_weight.HEAVY_MODULES``, so
+a heavy third-party import (invisible to a tldw-only module count) is named
+too. Measured 2026-10-20: 94 modules / 61,281 LOC; re-pinned 2026-10-22:
+94 modules / 61,609 LOC (dev grew ``local_tool_provider``).
+
 Honest blind spots:
 
 * LOC is a proxy for import cost, not a measurement of it -- a small module
@@ -77,6 +89,7 @@ Honest blind spots:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -105,16 +118,36 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: route after the first measurement (owner approved 556; ADR-097 ledger).
 #: 556 -> 557 on 2026-09-30 after the rebase onto dev 75c06af39a: #2922's
 #: ``settings_screen`` imports ``settings_hooks`` at module level (owner
-#: approved; TASK-33642 makes it lazy again).
-MAX_PASS_ADDED_MODULES = 557
+#: approved). 557 -> 556 on 2026-10-03: TASK-33642 made it lazy again.
+#: B0 TASK-33910.1: 556 -> 557 (2026-10-03), owner-approved; ADR-097 ledger.
+#: B1 TASK-33910.2: 557 -> 558 (2026-10-04), owner-approved; ADR-097 ledger.
+MAX_PASS_ADDED_MODULES = 558
 
 #: TASK-31552 pinned 378,740 (363,740 + 15,000 slack). TASK-33260 re-pin:
 #: 410,347 measured + 15,000 standard slack; TASK-33276 pays it down.
-MAX_PASS_ADDED_LOC = 425_347
+#: 2026-10-26 TASK-34000.28/.40 polish-1a (PR #3259): +1,188 LOC over dev, owner-approved
+#: 2026-10-29; re-measured after the rebase onto dev 38c9d2edcf (paired arms: dev
+#: 425,011 -> head 426,199, the same +1,188): 425,347 -> 426,199; ADR-097 ledger.
+MAX_PASS_ADDED_LOC = 426_199
 
 #: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
 #: re-pin: Library 125,111 measured + 10,000 slack; TASK-33276 pays it down.
 MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
+
+#: tldw_chatbook modules the first-send warm-up adds beyond app + chat.
+#: New row, owner decision 2026-10-20 ("Measure, then merge", TASK-33620.15.13):
+#: since TASK-33620.15.5 the pass also imports the Console's first-send
+#: modules (``Chat/console_first_send_modules.py``) on the same daemon thread,
+#: after the last route (TASK-33620.15.14), and the route walk above never ran
+#: them. A separate row rather than a raise of MAX_PASS_ADDED_MODULES: the
+#: route census stays comparable with its history. This one is measured from
+#: the same start (app + chat), so it is an upper bound on what the warm-up
+#: adds once the routes have run.
+#: Pinned at the measurement on 2026-10-20 (origin/dev 2d071d6d71 plus the
+#: warm-up list), modules exactly, no slack. RATCHET (ADR-097): never rises.
+#: No LOC row: a LOC pin with no slack would fail every edit that adds a line
+#: to one of these Console modules; the per-entry LOC is printed instead.
+MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
 
 _CENSUS_SCRIPT = """
 import json
@@ -184,13 +217,96 @@ print(
 """
 
 
-def _run_census(tmp_path: Path) -> dict:
+#: The first-send warm-up's census (TASK-33620.15.13): the same starting
+#: condition as the route walk (app + the initial Chat route), then
+#: ``FIRST_SEND_MODULES`` in the warm-up's own order, one marginal row per
+#: listed module. ``argv[1]`` is the heavy third-party set (JSON) whose new
+#: arrivals are reported by name.
+_WARMUP_CENSUS_SCRIPT = """
+import importlib
+import json
+import sys
+
+import tldw_chatbook.app  # noqa: F401
+import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401  (pre-warm, as above)
+from tldw_chatbook.Chat.console_first_send_modules import FIRST_SEND_MODULES
+
+heavy = json.loads(sys.argv[1])
+
+
+def tldw_modules():
+    return {
+        m
+        for m in sys.modules
+        if m.startswith("tldw_chatbook") and sys.modules[m] is not None
+    }
+
+
+def loc_of(mods):
+    total = 0
+    for name in mods:
+        path = getattr(sys.modules.get(name), "__file__", None)
+        if not path or not path.endswith(".py"):
+            continue
+        try:
+            with open(path, "rb") as fh:
+                total += sum(1 for _ in fh)
+        except OSError:
+            pass
+    return total
+
+
+heavy_before = {m for m in heavy if m in sys.modules}
+baseline = tldw_modules()
+rows = []
+for name in FIRST_SEND_MODULES:
+    before = tldw_modules()
+    heavy_seen = {m for m in heavy if m in sys.modules}
+    importlib.import_module(name)
+    added = tldw_modules() - before
+    rows.append(
+        {
+            "entry": name,
+            "added_modules": len(added),
+            "added_loc": loc_of(added),
+            "modules": sorted(added),
+            "heavy": sorted(m for m in heavy if m in sys.modules and m not in heavy_seen),
+        }
+    )
+
+final = tldw_modules() - baseline
+print(
+    "BUDGET_JSON:"
+    + json.dumps(
+        {
+            "listed": list(FIRST_SEND_MODULES),
+            "warmup_added_modules": len(final),
+            "warmup_added_loc": loc_of(final),
+            "heavy_added": sorted(m for m in heavy if m in sys.modules and m not in heavy_before),
+            "entries": rows,
+        }
+    ),
+    flush=True,
+)
+"""
+
+
+def _run_census(tmp_path: Path, script: str = _CENSUS_SCRIPT, *args: str) -> dict:
     """Walk the pre-importer's route order in an isolated fresh interpreter.
 
     Fresh interpreter because `sys.modules` is process-global: an earlier
     test importing any screen module would deflate the census. Isolated
     HOME/XDG so importing the app never touches the developer's live
     profile.
+
+    Args:
+        tmp_path: Directory for the subprocess's isolated profile.
+        script: The census to run (the route walk by default;
+            ``_WARMUP_CENSUS_SCRIPT`` for the first-send warm-up).
+        *args: Command-line arguments for ``script``.
+
+    Returns:
+        The census payload the script printed after ``BUDGET_JSON:``.
     """
     home = tmp_path / "home"
     data = tmp_path / "data"
@@ -211,7 +327,7 @@ def _run_census(tmp_path: Path) -> dict:
     env.pop("TLDW_CONFIG_PATH", None)
 
     result = subprocess.run(
-        [sys.executable, "-c", _CENSUS_SCRIPT],
+        [sys.executable, "-c", script, *args],
         cwd=REPO_ROOT,
         env=env,
         text=True,
@@ -265,9 +381,7 @@ def _snapshot_diff(census: dict, ratchet) -> str:
     live_loc = {r["route"]: r["added_loc"] for r in census["routes"]}
     pinned_loc = {name: row["loc"] for name, row in pinned_routes.items()}
     live_modules = {m for r in census["routes"] for m in r.get("modules", [])}
-    pinned_modules = {
-        m for row in pinned_routes.values() for m in row["modules"]
-    }
+    pinned_modules = {m for row in pinned_routes.values() for m in row["modules"]}
     return (
         "vs pinned snapshot boot_budget_snapshots/preimport_payload.json:\n"
         + ratchet.format_byte_diff(live_loc, pinned_loc, "route")
@@ -277,16 +391,13 @@ def _snapshot_diff(census: dict, ratchet) -> str:
             live_modules,
             pinned_modules,
             "module",
-            added_note="these consumed the headroom; defer them or shed "
-            "elsewhere",
+            added_note="these consumed the headroom; defer them or shed elsewhere",
         )
     )
 
 
 @pytest.mark.integration
-def test_preimport_pass_payload_stays_within_budget(
-    tmp_path: Path, ratchet
-) -> None:
+def test_preimport_pass_payload_stays_within_budget(tmp_path: Path, ratchet) -> None:
     """The registry walk's total marginal payload stays at its pinned size.
 
     Args:
@@ -350,6 +461,137 @@ def test_preimport_pass_payload_stays_within_budget(
                     fattest["added_loc"],
                     MAX_SINGLE_ROUTE_ADDED_LOC,
                 ),
+            ],
+        )
+    )
+
+
+def _heavy_modules() -> tuple[str, ...]:
+    """The boot guard's heavy third-party set, read from its own file."""
+    path = Path(__file__).with_name("test_app_import_weight.py")
+    spec = importlib.util.spec_from_file_location("tldw_perf_heavy_modules", path)
+    assert spec is not None and spec.loader is not None, f"unloadable: {path}"
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return tuple(module.HEAVY_MODULES)
+
+
+def _warmup_table(census: dict) -> str:
+    rows = sorted(census["entries"], key=lambda r: -r["added_modules"])
+    return "\n".join(
+        f"  {r['entry'].removeprefix('tldw_chatbook.'):<52} "
+        f"{r['added_modules']:>4} mods {r['added_loc']:>7} LOC"
+        for r in rows
+        if r["added_modules"]
+    )
+
+
+def _warmup_snapshot_diff(census: dict, ratchet) -> str:
+    """Name what grew: new list entries, and new modules with the entry that pulls each in.
+
+    Args:
+        census: The live warm-up census (``entries`` rows with ``modules``).
+        ratchet: shared ratchet helper.
+
+    Returns:
+        A multi-line report block.
+    """
+    snapshot = ratchet.load_json_snapshot("first-send-warmup")
+    pinned_entries = snapshot.get("entries", {})
+    if not pinned_entries:
+        return (
+            "(no pinned snapshot at boot_budget_snapshots/first_send_warmup.json "
+            f"-- regenerate deliberately with `{ratchet.SNAPSHOT_REFRESH}`)"
+        )
+    pinned_modules = {m for row in pinned_entries.values() for m in row["modules"]}
+    brought_by = {m: r["entry"] for r in census["entries"] for m in r["modules"]}
+    new_modules = sorted(set(brought_by) - pinned_modules)
+    lines = [
+        "vs pinned snapshot boot_budget_snapshots/first_send_warmup.json:",
+        "listed entries:",
+        ratchet.format_name_delta(
+            census["listed"],
+            snapshot.get("listed", []),
+            "listed module",
+            added_note="added to FIRST_SEND_MODULES",
+        ),
+    ]
+    if new_modules:
+        lines.append(
+            f"  NEW modules ({len(new_modules)}) -- these consumed the headroom; "
+            "defer them or shed elsewhere (pulled in by):"
+        )
+        lines.extend(
+            f"    + {name} (by {brought_by[name].removeprefix('tldw_chatbook.')})"
+            for name in new_modules
+        )
+    gone = sorted(pinned_modules - set(brought_by))
+    if gone:
+        lines.append(f"  modules no longer imported ({len(gone)}):")
+        lines.extend(f"    - {name}" for name in gone)
+    if not new_modules and not gone:
+        lines.append("  module set identical to the snapshot.")
+    return "\n".join(lines)
+
+
+@pytest.mark.integration
+def test_first_send_warmup_payload_stays_within_budget(tmp_path: Path, ratchet) -> None:
+    """The pass's first-send warm-up adds no module and no heavy dependency unseen.
+
+    TASK-33620.15.13: the warm-up runs on the pass's thread after the last
+    route (TASK-33620.15.14), so its imports are pass payload too. Counted
+    from app + chat, the same start as the route walk: an upper bound on what
+    it adds once the routes have run. Red when a module is added to
+    ``FIRST_SEND_MODULES`` or a listed module gains a top-level import of
+    another tldw module (the message names it and the entry that pulls it
+    in), or when the warm-up newly imports one of the boot guard's heavy
+    third-party modules.
+
+    Args:
+        tmp_path: pytest fixture; isolated dir for the subprocess's profile.
+        ratchet: shared ratchet helper (see ``conftest.py``).
+    """
+    heavy = _heavy_modules()
+    census = _run_census(tmp_path, _WARMUP_CENSUS_SCRIPT, json.dumps(heavy))
+    print(
+        f"\nFIRST-SEND WARM-UP CENSUS: {census['warmup_added_modules']} modules / "
+        f"{census['warmup_added_loc']} LOC added beyond app + chat\n"
+        f"{_warmup_table(census)}"
+    )
+
+    # Anti-vacuity: the warm-up's closure is about ninety modules, and the
+    # hooks package a first send runs is in it.
+    assert census["warmup_added_modules"] > 60, _warmup_table(census)
+    hooks = next(
+        r
+        for r in census["entries"]
+        if r["entry"] == "tldw_chatbook.Agents.hooks_v2.lifecycle"
+    )
+    assert hooks["added_modules"] > 0, "the hooks package was already resident"
+
+    heavy_rows = [(r["entry"], r["heavy"]) for r in census["entries"] if r["heavy"]]
+    assert not census["heavy_added"], (
+        f"the first-send warm-up imports heavy dependencies {census['heavy_added']} "
+        f"(by entry: {heavy_rows}); defer them behind the call that needs them"
+    )
+
+    diff = _warmup_snapshot_diff(census, ratchet)
+    refresh = f"Deliberate snapshot refresh: `{ratchet.SNAPSHOT_REFRESH}`"
+    assert census["warmup_added_modules"] <= MAX_FIRST_SEND_WARMUP_ADDED_MODULES, (
+        f"the first-send warm-up adds {census['warmup_added_modules']} tldw modules "
+        f"(ratchet limit {MAX_FIRST_SEND_WARMUP_ADDED_MODULES}). Per entry:\n"
+        f"{_warmup_table(census)}\n{diff}\n"
+        f"{ratchet.ratchet_policy('MAX_FIRST_SEND_WARMUP_ADDED_MODULES')}\n{refresh}"
+    )
+    ratchet.emit_headroom(
+        ratchet.headroom_line(
+            "first-send-warmup",
+            [
+                (
+                    "modules",
+                    census["warmup_added_modules"],
+                    MAX_FIRST_SEND_WARMUP_ADDED_MODULES,
+                )
             ],
         )
     )

@@ -131,8 +131,50 @@ def _first_doc_line(value: str | None) -> str:
     return value.strip().splitlines()[0].strip()
 
 
+#: ``(identity, tree)`` of the last parse of this file (TASK-33620.15.5).
+_SERVER_MODULE_AST: tuple[tuple, ast.Module] | None = None
+
+
+def _server_source_identity(path: Path) -> tuple:
+    info = path.stat()
+    return (
+        str(path),
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
 def _load_server_module_ast() -> ast.Module:
-    return ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    """Parse this module's source, reusing the tree while the file is unchanged.
+
+    TASK-33620.15.5: every Console send's configuration capture reads the
+    built-in manifest on the UI loop, and each read parsed this file again
+    (about 3 ms; more on a loaded machine). The tree is kept only when the
+    file's identity is the same before and after the read. Callers only read
+    the tree; the manifest is still built fresh from it on every call.
+    """
+    global _SERVER_MODULE_AST
+    path = Path(__file__)
+    identity = _server_source_identity(path)
+    kept = _SERVER_MODULE_AST
+    if kept is not None and kept[0] == identity:
+        return kept[1]
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    if _server_source_identity(path) == identity:
+        _SERVER_MODULE_AST = (identity, tree)
+    return tree
+
+
+def prime_local_manifest_source() -> None:
+    """Parse and keep this module's source ahead of the first manifest read.
+
+    Called from the app's idle pre-import pass (TASK-33620.15.5), so a
+    Console's first send does not parse it on the UI loop.
+    """
+    _load_server_module_ast()
 
 
 _AST_SIMPLE_TYPES = {
@@ -228,9 +270,10 @@ def _signature_to_prompt_arguments(
 
 
 def _extract_registered_entries(
-    method_name: str, decorator_name: str
+    method_name: str, decorator_name: str, *, module_node: ast.Module | None = None
 ) -> list[dict[str, Any]]:
-    module_node = _load_server_module_ast()
+    if module_node is None:
+        module_node = _load_server_module_ast()
     for node in module_node.body:
         if not isinstance(node, ast.ClassDef) or node.name != "TldwMCPServer":
             continue
@@ -275,16 +318,28 @@ def _extract_registered_entries(
     return []
 
 
-def _describe_local_resources() -> list[dict[str, Any]]:
-    return _extract_registered_entries("_register_resources", "resource")
+def _describe_local_resources(
+    *, module_node: ast.Module | None = None
+) -> list[dict[str, Any]]:
+    return _extract_registered_entries(
+        "_register_resources", "resource", module_node=module_node
+    )
 
 
-def _describe_local_prompts() -> list[dict[str, Any]]:
-    return _extract_registered_entries("_register_prompts", "prompt")
+def _describe_local_prompts(
+    *, module_node: ast.Module | None = None
+) -> list[dict[str, Any]]:
+    return _extract_registered_entries(
+        "_register_prompts", "prompt", module_node=module_node
+    )
 
 
-def _describe_local_tools() -> list[dict[str, Any]]:
-    return _extract_registered_entries("_register_tools", "tool")
+def _describe_local_tools(
+    *, module_node: ast.Module | None = None
+) -> list[dict[str, Any]]:
+    return _extract_registered_entries(
+        "_register_tools", "tool", module_node=module_node
+    )
 
 
 def _describe_local_library_tools() -> list[dict[str, Any]]:
@@ -306,13 +361,15 @@ def _describe_local_library_tools() -> list[dict[str, Any]]:
 
 
 def describe_local_mcp_capabilities() -> dict[str, Any]:
-    """Return a stable local MCP capability manifest without opening a loopback connection."""
+    """Return a fresh local manifest without opening a loopback connection."""
+    module_node = _load_server_module_ast()
     return {
         "server_id": "local:tldw_chatbook",
         "server_label": "tldw_chatbook local MCP",
-        "tools": _describe_local_tools() + _describe_local_library_tools(),
-        "resources": _describe_local_resources(),
-        "prompts": _describe_local_prompts(),
+        "tools": _describe_local_tools(module_node=module_node)
+        + _describe_local_library_tools(),
+        "resources": _describe_local_resources(module_node=module_node),
+        "prompts": _describe_local_prompts(module_node=module_node),
     }
 
 

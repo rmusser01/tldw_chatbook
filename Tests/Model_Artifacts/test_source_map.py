@@ -103,7 +103,9 @@ async def test_multi_file_artifact_provisions_end_to_end_with_source_map(tmp_pat
         assert srv.requests, "the fixture server must have actually been hit"
 
     installed_refs = {
-        item.descriptor.reference for item in core.list_installed() if item.descriptor is not None
+        item.descriptor.reference
+        for item in core.list_installed()
+        if item.descriptor is not None
     }
     assert root in installed_refs
     destination = core.artifact_path(root)
@@ -144,7 +146,9 @@ async def test_multi_file_artifact_with_dependency_provisions_via_source_map(tmp
         assert activated == root
 
     installed_refs = {
-        item.descriptor.reference for item in core.list_installed() if item.descriptor is not None
+        item.descriptor.reference
+        for item in core.list_installed()
+        if item.descriptor is not None
     }
     assert root in installed_refs
     assert dep in installed_refs
@@ -175,7 +179,9 @@ async def test_single_file_source_url_without_source_map_still_works(tmp_path):
 
         report = await svc.preflight(root, catalog)  # sources omitted entirely
         consent = report.grant()
-        activated = await svc.provision(root, consent, catalog)  # sources omitted entirely
+        activated = await svc.provision(
+            root, consent, catalog
+        )  # sources omitted entirely
         assert activated == root
 
     assert (core.artifact_path(root) / "model.onnx").read_bytes() == body
@@ -511,7 +517,9 @@ async def test_single_file_source_url_changed_after_consent_raises_consent_misma
 
     core = ModelArtifactService(tmp_path / "root")
     root = ArtifactRef("single-file-model-4", "r1", "int8")
-    desc_v1 = make_descriptor(ref=root, source_url="https://mirror-a.example.test/model")
+    desc_v1 = make_descriptor(
+        ref=root, source_url="https://mirror-a.example.test/model"
+    )
     catalog_v1 = DictCatalog({root: desc_v1})
     svc = ArtifactAcquisitionService(core, free_bytes_probe=lambda p: 10**12)
 

@@ -32,11 +32,16 @@ import inspect
 import json
 import os
 import sys
+import tempfile
+import threading
+import traceback
 from pathlib import Path
 from typing import Any
 
 import pytest
+
 from Tests.private_profile import private_profile_test
+from Tests.UI.console_controller_stubs import context_spend_for_test
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -99,11 +104,124 @@ async def _settle(pilot: Any, passes: int = 30) -> None:
         await pilot.pause()
 
 
+#: Worker groups through which a cold projection read publishes. Each ends in a
+#: full Console sync, and a full sync snapshots the transcript.
+_PUBLICATION_GROUPS = frozenset(
+    {
+        "console-sync",
+        "console-readiness-config",
+        "console-readiness-publication",
+        "console-context-presentation",
+        "console-context-publication",
+    }
+)
+
+
+async def _settle_publications(pilot: Any, screen: Any, timeout: float = 60.0) -> None:
+    """Wait until no cold projection read or the full sync it publishes is running.
+
+    TASK-36390: the fixture's own cold reads finish on workers. On a loaded
+    machine a fixed settle window could end before one of them published a
+    full sync. That sync then ran inside the typing burst and took three
+    transcript snapshots in the 400-message run. It is setup work, not
+    keystroke work.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    quiet = 0
+    while quiet < 3:
+        await asyncio.sleep(0.05)
+        await pilot.pause()
+        busy = sorted(
+            worker.group
+            for worker in pilot.app.workers
+            if worker.group in _PUBLICATION_GROUPS and not worker.is_finished
+        )
+        if screen._console_sync_in_progress:
+            busy.append("sync_in_progress")
+        if getattr(screen, "_console_control_bar_sync_scheduled", False):
+            busy.append("control_bar_sync_scheduled")
+        quiet = 0 if busy else quiet + 1
+        assert quiet or asyncio.get_running_loop().time() < deadline, (
+            f"Console publications never settled before typing: {busy}"
+        )
+
+
 #: The storage units TASK-33260 (PERF-01) added: what the two keystone
 #: regressions of September 2026 actually cost, and what the derivation
 #: counters above could not see (the census read 0 per key while every key
 #: ran 27-69 guarded ``load_settings`` calls).
 IO_UNITS = ("config_admissions", "storage_admissions", "helper_spawns", "os_opens")
+
+
+def _census_log_path() -> Path | None:
+    """Where to append this run's census, or None when nobody asked for it.
+
+    ``TLDW_STORAGE_UNIT_CENSUS_LOG`` must name a file inside the runner's
+    temporary directory (``RUNNER_TEMP`` on CI, else the system temporary
+    directory); anything else, including a symlink that resolves outside it,
+    is refused.
+
+    Returns:
+        The validated path, or None when the variable is unset.
+
+    Raises:
+        ValueError: The path lies outside the temporary directory.
+    """
+    requested = os.environ.get("TLDW_STORAGE_UNIT_CENSUS_LOG")
+    if not requested:
+        return None
+    from tldw_chatbook.Utils.path_validation import validate_path
+
+    root = os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()
+    return validate_path(requested, root)
+
+
+def _report_census(case: str, census: dict[str, Any]) -> None:
+    """Append one run's census to the requested log (see ``_census_log_path``).
+
+    Args:
+        case: The test case's node name.
+        census: Phase name to its measured storage units.
+    """
+    census_log = _census_log_path()
+    if census_log is None:
+        return
+    line = {"case": case, "platform": sys.platform, "census": census}
+    with open(census_log, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(line, sort_keys=True) + "\n")
+
+
+#: TASK-33802: who paid each storage admission and helper spawn billed to the
+#: typing burst, so an over-ceiling burst names its caller in the failure.
+_TYPING_BURST_CALLERS: list[str] = []
+#: TASK-33644: why the GC census pass failed. The pass records rather than
+#: asserts, so the census is still reported before the test fails on it.
+_GC_PASS_FAILURES: list[str] = []
+#: The app package's own frames (not the venv's, whose path also names the
+#: repository).
+_APP_PACKAGE = str(Path(__file__).resolve().parents[2] / "tldw_chatbook") + os.sep
+
+
+def _caller(unit: str) -> str:
+    """One line per unit: the unit, the thread and the innermost app frames.
+
+    Args:
+        unit: The storage unit being billed.
+
+    Returns:
+        ``"<unit> on <thread>: file:line fn <- ..."`` for the last six
+        ``tldw_chatbook`` frames, innermost first.
+    """
+    frames = [
+        frame
+        for frame in traceback.extract_stack()[:-3]
+        if frame.filename.startswith(_APP_PACKAGE)
+    ][-6:]
+    where = " <- ".join(
+        f"{frame.filename[len(_APP_PACKAGE) :]}:{frame.lineno} {frame.name}"
+        for frame in reversed(frames)
+    )
+    return f"{unit} on {threading.current_thread().name}: {where or '(no app frame)'}"
 
 
 _OS_OPEN_AUDIT: dict[str, Any] = {"installed": False, "bump": None}
@@ -163,6 +281,8 @@ def _count_storage_units(
         if counting["on"]:
             with lock:
                 counts[key] += 1
+            if counting.get("burst") and key in ("storage_admissions", "helper_spawns"):
+                _TYPING_BURST_CALLERS.append(_caller(key))
 
     real_operation = config_participants.operation
 
@@ -203,6 +323,167 @@ def _count_storage_units(
     monkeypatch.setitem(_OS_OPEN_AUDIT, "bump", bump)
 
 
+def _capture_media_cleanup_timer(
+    monkeypatch: pytest.MonkeyPatch, app_type: type[Any]
+) -> list[Any]:
+    """Capture the real startup cleanup callback for a separately billed phase.
+
+    TASK-33802: its five-second timer can otherwise open a SQLite helper on
+    an executor thread during typing. Keep the actual Textual timer and
+    callback; only its automatic firing is held still, like trace maintenance.
+
+    Args:
+        monkeypatch: Fixture that restores the original timer factory.
+        app_type: App class whose media-cleanup timer is being measured.
+
+    Returns:
+        Real startup callbacks to await in the cleanup phase.
+    """
+    callbacks: list[Any] = []
+    real_set_timer = app_type.set_timer
+
+    def set_timer(
+        app: Any,
+        delay: float,
+        callback: Any = None,
+        *,
+        name: str | None = None,
+        pause: bool = False,
+    ) -> Any:
+        if callback is not None and callback == app.perform_media_cleanup:
+            callbacks.append(callback)
+            pause = True
+        return real_set_timer(app, delay, callback, name=name, pause=pause)
+
+    monkeypatch.setattr(app_type, "set_timer", set_timer)
+    return callbacks
+
+
+@pytest.mark.asyncio
+async def test_media_cleanup_capture_holds_only_its_timer(monkeypatch) -> None:
+    """Other real timers fire; cleanup is awaited exactly once when driven."""
+    from textual.app import App
+
+    other_fired = asyncio.Event()
+    cleanup_calls: list[None] = []
+
+    class CleanupApp(App[None]):
+        async def perform_media_cleanup(self) -> None:
+            cleanup_calls.append(None)
+
+        def on_mount(self) -> None:
+            self.set_timer(0.001, self.perform_media_cleanup)
+            self.set_timer(0.001, other_fired.set)
+
+    callbacks = _capture_media_cleanup_timer(monkeypatch, CleanupApp)
+    app = CleanupApp()
+    async with app.run_test() as pilot:
+        await asyncio.wait_for(other_fired.wait(), 5)
+        await pilot.pause()
+        assert len(callbacks) == 1
+        assert not cleanup_calls
+        await callbacks[0]()
+        assert len(cleanup_calls) == 1
+
+
+def _capture_native_pause_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Any, threading.Event]:
+    """Hold wall-clock probes; retain the real callable and a drain barrier."""
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    real_probe = storage_admission._local_pause_requested
+    held = threading.Event()
+
+    def held_probe() -> bool:
+        held.set()
+        return False
+
+    monkeypatch.setattr(storage_admission, "_local_pause_requested", held_probe)
+    return real_probe, held
+
+
+async def _census_credential_ticks(
+    console: Any, native_probe: Any, credential_interval: float
+) -> None:
+    """Drive the actual idle work at its configured cadence, without a clock."""
+    from tldw_chatbook.Backup_Recovery.runtime_maintenance import (
+        MAINTENANCE_PROBE_INTERVAL_SECONDS,
+    )
+
+    elapsed = 0.0
+    for _ in range(IDLE_TICKS):
+        console._poll_console_credential_readiness()
+        elapsed += credential_interval
+        while elapsed >= MAINTENANCE_PROBE_INTERVAL_SECONDS:
+            assert not await asyncio.to_thread(native_probe), (
+                "native maintenance requested"
+            )
+            elapsed -= MAINTENANCE_PROBE_INTERVAL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_native_pause_capture_drains_and_bills_real_probes(monkeypatch, tmp_path):
+    """Elapsed monitor time cannot leak opens; driven probes retain cost/result."""
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance, storage_admission
+
+    entered, release = threading.Event(), threading.Event()
+    probe_calls: list[None] = []
+    requested = {"paused": False}
+    path = tmp_path / "probe"
+    path.write_bytes(b"probe")
+
+    def probe() -> bool:
+        if not probe_calls:
+            entered.set()
+            assert release.wait(5), "in-flight probe was not released"
+        probe_calls.append(None)
+        descriptor = os.open(path, os.O_RDONLY)
+        os.close(descriptor)
+        return requested["paused"]
+
+    class Console:
+        ticks = 0
+
+        def _poll_console_credential_readiness(self) -> None:
+            self.ticks += 1
+
+    counts: dict[str, int] = {}
+    counting = {"on": False}
+    _count_storage_units(monkeypatch, counts, counting)
+    monkeypatch.setattr(storage_admission, "_local_pause_requested", probe)
+    interval = runtime_maintenance.MAINTENANCE_PROBE_INTERVAL_SECONDS
+    monkeypatch.setattr(runtime_maintenance, "MAINTENANCE_PROBE_INTERVAL_SECONDS", 0.01)
+    monitor = asyncio.create_task(runtime_maintenance.monitor_app(object()))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        real_probe, held = _capture_native_pause_probe(monkeypatch)
+        assert not held.is_set(), "hold completed before the in-flight probe"
+        release.set()
+        assert await asyncio.to_thread(held.wait, 5)
+        assert len(probe_calls) == 1
+        counting["on"] = True
+        await asyncio.sleep(0.05)  # Several real monitor ticks remain held.
+        assert counts["os_opens"] == 0
+        monkeypatch.setattr(
+            runtime_maintenance, "MAINTENANCE_PROBE_INTERVAL_SECONDS", interval
+        )
+        console = Console()
+        await _census_credential_ticks(console, real_probe, interval / 4)
+        assert console.ticks == IDLE_TICKS
+        assert len(probe_calls) == 3
+        assert counts["os_opens"] == 2
+        requested["paused"] = True
+        with pytest.raises(AssertionError, match="native maintenance requested"):
+            await _census_credential_ticks(console, real_probe, interval / 4)
+        assert counts["os_opens"] == 3
+    finally:
+        counting["on"] = False
+        release.set()
+        monitor.cancel()
+        await asyncio.gather(monitor, return_exceptions=True)
+
+
 async def _census(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -210,6 +491,7 @@ async def _census(
     *,
     storage_units: bool = False,
     known_evidence: bool = False,
+    draft_pause: bool = False,
 ) -> dict[str, int]:
     """Boot Console, seed a transcript, type, and return a call census.
 
@@ -220,11 +502,15 @@ async def _census(
         storage_units: Also count the burst in storage units (``IO_UNITS``
             keys) and then census the typing pause, the idle ticks and one
             warm Console visit (``<phase>:<unit>`` keys; see
-            ``_census_idle_and_visit``). Holds the wall-clock loops still for
-            the burst; off, the derivation census runs exactly as before.
+            ``_census_idle_and_visit``). All variants hold credential and
+            draft-pause timers still during typing; storage mode separately
+            bills their real callbacks to the idle and pause phases.
         known_evidence: First settle a test result for the active connection
             into the app's shared evidence owner, so every readiness build
             looks it up and finds it (TASK-33005.2 AC#6).
+        draft_pause: Separately count one real paused draft refresh after the
+            typing burst (``pause:<counter>``), including in-memory history
+            work that the storage-unit ratchet cannot see.
 
     Returns:
         Mapping of counter name to calls observed during the typing burst
@@ -245,18 +531,17 @@ async def _census(
     monkeypatch.setattr(Pilot, "_wait_for_screen", wait_for_screen)
 
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Chat import console_session_settings as settings_module
     from tldw_chatbook.Chat.console_chat_models import (
         ConsoleChatMessage,
         ConsoleMessageRole,
     )
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-    from tldw_chatbook.UI.Console_Modules import session as session_module
     from tldw_chatbook.UI.Console_Modules import (
         console_spend_projection as spend_module,
     )
+    from tldw_chatbook.UI.Console_Modules import session as session_module
     from tldw_chatbook.UI.Screens import chat_screen as screen_module
-
-    from tldw_chatbook.Chat import console_session_settings as settings_module
 
     counts: dict[str, int] = {
         "messages_for_session": 0,
@@ -270,6 +555,7 @@ async def _census(
         "cost_projection_estimate_rows": 0,
         "context_rows": 0,
         "context_estimate_max_rows": 0,
+        "cleanup_candidate_queries_completed": 0,
     }
     counting = {"on": False}
 
@@ -370,25 +656,45 @@ async def _census(
     )
 
     trace_maintenance: list[tuple[Any, Any]] = []
+    media_cleanup: list[Any] = []
     if storage_units:
+        native_probe, probe_held = _capture_native_pause_probe(monkeypatch)
         _count_storage_units(monkeypatch, counts, counting)
+        media_cleanup = _capture_media_cleanup_timer(monkeypatch, TldwCli)
         # The 1 Hz legacy trace-maintenance loop (armed 5 s after ready,
         # runs forever) is wall-clock driven: left running, a slow machine
         # bills more of its ticks to whatever is being measured. Captured
         # instead of scheduled; the ``trace`` phase bills it per tick.
         from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
+        real_schedule = ConsoleRuntime._schedule_legacy_trace_maintenance
         monkeypatch.setattr(
             ConsoleRuntime,
             "_schedule_legacy_trace_maintenance",
-            lambda _runtime, database, normalizer_factory: trace_maintenance.append(
-                (database, normalizer_factory)
+            lambda runtime, database, normalizer_factory: trace_maintenance.append(
+                (database, normalizer_factory, runtime, real_schedule)
             ),
         )
 
     app = TldwCli()
+    if storage_units:
+        real_candidates = app.media_db.get_deletion_candidates
+
+        def counted_candidates(*args: Any, **kwargs: Any) -> Any:
+            result = real_candidates(*args, **kwargs)
+            if counting["on"]:
+                counts["cleanup_candidate_queries_completed"] += 1
+            return result
+
+        monkeypatch.setattr(app.media_db, "get_deletion_candidates", counted_candidates)
     async with app.run_test(size=(170, 48)) as pilot:
         await _settle(pilot)
+        if storage_units:
+            # The monitor awaits probes serially: its first held call proves
+            # any native probe already in flight finished before billing.
+            assert await asyncio.to_thread(probe_held.wait, 5), (
+                "native probe never held"
+            )
 
         store = pilot.app.screen._ensure_console_chat_store()
         workspace_id = store.workspace_context.active_workspace_id
@@ -417,8 +723,15 @@ async def _census(
         # projection rebuild before the measured unchanged typing burst; a
         # real restored conversation also paints context and cost before input.
         screen = pilot.app.screen
-        screen._active_console_settings_context_estimate()
-        screen._build_console_cost_state()
+        context_spend_for_test(screen)._active_console_settings_context_estimate()
+        context_spend_for_test(screen)._build_console_cost_state()
+        # TASK-36390: and what the composer's 0.2 s trailing refresh reads. A
+        # >0.2 s gap between presses fires it mid-burst. Its first
+        # context-presentation read after the fixture's back-door ingest is
+        # cold, and that read's publication is a full sync: 3 transcript
+        # snapshots. Paying it here leaves the burst only the warm read.
+        screen._sync_console_settings_summary()
+        screen._sync_console_cost_chip()
         if known_evidence:
             _settle_known_connection_evidence(pilot.app, screen)
             await _settle(pilot, passes=10)  # Its one refresh is not typing.
@@ -435,21 +748,52 @@ async def _census(
         # is above. The 0.25 s credential poll builds readiness each tick
         # (billed per tick by the ``idle`` phase): left running, the slower
         # 400-message run billed more ticks to typing (34 vs 39 builds).
-        screen._stop_console_credential_poll_timer()
         if storage_units:
-            # The 0.2 s trailing draft-spend refresh, which a loaded machine
-            # that leaves a >0.2 s gap between two presses fires mid-burst
-            # (measured: 49 config admissions, not 27); the ``pause`` phase
-            # fires it exactly once.
-            screen._console_draft_spend_refresh.delay_seconds = 3600.0
+            credential_interval = screen._console_credential_poll_timer._interval
+        screen._stop_console_credential_poll_timer()
+        # TASK-37144: the 0.2 s trailing refresh also builds readiness three
+        # times. Any elapsed pause between keys belongs to the pause phase,
+        # which restores the cadence and bills the actual callback once.
+        screen._console_draft_spend_refresh.delay_seconds = 3600.0
 
+        await _settle_publications(pilot, screen)
+        _TYPING_BURST_CALLERS.clear()
+        counting["burst"] = True
         counting["on"] = True
         for _ in range(KEYSTROKES):
             await pilot.press("a")
         counting["on"] = False
+        counting["burst"] = False
+
+        if draft_pause:
+            typing = dict(counts)
+            for key in counts:
+                counts[key] = 0
+            counting["on"] = True
+            try:
+                spend_refresh = screen._console_draft_spend_refresh
+                spend_refresh.delay_seconds = 0.2
+                spend_refresh.stop()
+                spend_refresh.refresh()
+                await _settle_publications(pilot, screen)
+            finally:
+                counting["on"] = False
+            pause = {f"pause:{key}": value for key, value in counts.items()}
+            counts.clear()
+            counts.update(typing)
+            counts.update(pause)
 
         if storage_units:
-            await _census_idle_and_visit(pilot, counts, counting, trace_maintenance)
+            await _census_idle_and_visit(
+                pilot,
+                counts,
+                counting,
+                trace_maintenance,
+                monkeypatch,
+                media_cleanup,
+                native_probe,
+                credential_interval,
+            )
 
     return counts
 
@@ -499,25 +843,34 @@ async def _census_idle_and_visit(
     pilot: Any,
     counts: dict[str, int],
     counting: dict[str, Any],
-    trace_maintenance: list[tuple[Any, Any]],
+    trace_maintenance: list[tuple[Any, Any, Any, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    media_cleanup: list[Any],
+    native_probe: Any,
+    credential_interval: float,
 ) -> None:
     """Census the typing pause, idle ticks and a warm visit in storage units.
 
     Every phase counts every thread from its start until its own timers
     settled and every worker it started finished, so nothing a phase begins
     lands in the next one. The wall-clock loops (credential poll, trace
-    maintenance) are stopped/captured by ``_census``, so no phase depends on
-    how many ticks a loaded machine fires.
+    maintenance, native backup probe) are stopped/captured by ``_census``,
+    so no phase depends on how many ticks a loaded machine fires.
 
     * ``pause:`` -- what the typing burst leaves behind once the user stops:
       the trailing draft-spend refresh (held off during the burst by
       ``_census``, fired once here) and every worker it and the burst's own
       trailing work started (the audit's 250-415 ms stall per typing pause).
     * ``idle:`` -- the 0.25 s credential poll, driven directly (per tick; the
-      audit's 4 config admissions/s at rest).
+      audit's 4 config admissions/s at rest), including real native backup
+      probes at their production cadence (two per eight credential ticks).
     * ``trace:`` -- the 1 Hz legacy trace-maintenance batch, driven exactly
       as its loop does (per tick; a helper spawn/s, via
       ``run_owned_db_call``'s owned connection).
+    * ``gc:`` -- the production maintenance loop's first GC pass
+      (TASK-33644): its graph-epoch read, collection and compaction attempt.
+    * ``cleanup:`` -- the captured startup media-cleanup callback, awaited
+      once with its real SQLite candidate query and connection cleanup.
     * ``visit:`` -- Console -> Library (uncounted) -> Console. The route is
       reusable (TASK-31520), so the return is a warm resume: no mount, only
       ``on_screen_resume`` and what it schedules.
@@ -531,8 +884,16 @@ async def _census_idle_and_visit(
         pilot: the running app's pilot, on a settled Console after the burst.
         counts: census mapping; phase keys are added as ``<phase>:<unit>``.
         counting: shared ``{"on": bool}`` switch.
-        trace_maintenance: the captured ``(database, normalizer_factory)``
-            the runtime would have started its maintenance loop with.
+        trace_maintenance: one captured ``(database, normalizer_factory,
+            runtime, real_schedule)`` per scheduling call: the arguments the
+            runtime would have started its maintenance loop with, the runtime
+            itself and the real ``_schedule_legacy_trace_maintenance`` that
+            ``gc_pass`` uses to start that loop.
+        monkeypatch: pytest fixture that owns the GC owned-call wrapper and
+            ready delay; the pass restores the wrapper before it ends.
+        media_cleanup: the captured real startup cleanup callback.
+        native_probe: the real held native-pause callable, billed during idle.
+        credential_interval: the captured real credential timer interval.
     """
     from textual import worker_manager
 
@@ -580,6 +941,10 @@ async def _census_idle_and_visit(
             counting["on"] = False
         if name is not None:
             phases.update({f"{name}:{unit}": counts[unit] for unit in IO_UNITS})
+        if name == "cleanup":
+            phases["cleanup:candidate_queries_completed"] = counts[
+                "cleanup_candidate_queries_completed"
+            ]
 
     async def typing_pause() -> None:
         spend_refresh = console._console_draft_spend_refresh
@@ -588,18 +953,138 @@ async def _census_idle_and_visit(
         spend_refresh.refresh()
 
     async def credential_ticks() -> None:
-        for _ in range(IDLE_TICKS):
-            console._poll_console_credential_readiness()
+        await _census_credential_ticks(console, native_probe, credential_interval)
 
     assert trace_maintenance, "the Console never armed legacy trace maintenance"
-    database, normalizer_factory = trace_maintenance[0]
+    database, normalizer_factory, runtime, real_schedule = trace_maintenance[0]
     maintenance = LegacyTraceMaintenance(
         database, normalizer=normalizer_factory(), provider_active=lambda: False
     )
+    # Capturing the scheduler leaves the fresh migration pending. Finish its
+    # one-time write before measuring the settled idle completion checks.
+    assert (await run_owned_db_call(database, maintenance.run_batch)).logical_complete
 
     async def trace_ticks() -> None:
         for _ in range(IDLE_TICKS):
             await run_owned_db_call(database, maintenance.run_batch)
+
+    async def gc_pass() -> None:
+        """Bill the maintenance loop's first GC pass, collection included.
+
+        The census holds the loop back until here, so its first pass is the
+        first GC of the profile: the graph-epoch read, the collection and the
+        compaction attempt. On the census's small database compaction defers
+        (``database_threshold``, a retryable reason) and the loop keeps that
+        collection pending, so later passes are the epoch read plus a
+        compaction retry with no collection -- the first pass is the superset,
+        and the census asserts it ran exactly those three calls. It is billed
+        from its epoch read through compaction (the batch normalization before
+        it is the per-tick row above) and fails the census if a call raises or
+        the collection is unusable. The 1 Hz backup-maintenance probe is held
+        still for the whole phase: it walks every registered root (~37 opens)
+        on its own thread, and landing inside the short billed window it
+        doubled the pass's opens about one run in ten. The hold now covers
+        every census phase; the idle phase pays the real native probe cost.
+        """
+        from tldw_chatbook.Chat import console_runtime as runtime_module
+
+        real_owned = runtime_module.run_owned_db_call
+
+        _GC_PASS_FAILURES.clear()
+        window: dict[str, Any] = {"calls": [], "error": None}
+        billed = asyncio.Event()
+        # Owned calls run in worker threads that cancelling the loop does not
+        # stop; cleanup waits for them before it restores anything.
+        in_flight: set[asyncio.Future[Any]] = set()
+        # Calls whose wrapper was cancelled; their outcome is read after
+        # cleanup, since no wrapper is left to report it.
+        orphaned: list[tuple[str, asyncio.Future[Any]]] = []
+
+        async def owned(
+            database_: Any, operation: Any, *args: Any, **kwargs: Any
+        ) -> Any:
+            name = getattr(operation, "__name__", "")
+            if name == "current_graph_epoch" and not window["calls"]:
+                for unit in IO_UNITS:
+                    counts[unit] = 0
+                counting["on"] = True
+            if counting["on"] and not billed.is_set():
+                window["calls"].append(name)
+            call = asyncio.ensure_future(
+                real_owned(database_, operation, *args, **kwargs)
+            )
+            in_flight.add(call)
+            call.add_done_callback(in_flight.discard)
+            try:
+                result = await asyncio.shield(call)
+            except BaseException as error:
+                if isinstance(error, asyncio.CancelledError):
+                    orphaned.append((name, call))
+                # Any call in the billed pass -- epoch read, collection or
+                # compaction -- ends the census with its name, not a timeout.
+                if window["calls"] and not billed.is_set():
+                    counting["on"] = False
+                    window["error"] = window["error"] or (
+                        f"{name or 'an owned call'} raised {type(error).__name__}"
+                    )
+                    billed.set()
+                raise
+            if name == "collect" and window["calls"] and not billed.is_set():
+                window["collected"] = getattr(result, "status", None)
+            if name == "run_after_gc" and window["calls"] and not billed.is_set():
+                counting["on"] = False
+                # A deferral (e.g. database_threshold on the small census
+                # database) is a whole pass: all three calls ran. A collection
+                # that did not complete (e.g. a stale epoch) or was unusable
+                # did partial work, so its counts are not the pass's.
+                if window.get("collected") != "completed":
+                    window["error"] = window["error"] or (
+                        f"the billed collection ended {window.get('collected')!r}"
+                    )
+                elif getattr(result, "reason_code", "") == "logical_gc_unavailable":
+                    window["error"] = "the billed pass found no usable collection"
+                phases.update({f"gc:{unit}": counts[unit] for unit in IO_UNITS})
+                billed.set()
+            return result
+
+        monkeypatch.setattr(runtime_module, "run_owned_db_call", owned)
+        monkeypatch.setattr(
+            runtime_module, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 0.0
+        )
+        real_schedule(runtime, database, normalizer_factory)
+        try:
+            await asyncio.wait_for(billed.wait(), GC_PASS_WAIT_SECONDS)
+        except TimeoutError:
+            window["error"] = window["error"] or (
+                f"the billed GC pass did not finish in {GC_PASS_WAIT_SECONDS} s"
+            )
+        finally:
+            task = runtime._legacy_trace_maintenance_task
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                runtime._legacy_trace_maintenance_task = None
+            if in_flight:
+                await asyncio.wait(set(in_flight), timeout=GC_PASS_WAIT_SECONDS)
+            monkeypatch.setattr(runtime_module, "run_owned_db_call", real_owned)
+        late = [
+            f"{name} then raised {type(call.exception()).__name__}"
+            for name, call in orphaned
+            if call.done() and not call.cancelled() and call.exception() is not None
+        ]
+        failure = "; ".join(filter(None, [window["error"], *late]))
+        if not failure and window["calls"] != [
+            "current_graph_epoch",
+            "collect",
+            "run_after_gc",
+        ]:
+            failure = f"the billed GC pass ran {window['calls']}"
+        if failure:
+            _GC_PASS_FAILURES.append(failure)
+            # Unmeasured (never over a ceiling); the test fails on the
+            # recorded failure once the census is reported.
+            for unit in IO_UNITS:
+                phases.setdefault(f"gc:{unit}", -1)
 
     async def navigate(target: str) -> None:
         await app.handle_screen_navigation(NavigateToScreen(target))
@@ -620,9 +1105,12 @@ async def _census_idle_and_visit(
 
     worker_manager.WorkerManager._new_worker = recording_new_worker
     try:
+        assert len(media_cleanup) == 1, "startup media cleanup was not captured"
+        await phase("cleanup", media_cleanup[0])
         await phase("pause", typing_pause)
         await phase("idle", credential_ticks)
         await phase("trace", trace_ticks)
+        await gc_pass()
         await phase(None, lambda: navigate("library"))
         assert app.screen is not console, "census never left the Console"
         await phase("visit", lambda: navigate("chat"))
@@ -747,9 +1235,9 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
         "cost_projection_estimate_rows",
         "context_rows",
     ):
-        assert (
-            loaded[key] == 0
-        ), f"typing traversed settled transcript in {key}: {loaded[key]} rows"
+        assert loaded[key] == 0, (
+            f"typing traversed settled transcript in {key}: {loaded[key]} rows"
+        )
     assert loaded["context_estimate_max_rows"] <= 1
 
 
@@ -760,6 +1248,102 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
 #: stale snapshot is the task-177 regression).
 MAX_SETTINGS_READINESS_BUILDS_PER_KEY = 3
 MAX_TEMPLATE_DEFAULT_BUILDS_PER_KEY = 0
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+@private_profile_test
+async def test_typing_census_excludes_elapsed_draft_pause_work(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """Elapsed pauses between real keys must not inflate the typing census."""
+    from textual.pilot import Pilot
+    from textual.timer import Timer
+
+    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        ConsoleDraftSpendRefresh,
+    )
+
+    elapsed = 0.0
+    presses = 0
+    delivered = 0
+    scheduled: list[tuple[ConsoleDraftSpendRefresh, Timer, float]] = []
+    timer_tasks: list[asyncio.Task[Any]] = []
+    real_schedule = ConsoleDraftSpendRefresh.schedule
+    real_press = Pilot.press
+
+    def schedule(owner: ConsoleDraftSpendRefresh) -> None:
+        # Keep native replacement/coalescing and callbacks; control only when
+        # the real timer's elapsed interval is delivered to its owner.
+        real_schedule(owner)
+        timer = owner.timer
+        assert isinstance(timer, Timer)
+        timer.pause()
+        scheduled.append((owner, timer, elapsed + owner.delay_seconds))
+        if timer._task is not None:
+            timer_tasks.append(timer._task)
+
+    async def press(pilot: Pilot[Any], *keys: str) -> None:
+        nonlocal elapsed, presses, delivered
+        await real_press(pilot, *keys)
+        presses += len(keys)
+        assert pilot.app.focused.draft_text() == "a" * presses
+        elapsed += 0.21
+        for owner, timer, due in tuple(scheduled):
+            if owner.timer is timer and due <= elapsed:
+                timer.stop()
+                owner.refresh()
+                delivered += 1
+        await pilot.pause()
+
+    monkeypatch.setattr(ConsoleDraftSpendRefresh, "schedule", schedule)
+    monkeypatch.setattr(Pilot, "press", press)
+    try:
+        counts = await _census(
+            monkeypatch, tmp_path, seeded_messages=400, draft_pause=True
+        )
+    finally:
+        for owner, timer, _ in scheduled:
+            timer.stop()
+            if owner.timer is timer:
+                owner.stop()
+        await asyncio.gather(*timer_tasks, return_exceptions=True)
+
+    sources = {
+        name: str(Path(sys.modules[name].__file__).resolve())
+        for name in (
+            "tldw_chatbook.app",
+            "tldw_chatbook.UI.Screens.chat_screen",
+            "tldw_chatbook.UI.Console_Modules.console_spend_projection",
+        )
+    }
+    assert all(Path(path).is_relative_to(REPO_ROOT) for path in sources.values())
+    request.node.user_properties.extend(
+        [
+            ("controlled_pause_census", json.dumps(counts, sort_keys=True)),
+            ("native_timer_count", str(len(scheduled))),
+            ("delivered_pause_count", str(delivered)),
+            ("runtime_sources", json.dumps(sources, sort_keys=True)),
+        ]
+    )
+    assert presses == KEYSTROKES
+    assert len(scheduled) >= KEYSTROKES, "native draft timers were never armed"
+    builds = counts["settings_readiness_builds"] / KEYSTROKES
+    assert 0 < builds <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY, counts
+    assert counts["pause:settings_readiness_builds"] > 0, counts
+    for phase in ("", "pause:"):
+        for key in (
+            "messages_for_session",
+            "snapshots",
+            "snapshot_rows",
+            "spend_history_rows",
+            "cost_rows",
+            "cost_snapshot_rows",
+            "cost_projection_estimate_rows",
+            "context_rows",
+        ):
+            assert counts[f"{phase}{key}"] == 0, (phase, key, counts)
+        assert counts[f"{phase}context_estimate_max_rows"] <= 1, counts
 
 
 @pytest.mark.ui
@@ -820,8 +1404,11 @@ async def test_typing_does_not_rebuild_the_provider_derivation(
 #: a live connection (no connect admission, no helper), so these pins are the
 #: observed maxima. ``os_opens`` also jitters UPWARD, in steps of ~37 opens
 #: (one extra path walk) between runs with identical admission counts --
-#: timing-dependent, source not isolated -- so its pins are the observed
-#: maxima checked with ``OS_OPENS_JITTER_SLACK`` on top; the admission
+#: timing-dependent; TASK-33644 traced one such walk to the 1 Hz backup-
+#: maintenance probe (``_local_pause_requested``) -- so its pins are the observed
+#: maxima checked with ``OS_OPENS_JITTER_SLACK`` on top. TASK-33664.1 now
+#: holds native wall-clock probes across all phases and bills their real cost
+#: in idle at the production cadence, retaining these ceiling values; admission
 #: counts are the exact signal. ``os_opens`` scales with
 #: the depth of the profile path (one open per component): pinned on macOS's
 #: ~11-component private-profile tmp path; Linux CI paths read lower.
@@ -861,16 +1448,133 @@ MAX_TRACE_MAINTENANCE_STORAGE_UNITS_PER_TICK = {
 #: Re-pinned 39/112/35,351 -> 43/134/44,712 on 2026-09-30 (owner approved)
 #: when #2888 was rebased onto dev 75c06af39a: #2922's Console hooks refresh
 #: hook-permission state from disk on every visit (four runs: 43 config;
-#: 127-133 storage, pinned max + 1; 42,830-44,712 opens). TASK-33642 takes
-#: that refresh off the visit path and lowers these again.
+#: 127-133 storage, pinned max + 1; 42,830-44,712 opens). TASK-33642 took
+#: that refresh off the visit path (a warm visit reuses the hook snapshot
+#: while nothing it read changed) and restored 39/112/35,351 on 2026-10-03;
+#: the same census then read 8 config, 56 storage, 9 helpers, ~2,160 opens
+#: on macOS (dev at 2612fc56b2: 8, 59-60, 8-9, ~2,530).
 MAX_VISIT_STORAGE_UNITS = {
-    "config_admissions": 43,
-    "storage_admissions": 134,
+    "config_admissions": 39,
+    "storage_admissions": 112,
     "helper_spawns": 9,
-    "os_opens": 44_712,
+    "os_opens": 35_351,
 }
+#: TASK-33644: the maintenance loop's first GC pass, billed on its own: the
+#: graph-epoch read, the collection and the compaction attempt (deferred on
+#: the census's small database). Pinned 2026-10-03 at dev 0409592a2d:
+#: 0 / 9 / 3 / 54 in every run -- three owned database calls, each on a fresh
+#: helper. ``os_opens`` is exact, not jitter: each helper start walks the
+#: profile directory chain (one open per component, plus ``/`` and
+#: ``/dev/null``), so it is ``3 x (components + 2)``: 54 under macOS's default
+#: pytest temp dir (16 components), 39 on the Linux runner (11). A deeper
+#: ``--basetemp`` adds 3 per component; a helper reused from a live
+#: connection reads 18 fewer.
+MAX_TRACE_GC_PASS_STORAGE_UNITS = {
+    "config_admissions": 0,
+    "storage_admissions": 9,
+    "helper_spawns": 3,
+    "os_opens": 54,
+}
+#: How long the GC census waits for its billed pass, and again for owned
+#: calls still in their worker threads after cancelling the loop.
+GC_PASS_WAIT_SECONDS = 60
 #: Upward timing jitter allowance on ``os_opens`` only (see above).
 OS_OPENS_JITTER_SLACK = 1.05
+#: TASK-33643: os.open ceilings on the Linux perf-guard runner, where path
+#: depth (and so opens per admission) differs from macOS -- the dicts above
+#: hold macOS values. Pinned 2026-10-03 from three perf-guard runs (six
+#: census lines, both evidence variants) at the highest value seen; the
+#: shared jitter slack applies on top. Observed ranges: typing burst 54-81,
+#: typing pause 153-206, credential poll 3.375-6.75 per tick, trace
+#: maintenance 16.5-23.125 per tick, trace GC pass 26, visit 1,913-1,926.
+#: The GC-pass row was re-pinned 26 -> 39 when the census started billing
+#: the first pass (collection included): 3 helpers x (11 components + 2).
+#: Every row assumes the runner's default pytest temp dir (11 path components
+#: to the census profile): each directory walk opens one file per component,
+#: so a run under a deeper ``--basetemp`` reads higher on every row by design.
+#: The gate is for that CI layout, not for arbitrary local temp roots.
+LINUX_OS_OPENS_CEILINGS = {
+    "typing (whole burst)": 81,
+    "typing pause": 206,
+    "credential poll (per tick)": 6.75,
+    "trace maintenance (per tick)": 23.125,
+    "trace GC pass": 39,
+    "visit": 1_926,
+}
+
+
+def _ceiling(phase: str, unit: str, ceilings: dict[str, float]) -> float | None:
+    """The ceiling one census unit is gated on here, or None if ungated.
+
+    Admissions and helper spawns count logic, so they gate everywhere.
+    os.open counts depend on path depth, so each platform has its own:
+    macOS uses the per-phase dicts, Linux ``LINUX_OS_OPENS_CEILINGS``, and
+    any other platform is not gated on them.
+
+    Args:
+        phase: The census phase, a key of ``LINUX_OS_OPENS_CEILINGS``.
+        unit: One of ``IO_UNITS``.
+        ceilings: That phase's macOS ceilings.
+
+    Returns:
+        The ceiling, or None when this platform has no os.open pin.
+    """
+    if unit != "os_opens":
+        return ceilings[unit]
+    if sys.platform == "darwin":
+        return ceilings[unit]
+    if sys.platform.startswith("linux"):
+        return LINUX_OS_OPENS_CEILINGS[phase]
+    return None
+
+
+def test_each_platform_gates_os_opens_on_its_own_ceilings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-33643: macOS and Linux each gate os.open on their own pins.
+
+    Args:
+        monkeypatch: Switches ``sys.platform``.
+    """
+    macos = {"config_admissions": 8, "os_opens": 2_000}
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert _ceiling("visit", "os_opens", macos) == 2_000
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert _ceiling("visit", "os_opens", macos) == LINUX_OS_OPENS_CEILINGS["visit"]
+    assert _ceiling("visit", "config_admissions", macos) == 8
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert _ceiling("visit", "os_opens", macos) is None
+    assert _ceiling("visit", "config_admissions", macos) == 8
+
+
+def test_the_census_log_stays_inside_the_runner_temp_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-33643: the census writes only where the runner's temp dir allows.
+
+    Args:
+        monkeypatch: Sets the runner temp dir and the requested log path.
+        tmp_path: The runner temp dir, and a sibling outside it.
+    """
+    runner_temp = tmp_path / "runner"
+    runner_temp.mkdir()
+    monkeypatch.setenv("RUNNER_TEMP", str(runner_temp))
+    monkeypatch.delenv("TLDW_STORAGE_UNIT_CENSUS_LOG", raising=False)
+    assert _census_log_path() is None
+
+    inside = runner_temp / "census.jsonl"
+    monkeypatch.setenv("TLDW_STORAGE_UNIT_CENSUS_LOG", str(inside))
+    assert _census_log_path() == inside.resolve()
+
+    monkeypatch.setenv("TLDW_STORAGE_UNIT_CENSUS_LOG", str(tmp_path / "outside.jsonl"))
+    with pytest.raises(ValueError):
+        _census_log_path()
+
+    escape = runner_temp / "escape.jsonl"
+    escape.symlink_to(tmp_path / "outside.jsonl")
+    monkeypatch.setenv("TLDW_STORAGE_UNIT_CENSUS_LOG", str(escape))
+    with pytest.raises(ValueError):
+        _census_log_path()
 
 
 @pytest.mark.ui
@@ -910,10 +1614,6 @@ async def test_console_storage_units_stay_within_their_ratchets(
         storage_units=True,
         known_evidence=known_evidence,
     )
-    assert (
-        counts["settings_readiness_builds"] / KEYSTROKES
-        <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
-    )
     measured = {
         "typing (whole burst)": (
             {unit: counts[unit] for unit in IO_UNITS},
@@ -931,13 +1631,44 @@ async def test_console_storage_units_stay_within_their_ratchets(
             {unit: counts[f"trace:{unit}"] / IDLE_TICKS for unit in IO_UNITS},
             MAX_TRACE_MAINTENANCE_STORAGE_UNITS_PER_TICK,
         ),
+        "trace GC pass": (
+            {unit: counts[f"gc:{unit}"] for unit in IO_UNITS},
+            MAX_TRACE_GC_PASS_STORAGE_UNITS,
+        ),
         "visit": (
             {unit: counts[f"visit:{unit}"] for unit in IO_UNITS},
             MAX_VISIT_STORAGE_UNITS,
         ),
     }
+    census: dict[str, Any] = {k: v[0] for k, v in measured.items()}
+    cleanup_units = {unit: counts[f"cleanup:{unit}"] for unit in IO_UNITS}
+    census["media cleanup"] = cleanup_units
+    census["media cleanup candidate queries completed"] = counts[
+        "cleanup:candidate_queries_completed"
+    ]
+    request.node.user_properties.append(("storage_units", json.dumps(census)))
+    # TASK-33643: every run reports its census -- before any assertion, so a
+    # failing run reports too -- and CI ceilings are pinned from those lines;
+    # perf-guard.yml names the file and prints it.
+    if _GC_PASS_FAILURES:
+        census["trace GC pass failure"] = _GC_PASS_FAILURES[0]
+    _report_census(request.node.name, census)
+    assert not _GC_PASS_FAILURES, _GC_PASS_FAILURES[0]
+    assert (
+        counts["settings_readiness_builds"] / KEYSTROKES
+        <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
+    )
     request.node.user_properties.append(
-        ("storage_units", json.dumps({k: v[0] for k, v in measured.items()}))
+        ("media_cleanup_units", json.dumps(cleanup_units))
+    )
+    assert cleanup_units["storage_admissions"] >= 1, (
+        "the startup cleanup phase did not reach its real database operation"
+    )
+    assert counts["cleanup:candidate_queries_completed"] == 1, (
+        "startup cleanup did not complete exactly one real candidate query"
+    )
+    assert cleanup_units["helper_spawns"] >= 1, (
+        "the real startup cleanup query's cold SQLite helper was not counted"
     )
     for unit in IO_UNITS:
         assert counts[f"canary:{unit}"] >= 1, (
@@ -946,22 +1677,41 @@ async def test_console_storage_units_stay_within_their_ratchets(
             "_count_storage_units wraps for it is no longer on the production "
             "path, so every ceiling below would pass vacuously."
         )
+    # PERF-06: a warm credential observer must not re-admit cached settings.
+    assert census["credential poll (per tick)"]["config_admissions"] == 0
+    assert census["credential poll (per tick)"]["storage_admissions"] == 0
     slack = {"os_opens": OS_OPENS_JITTER_SLACK}
-    # The os.open ceilings are macOS measurements (path depth differs per OS),
-    # so elsewhere -- the Linux perf-guard runner -- only the logic-level
-    # admission and helper counts gate.
-    gated = set(IO_UNITS) if sys.platform == "darwin" else set(IO_UNITS) - {"os_opens"}
     over = [
-        f"{phase} {unit}: {value} > ceiling {ceilings[unit]}"
+        f"{phase} {unit}: {value} > ceiling {ceiling}"
         f"{' x ' + str(slack[unit]) if unit in slack else ''}"
         for phase, (values, ceilings) in measured.items()
         for unit, value in values.items()
-        if unit in gated and value > ceilings[unit] * slack.get(unit, 1)
+        if (ceiling := _ceiling(phase, unit, ceilings)) is not None
+        and value > ceiling * slack.get(unit, 1)
     ]
+    # Only the units the burst went over: its ceilings allow dozens of
+    # ordinary admissions, which would bury the one that broke it.
+    burst_over = {
+        unit
+        for unit in ("storage_admissions", "helper_spawns")
+        if f"typing (whole burst) {unit}:" in " ".join(over)
+    }
+    burst_callers = [
+        entry
+        for entry in _TYPING_BURST_CALLERS
+        if entry.split(" on ", 1)[0] in burst_over
+    ]
+    callers = (
+        " Typing-burst callers: " + " | ".join(burst_callers) + "."
+        if burst_callers
+        else ""
+    )
     assert not over, (
         "Console storage units rose above their ratchet: "
         + "; ".join(over)
-        + f". Full census: {json.dumps({k: v[0] for k, v in measured.items()})}. "
+        + f". Full census: {json.dumps({k: v[0] for k, v in measured.items()})}."
+        + callers
+        + " "
         "Each unit is a real cost on a user path (an admission re-walks "
         "directory chains with one open() per component; a helper spawn is a "
         "python child, ~45-75 ms). Take the new cost off the path; never "

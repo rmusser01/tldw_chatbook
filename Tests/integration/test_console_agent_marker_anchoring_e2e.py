@@ -73,11 +73,11 @@ class _Gateway:
 
     async def resolve_for_send(self, _selection):
         return provider_resolution(
-                   ready=True,
-                   provider="llama_cpp",
-                   model="test-model",
-                   visible_copy="",
-               )
+            ready=True,
+            provider="llama_cpp",
+            model="test-model",
+            visible_copy="",
+        )
 
     async def stream_chat(self, _resolution, _messages, **kwargs):
         chunks = self._scripts[self.calls]
@@ -244,13 +244,14 @@ async def test_agent_marker_anchoring_across_two_sibling_branches_on_resume(tmp_
         assert conversation_id is not None
 
         # ---- Both runs are real, distinct, NON-superseded, correctly anchored ----
-        primary_runs = [
-            r for r in _all_runs(agent_db) if r["agent_kind"] == "primary"
-        ]
+        primary_runs = [r for r in _all_runs(agent_db) if r["agent_kind"] == "primary"]
         assert len(primary_runs) == 2
         assert all(r["status"] != "superseded" for r in primary_runs)
         by_anchor = {r["assistant_message_id"]: r for r in primary_runs}
-        assert set(by_anchor) == {a1.persisted_message_id, a1_prime.persisted_message_id}
+        assert set(by_anchor) == {
+            a1.persisted_message_id,
+            a1_prime.persisted_message_id,
+        }
         r1_steps = json.loads(by_anchor[a1.persisted_message_id]["steps"])
         r2_steps = json.loads(by_anchor[a1_prime.persisted_message_id]["steps"])
         assert any(s["tool_name"] == "calculator" for s in r1_steps)
@@ -412,9 +413,7 @@ async def test_retry_supersedes_prior_run_dropping_its_resume_markers(tmp_path):
         assert retried.status == "complete"
         assert retried.content == "81."
 
-        primary_runs = [
-            r for r in _all_runs(agent_db) if r["agent_kind"] == "primary"
-        ]
+        primary_runs = [r for r in _all_runs(agent_db) if r["agent_kind"] == "primary"]
         assert len(primary_runs) == 2
         statuses = sorted(r["status"] for r in primary_runs)
         assert "superseded" in statuses

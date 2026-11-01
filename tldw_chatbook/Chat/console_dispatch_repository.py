@@ -34,6 +34,9 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationValidationError,
+    ContinuationConflictError,
+    ContinuationRestoreTarget,
+    validate_continuation_restore,
     dump_provider_continuation_json,
     parse_provider_continuation_json,
     read_provider_continuation_json,
@@ -51,7 +54,7 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
-from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.Chat.message_metadata import MessageMetadata, AgentChatStartMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
@@ -63,12 +66,15 @@ _OWNER_SELECT = """
            checkpoint.preparation_id, checkpoint.attempt_id, checkpoint.state,
            checkpoint.checkpoint_revision, checkpoint.user_message_version,
            checkpoint.assistant_message_version, checkpoint.origin,
-           checkpoint.queue_entry_id, checkpoint.frozen_authority_json,
+           checkpoint.queue_entry_id, checkpoint.agent_chat_start_attempt_id, checkpoint.frozen_authority_json,
            checkpoint.resolved_destination_json,
            checkpoint.reconstructability_json,
            conversation.deleted AS conversation_deleted,
            user_message.conversation_id AS user_conversation_id,
            user_message.role AS user_role,
+           user_message.content AS user_content,
+           user_message.parent_message_id AS user_parent_message_id,
+           user_message.metadata_json AS user_metadata_json,
            user_message.version AS current_user_version,
            user_message.deleted AS user_deleted,
            assistant_message.conversation_id AS assistant_conversation_id,
@@ -142,6 +148,29 @@ class ConsoleDispatchRepository:
             _OWNER_SELECT + " WHERE checkpoint.conversation_id = ?",
             (acceptance.conversation_id,),
         ).fetchall()
+        if existing_rows and acceptance.origin == "agent_chat_start":
+            checkpoint, error = self._checkpoint_from_row(existing_rows[0])
+            metadata = MessageMetadata.from_json(existing_rows[0]["user_metadata_json"])
+            if (
+                len(existing_rows) == 1
+                and checkpoint is not None
+                and error is None
+                and checkpoint.agent_chat_start_attempt_id
+                == acceptance.agent_chat_start_attempt_id
+                and checkpoint.user_message_id == acceptance.user_message_id
+                and checkpoint.assistant_message_id == acceptance.assistant_message_id
+                and checkpoint.preparation_id == acceptance.preparation_id
+                and checkpoint.attempt_id == acceptance.attempt_id
+                and metadata is not None
+                and metadata.agent_chat_start == acceptance.agent_chat_start
+                and existing_rows[0]["user_content"] == acceptance.user_content
+                and existing_rows[0]["user_parent_message_id"]
+                == acceptance.parent_message_id
+                and checkpoint.frozen_authority == acceptance.frozen_authority
+                and checkpoint.resolved_destination == acceptance.resolved_destination
+                and checkpoint.reconstructability == acceptance.reconstructability
+            ):
+                return checkpoint
         if existing_rows:
             raise RuntimeError(
                 "Conversation already has an active dispatch checkpoint."
@@ -206,6 +235,74 @@ class ConsoleDispatchRepository:
                     receipt.initiator,
                 ),
             )
+        machine = acceptance.machine_followup_receipt
+        if machine is not None:
+            from tldw_chatbook.Chat.response_rules.corrections import (
+                MachineFollowupReceipt,
+            )
+
+            if type(machine) is not MachineFollowupReceipt:
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid machine receipt."
+                )
+            machine.__post_init__()
+            parent = cursor.execute(
+                "SELECT sender,version FROM messages WHERE id=? AND conversation_id=? AND deleted=0",
+                (machine.parent_assistant_message_id, acceptance.conversation_id),
+            ).fetchone()
+            if (
+                acceptance.origin != "queued"
+                or not acceptance.queue_entry_id
+                or machine.parent_assistant_message_id != acceptance.parent_message_id
+                or parent is None
+                or parent[0] != "assistant"
+                or (
+                    machine.source_message_version is not None
+                    and machine.source_message_version != parent[1]
+                )
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid machine parent."
+                )
+            if "hook" in machine.contributors and receipt is None:
+                raise ConsoleDispatchCheckpointValidationError("Missing genuine hook receipt.")
+            if receipt is not None and (
+                "hook" not in machine.contributors
+                or receipt.parent_turn_id != machine.parent_turn_id
+                or receipt.admitted_turns != machine.admitted_turns
+                or receipt.chain_id != machine.chain_id
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Mismatched machine lineage."
+                )
+            previous = cursor.execute(
+                "SELECT admitted_turns,native_turns FROM console_machine_followup_receipts WHERE chain_id=? AND conversation_id=? ORDER BY admitted_turns DESC LIMIT 1",
+                (machine.chain_id, acceptance.conversation_id),
+            ).fetchone()
+            shared, native_count = (previous[0], previous[1]) if previous else (0, 0)
+            if (
+                machine.admitted_turns != shared + 1
+                or machine.native_turns
+                != native_count + int("native" in machine.contributors)
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid machine counters."
+                )
+            cursor.execute(
+                "INSERT INTO console_machine_followup_receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    machine.operation_id,
+                    machine.parent_turn_id,
+                    machine.settlement_id,
+                    acceptance.conversation_id,
+                    machine.parent_assistant_message_id,
+                    acceptance.assistant_message_id,
+                    machine.chain_id,
+                    machine.admitted_turns,
+                    machine.native_turns,
+                    json.dumps(machine.contributors, separators=(",", ":")),
+                ),
+            )
         attachments = self._validated_attachments(acceptance)
         first_attachment = next(
             (row for row in attachments if row[0] == 0),
@@ -235,7 +332,12 @@ class ConsoleDispatchRepository:
                 now,
                 self.db.client_id,
                 (
-                    json.dumps(
+                    MessageMetadata(
+                        origin="agent_chat_start",
+                        agent_chat_start=acceptance.agent_chat_start,
+                    ).to_json()
+                    if acceptance.origin == "agent_chat_start"
+                    else json.dumps(
                         {
                             "origin": "hook",
                             "initiator": "hook_continuation",
@@ -244,7 +346,11 @@ class ConsoleDispatchRepository:
                         }
                     )
                     if receipt
-                    else None
+                    else (
+                        MessageMetadata(root_fork=True).to_json()
+                        if acceptance.user_root_fork
+                        else None
+                    )
                 ),
             ),
         )
@@ -315,10 +421,10 @@ class ConsoleDispatchRepository:
                 assistant_message_id, user_message_id, conversation_id,
                 schema_version, preparation_id, attempt_id, state,
                 checkpoint_revision, user_message_version,
-                assistant_message_version, origin, queue_entry_id,
+                assistant_message_version, origin, queue_entry_id, agent_chat_start_attempt_id,
                 frozen_authority_json, resolved_destination_json,
                 reconstructability_json, created_at, updated_at
-            ) VALUES (?, ?, ?, 1, ?, ?, 'accepted', 1, 1, 1, ?, ?, ?, ?, ?,
+            ) VALUES (?, ?, ?, 1, ?, ?, 'accepted', 1, 1, 1, ?, ?, ?, ?, ?, ?,
                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
@@ -329,11 +435,13 @@ class ConsoleDispatchRepository:
                 acceptance.attempt_id,
                 acceptance.origin,
                 acceptance.queue_entry_id,
+                acceptance.agent_chat_start_attempt_id,
                 authority_json,
                 destination_json,
                 reconstructability_json,
             ),
         )
+        self.db._advance_semantic_graph_epoch(cursor)
         message_ids: Mapping[str, str] = {
             "user": acceptance.user_message_id,
             "assistant": acceptance.assistant_message_id,
@@ -360,6 +468,50 @@ class ConsoleDispatchRepository:
                 error_code or "Accepted checkpoint is invalid."
             )
         return checkpoint
+
+    def admitted_trace_revision_ids(self, cursor: sqlite3.Cursor) -> tuple[str, ...]:
+        """Read current provenance roots owned by valid durable admissions.
+
+        The caller holds the collector's mark transaction. Reuse dispatch's
+        exact payload/version validation; a recovery-shaped or off-path row
+        does not acquire retention authority. Reservation later takes over
+        through the trace call graph, and settlement releases this root.
+        """
+        revisions: list[str] = []
+        conversations = cursor.execute(
+            "SELECT DISTINCT conversation_id FROM console_dispatch_checkpoints"
+        ).fetchall()
+        for (conversation_id,) in conversations:
+            result = self.read_for_session(str(conversation_id))
+            checkpoint = result.checkpoint
+            if checkpoint is None:
+                continue
+            parent = cursor.execute(
+                "SELECT parent_message_id FROM messages WHERE id = ?",
+                (checkpoint.assistant_message_id,),
+            ).fetchone()
+            if parent is None or parent[0] != checkpoint.user_message_id:
+                continue
+            rows = cursor.execute(
+                """WITH RECURSIVE admitted_path(message_id, parent_message_id) AS (
+                       SELECT id, parent_message_id FROM messages
+                        WHERE id = ? AND conversation_id = ? AND deleted = 0
+                       UNION
+                       SELECT parent.id, parent.parent_message_id FROM messages AS parent
+                         JOIN admitted_path AS child ON parent.id = child.parent_message_id
+                        WHERE parent.conversation_id = ? AND parent.deleted = 0
+                   ) SELECT revision.revision_id
+                       FROM console_trace_semantic_revisions AS revision
+                       JOIN admitted_path AS message
+                         ON revision.live_message_id = message.message_id
+                      WHERE revision.source_conversation_id = ?
+                        AND revision.source_message_id = message.message_id
+                        AND revision.live_locator_retired_at IS NULL""",
+                (checkpoint.assistant_message_id, conversation_id,
+                 conversation_id, conversation_id),
+            ).fetchall()
+            revisions.extend(str(row[0]) for row in rows)
+        return tuple(revisions)
 
     def read_for_session(self, conversation_id: str) -> ConsoleDispatchReadResult:
         """Read and validate at most one active-path recovery owner."""
@@ -825,6 +977,7 @@ class ConsoleDispatchRepository:
         )
         if deleted.rowcount != 1:
             raise sqlite3.IntegrityError("Checkpoint reconciliation delete failed.")
+        CharactersRAGDB._advance_semantic_graph_epoch(cursor)
 
     @staticmethod
     def _quarantined(
@@ -949,6 +1102,7 @@ class ConsoleDispatchRepository:
                 raise sqlite3.IntegrityError(
                     "Checkpoint state CAS lost after owner CAS."
                 )
+            self.db._advance_semantic_graph_epoch(cursor)
             updated_row = self._owner_by_assistant(
                 cursor, transition.assistant_message_id
             )
@@ -1193,6 +1347,7 @@ class ConsoleDispatchRepository:
                 raise sqlite3.IntegrityError(
                     "Checkpoint settlement delete lost after owner CAS."
                 )
+            self.db._advance_semantic_graph_epoch(cursor)
             return ConsoleDispatchWriteResult(
                 ConsoleDispatchResultStatus.COMMITTED,
                 None,
@@ -1303,6 +1458,7 @@ class ConsoleDispatchRepository:
                 raise sqlite3.IntegrityError(
                     "Checkpoint handoff delete lost after owner CAS."
                 )
+            self.db._advance_semantic_graph_epoch(cursor)
             content = row["assistant_content"]
             return ConsoleDispatchWriteResult(
                 ConsoleDispatchResultStatus.COMMITTED,
@@ -1498,21 +1654,57 @@ class ConsoleDispatchRepository:
             destination = parse_console_resolved_destination_json(
                 row["resolved_destination_json"]
             )
-            return bool(
-                continuation.provider == destination.provider
-                and continuation.model == destination.model
-                and continuation.api_base_url == destination.endpoint_identity
+            if continuation.schema_version != 3:
+                return False
+            validate_continuation_restore(
+                continuation,
+                ContinuationRestoreTarget(
+                    provider=destination.continuation_provider,
+                    protocol=destination.continuation_protocol,
+                    model=destination.model,
+                    api_base_url=destination.continuation_base_url,
+                    selected_provider=destination.provider,
+                ),
             )
-        except (AttributeError, ConsoleDispatchCheckpointValidationError):
+            return True
+        except (
+            AttributeError,
+            ContinuationValidationError,
+            ContinuationConflictError,
+            ConsoleDispatchCheckpointValidationError,
+        ):
             return False
 
     @staticmethod
     def _validate_acceptance(acceptance: ConsoleDurableTurnAcceptance) -> None:
         if (
             not isinstance(acceptance, ConsoleDurableTurnAcceptance)
-            or acceptance.origin not in {"manual", "queued"}
-            or (acceptance.origin == "manual" and acceptance.queue_entry_id is not None)
+            or acceptance.origin not in {"manual", "queued", "agent_chat_start"}
+            or (acceptance.origin != "queued" and acceptance.queue_entry_id is not None)
             or (acceptance.origin == "queued" and not acceptance.queue_entry_id)
+            or (
+                acceptance.origin == "agent_chat_start"
+                and (
+                    acceptance.attachments
+                    or type(acceptance.handoff_draft_revision) is not int
+                    or acceptance.handoff_draft_revision < 1
+                    or not isinstance(
+                        acceptance.agent_chat_start, AgentChatStartMetadata
+                    )
+                    or acceptance.agent_chat_start_attempt_id
+                    != acceptance.agent_chat_start.attempt_id
+                    or not ConsoleDispatchRepository._valid_identifier(
+                        acceptance.agent_chat_start_attempt_id
+                    )
+                )
+            )
+            or (
+                acceptance.origin != "agent_chat_start"
+                and (
+                    acceptance.agent_chat_start_attempt_id is not None
+                    or acceptance.agent_chat_start is not None
+                )
+            )
             or any(
                 not ConsoleDispatchRepository._valid_identifier(value)
                 for value in (
@@ -1540,6 +1732,19 @@ class ConsoleDispatchRepository:
             or type(acceptance.user_content) is not str
             or type(acceptance.attachments) is not tuple
             or type(acceptance.contributions) is not tuple
+            or (
+                acceptance.user_root_fork
+                and (
+                    acceptance.origin == "agent_chat_start"
+                    or acceptance.continuation_receipt is not None
+                )
+            )
+            or (
+                acceptance.origin == "agent_chat_start"
+                and acceptance.continuation_receipt is not None
+            )
+            or type(acceptance.user_root_fork) is not bool
+            or (acceptance.user_root_fork and acceptance.parent_message_id is not None)
         ):
             raise ConsoleDispatchCheckpointValidationError(
                 "Invalid durable turn acceptance."
@@ -1626,11 +1831,23 @@ class ConsoleDispatchRepository:
                     row["user_message_version"],
                     row["assistant_message_version"],
                 )
-                or row["origin"] not in {"manual", "queued"}
-                or (row["origin"] == "manual" and row["queue_entry_id"] is not None)
+                or row["origin"] not in {"manual", "queued", "agent_chat_start"}
+                or (row["origin"] != "queued" and row["queue_entry_id"] is not None)
                 or (row["origin"] == "queued" and not row["queue_entry_id"])
             ):
                 return None, "invalid_checkpoint_owner"
+            provenance = MessageMetadata.from_json(row["user_metadata_json"])
+            if row["origin"] == "agent_chat_start":
+                if (
+                    provenance is None
+                    or provenance.origin != "agent_chat_start"
+                    or provenance.agent_chat_start is None
+                    or provenance.agent_chat_start.attempt_id
+                    != row["agent_chat_start_attempt_id"]
+                ):
+                    return None, "invalid_machine_provenance"
+            elif row["agent_chat_start_attempt_id"] is not None:
+                return None, "invalid_checkpoint_identity"
             identity_values = (
                 row["assistant_message_id"],
                 row["user_message_id"],
@@ -1667,6 +1884,7 @@ class ConsoleDispatchRepository:
                 user_message_version=row["user_message_version"],
                 assistant_message_version=row["assistant_message_version"],
                 origin=row["origin"],
+                agent_chat_start_attempt_id=row["agent_chat_start_attempt_id"],
                 queue_entry_id=row["queue_entry_id"],
                 frozen_authority=frozen_authority,
                 resolved_destination=parse_console_resolved_destination_json(

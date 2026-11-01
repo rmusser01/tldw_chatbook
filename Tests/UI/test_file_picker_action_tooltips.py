@@ -68,9 +68,7 @@ def _single_line_option_offset(navigation, index: int) -> tuple[int, int]:
 def _render_option_prompt(option, *, width: int = 80):
     console = Console(width=width, color_system=None)
     render_options = console.options.update(width=width)
-    rendered_table = next(
-        iter(option.prompt.__rich_console__(console, render_options))
-    )
+    rendered_table = next(iter(option.prompt.__rich_console__(console, render_options)))
     lines = console.render_lines(rendered_table, render_options, pad=False)
     return [segment for line in lines for segment in line]
 
@@ -111,9 +109,7 @@ async def test_wait_for_picker_path_ignores_parent_only_population(tmp_path):
 @pytest.mark.asyncio
 async def test_wait_for_picker_path_failure_names_missing_path(tmp_path):
     target = tmp_path / "missing.json"
-    navigation = SimpleNamespace(
-        options=[SimpleNamespace(location=tmp_path.parent)]
-    )
+    navigation = SimpleNamespace(options=[SimpleNamespace(location=tmp_path.parent)])
     pilot = SimpleNamespace(pause=AsyncMock(return_value=None))
 
     with pytest.raises(AssertionError) as error:
@@ -330,9 +326,7 @@ async def test_character_picker_single_click_selects_without_importing(
 
 
 @pytest.mark.asyncio
-async def test_character_picker_space_selects_without_importing(
-    tmp_path, monkeypatch
-):
+async def test_character_picker_space_selects_without_importing(tmp_path, monkeypatch):
     _patch_clean_picker_config(monkeypatch)
     card = tmp_path / "ann.json"
     card.write_text("{}", encoding="utf-8")

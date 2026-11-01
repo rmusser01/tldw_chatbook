@@ -1,0 +1,1275 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__ test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer __
+
+    @pytest.mark.asyncio
+    async def test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer():
+        """Integration: a real ConsoleChatController round waiting on a worker
+        thread, the real ChatTaskCards/ChatQuestionCard under the consolidated
+        CSS, the real ConsoleComposerBar, and the real visible send action. Only
+        the screen object is a stand-in: constructing ``ChatScreen`` with the
+        shared mock host trips a real-path check on current dev."""
+        import threading
+    
+        from textual.app import ComposeResult
+    
+        from Tests.console_provider_doubles import persisted_console_store
+        from Tests.UI.consolidated_css import ConsolidatedCSSApp
+        from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+        from tldw_chatbook.Chat.console_command_grammar import (
+            KIND_NOT_COMMAND,
+            CommandParse,
+        )
+        from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+        from tldw_chatbook.Widgets.Chat_Widgets.chat_task_cards import ChatTaskCards
+        from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+    
+        class _Harness(ConsolidatedCSSApp):
+            def compose(self) -> ComposeResult:
+                yield ChatTaskCards(id="chat-task-cards")
+    
+        questions = [
+            {"question": "Which DB?", "header": "DB", "multiSelect": False,
+             "options": [{"label": "Postgres", "description": ""}, {"label": "SQLite", "description": ""}]},
+            {"question": "Regions?", "header": "Region", "multiSelect": True,
+             "options": [{"label": "eu", "description": ""}, {"label": "us", "description": ""}]},
+        ]
+        app = _Harness()
+        controller = ConsoleChatController(store=persisted_console_store(), provider_gateway=object())
+        session = controller.new_session(title="s")
+        box = {}
+        try:
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause()
+                cards = app.query_one(ChatTaskCards)
+                controller.app = app
+                controller.set_pending_question = lambda payload: cards.sync_state(
+                    TaskResumeState(pending_question=payload)
+                )
+                thread = threading.Thread(
+                    target=lambda: box.update(
+                        result=controller.request_user_questions(questions, session_id=session.id)
+                    )
+                )
+                thread.start()
+                for _ in range(40):
+                    await pilot.pause(0.05)
+                    if list(cards.query("#chat-question-card")):
+                        break
+>               card = cards.query_one("#chat-question-card")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_ask_user_typed_answers.py:272: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ChatTaskCards(id='chat-task-cards'), selector = '#chat-question-card'
+expect_type = None
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+    
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+    
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+    
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+    
+        base_node = self._get_dom_base()
+    
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+    
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#chat-question-card' on ChatTaskCards(id='chat-task-cards')
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+---------------------------- Captured stderr setup -----------------------------
+2026-10-04 15:51:03.001 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-04 15:51:03.026 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-04 15:51:03.124 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-04 15:51:03.131 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------------------------- Captured stderr call -----------------------------
+2026-10-04 15:51:03.153 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2885 - Initializing CharactersRAGDB db_sha256=memory [Client ID: console-doubles]
+2026-10-04 15:51:03.153 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=8494865792
+2026-10-04 15:51:03.153 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24136 - Started outermost transaction on thread 8494865792.
+2026-10-04 15:51:03.154 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8152 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 77
+2026-10-04 15:51:03.154 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:3947 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: db_sha256=memory...
+2026-10-04 15:51:03.154 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.163 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:3988 - [rag_char_chat_schema V4] Full schema script executed.
+2026-10-04 15:51:03.163 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:3995 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: db_sha256=memory.
+2026-10-04 15:51:03.164 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4259 - [task-2451] Default Assistant enrichment UPDATE affected 1 row(s) in DB: db_sha256=memory.
+2026-10-04 15:51:03.164 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4280 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.164 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.179 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4290 - [rag_char_chat_schema V4→V5] Migration script executed.
+2026-10-04 15:51:03.179 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4299 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.179 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4333 - Migrating schema from V5 to V6 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.179 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.181 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4341 - [rag_char_chat_schema V5→V6] Migration script executed.
+2026-10-04 15:51:03.181 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4350 - [rag_char_chat_schema V5→V6] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.181 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4384 - Migrating schema from V6 to V7 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.181 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.182 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4392 - [rag_char_chat_schema V6→V7] Migration script executed.
+2026-10-04 15:51:03.182 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4401 - [rag_char_chat_schema V6→V7] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.183 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8066 - Migrating schema from V7 to V8 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.183 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.185 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8074 - [rag_char_chat_schema V7→V8] Migration script executed.
+2026-10-04 15:51:03.185 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8083 - [rag_char_chat_schema V7→V8] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.185 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4435 - Migrating schema from V8 to V9 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.185 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.188 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4443 - [rag_char_chat_schema V8→V9] Migration script executed.
+2026-10-04 15:51:03.188 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4452 - [rag_char_chat_schema V8→V9] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.188 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4486 - Migrating schema from V9 to V10 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.188 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.189 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4494 - [rag_char_chat_schema V9→V10] Migration script executed.
+2026-10-04 15:51:03.189 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4503 - [rag_char_chat_schema V9→V10] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.189 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4537 - Migrating schema from V10 to V11 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.189 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.192 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4545 - [rag_char_chat_schema V10→V11] Migration script executed.
+2026-10-04 15:51:03.192 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4554 - [rag_char_chat_schema V10→V11] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.192 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4588 - Migrating schema from V11 to V12 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.192 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.206 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4596 - [rag_char_chat_schema V11→V12] Migration script executed.
+2026-10-04 15:51:03.206 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4605 - [rag_char_chat_schema V11→V12] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.206 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4631 - Migrating schema from V12 to V13 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.206 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.242 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4639 - [rag_char_chat_schema V12→V13] Migration script executed.
+2026-10-04 15:51:03.242 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4647 - [rag_char_chat_schema V12→V13] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.242 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4672 - Migrating schema from V13 to V14 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.243 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.256 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4680 - [rag_char_chat_schema V13→V14] Migration script executed.
+2026-10-04 15:51:03.256 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4688 - [rag_char_chat_schema V13→V14] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.256 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4713 - Migrating schema from V14 to V15 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.256 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.258 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4721 - [rag_char_chat_schema V14→V15] Migration script executed.
+2026-10-04 15:51:03.258 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4729 - [rag_char_chat_schema V14→V15] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.258 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4755 - Migrating schema from V15 to V16 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.258 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.258 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4798 - [rag_char_chat_schema V15→V16] Migration script executed.
+2026-10-04 15:51:03.258 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4808 - [rag_char_chat_schema V15→V16] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.258 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4834 - Migrating schema from V16 to V17 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.259 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.259 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4849 - [rag_char_chat_schema V16→V17] Migration script executed.
+2026-10-04 15:51:03.259 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4857 - [rag_char_chat_schema V16→V17] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.259 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4885 - Migrating schema from V17 to V18 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.259 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.264 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4900 - [rag_char_chat_schema V17→V18] Migration script executed.
+2026-10-04 15:51:03.264 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4908 - [rag_char_chat_schema V17→V18] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.264 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8009 - Migrating schema from V18 to V19 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.264 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.265 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8024 - [rag_char_chat_schema V18→V19] Migration script executed.
+2026-10-04 15:51:03.265 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8032 - [rag_char_chat_schema V18→V19] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.265 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4936 - Migrating schema from V19 to V20 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.265 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.270 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4956 - [rag_char_chat_schema V19→V20] Migration script executed.
+2026-10-04 15:51:03.270 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4964 - [rag_char_chat_schema V19→V20] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.270 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:4992 - Migrating schema from V20 to V21 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.270 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.270 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_skip_already_applied_add_column:3822 - [rag_char_chat_schema V20→V21] world_book_entries.priority already present; skipping the ADD COLUMN (idempotent replay).
+2026-10-04 15:51:03.271 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5012 - [rag_char_chat_schema V20→V21] Migration script executed.
+2026-10-04 15:51:03.271 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5020 - [rag_char_chat_schema V20→V21] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.271 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5042 - Migrating schema from V21 to V22 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.271 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.272 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_skip_already_applied_add_column:3822 - [rag_char_chat_schema V21→V22] world_book_entries.regex already present; skipping the ADD COLUMN (idempotent replay).
+2026-10-04 15:51:03.272 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5057 - [rag_char_chat_schema V21→V22] Migration script executed.
+2026-10-04 15:51:03.272 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5063 - [rag_char_chat_schema V21→V22] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.272 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5085 - Migrating schema from V22 to V23 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.272 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.273 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5100 - [rag_char_chat_schema V22→V23] Migration script executed.
+2026-10-04 15:51:03.273 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5106 - [rag_char_chat_schema V22→V23] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.273 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5129 - Migrating schema from V23 to V24 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.273 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.276 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5144 - [rag_char_chat_schema V23→V24] Migration script executed.
+2026-10-04 15:51:03.276 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5150 - [rag_char_chat_schema V23→V24] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.276 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5173 - Migrating schema from V24 to V25 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.277 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.277 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5188 - [rag_char_chat_schema V24→V25] Migration script executed.
+2026-10-04 15:51:03.277 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5194 - [rag_char_chat_schema V24→V25] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.277 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5218 - Migrating schema from V25 to V26 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.277 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.283 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5233 - [rag_char_chat_schema V25→V26] Migration script executed.
+2026-10-04 15:51:03.283 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5239 - [rag_char_chat_schema V25→V26] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.284 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.288 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.288 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-04 15:51:03.292 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5426 - Migrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.293 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.294 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5441 - [rag_char_chat_schema V28→V29] Migration script executed.
+2026-10-04 15:51:03.294 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5449 - [rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.294 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5476 - Migrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.294 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.298 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5496 - [rag_char_chat_schema V29→V30] Migration script executed.
+2026-10-04 15:51:03.298 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5520 - [rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.298 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5547 - Migrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.298 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.302 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5567 - [rag_char_chat_schema V30→V31] Migration script executed.
+2026-10-04 15:51:03.302 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5591 - [rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.302 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:5624 - Migrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.303 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4259 - [task-2451] Default Assistant enrichment UPDATE affected 0 row(s) in DB: db_sha256=memory.
+2026-10-04 15:51:03.303 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:5650 - [rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.303 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.305 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.309 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.311 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.313 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.318 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.319 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.320 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.321 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.323 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:5970 - Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.324 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6034 - [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-10-04 15:51:03.324 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6084 - Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.324 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.325 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6223 - [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.325 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6253 - Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.325 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.343 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6293 - [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.343 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6362 - Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-10-04 15:51:03.343 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.345 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6395 - Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-10-04 15:51:03.345 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6439 - Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.345 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.351 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6485 - [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=memory. Purged 0 unreachable sync_log row(s) of 1.
+2026-10-04 15:51:03.352 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6527 - Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.352 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.353 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6562 - [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.353 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.360 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6718 - Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.360 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.362 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6753 - [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.362 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6801 - Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.362 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.362 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6835 - [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 15:51:03.362 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.368 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.381 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:6960 - Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 15:51:03.381 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.381 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7025 - [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=memory (examined 0, compacted 0, skipped 0 unreadable).
+2026-10-04 15:51:03.381 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.386 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.388 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.441 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.443 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.481 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.483 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.484 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.485 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.520 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.527 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.558 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.560 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.566 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-04 15:51:03.566 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-04 15:51:03.567 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.571 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.618 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.620 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.622 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.632 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.660 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.661 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.671 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.672 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.672 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24105 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 15:51:03.707 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8286 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 77.
+2026-10-04 15:51:03.707 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24201 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-04 15:51:03.708 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=memory
+2026-10-04 15:51:03.817 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+____ TestPreviewIntegration.test_open_in_console_stages_preview_transcript _____
+
+self = <Tests.UI.test_personas_workbench.TestPreviewIntegration object at 0x112b64770>
+mock_app_instance = <MagicMock id='4807240176'>, stub_characters = None
+stub_conversations = None
+
+    async def test_open_in_console_stages_preview_transcript(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        from textual.widgets import Button as _Button
+    
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+    
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+        async with app.run_test(size=(160, 50)) as pilot:
+>           screen = await self._select_first_character(pilot)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_personas_workbench.py:11271: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/test_personas_workbench.py:10250: in _select_first_character
+    await pilot.click("#personas-library-row-character-1")
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/pilot.py:238: in click
+    return await self._post_mouse_events(
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/pilot.py:429: in _post_mouse_events
+    target_widget = screen.query_one(widget)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PersonasScreen(classes='shell-header-normal')
+selector = '#personas-library-row-character-1', expect_type = None
+
+    def query_one(
+        self,
+        selector: str | type[QueryType],
+        expect_type: type[QueryType] | None = None,
+    ) -> QueryType | Widget:
+        """Get a widget from this widget's children that matches a selector or widget type.
+    
+        Args:
+            selector: A selector or widget type.
+            expect_type: Require the object be of the supplied type, or None for any type.
+    
+        Raises:
+            WrongType: If the wrong type was found.
+            NoMatches: If no node matches the query.
+    
+        Returns:
+            A widget matching the selector.
+        """
+        _rich_traceback_omit = True
+    
+        base_node = self._get_dom_base()
+    
+        if isinstance(selector, str):
+            query_selector = selector
+        else:
+            query_selector = selector.__name__
+    
+        if is_id_selector(query_selector):
+            cache_key = (base_node._nodes._updates, query_selector, expect_type)
+            cached_result = base_node._query_one_cache.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+            if (
+                node := walk_breadth_search_id(
+                    base_node, query_selector[1:], with_root=False
+                )
+            ) is not None:
+                if expect_type is not None and not isinstance(node, expect_type):
+                    raise WrongType(
+                        f"Node matching {query_selector!r} is the wrong type; expected type {expect_type.__name__!r}, found {node}"
+                    )
+                base_node._query_one_cache[cache_key] = node
+                return node
+>           raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E           textual.css.query.NoMatches: No nodes match '#personas-library-row-character-1' on PersonasScreen(classes='shell-header-normal')
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1505: NoMatches
+
+During handling of the above exception, another exception occurred:
+
+self = <Tests.UI.test_personas_workbench.TestPreviewIntegration object at 0x112b64770>
+mock_app_instance = <MagicMock id='4807240176'>, stub_characters = None
+stub_conversations = None
+
+    async def test_open_in_console_stages_preview_transcript(
+        self, mock_app_instance, stub_characters, stub_conversations
+    ):
+        from textual.widgets import Button as _Button
+    
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_preview_pane import (
+            PersonasPreviewPane,
+        )
+    
+        app = PersonasTestApp(mock_app_instance)
+        app.open_chat_with_handoff = Mock()
+>       async with app.run_test(size=(160, 50)) as pilot:
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_personas_workbench.py:11270: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:231: in __aexit__
+    await self.gen.athrow(value)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/widget.py:4718: in _compose
+    widgets = [*self._pending_children, *compose(self)]
+                                         ^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/compose.py:54: in compose
+    child = next(iter_compose)
+            ^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/AppFooterStatus.py:199: in compose
+    self._tamagotchi = self._build_tamagotchi()
+                       ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Widgets/AppFooterStatus.py:229: in _build_tamagotchi
+    get_cli_setting("tamagotchi", "enabled", False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a5bf5c0>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+----------------------------- Captured stderr call -----------------------------
+2026-10-04 15:51:07.969 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing PersonasScreen screen: personas
+2026-10-04 15:51:07.969 | DEBUG    | tldw_chatbook.UI.CCP_Modules.ccp_character_handler:__init__:213 - CCPCharacterHandler initialized
+2026-10-04 15:51:07.970 | INFO     | tldw_chatbook.UI.CCP_Modules.ccp_enhanced_handlers:enhance_character_handler:173 - Enhanced character handler with validation and loading indicators
+2026-10-04 15:51:07.970 | INFO     | tldw_chatbook.UI.CCP_Modules.ccp_enhanced_handlers:setup_ccp_enhancements:321 - Personas handler enhancements setup complete for screen_type=PersonasScreen handlers=['character']
+2026-10-04 15:51:09.775 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen personas mounted
+2026-10-04 15:51:10.411 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen personas unmounted
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site- │
+│ packages/textual/widget.py:4718 in _compose                                  │
+│                                                                              │
+│   4715 │                                                                     │
+│   4716 │   async def _compose(self) -> None:                                 │
+│   4717 │   │   try:                                                          │
+│ ❱ 4718 │   │   │   widgets = [*self._pending_children, *compose(self)]       │
+│   4719 │   │   │   self._pending_children.clear()                            │
+│   4720 │   │   except TypeError as error:                                    │
+│   4721 │   │   │   raise TypeError(                                          │
+│                                                                              │
+│ ╭───────────────────────── locals ─────────────────────────╮                 │
+│ │ error = RecoveryRequired('raw_source_selection_changed') │                 │
+│ │  self = AppFooterStatus(id='app-footer-status')          │                 │
+│ ╰──────────────────────────────────────────────────────────╯                 │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_c │
+│ hatbook/Widgets/AppFooterStatus.py:199 in compose                            │
+│                                                                              │
+│   196 │   │   yield self._word_count_display  # Word count display           │
+│   197 │   │   yield self._token_count_display  # Token count display         │
+│   198 │   │   yield self._db_status_display  # This is the existing DB size  │
+│ ❱ 199 │   │   self._tamagotchi = self._build_tamagotchi()                    │
+│   200 │   │   if self._tamagotchi is not None:                               │
+│   201 │   │   │   yield self._tamagotchi                                     │
+│   202                                                                        │
+│                                                                              │
+│ ╭──────────────────── locals ────────────────────╮                           │
+│ │ self = AppFooterStatus(id='app-footer-status') │                           │
+│ ╰────────────────────────────────────────────────╯                           │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_c │
+│ hatbook/Widgets/AppFooterStatus.py:229 in _build_tamagotchi                  │
+│                                                                              │
+│   226 │   │   # `raw_cli_permitted` already use) -- anything it cannot read  │
+│   227 │   │   # boolean, including a bare integer or a typo, resolves to the │
+│   228 │   │   if not coerce_bool_setting(                                    │
+│ ❱ 229 │   │   │   get_cli_setting("tamagotchi", "enabled", False), False     │
+│   230 │   │   ):                                                             │
+│   231 │   │   │   return None                                                │
+│   232                                                                        │
+│                                                                              │
+│ ╭──────────────────── locals ────────────────────╮                           │
+│ │ self = AppFooterStatus(id='app-footer-status') │                           │
+│ ╰────────────────────────────────────────────────╯                           │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_c │
+│ hatbook/config.py:9511 in get_cli_setting                                    │
+│                                                                              │
+│    9508 │   │   The resolved setting value, or ``default`` when the section/ │
+│    9509 │   │   not exist.                                                   │
+│    9510 │   """                                                              │
+│ ❱  9511 │   config = load_cli_config_and_ensure_existence()  # Ensures confi │
+│    9512 │                                                                    │
+│    9513 │   default_was_given = default is not _CLI_SETTING_DEFAULT_UNSET    │
+│    9514 │   resolved_default = default if default_was_given else None        │
+│                                                                              │
+│ ╭──────── locals ────────╮                                                   │
+│ │ default = False        │                                                   │
+│ │     key = 'enabled'    │                                                   │
+│ │ section = 'tamagotchi' │                                                   │
+│ ╰────────────────────────╯                                                   │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_c │
+│ hatbook/config.py:7112 in load_cli_config_and_ensure_existence               │
+│                                                                              │
+│    7109 │   │   warm = _warm_config_cache_hit()                              │
+│    7110 │   │   if warm is not None:                                         │
+│    7111 │   │   │   return warm                                              │
+│ ❱  7112 │   return _load_cli_config_bootstrap(force_reload=force_reload).con │
+│    7113                                                                      │
+│    7114                                                                      │
+│    7115 def _setting_value_for_log(key: Any, value: Any) -> str:             │
+│                                                                              │
+│ ╭─────── locals ───────╮                                                     │
+│ │ force_reload = False │                                                     │
+│ │         warm = None  │                                                     │
+│ ╰──────────────────────╯                                                     │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_c │
+│ hatbook/Backup_Recovery/config_participants.py:421 in wrapped                │
+│                                                                              │
+│   418 │   │   target = (                                                     │
+│   419 │   │   │   (args[0] if args else kwargs.get("config_path")) if path_h │
+│   420 │   │   )                                                              │
+│ ❱ 421 │   │   with operation(source, target=target):                         │
+│   422 │   │   │   return function(*args, **kwargs)                           │
+│   423 │                                                                      │
+│   424 │   return wrapped                                                     │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │        args = ()                                                         │ │
+│ │      kwargs = {'force_reload': False}                                    │ │
+│ │ path_helper = False                                                      │ │
+│ │      source = <module 'tldw_chatbook.config' from                        │ │
+│ │               '/Users/macbook-dev/.codex/worktrees/console-chat-starts/… │ │
+│ │      target = None                                                       │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none │
+│ /lib/python3.12/contextlib.py:137 in __enter__                               │
+│                                                                              │
+│   134 │   │   # they are only needed for recreation, which is not possible a │
+│   135 │   │   del self.args, self.kwds, self.func                            │
+│   136 │   │   try:                                                           │
+│ ❱ 137 │   │   │   return next(self.gen)                                      │
+│   138 │   │   except StopIteration:                                          │
+│   139 │   │   │   raise RuntimeError("generator didn't yield") from None     │
+│   140                                                                        │
+│                                                                              │
+│ ╭────────────────────────────── locals ──────────────────────────────╮       │
+│ │ self = <contextlib._GeneratorContextManager object at 0x10c9cdee0> │       │
+│ ╰────────────────────────────────────────────────────────────────────╯       │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_c │
+│ hatbook/Backup_Recovery/config_participants.py:352 in operation              │
+│                                                                              │
+│   349 │   │   │   for name in _STATE_NAMES                                   │
+│   350 │   │   │   if hasattr(source, name)                                   │
+│   351 │   │   }                                                              │
+│ ❱ 352 │   │   with raw._scope(source, route, writing=True, selected_read=tar │
+│   353 │   │   │   state = raw._states[active]                                │
+│   354 │   │   │   entered = True                                             │
+│   355 │   │   │   yield active                                               │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │      acquired = <contextlib.ExitStack object at 0x10c9cde20>             │ │
+│ │       attempt = <tldw_chatbook.Backup_Recovery.storage_admission._Acqui… │ │
+│ │                 object at 0x10c9ccce0>                                   │ │
+│ │        before = {                                                        │ │
+│ │                 │   '_CONFIG_CACHE': {                                   │ │
+│ │                 │   │   'config_schema_version': 1,                      │ │
+│ │                 │   │   'general': {                                     │ │
+│ │                 │   │   │   'default_tab': 'chat',                       │ │
+│ │                 │   │   │   'focus_mode': False,                         │ │
+│ │                 │   │   │   'default_theme': 'textual-dark',             │ │
+│ │                 │   │   │   'palette_theme_limit': 1,                    │ │
+│ │                 │   │   │   'log_level': 'INFO',                         │ │
+│ │                 │   │   │   'users_name': 'default_user',                │ │
+│ │                 │   │   │   'shutdown_grace_seconds': 120.0              │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'console': {                                     │ │
+│ │                 │   │   │   'collapse_large_pastes': True,               │ │
+│ │                 │   │   │   'custom_endpoints_use_engine': True,         │ │
+│ │                 │   │   │   'show_model_thinking': True,                 │ │
+│ │                 │   │   │   'thinking_history_policy_default': 'auto',   │ │
+│ │                 │   │   │   'reasoning_history': 'auto',                 │ │
+│ │                 │   │   │   'reasoning_history_overrides': {},           │ │
+│ │                 │   │   │   'reasoning_native_tool_overrides': {},       │ │
+│ │                 │   │   │   'stack_collapsed_rail_labels': False,        │ │
+│ │                 │   │   │   'rail_layout_scope': 'global',               │ │
+│ │                 │   │   │   'assistant_library_access_default': False,   │ │
+│ │                 │   │   │   ... +41                                      │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'console_ssh': {                                 │ │
+│ │                 │   │   │   'control_persist': '10m',                    │ │
+│ │                 │   │   │   'enable_multiplexing': True,                 │ │
+│ │                 │   │   │   'connect_timeout_s': 3,                      │ │
+│ │                 │   │   │   'max_concurrent_calls': 8,                   │ │
+│ │                 │   │   │   'session_worker': True,                      │ │
+│ │                 │   │   │   'session_idle_s': 60,                        │ │
+│ │                 │   │   │   'bundle_cache': True                         │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'hooks': {'enabled': True},                      │ │
+│ │                 │   │   'skills': {},                                    │ │
+│ │                 │   │   'tamagotchi': {'enabled': False},                │ │
+│ │                 │   │   'appearance': {                                  │ │
+│ │                 │   │   │   'character_expression_mode': 'dynamic',      │ │
+│ │                 │   │   │   'density': 'normal',                         │ │
+│ │                 │   │   │   'animations_enabled': True,                  │ │
+│ │                 │   │   │   'smooth_scrolling': True,                    │ │
+│ │                 │   │   │   'reduce_motion': False,                      │ │
+│ │                 │   │   │   'ascii_glyphs': False,                       │ │
+│ │                 │   │   │   'console_transcript_style': 'role_accents'   │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'acp': {                                         │ │
+│ │                 │   │   │   'runtime': {                                 │ │
+│ │                 │   │   │   │   'command': '',                           │ │
+│ │                 │   │   │   │   'args': [],                              │ │
+│ │                 │   │   │   │   'cwd': '',                               │ │
+│ │                 │   │   │   │   'runtime_id': 'local-acp-runtime',       │ │
+│ │                 │   │   │   │   'runtime_label': 'Local ACP Runtime',    │ │
+│ │                 │   │   │   │   'runtime_version': '',                   │ │
+│ │                 │   │   │   │   'startup_timeout_seconds': 2.0           │ │
+│ │                 │   │   │   }                                            │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'tldw_api': {                                    │ │
+│ │                 │   │   │   'base_url': 'http://127.0.0.1:8000',         │ │
+│ │                 │   │   │   'auth_token':                                │ │
+│ │                 'default-secret-key-for-single-user'                     │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   ... +50                                          │ │
+│ │                 │   },                                                   │ │
+│ │                 │   '_CONFIG_CACHE_SOURCE':                              │ │
+│ │                 PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2… │ │
+│ │                 │   '_CONFIG_FILE_STAMP': (                              │ │
+│ │                 │   │   1791154259079905909,                             │ │
+│ │                 │   │   115361                                           │ │
+│ │                 │   ),                                                   │ │
+│ │                 │   '_CONFIG_STAT_CHECKED_MONOTONIC': 521508.024931416,  │ │
+│ │                 │   '_SETTINGS_CACHE': {                                 │ │
+│ │                 │   │   'APP_MODE_STR': 'single',                        │ │
+│ │                 │   │   'SINGLE_USER_MODE': True,                        │ │
+│ │                 │   │   'LOG_LEVEL': 'INFO',                             │ │
+│ │                 │   │   'PROJECT_ROOT':                                  │ │
+│ │                 PosixPath('/Users/macbook-dev/.codex/worktrees/console-… │ │
+│ │                 │   │   'API_COMPONENT_ROOT':                            │ │
+│ │                 PosixPath('/Users/macbook-dev/.codex/worktrees/console-… │ │
+│ │                 │   │   'USERS_NAME': 'default_user',                    │ │
+│ │                 │   │   'general': {                                     │ │
+│ │                 │   │   │   'default_tab': 'chat',                       │ │
+│ │                 │   │   │   'focus_mode': False,                         │ │
+│ │                 │   │   │   'default_theme': 'textual-dark',             │ │
+│ │                 │   │   │   'palette_theme_limit': 1,                    │ │
+│ │                 │   │   │   'log_level': 'INFO',                         │ │
+│ │                 │   │   │   'users_name': 'default_user',                │ │
+│ │                 │   │   │   'shutdown_grace_seconds': 120.0              │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'logging': {                                     │ │
+│ │                 │   │   │   'log_filename': 'tldw_cli_app.log',          │ │
+│ │                 │   │   │   'file_log_level': 'INFO',                    │ │
+│ │                 │   │   │   'log_max_bytes': 10485760,                   │ │
+│ │                 │   │   │   'log_backup_count': 5                        │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'database': {                                    │ │
+│ │                 │   │   │   'chachanotes_db_path':                       │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db',  │ │
+│ │                 │   │   │   'prompts_db_path':                           │ │
+│ │                 '~/.local/share/tldw_cli/tldw_cli_prompts.db',           │ │
+│ │                 │   │   │   'media_db_path':                             │ │
+│ │                 '~/.local/share/tldw_cli/tldw_cli_media_v2.db',          │ │
+│ │                 │   │   │   'research_db_path':                          │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_research.db',     │ │
+│ │                 │   │   │   'writing_db_path':                           │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_writing.db',      │ │
+│ │                 │   │   │   'library_collections_db_path':               │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_library_collecti… │ │
+│ │                 │   │   │   'workspaces_db_path':                        │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_workspaces.db',   │ │
+│ │                 │   │   │   'evals_db_path':                             │ │
+│ │                 '~/.local/share/tldw_cli/evals.db',                      │ │
+│ │                 │   │   │   'rag_indexing_db_path':                      │ │
+│ │                 '~/.local/share/tldw_cli/rag_indexing.db',               │ │
+│ │                 │   │   │   'subscriptions_db_path':                     │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_subscriptions.db… │ │
+│ │                 │   │   │   ... +3                                       │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'api_settings': {                                │ │
+│ │                 │   │   │   'openai': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'OPENAI_API_KEY',     │ │
+│ │                 │   │   │   │   'model': 'gpt-5.6-terra',                │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'anthropic': {                               │ │
+│ │                 │   │   │   │   'api_key_env_var': 'ANTHROPIC_API_KEY',  │ │
+│ │                 │   │   │   │   'model': 'claude-sonnet-5',              │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'cohere': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'COHERE_API_KEY',     │ │
+│ │                 │   │   │   │   'model': 'command-a-03-2025',            │ │
+│ │                 │   │   │   │   'temperature': 0.3,                      │ │
+│ │                 │   │   │   │   'top_p': 0.75,                           │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'deepseek': {                                │ │
+│ │                 │   │   │   │   'api_key_env_var': 'DEEPSEEK_API_KEY',   │ │
+│ │                 │   │   │   │   'model': 'deepseek-v4-flash',            │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'groq': {                                    │ │
+│ │                 │   │   │   │   'api_key_env_var': 'GROQ_API_KEY',       │ │
+│ │                 │   │   │   │   'model': 'llama-3.3-70b-versatile',      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 8192,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'google': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'GOOGLE_API_KEY',     │ │
+│ │                 │   │   │   │   'api_key': '<API_KEY_HERE>',             │ │
+│ │                 │   │   │   │   'model': 'gemini-2.5-flash',             │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 0.9,                            │ │
+│ │                 │   │   │   │   'top_k': 100,                            │ │
+│ │                 │   │   │   │   'max_tokens': 8192,                      │ │
+│ │                 │   │   │   │   'timeout': 120,                          │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'huggingface': {                             │ │
+│ │                 │   │   │   │   'api_key_env_var':                       │ │
+│ │                 'HUGGINGFACE_API_KEY',                                   │ │
+│ │                 │   │   │   │   'model': 'openai/gpt-oss-120b',          │ │
+│ │                 │   │   │   │   'api_base_url':                          │ │
+│ │                 'https://router.huggingface.co/v1',                      │ │
+│ │                 │   │   │   │   'api_chat_path': 'chat/completions',     │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 50,                             │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   ... +2                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'mistralai': {                               │ │
+│ │                 │   │   │   │   'api_key_env_var': 'MISTRAL_API_KEY',    │ │
+│ │                 │   │   │   │   'model': 'mistral-large-latest',         │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'openrouter': {                              │ │
+│ │                 │   │   │   │   'api_key_env_var': 'OPENROUTER_API_KEY', │ │
+│ │                 │   │   │   │   'model':                                 │ │
+│ │                 'meta-llama/Llama-3.1-8B-Instruct',                      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'min_p': 0.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 120,                          │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'moonshot': {                                │ │
+│ │                 │   │   │   │   'api_key_env_var': 'MOONSHOT_API_KEY',   │ │
+│ │                 │   │   │   │   'model': 'kimi-k3',                      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 0.95,                           │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'api_region': 'international',           │ │
+│ │                 │   │   │   │   'api_base_url':                          │ │
+│ │                 'https://api.moonshot.ai/v1',                            │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 1.0,                      │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   ... +51                                      │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   ... +61                                          │ │
+│ │                 │   },                                                   │ │
+│ │                 │   '_SETTINGS_CACHE_SOURCE':                            │ │
+│ │                 PosixPath('/private/var/folders/sn/m80n2j152t9gw3w8qwk2… │ │
+│ │                 │   'settings': {                                        │ │
+│ │                 │   │   'APP_MODE_STR': 'single',                        │ │
+│ │                 │   │   'SINGLE_USER_MODE': True,                        │ │
+│ │                 │   │   'LOG_LEVEL': 'INFO',                             │ │
+│ │                 │   │   'PROJECT_ROOT':                                  │ │
+│ │                 PosixPath('/Users/macbook-dev/.codex/worktrees/console-… │ │
+│ │                 │   │   'API_COMPONENT_ROOT':                            │ │
+│ │                 PosixPath('/Users/macbook-dev/.codex/worktrees/console-… │ │
+│ │                 │   │   'USERS_NAME': 'default_user',                    │ │
+│ │                 │   │   'general': {                                     │ │
+│ │                 │   │   │   'default_tab': 'chat',                       │ │
+│ │                 │   │   │   'focus_mode': False,                         │ │
+│ │                 │   │   │   'default_theme': 'textual-dark',             │ │
+│ │                 │   │   │   'palette_theme_limit': 1,                    │ │
+│ │                 │   │   │   'log_level': 'INFO',                         │ │
+│ │                 │   │   │   'users_name': 'default_user',                │ │
+│ │                 │   │   │   'shutdown_grace_seconds': 120.0              │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'logging': {                                     │ │
+│ │                 │   │   │   'log_filename': 'tldw_cli_app.log',          │ │
+│ │                 │   │   │   'file_log_level': 'INFO',                    │ │
+│ │                 │   │   │   'log_max_bytes': 10485760,                   │ │
+│ │                 │   │   │   'log_backup_count': 5                        │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'database': {                                    │ │
+│ │                 │   │   │   'chachanotes_db_path':                       │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_ChaChaNotes.db',  │ │
+│ │                 │   │   │   'prompts_db_path':                           │ │
+│ │                 '~/.local/share/tldw_cli/tldw_cli_prompts.db',           │ │
+│ │                 │   │   │   'media_db_path':                             │ │
+│ │                 '~/.local/share/tldw_cli/tldw_cli_media_v2.db',          │ │
+│ │                 │   │   │   'research_db_path':                          │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_research.db',     │ │
+│ │                 │   │   │   'writing_db_path':                           │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_writing.db',      │ │
+│ │                 │   │   │   'library_collections_db_path':               │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_library_collecti… │ │
+│ │                 │   │   │   'workspaces_db_path':                        │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_workspaces.db',   │ │
+│ │                 │   │   │   'evals_db_path':                             │ │
+│ │                 '~/.local/share/tldw_cli/evals.db',                      │ │
+│ │                 │   │   │   'rag_indexing_db_path':                      │ │
+│ │                 '~/.local/share/tldw_cli/rag_indexing.db',               │ │
+│ │                 │   │   │   'subscriptions_db_path':                     │ │
+│ │                 '~/.local/share/tldw_cli/tldw_chatbook_subscriptions.db… │ │
+│ │                 │   │   │   ... +3                                       │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   'api_settings': {                                │ │
+│ │                 │   │   │   'openai': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'OPENAI_API_KEY',     │ │
+│ │                 │   │   │   │   'model': 'gpt-5.6-terra',                │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'anthropic': {                               │ │
+│ │                 │   │   │   │   'api_key_env_var': 'ANTHROPIC_API_KEY',  │ │
+│ │                 │   │   │   │   'model': 'claude-sonnet-5',              │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'cohere': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'COHERE_API_KEY',     │ │
+│ │                 │   │   │   │   'model': 'command-a-03-2025',            │ │
+│ │                 │   │   │   │   'temperature': 0.3,                      │ │
+│ │                 │   │   │   │   'top_p': 0.75,                           │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'deepseek': {                                │ │
+│ │                 │   │   │   │   'api_key_env_var': 'DEEPSEEK_API_KEY',   │ │
+│ │                 │   │   │   │   'model': 'deepseek-v4-flash',            │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'groq': {                                    │ │
+│ │                 │   │   │   │   'api_key_env_var': 'GROQ_API_KEY',       │ │
+│ │                 │   │   │   │   'model': 'llama-3.3-70b-versatile',      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 8192,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'google': {                                  │ │
+│ │                 │   │   │   │   'api_key_env_var': 'GOOGLE_API_KEY',     │ │
+│ │                 │   │   │   │   'api_key': '<API_KEY_HERE>',             │ │
+│ │                 │   │   │   │   'model': 'gemini-2.5-flash',             │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 0.9,                            │ │
+│ │                 │   │   │   │   'top_k': 100,                            │ │
+│ │                 │   │   │   │   'max_tokens': 8192,                      │ │
+│ │                 │   │   │   │   'timeout': 120,                          │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'huggingface': {                             │ │
+│ │                 │   │   │   │   'api_key_env_var':                       │ │
+│ │                 'HUGGINGFACE_API_KEY',                                   │ │
+│ │                 │   │   │   │   'model': 'openai/gpt-oss-120b',          │ │
+│ │                 │   │   │   │   'api_base_url':                          │ │
+│ │                 'https://router.huggingface.co/v1',                      │ │
+│ │                 │   │   │   │   'api_chat_path': 'chat/completions',     │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 50,                             │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   ... +2                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'mistralai': {                               │ │
+│ │                 │   │   │   │   'api_key_env_var': 'MISTRAL_API_KEY',    │ │
+│ │                 │   │   │   │   'model': 'mistral-large-latest',         │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 60,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   'streaming': False                       │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'openrouter': {                              │ │
+│ │                 │   │   │   │   'api_key_env_var': 'OPENROUTER_API_KEY', │ │
+│ │                 │   │   │   │   'model':                                 │ │
+│ │                 'meta-llama/Llama-3.1-8B-Instruct',                      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 1.0,                            │ │
+│ │                 │   │   │   │   'top_k': 0,                              │ │
+│ │                 │   │   │   │   'min_p': 0.0,                            │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'timeout': 120,                          │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 5,                        │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   'moonshot': {                                │ │
+│ │                 │   │   │   │   'api_key_env_var': 'MOONSHOT_API_KEY',   │ │
+│ │                 │   │   │   │   'model': 'kimi-k3',                      │ │
+│ │                 │   │   │   │   'temperature': 0.7,                      │ │
+│ │                 │   │   │   │   'top_p': 0.95,                           │ │
+│ │                 │   │   │   │   'max_tokens': 4096,                      │ │
+│ │                 │   │   │   │   'api_region': 'international',           │ │
+│ │                 │   │   │   │   'api_base_url':                          │ │
+│ │                 'https://api.moonshot.ai/v1',                            │ │
+│ │                 │   │   │   │   'timeout': 90,                           │ │
+│ │                 │   │   │   │   'retries': 3,                            │ │
+│ │                 │   │   │   │   'retry_delay': 1.0,                      │ │
+│ │                 │   │   │   │   ... +1                                   │ │
+│ │                 │   │   │   },                                           │ │
+│ │                 │   │   │   ... +51                                      │ │
+│ │                 │   │   },                                               │ │
+│ │                 │   │   ... +61                                          │ │
+│ │                 │   },                                                   │ │
+│ │                 │   '_CONFIG_GENERATION': 1,                             │ │
+│ │                 │   '_ENCRYPTION_PASSWORD': None,                        │ │
+│ │                 │   '_FIRST_PROFILE_CREATED_THIS_SESSION': True          │ │
+│ │                 }                                                        │ │
+│ │          core = None                                                     │ │
+│ │       entered = False                                                    │ │
+│ │          lock = <unlocked _thread.RLock object owner=0 count=0 at        │ │
+│ │                 0x10a742100>                                             │ │
+│ │          name = '_FIRST_PROFILE_CREATED_THIS_SESSION'                    │ │
+│ │        nested = False                                                    │ │
+│ │ nested_target = None                                                     │ │
+│ │      previous = None                                                     │ │
+│ │           raw = <module 'tldw_chatbook.Backup_Recovery.raw_participants' │ │
+│ │                 from                                                     │ │
+│ │                 '/Users/macbook-dev/.codex/worktrees/console-chat-start… │ │
+│ │         route = 'config'                                                 │ │
+│ │        source = <module 'tldw_chatbook.config' from                      │ │
+│ │                 '/Users/macbook-dev/.codex/worktrees/console-chat-start… │ │
+│ │        target = None                                                     │ │
+│ │         value = True                                                     │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none │
+│ /lib/python3.12/contextlib.py:137 in __enter__                               │
+│                                                                              │
+│   134 │   │   # they are only needed for recreation, which is not possible a │
+│   135 │   │   del self.args, self.kwds, self.func                            │
+│   136 │   │   try:                                                           │
+│ ❱ 137 │   │   │   return next(self.gen)                                      │
+│   138 │   │   except StopIteration:                                          │
+│   139 │   │   │   raise RuntimeError("generator didn't yield") from None     │
+│   140                                                                        │
+│                                                                              │
+│ ╭────────────────────────────── locals ──────────────────────────────╮       │
+│ │ self = <contextlib._GeneratorContextManager object at 0x10c9cdc70> │       │
+│ ╰────────────────────────────────────────────────────────────────────╯       │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_c │
+│ hatbook/Backup_Recovery/raw_participants.py:649 in _scope                    │
+│                                                                              │
+│    646 │   │   │   # Constructor directory selection is complete before bind │
+│    647 │   │   │   if route == "template_directory":                         │
+│    648 │   │   │   │   source.user_templates_dir = selected                  │
+│ ❱  649 │   │   │   participant = _raw_participant(source)                    │
+│    650 │   │   │   binding = _participant_state(participant)                 │
+│    651 │   │   │   if (                                                      │
+│    652 │   │   │   │   binding.owner                                         │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │          anchor = PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │ anchor_identity = (16777230, 424930062)                                  │ │
+│ │     anchor_info = os.stat_result(st_mode=16832, st_ino=424930062,        │ │
+│ │                   st_dev=16777230, st_nlink=2, st_uid=501, st_gid=0,     │ │
+│ │                   st_size=64, st_atime=1791154266, st_mtime=1791154266,  │ │
+│ │                   st_ctime=1791154266)                                   │ │
+│ │         attempt = <tldw_chatbook.Backup_Recovery.storage_admission._Acq… │ │
+│ │                   object at 0x10c9cdac0>                                 │ │
+│ │  body_completed = False                                                  │ │
+│ │            core = None                                                   │ │
+│ │     directories = ()                                                     │ │
+│ │  directory_only = False                                                  │ │
+│ │       installed = True                                                   │ │
+│ │          locked = False                                                  │ │
+│ │         missing = []                                                     │ │
+│ │       operation = None                                                   │ │
+│ │           owned = None                                                   │ │
+│ │          parent = PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │     participant = None                                                   │ │
+│ │           paths = (                                                      │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │                   )                                                      │ │
+│ │          pinned = True                                                   │ │
+│ │        previous = None                                                   │ │
+│ │           route = 'config'                                               │ │
+│ │        selected = PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │   selected_read = None                                                   │ │
+│ │          source = <module 'tldw_chatbook.config' from                    │ │
+│ │                   '/Users/macbook-dev/.codex/worktrees/console-chat-sta… │ │
+│ │     source_lock = None                                                   │ │
+│ │        template = None                                                   │ │
+│ │     temporaries = {                                                      │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │                   PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │                   │                                                      │ │
+│ │                   PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │                   PosixPath('/private/tmp/pr2995-task16/immutable-base-… │ │
+│ │                   }                                                      │ │
+│ │       temporary = None                                                   │ │
+│ │   user_template = True                                                   │ │
+│ │         writing = True                                                   │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_c │
+│ hatbook/Backup_Recovery/raw_participants.py:296 in _raw_participant          │
+│                                                                              │
+│    293 │   │   │   │   weakref.ref(source), type(source), owner, selected    │
+│    294 │   │   │   )                                                         │
+│    295 │   │   │   _source_participants[source] = participant                │
+│ ❱  296 │   │   state = _participant_state(participant)                       │
+│    297 │   │   if state.selected != selected:                                │
+│    298 │   │   │   raise bootstrap.RecoveryRequired("raw_source_selection_ch │
+│    299 │   │   return participant                                            │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │        installed = True                                                  │ │
+│ │            owner = 'config'                                              │ │
+│ │      participant = <tldw_chatbook.Backup_Recovery.raw_participants._Raw… │ │
+│ │                    object at 0x10a5bf5c0>                                │ │
+│ │         selected = PosixPath('/private/tmp/pr2995-task16/immutable-base… │ │
+│ │ settings_binding = (                                                     │ │
+│ │                    │   'config',                                         │ │
+│ │                    │                                                     │ │
+│ │                    PosixPath('/private/tmp/pr2995-task16/immutable-base… │ │
+│ │                    │   True                                              │ │
+│ │                    )                                                     │ │
+│ │           source = <module 'tldw_chatbook.config' from                   │ │
+│ │                    '/Users/macbook-dev/.codex/worktrees/console-chat-st… │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_c │
+│ hatbook/Backup_Recovery/raw_participants.py:132 in _participant_state        │
+│                                                                              │
+│    129 │   if state.owner == "config":                                       │
+│    130 │   │   binding = config_files.binding(source)                        │
+│    131 │   │   if binding is None or binding[1] != state.selected:           │
+│ ❱  132 │   │   │   raise bootstrap.RecoveryRequired("raw_source_selection_ch │
+│    133 │   if state.owner in {                                               │
+│    134 │   │   "eval.definitions",                                           │
+│    135 │   │   "notes.templates",                                            │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │     binding = (                                                          │ │
+│ │               │   'config',                                              │ │
+│ │               │                                                          │ │
+│ │               PosixPath('/private/tmp/pr2995-task16/immutable-base-two-… │ │
+│ │               │   True                                                   │ │
+│ │               )                                                          │ │
+│ │ participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParti… │ │
+│ │               object at 0x10a5bf5c0>                                     │ │
+│ │      source = <module 'tldw_chatbook.config' from                        │ │
+│ │               '/Users/macbook-dev/.codex/worktrees/console-chat-starts/… │ │
+│ │       state = _ParticipantState(                                         │ │
+│ │               │   source=<weakref at 0x10a76bd30; to 'module' at         │ │
+│ │               0x109596610>,                                              │ │
+│ │               │   source_type=<class 'module'>,                          │ │
+│ │               │   owner='config',                                        │ │
+│ │               │                                                          │ │
+│ │               selected=PosixPath('/private/var/folders/sn/m80n2j152t9gw… │ │
+│ │               │   closed=False                                           │ │
+│ │               )                                                          │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+╰──────────────────────────────────────────────────────────────────────────────╯
+RecoveryRequired: raw_source_selection_changed
+
+NOTE: 1 of 2 errors shown. Run with textual run --dev to see all errors.
+=============================== warnings summary ===============================
+Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer
+  /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-1 (<lambda>)
+  
+  Traceback (most recent call last):
+    File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+      self.run()
+    File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012, in run
+      self._target(*self._args, **self._kwargs)
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/UI/test_console_ask_user_typed_answers.py", line 264, in <lambda>
+      result=controller.request_user_questions(questions, session_id=session.id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py", line 17860, in request_user_questions
+      return self._interrupt_host.request_user_questions(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py", line 4478, in request_user_questions
+      timeout_seconds = self.read_controller__resolve_ask_user_timeout_seconds()()
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py", line 17854, in _resolve_ask_user_timeout_seconds
+      return self._interrupt_host._resolve_ask_user_timeout_seconds()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py", line 2801, in _resolve_ask_user_timeout_seconds
+      self.read_global_get_cli_setting()(
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/config.py", line 9511, in get_cli_setting
+      config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/config.py", line 7112, in load_cli_config_and_ensure_existence
+      return _load_cli_config_bootstrap(force_reload=force_reload).config
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Backup_Recovery/config_participants.py", line 421, in wrapped
+      with operation(source, target=target):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+      return next(self.gen)
+             ^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Backup_Recovery/config_participants.py", line 352, in operation
+      with raw._scope(source, route, writing=True, selected_read=target) as active:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+      return next(self.gen)
+             ^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Backup_Recovery/raw_participants.py", line 649, in _scope
+      participant = _raw_participant(source)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Backup_Recovery/raw_participants.py", line 296, in _raw_participant
+      state = _participant_state(participant)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Backup_Recovery/raw_participants.py", line 132, in _participant_state
+      raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+  tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-16-safe-evidence/immutable-base-two-nodes.xml -
+============================= slowest 25 durations =============================
+3.79s call     Tests/UI/test_personas_workbench.py::TestPreviewIntegration::test_open_in_console_stages_preview_transcript
+3.24s call     Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer
+FAILED Tests/UI/test_personas_workbench.py::TestPreviewIntegration::test_open_in_console_stages_preview_transcript
+2 failed, 1 warning in 11.94s

@@ -34,7 +34,9 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.console_rail_section_helpers import open_rail_section
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -64,6 +66,8 @@ from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
     ReactionOption,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _avatar_png(color: tuple[int, int, int]) -> bytes:
@@ -148,6 +152,7 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
         ensure_chat_store=lambda: store,
         provider_readiness_config_accessor=lambda: {},
         default_session_settings=lambda: SimpleNamespace(),
+        set_active_workspace_for_session=lambda _session_id: None,
         swap_session_character=lambda *_args, **_kwargs: False,
         sync_temporary_chip=lambda: None,
         sync_native_chat_ui=AsyncMock(),
@@ -292,6 +297,7 @@ def test_build_character_avatar_widget_pixels_failure_falls_back_to_text(monkeyp
 async def console_screen_with_character():
     """Mounted Console screen under the default config (avatar rail on)."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
@@ -320,6 +326,7 @@ def _set_chat_images_setting(app, key: str, value) -> None:
 async def console_screen_avatar_off():
     """Mounted Console screen with ``chat.images.show_character_avatar`` off."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     _set_chat_images_setting(app, "show_character_avatar", False)
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
@@ -332,6 +339,7 @@ async def console_screen_avatar_off():
 async def console_screen_generic():
     """Mounted Console screen, default config, generic (no-character) session."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
@@ -366,8 +374,9 @@ async def test_character_section_empty_state_for_generic_session(
     console_screen_generic,
 ):
     screen = console_screen_generic
-    name = screen.query_one("#console-character-name")
-    assert "No character" in str(name.renderable)  # empty-state copy
+    identity = screen.query_one("#console-character-identity")
+    assert "No current character" in str(identity.renderable)
+    assert not screen.query_one("#console-character-name").display
 
 
 @pytest.mark.asyncio
@@ -412,9 +421,11 @@ def avatar_db(tmp_path):
 
 
 @pytest_asyncio.fixture
-async def console_screen_with_db(avatar_db):
+async def console_screen_with_db(avatar_db, request):
     """Mounted Console screen wired to a real ``CharactersRAGDB``."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
+    request.getfixturevalue("owned_console_apps")(app.console_runtime, avatar_db)
     app.chachanotes_db = avatar_db
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
@@ -434,7 +445,7 @@ async def console_screen_with_db(avatar_db):
 
 
 @pytest_asyncio.fixture
-async def console_screen_with_db_and_pilot(avatar_db):
+async def console_screen_with_db_and_pilot(avatar_db, request):
     """Mounted real Character rail plus Pilot for post-refresh geometry checks."""
 
     class CharacterGeometryHarness(ConsoleHarness):
@@ -443,6 +454,8 @@ async def console_screen_with_db_and_pilot(avatar_db):
         CSS_PATH = str(BUNDLED_STYLESHEET)
 
     app = _build_test_app()
+    _configure_native_ready_console(app)
+    request.getfixturevalue("owned_console_apps")(app.console_runtime, avatar_db)
     app.chachanotes_db = avatar_db
     _set_chat_images_setting(app, "default_render_mode", "pixels")
     host = CharacterGeometryHarness(app)
@@ -455,11 +468,13 @@ async def console_screen_with_db_and_pilot(avatar_db):
 
 
 @pytest_asyncio.fixture
-async def console_screen_with_db_avatar_off(avatar_db):
+async def console_screen_with_db_avatar_off(avatar_db, request):
     """Mounted Console screen wired to a real DB, with the avatar rail
     section config-off (``chat.images.show_character_avatar = False``).
     """
     app = _build_test_app()
+    _configure_native_ready_console(app)
+    request.getfixturevalue("owned_console_apps")(app.console_runtime, avatar_db)
     app.chachanotes_db = avatar_db
     _set_chat_images_setting(app, "show_character_avatar", False)
     host = ConsoleHarness(app)
@@ -594,9 +609,12 @@ async def test_sync_tick_refreshes_avatar(console_screen_with_db):
     char_id = db.add_character_card({"name": "Ada", "image": buf.getvalue()})
     _set_active_console_character(screen, char_id, "Ada")
 
-    await (
-        screen._sync_native_console_chat_ui()
-    )  # the real sync entrypoint, not the refresh directly
+    # A coalesced call returns False while an earlier sync owns the screen.
+    # Observe completion through the same real entrypoint before reading pixels.
+    for _ in range(100):
+        if await screen._sync_native_console_chat_ui():
+            break
+        await asyncio.sleep(.01)
 
     assert screen._active_character_avatar is not None
     assert screen._active_character_avatar_name == "Ada"
@@ -1424,13 +1442,15 @@ async def test_render_awaits_never_resume_a_stale_avatar_paint(
     original_reaction_update = reaction.update
     updates: list[str] = []
 
-    def update_name(value):
+    # The painter may pass Static.update's ``layout`` flag: the hidden name
+    # caption takes new copy without a layout (TASK-35970).
+    def update_name(value, **kwargs):
         updates.append("name")
-        return original_name_update(value)
+        return original_name_update(value, **kwargs)
 
-    def update_reaction(value):
+    def update_reaction(value, **kwargs):
         updates.append("reaction")
-        return original_reaction_update(value)
+        return original_reaction_update(value, **kwargs)
 
     monkeypatch.setattr(name, "update", update_name)
     monkeypatch.setattr(reaction, "update", update_reaction)
@@ -1708,11 +1728,11 @@ async def test_failed_session_close_preserves_reaction_override(
     session = store.ensure_session(title="Samira")
     scope = (session.id, "character", "7")
     screen._session._set_manual_reaction(scope, "custom:relief")
-    controller = screen._ensure_console_chat_controller()
+    runtime = screen._session._console_runtime_accessor()
     monkeypatch.setattr(
-        controller,
+        runtime,
         "close_session",
-        lambda _session_id: (_ for _ in ()).throw(RuntimeError("close failed")),
+        AsyncMock(side_effect=RuntimeError("close failed")),
     )
 
     with pytest.raises(RuntimeError, match="close failed"):
@@ -2323,18 +2343,14 @@ async def test_avatar_holder_hugs_its_content():
     """
     import inspect
 
-    # wave-1 console decomposition, task 3: the Character section's
-    # `compose()` code (including the avatar holder) moved out of
-    # `ChatScreen.compose_content` onto `ConsoleLeftRail`. Retargeted per
-    # the screen-decomposition design's testing rule -- the source-location
-    # assertion moves with the code, the width/height assertions stay
-    # byte-for-byte.
+    # The extracted rail now assigns ADR-150 utility classes; both still
+    # resolve to auto sizing in the production app-tier stylesheet.
     from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 
     src = inspect.getsource(ConsoleLeftRail.compose)
     holder = src.split("avatar_holder = ClickableAvatarBox", 1)[1][:900]
-    assert 'avatar_holder.styles.width = "auto"' in holder
-    assert 'avatar_holder.styles.height = "auto"' in holder
+    assert 'avatar_holder.add_class("w-auto")' in holder
+    assert 'avatar_holder.add_class("h-auto")' in holder
 
 
 @pytest.mark.asyncio
@@ -2465,6 +2481,8 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
 class _AvatarHolderApp(ConsolidatedCSSApp):
     """Host mirroring the rail's auto/auto avatar holder (task-1661 shape)."""
 
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
     def __init__(
         self,
         screen: ChatScreen,
@@ -2479,8 +2497,7 @@ class _AvatarHolderApp(ConsolidatedCSSApp):
 
     def compose(self) -> ComposeResult:
         holder = ClickableAvatarBox(id="console-character-avatar")
-        holder.styles.width = "auto"
-        holder.styles.height = "auto"
+        holder.add_class("w-auto", "h-auto")
         with holder:
             # Built HERE, inside the active app context: the pixels fallback
             # reads `self.app.no_color` for its monochrome guard, which needs
@@ -2726,3 +2743,82 @@ async def test_character_portrait_grows_and_shrinks_with_terminal(
     assert sizes[1].height > sizes[0].height
     assert sizes[1].width > sizes[0].width
     assert sizes[2] == sizes[0]
+
+
+# -- TASK-33620.15.7: the hidden no-character avatar blank -----------------
+
+
+async def _paint_avatar(screen, spec: dict | None = None) -> None:
+    await screen._render_character_avatar_into_section(
+        spec=spec, name=None, manual_label=None, is_current=lambda: True
+    )
+
+
+def _avatar_children(screen) -> list:
+    return list(screen.query_one("#console-character-avatar").children)
+
+
+def _is_blank(widget) -> bool:
+    return (
+        isinstance(widget, Static)
+        and widget.id == "console-character-avatar-empty"
+        and not widget.display
+        and str(widget.content) == ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_blank_avatar_repaint_keeps_the_mounted_blank(
+    console_screen_with_db, monkeypatch
+) -> None:
+    """With no character, an expression change re-mounted the same blank."""
+
+    from Tests.UI.test_console_run_tick_layout_requests import _LayoutRequests
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    requests = _LayoutRequests(monkeypatch)
+    _app, screen, _db = console_screen_with_db
+    await _paint_avatar(screen)
+    (blank,) = _avatar_children(screen)
+    assert _is_blank(blank)
+    with requests.counting() as calls:
+        await _paint_avatar(screen)
+    assert _avatar_children(screen) == [blank]
+    rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    assert [w for w in calls if w is rail or rail in w.ancestors] == []
+    # Positive control: a character without an image is a visible placeholder
+    # that replaces the blank, and the blank comes back after it.
+    await _paint_avatar(screen, {"character_id": 7})
+    (placeholder,) = _avatar_children(screen)
+    assert not _is_blank(placeholder)
+    await _paint_avatar(screen)
+    (again,) = _avatar_children(screen)
+    assert _is_blank(again) and again is not blank
+
+
+@pytest.mark.asyncio
+async def test_blank_avatar_decision_waits_for_an_in_flight_replacement(
+    console_screen_with_db,
+) -> None:
+    """The keep-the-blank check runs under the mount lock.
+
+    A replacement already holding the lock removes the blank and is then
+    superseded. A blank paint that checked outside the lock saw the blank
+    still attached and kept it, so the holder was left with no child at all.
+    """
+
+    from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
+
+    _app, screen, _db = console_screen_with_db
+    await _paint_avatar(screen)
+    assert _is_blank(_avatar_children(screen)[0])
+    rail = screen.query_one("#console-left-rail", ConsoleLeftRail)
+    holder = screen.query_one("#console-character-avatar")
+    async with rail._character_avatar_mount_lock:
+        paint = asyncio.create_task(_paint_avatar(screen))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        await holder.remove_children()
+    await asyncio.wait_for(paint, timeout=5)
+    children = _avatar_children(screen)
+    assert len(children) == 1 and _is_blank(children[0]), children

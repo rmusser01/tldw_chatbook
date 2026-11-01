@@ -287,9 +287,7 @@ def validate_path(
                 labels={"type": "hidden_file_access"},
             )
             if redact_paths:
-                redacted_failure = (
-                    "Access to hidden files/directories is not allowed"
-                )
+                redacted_failure = "Access to hidden files/directories is not allowed"
             raise ValueError("Access to hidden files/directories is not allowed")
 
         # Some callers pass the destination's own immediate parent as
@@ -314,9 +312,7 @@ def validate_path(
                 labels={"type": "hidden_file_access"},
             )
             if redact_paths:
-                redacted_failure = (
-                    "Access to hidden files/directories is not allowed"
-                )
+                redacted_failure = "Access to hidden files/directories is not allowed"
             raise ValueError("Access to hidden files/directories is not allowed")
 
         # Log success

@@ -1,0 +1,485 @@
+[
+  {
+    "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971051",
+    "pull_request_review_id": 5404068729,
+    "id": 4175971051,
+    "node_id": "PRRC_kwDOOcyyl8746ELr",
+    "diff_hunk": "@@ -11318,3 +11376,45 @@ def new_chat_tool(args: dict) -> ToolResult:\n         return _run(\"new_chat\", args)\n \n     return fork_chat_tool, new_chat_tool\n+\n+\n+def validate_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:\n+    \"\"\"Validate public creation fields without carrying model-supplied authority.\"\"\"\n+    defaults = {\n+        \"title\": \"\",\n+        \"opening_prompt\": \"\",\n+        \"instructions\": \"\",\n+        \"destination\": \"same_workspace\",\n+        \"mode\": \"draft\",\n+        \"provider\": \"\",\n+        \"model\": \"\",\n+        \"preset\": \"\",\n+    }\n+    values = {key: arguments.get(key, default) for key, default in defaults.items()}\n+    for key, value in values.items():\n+        if not isinstance(value, str):\n+            raise ValueError(f\"invalid_args: {key} must be a string\")",
+    "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+    "commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "original_commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "user": {
+      "login": "qodo-code-review[bot]",
+      "id": 151058649,
+      "node_id": "BOT_kgDOCQD42Q",
+      "avatar_url": "https://avatars.githubusercontent.com/in/484649?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/qodo-code-review%5Bbot%5D",
+      "html_url": "https://github.com/apps/qodo-code-review",
+      "followers_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "<img src=\"https://img.shields.io/badge/Medium-634FD1?style=flat-square\" height=\"20px\" alt=\"Remediation recommended\">\n\n6\\. New chat inputs skip shared validation <code>\ud83d\udcd8 Rule violation</code> <code>\u2261 Correctness</code>\n\n<pre>\n<b><i>validate_new_chat_arguments</i></b> validates a raw mapping with local type, length, and mode checks\ninstead of using the shared input-validation module and a Pydantic model. Both the chat tool and the\ncontroller call this helper, so new creation fields follow a separate validation path at those\nboundaries.\n</pre>\n\n\n<details>\n<summary><strong>Agent Prompt</strong></summary>\n\n```\n## Issue description\nNew chat creation fields are validated locally instead of through the shared Pydantic-based validation module.\n\n## Fix Focus Areas\n- tldw_chatbook/Chat/console_agent_bridge.py[11381-11413]\n- tldw_chatbook/Utils/input_validation.py[1-60]\n\n## Recommended Fix\nDefine a typed, constrained chat-creation model in the shared module and use its validated values at both chat-creation boundaries.\n```\n\n<code>\u24d8 Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>\n</details>\n\n[Dismiss \u2197](https://app.qodo.ai/findings/b92f124c-83ed-4768-8a92-800f6f211f08?action=dismiss&origin=git) | [View \u2197](https://app.qodo.ai/findings/b92f124c-83ed-4768-8a92-800f6f211f08)",
+    "created_at": "2026-10-04T03:22:20Z",
+    "updated_at": "2026-10-04T03:22:20Z",
+    "html_url": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971051",
+    "pull_request_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971051"
+      },
+      "html": {
+        "href": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971051"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971051/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": 11393,
+    "original_start_line": 11393,
+    "start_side": "RIGHT",
+    "line": 11396,
+    "original_line": 11396,
+    "side": "RIGHT",
+    "author_association": "NONE",
+    "original_position": 204,
+    "position": 204,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971055",
+    "pull_request_review_id": 5404068729,
+    "id": 4175971055,
+    "node_id": "PRRC_kwDOOcyyl8746ELv",
+    "diff_hunk": "@@ -0,0 +1,524 @@\n+\"\"\"One runtime-owned, bounded start for an already durable agent-created chat.\"\"\"\n+\n+from __future__ import annotations\n+\n+import asyncio\n+import hashlib\n+from dataclasses import dataclass, field\n+from typing import Any, Literal\n+\n+from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call\n+\n+from .console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID\n+from .console_turn_context import ConsoleTurnConfigurationSnapshot\n+\n+\n+@dataclass(frozen=True, slots=True)\n+class AgentChatStartRequest:\n+    attempt_id: str\n+    source_run_id: str\n+    source_session_id: str\n+    source_session_incarnation: str\n+    conversation_id: str\n+    session_id: str\n+    session_incarnation: str\n+    draft_revision: int\n+    context_epoch: int\n+    opening_prompt: str = field(repr=False)\n+    configuration: ConsoleTurnConfigurationSnapshot = field(repr=False)\n+    workspace_id: str\n+\n+\n+@dataclass(frozen=True, slots=True)\n+class AgentChatStartOutcome:\n+    launch_status: Literal[\"not_started\", \"started\", \"review_required\"]\n+    reason: str | None = None\n+\n+\n+_AUTHORIZATION_KEY = object()\n+\n+\n+class AgentChatStartAuthorization:\n+    \"\"\"Exact live coordinator authority; persisted provenance never creates it.\"\"\"\n+\n+    def __init__(\n+        self, owner: Any, request: AgentChatStartRequest, context: Any, *, key: object\n+    ) -> None:\n+        if key is not _AUTHORIZATION_KEY:\n+            raise PermissionError(\"coordinator authorization required\")\n+        self.owner = owner\n+        self.request = request\n+        self.context = context\n+        self.bridge = owner._controller._agent_bridge\n+        self.store = owner._controller.store\n+        self.database = self.bridge.runs_db\n+        self.ledger = self.database.automatic_work\n+        self.capacity_owner = owner._controller._fleet_wake\n+        self.runtime_owner_id = self.capacity_owner.runtime_owner_id\n+        self.token = object()\n+        self.accepted = False\n+        self.receipted = False\n+        self.withdrawn = False\n+        self.outcome = asyncio.get_running_loop().create_future()\n+        self.task: asyncio.Task | None = None\n+        self.preparation_id: str | None = None\n+        self.validating_state: Any = None\n+        self.running = False\n+        self.provider_worker: asyncio.Task | None = None\n+        self.withdrawal_reason: str | None = None\n+\n+\n+class ConsoleChatStartCoordinator:\n+    \"\"\"Own starts until cleanup without adding a scheduler or retry queue.\"\"\"\n+\n+    def __init__(self, controller: Any) -> None:\n+        self._controller = controller\n+        self._active: dict[str, AgentChatStartAuthorization] = {}\n+        self._tasks: set[asyncio.Task] = set()\n+        self._disposed = False\n+\n+    def tasks(self) -> tuple[asyncio.Task, ...]:\n+        \"\"\"Return currently owned work for runtime drain and verification.\"\"\"\n+        return tuple(self._tasks)\n+\n+    async def withdraw_for_manual(self, session_id: str) -> None:\n+        \"\"\"Drain only the exact prepared target before ordinary manual admission.\"\"\"\n+        item = self._active.get(session_id)\n+        if item is None or item.accepted:\n+            return\n+        self.withdraw_prepared(session_id, \"manual_send\")\n+        if item.task is not None:\n+            await asyncio.gather(item.task, return_exceptions=True)\n+\n+    def is_accepted(self, session_id: str) -> bool:\n+        \"\"\"Return whether this runtime still owns an accepted target start.\"\"\"\n+        item = self._active.get(session_id)\n+        return bool(item and item.accepted and self.authorizes(item, session_id))\n+\n+    def is_prepared(self, session_id: str) -> bool:\n+        item = self._active.get(session_id)\n+        return bool(item and not item.accepted and not item.withdrawn)\n+\n+    def authorizes(\n+        self, authorization: AgentChatStartAuthorization | None, session_id: str\n+    ) -> bool:\n+        if not isinstance(authorization, AgentChatStartAuthorization):\n+            return False\n+        target = self._controller.store._sessions.get(session_id)\n+        return bool(\n+            not self._disposed\n+            and not authorization.withdrawn\n+            and authorization.owner is self\n+            and self._controller.store is authorization.store\n+            and self._active.get(session_id) is authorization\n+            and target is not None\n+            and target.incarnation_id == authorization.request.session_incarnation\n+        )\n+\n+    def _source_live(self, request: AgentChatStartRequest) -> bool:\n+        controller = self._controller\n+        return controller._chat_creation_source_live(\n+            {\n+                \"session_id\": request.source_session_id,\n+                \"source_incarnation\": request.source_session_incarnation,\n+                \"source_run_id\": request.source_run_id,\n+                \"source_message_id\": controller._active_assistant_message_ids.get(\n+                    request.source_session_id\n+                ),\n+            }\n+        )\n+\n+    def _target_unchanged(self, request: AgentChatStartRequest) -> bool:\n+        controller = self._controller\n+        store = controller.store\n+        target = store._sessions.get(request.session_id)\n+        return bool(\n+            target\n+            and target.incarnation_id == request.session_incarnation\n+            and target.workspace_id == request.workspace_id\n+            and target.persisted_conversation_id == request.conversation_id\n+            and target.agent_handoff_state == \"pending\"\n+            and target.agent_handoff_revision == request.draft_revision\n+            and target.draft == request.opening_prompt\n+            and target.settings == request.configuration.session_settings\n+            and store.conversation_context_epoch(target.id) == request.context_epoch\n+            and not store.pending_attachments(target.id)\n+            and not store.session_one_shot_prefill(target.id)\n+            and controller._has_explicit_staged_evidence(target.id) is False\n+            and not controller.prompt_queue_coordinator.controls_generation(target.id)\n+        )\n+\n+    @staticmethod\n+    async def _drain_owned(task: asyncio.Task) -> Any:\n+        \"\"\"A cancelled awaiter must not detach physical work from its slot.\"\"\"\n+        while True:\n+            try:\n+                return await asyncio.shield(task)\n+            except asyncio.CancelledError:\n+                if task.done():\n+                    return task.result()\n+\n+    async def run_provider_worker(self, session_id: str, operation: Any) -> Any:\n+        \"\"\"Retain an exact native worker after cancellation of its awaiter.\"\"\"\n+        item = self._active.get(session_id)\n+        if item is None or not item.accepted:\n+            return await operation\n+        item.provider_worker = asyncio.create_task(operation)\n+        return await asyncio.shield(item.provider_worker)\n+\n+    async def _publish_outcome(\n+        self,\n+        request: AgentChatStartRequest,\n+        outcome: AgentChatStartOutcome,\n+        *,\n+        store: Any = None,\n+    ) -> AgentChatStartOutcome:\n+        from .message_metadata import AgentHandoffLaunchMetadata\n+\n+        launch = AgentHandoffLaunchMetadata(\n+            \"start\", outcome.launch_status, outcome.reason\n+        )\n+        store = store if store is not None else self._controller.store\n+        publication = asyncio.create_task(\n+            run_owned_db_call(\n+                store.persistence.db,\n+                store.persistence.update_agent_handoff_launch,\n+                request.conversation_id,\n+                launch,\n+            )\n+        )\n+        try:\n+            await asyncio.shield(publication)\n+        except asyncio.CancelledError:\n+            await self._drain_owned(publication)\n+            raise\n+        except Exception:\n+            outcome = AgentChatStartOutcome(\"review_required\", \"outcome_unconfirmed\")\n+            launch = AgentHandoffLaunchMetadata(\n+                \"start\", outcome.launch_status, outcome.reason\n+            )\n+        target = store._sessions.get(request.session_id)\n+        if (\n+            self._controller.store is store\n+            and target is not None\n+            and target.incarnation_id == request.session_incarnation\n+        ):\n+            target.agent_handoff_launch = launch\n+        return outcome\n+\n+    async def _resolve(\n+        self, item: AgentChatStartAuthorization, status: str, reason: str | None = None\n+    ) -> None:\n+        if not item.outcome.done():\n+            outcome = await self._publish_outcome(\n+                item.request, AgentChatStartOutcome(status, reason), store=item.store\n+            )\n+            item.outcome.set_result(outcome)\n+\n+    def _runtime_refusal(self, request: AgentChatStartRequest) -> str | None:\n+        \"\"\"Recheck current native support and enablement at each admission fence.\"\"\"\n+        from tldw_chatbook.Agents.agent_service import _coerce_autowake_enabled\n+        from tldw_chatbook.config import get_cli_setting\n+\n+        controller = self._controller\n+        if getattr(controller, \"_maintenance_paused\", False):\n+            return \"maintenance\"\n+        if (\n+            self._disposed\n+            or controller._disposed\n+            or not controller._agent_runtime_enabled\n+            or not _coerce_autowake_enabled(\n+                get_cli_setting(\"agents\", \"autowake_enabled\", True)\n+            )\n+        ):\n+            return \"runtime_disabled\"\n+        target = controller.store._sessions.get(request.session_id)\n+        if (\n+            not controller._agent_dispatch_is_eligible(target, prefill=None)\n+            or target.runtime_backend != \"local\"\n+        ):\n+            return \"runtime_unavailable\"\n+        return None\n+\n+    def _destination_available(self, request: AgentChatStartRequest) -> bool:\n+        global_scope = request.workspace_id in (None, CONSOLE_GLOBAL_WORKSPACE_ID)\n+        return self._controller._chat_creation_destination_available(\n+            scope_type=\"global\" if global_scope else \"workspace\",\n+            workspace_id=None if global_scope else request.workspace_id,\n+        )\n+\n+    async def start(self, request: AgentChatStartRequest) -> AgentChatStartOutcome:\n+        \"\"\"Return at refusal or both acceptance fences while owning the target task.\"\"\"\n+        controller = self._controller\n+        reason = self._runtime_refusal(request)\n+        if reason is None and not self._destination_available(request):\n+            reason = \"destination_unavailable\"\n+        if reason is not None:\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", reason)\n+            )\n+        if (\n+            request.configuration.session_settings is not None\n+            and not request.configuration.session_settings.provider.strip()\n+        ):\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"provider_unconfigured\")\n+            )\n+        if not self._source_live(request):\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"source_unavailable\")\n+            )\n+        if not self._target_unchanged(request) or request.session_id in self._active:\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"target_changed\")\n+            )\n+        ledger = getattr(controller._agent_bridge.runs_db, \"automatic_work\", None)\n+        if ledger is None:\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"lineage_unavailable\")\n+            )\n+        item = AgentChatStartAuthorization(self, request, None, key=_AUTHORIZATION_KEY)\n+        owner = controller._fleet_wake\n+        if not owner.try_claim_automatic_primary(request.session_id, item.token):\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"capacity\")\n+            )\n+        self._active[request.session_id] = item\n+        # Initial ledger work belongs to runtime shutdown before its first await.\n+        item.task = asyncio.create_task(self._run(item))\n+        self._tasks.add(item.task)\n+        item.task.add_done_callback(self._tasks.discard)\n+        try:\n+            return await asyncio.shield(item.outcome)\n+        except asyncio.CancelledError:\n+            self.withdraw_prepared(request.session_id, \"caller_cancelled\")\n+            raise\n+\n+    async def _prepare(self, item: AgentChatStartAuthorization) -> bool:\n+        \"\"\"Drain initial preparation before any withdrawal can settle its reservation.\"\"\"\n+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits\n+        from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext\n+\n+        request = item.request\n+        owner = item.capacity_owner\n+        ledger = item.ledger\n+        preparation = asyncio.create_task(\n+            run_owned_db_call(\n+                item.database,\n+                ledger.prepare_chat_start,\n+                attempt_id=request.attempt_id,\n+                source_run_id=request.source_run_id,\n+                target_conversation_id=request.conversation_id,\n+                target_session_id=request.session_id,\n+                target_session_incarnation=request.session_incarnation,\n+                owner_id=item.runtime_owner_id,\n+                draft_revision=request.draft_revision,\n+                context_epoch=request.context_epoch,\n+                request_fingerprint=hashlib.sha256(\n+                    request.opening_prompt.encode()\n+                ).hexdigest(),\n+                limits=AutomaticWorkLimits.from_settings(),\n+            )\n+        )\n+        try:\n+            attempt = await asyncio.shield(preparation)\n+        except asyncio.CancelledError:\n+            item.withdrawn = True\n+            attempt = await self._drain_owned(preparation)\n+        item.context = AutomaticWorkContext(\n+            ledger,\n+            attempt.chain_id,\n+            item.runtime_owner_id,\n+            request.attempt_id,\n+            attempt_kind=\"chat_start\",\n+        )\n+        return self.authorizes(item, request.session_id) and self._source_live(request)\n+\n+    async def _run(self, item: AgentChatStartAuthorization) -> None:\n+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused\n+        from .console_chat_models import (\n+            ConsoleSubmissionOrigin,\n+            ConsoleRunState,\n+            ConsoleRunStatus,\n+        )\n+\n+        controller, request = self._controller, item.request\n+        item.running = True\n+        status, reason = \"not_started\", \"preflight_refused\"\n+        controller._agent_wake_turn_sessions.add(request.session_id)\n+        try:\n+            if item.withdrawn:\n+                return\n+            if not await self._prepare(item):\n+                reason = \"source_unavailable\"\n+                return\n+            with item.context.scope():\n+                await controller.submit_draft(\n+                    request.opening_prompt,\n+                    session_id=request.session_id,\n+                    origin=ConsoleSubmissionOrigin.AGENT_CHAT_START,\n+                    chat_start_authorization=item,\n+                    configuration=request.configuration,\n+                    accepted_attachments=(),\n+                )\n+            if item.accepted and not item.receipted:\n+                status, reason = \"review_required\", \"receipt_unconfirmed\"\n+        except AutomaticWorkRefused:\n+            reason = \"preparation_refused\"\n+        except BaseException:\n+            if item.accepted:\n+                status, reason = \"review_required\", \"interrupted\"\n+            elif item.context is None:\n+                status, reason = \"review_required\", \"preparation_unconfirmed\"\n+        finally:\n+            if item.provider_worker is not None:\n+                try:\n+                    await self._drain_owned(item.provider_worker)\n+                except BaseException:\n+                    status, reason = \"review_required\", \"worker_unconfirmed\"\n+            if item.receipted:\n+                try:\n+                    await self._drain_owned(\n+                        asyncio.create_task(\n+                            run_owned_db_call(\n+                                item.database,\n+                                item.context.ledger.complete_chat_start,\n+                                request.attempt_id,\n+                                owner_id=item.context.owner_id,\n+                            )\n+                        )\n+                    )\n+                except Exception:\n+                    status, reason = \"review_required\", \"settlement_unconfirmed\"\n+            if not item.accepted and item.context is not None:\n+                try:\n+                    refunded = await self._drain_owned(\n+                        asyncio.create_task(\n+                            run_owned_db_call(\n+                                item.database,\n+                                item.context.ledger.abort_chat_start,\n+                                request.attempt_id,\n+                                owner_id=item.context.owner_id,\n+                            )\n+                        )\n+                    )\n+                    if not refunded:\n+                        status, reason = \"review_required\", \"settlement_unconfirmed\"\n+                except Exception:\n+                    status, reason = \"review_required\", \"settlement_unconfirmed\"\n+            await self._drain_owned(\n+                asyncio.create_task(\n+                    self._resolve(\n+                        item,\n+                        status,\n+                        item.withdrawal_reason\n+                        if status == \"not_started\" and item.withdrawal_reason\n+                        else reason,\n+                    )\n+                )\n+            )\n+            # Release only this preparation. A manual winner may already own a new one.\n+            preparation = controller.store.preparation_for_session(request.session_id)\n+            if (\n+                not item.accepted\n+                and preparation is not None\n+                and preparation.preparation_id == item.preparation_id\n+            ):\n+                controller._abandon_preparation(preparation.preparation_id)\n+            if (\n+                not item.accepted\n+                and item.validating_state is not None\n+                and controller.run_state_for(request.session_id)\n+                is item.validating_state\n+            ):\n+                controller._set_run_state(\n+                    ConsoleRunState(ConsoleRunStatus.IDLE),\n+                    session_id=request.session_id,\n+                )\n+            controller._agent_wake_turn_sessions.discard(request.session_id)\n+            if self._active.get(request.session_id) is item:\n+                self._active.pop(request.session_id, None)\n+            item.capacity_owner.release_automatic_primary(\n+                request.session_id, item.token\n+            )\n+\n+    async def accept(self, authorization: AgentChatStartAuthorization) -> bool:\n+        \"\"\"Serialize the ledger ownership cutoff with manual/source withdrawal.\"\"\"\n+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits\n+\n+        item, request = authorization, authorization.request\n+        if not await self._controller.store.drain_agent_handoff(request.session_id):\n+            return False\n+        reason = self._runtime_refusal(request)\n+        if reason is None and (\n+            self._controller._agent_bridge is not item.bridge\n+            or item.context.owner_id != self._controller._fleet_wake.runtime_owner_id\n+        ):\n+            reason = \"runtime_unavailable\"\n+        if reason is None and not self._destination_available(request):\n+            reason = \"destination_unavailable\"\n+        if reason is not None:\n+            item.withdrawal_reason = reason\n+            return False\n+        if (\n+            not self.authorizes(item, request.session_id)\n+            or item.accepted\n+            or not self._source_live(request)\n+            or not self._target_unchanged(request)\n+            or not self._controller._fleet_wake.try_claim_automatic_primary(\n+                request.session_id, item.token\n+            )\n+        ):\n+            return False\n+        # No await between final source checks and the durable ownership cutoff.\n+        with operation_owned_connection(item.database):\n+            item.accepted = item.context.ledger.accept_chat_start(",
+    "path": "tldw_chatbook/Chat/console_chat_start.py",
+    "commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "original_commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "user": {
+      "login": "qodo-code-review[bot]",
+      "id": 151058649,
+      "node_id": "BOT_kgDOCQD42Q",
+      "avatar_url": "https://avatars.githubusercontent.com/in/484649?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/qodo-code-review%5Bbot%5D",
+      "html_url": "https://github.com/apps/qodo-code-review",
+      "followers_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "<img src=\"https://img.shields.io/badge/Medium-634FD1?style=flat-square\" height=\"20px\" alt=\"Remediation recommended\">\n\n1\\. Chat approval can stall the console <code>\ud83d\udcd8 Rule violation</code> <code>\u27b9 Performance</code>\n\n<pre>\n<b><i>ConsoleChatStartCoordinator.accept</i></b> calls the synchronous <b><i>accept_chat_start</i></b> database operation\ndirectly from an async submission path. When the admission transaction waits on SQLite or takes time\nto complete, it blocks the event loop that handles the console; nearby database work uses\n<b><i>run_owned_db_call</i></b> to run off-thread.\n</pre>\n\n\n<details>\n<summary><strong>Agent Prompt</strong></summary>\n\n```\n## Issue description\nChat-start acceptance runs synchronous database admission on the async console path.\n\n## Fix Focus Areas\n- tldw_chatbook/Chat/console_chat_start.py[463-480]\n- tldw_chatbook/DB/base_db.py[64-89]\n\n## Recommended Fix\nRun admission through the owned database worker while preserving the final source checks and single-claim ownership cutoff across the handoff.\n```\n\n<code>\u24d8 Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>\n</details>\n\n[Dismiss \u2197](https://app.qodo.ai/findings/a73846d0-a4cd-43e5-93d8-8d4987ee687d?action=dismiss&origin=git) | [View \u2197](https://app.qodo.ai/findings/a73846d0-a4cd-43e5-93d8-8d4987ee687d)",
+    "created_at": "2026-10-04T03:22:20Z",
+    "updated_at": "2026-10-04T03:22:20Z",
+    "html_url": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971055",
+    "pull_request_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971055"
+      },
+      "html": {
+        "href": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971055"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971055/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": 474,
+    "original_start_line": 474,
+    "start_side": "RIGHT",
+    "line": 475,
+    "original_line": 475,
+    "side": "RIGHT",
+    "author_association": "NONE",
+    "original_position": 475,
+    "position": 475,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971059",
+    "pull_request_review_id": 5404068729,
+    "id": 4175971059,
+    "node_id": "PRRC_kwDOOcyyl8746ELz",
+    "diff_hunk": "@@ -11318,3 +11376,45 @@ def new_chat_tool(args: dict) -> ToolResult:\n         return _run(\"new_chat\", args)\n \n     return fork_chat_tool, new_chat_tool\n+\n+\n+def validate_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:\n+    \"\"\"Validate public creation fields without carrying model-supplied authority.\"\"\"",
+    "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+    "commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "original_commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "user": {
+      "login": "qodo-code-review[bot]",
+      "id": 151058649,
+      "node_id": "BOT_kgDOCQD42Q",
+      "avatar_url": "https://avatars.githubusercontent.com/in/484649?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/qodo-code-review%5Bbot%5D",
+      "html_url": "https://github.com/apps/qodo-code-review",
+      "followers_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "<img src=\"https://img.shields.io/badge/Medium-634FD1?style=flat-square\" height=\"20px\" alt=\"Remediation recommended\">\n\n2\\. New chat validator omits doc sections <code>\ud83d\udcd8 Rule violation</code> <code>\u2699 Maintainability</code>\n\n<pre>\n<b><i>validate_new_chat_arguments</i></b> has only a one-line docstring despite accepting <b><i>arguments</i></b>, returning\nvalidated values, and raising <b><i>ValueError</i></b>. Callers of this new public helper cannot learn its\naccepted fields, returned mapping, or validation failures from the required API documentation.\n</pre>\n\n\n<details>\n<summary><strong>Agent Prompt</strong></summary>\n\n```\n## Issue description\nThe new public chat validator lacks Google-style sections for its argument, return value, and validation errors.\n\n## Fix Focus Areas\n- tldw_chatbook/Chat/console_agent_bridge.py[11381-11382]\n\n## Recommended Fix\nExpand the docstring with Args:, Returns:, and Raises: sections covering the mapping and its ValueError conditions.\n```\n\n<code>\u24d8 Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>\n</details>\n\n[Dismiss \u2197](https://app.qodo.ai/findings/52902b76-0e4c-43ce-b3cc-46f19011f7e2?action=dismiss&origin=git) | [View \u2197](https://app.qodo.ai/findings/52902b76-0e4c-43ce-b3cc-46f19011f7e2)",
+    "created_at": "2026-10-04T03:22:20Z",
+    "updated_at": "2026-10-04T03:22:20Z",
+    "html_url": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971059",
+    "pull_request_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971059"
+      },
+      "html": {
+        "href": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971059"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971059/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": 11381,
+    "original_start_line": 11381,
+    "start_side": "RIGHT",
+    "line": 11382,
+    "original_line": 11382,
+    "side": "RIGHT",
+    "author_association": "NONE",
+    "original_position": 190,
+    "position": 190,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971062",
+    "pull_request_review_id": 5404068729,
+    "id": 4175971062,
+    "node_id": "PRRC_kwDOOcyyl8746EL2",
+    "diff_hunk": "@@ -0,0 +1,524 @@\n+\"\"\"One runtime-owned, bounded start for an already durable agent-created chat.\"\"\"\n+\n+from __future__ import annotations\n+\n+import asyncio\n+import hashlib\n+from dataclasses import dataclass, field\n+from typing import Any, Literal\n+\n+from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call\n+\n+from .console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID\n+from .console_turn_context import ConsoleTurnConfigurationSnapshot\n+\n+\n+@dataclass(frozen=True, slots=True)\n+class AgentChatStartRequest:\n+    attempt_id: str\n+    source_run_id: str\n+    source_session_id: str\n+    source_session_incarnation: str\n+    conversation_id: str\n+    session_id: str\n+    session_incarnation: str\n+    draft_revision: int\n+    context_epoch: int\n+    opening_prompt: str = field(repr=False)\n+    configuration: ConsoleTurnConfigurationSnapshot = field(repr=False)\n+    workspace_id: str\n+\n+\n+@dataclass(frozen=True, slots=True)\n+class AgentChatStartOutcome:\n+    launch_status: Literal[\"not_started\", \"started\", \"review_required\"]\n+    reason: str | None = None\n+\n+\n+_AUTHORIZATION_KEY = object()\n+\n+\n+class AgentChatStartAuthorization:\n+    \"\"\"Exact live coordinator authority; persisted provenance never creates it.\"\"\"\n+\n+    def __init__(\n+        self, owner: Any, request: AgentChatStartRequest, context: Any, *, key: object\n+    ) -> None:\n+        if key is not _AUTHORIZATION_KEY:\n+            raise PermissionError(\"coordinator authorization required\")\n+        self.owner = owner\n+        self.request = request\n+        self.context = context\n+        self.bridge = owner._controller._agent_bridge\n+        self.store = owner._controller.store\n+        self.database = self.bridge.runs_db\n+        self.ledger = self.database.automatic_work\n+        self.capacity_owner = owner._controller._fleet_wake\n+        self.runtime_owner_id = self.capacity_owner.runtime_owner_id\n+        self.token = object()\n+        self.accepted = False\n+        self.receipted = False\n+        self.withdrawn = False\n+        self.outcome = asyncio.get_running_loop().create_future()\n+        self.task: asyncio.Task | None = None\n+        self.preparation_id: str | None = None\n+        self.validating_state: Any = None\n+        self.running = False\n+        self.provider_worker: asyncio.Task | None = None\n+        self.withdrawal_reason: str | None = None\n+\n+\n+class ConsoleChatStartCoordinator:\n+    \"\"\"Own starts until cleanup without adding a scheduler or retry queue.\"\"\"\n+\n+    def __init__(self, controller: Any) -> None:\n+        self._controller = controller\n+        self._active: dict[str, AgentChatStartAuthorization] = {}\n+        self._tasks: set[asyncio.Task] = set()\n+        self._disposed = False\n+\n+    def tasks(self) -> tuple[asyncio.Task, ...]:\n+        \"\"\"Return currently owned work for runtime drain and verification.\"\"\"\n+        return tuple(self._tasks)\n+\n+    async def withdraw_for_manual(self, session_id: str) -> None:\n+        \"\"\"Drain only the exact prepared target before ordinary manual admission.\"\"\"\n+        item = self._active.get(session_id)\n+        if item is None or item.accepted:\n+            return\n+        self.withdraw_prepared(session_id, \"manual_send\")\n+        if item.task is not None:\n+            await asyncio.gather(item.task, return_exceptions=True)\n+\n+    def is_accepted(self, session_id: str) -> bool:\n+        \"\"\"Return whether this runtime still owns an accepted target start.\"\"\"\n+        item = self._active.get(session_id)\n+        return bool(item and item.accepted and self.authorizes(item, session_id))\n+\n+    def is_prepared(self, session_id: str) -> bool:\n+        item = self._active.get(session_id)\n+        return bool(item and not item.accepted and not item.withdrawn)\n+\n+    def authorizes(\n+        self, authorization: AgentChatStartAuthorization | None, session_id: str\n+    ) -> bool:\n+        if not isinstance(authorization, AgentChatStartAuthorization):\n+            return False\n+        target = self._controller.store._sessions.get(session_id)\n+        return bool(\n+            not self._disposed\n+            and not authorization.withdrawn\n+            and authorization.owner is self\n+            and self._controller.store is authorization.store\n+            and self._active.get(session_id) is authorization\n+            and target is not None\n+            and target.incarnation_id == authorization.request.session_incarnation\n+        )\n+\n+    def _source_live(self, request: AgentChatStartRequest) -> bool:\n+        controller = self._controller\n+        return controller._chat_creation_source_live(\n+            {\n+                \"session_id\": request.source_session_id,\n+                \"source_incarnation\": request.source_session_incarnation,\n+                \"source_run_id\": request.source_run_id,\n+                \"source_message_id\": controller._active_assistant_message_ids.get(\n+                    request.source_session_id\n+                ),\n+            }\n+        )\n+\n+    def _target_unchanged(self, request: AgentChatStartRequest) -> bool:\n+        controller = self._controller\n+        store = controller.store\n+        target = store._sessions.get(request.session_id)\n+        return bool(\n+            target\n+            and target.incarnation_id == request.session_incarnation\n+            and target.workspace_id == request.workspace_id\n+            and target.persisted_conversation_id == request.conversation_id\n+            and target.agent_handoff_state == \"pending\"\n+            and target.agent_handoff_revision == request.draft_revision\n+            and target.draft == request.opening_prompt\n+            and target.settings == request.configuration.session_settings\n+            and store.conversation_context_epoch(target.id) == request.context_epoch\n+            and not store.pending_attachments(target.id)\n+            and not store.session_one_shot_prefill(target.id)\n+            and controller._has_explicit_staged_evidence(target.id) is False\n+            and not controller.prompt_queue_coordinator.controls_generation(target.id)\n+        )\n+\n+    @staticmethod\n+    async def _drain_owned(task: asyncio.Task) -> Any:\n+        \"\"\"A cancelled awaiter must not detach physical work from its slot.\"\"\"\n+        while True:\n+            try:\n+                return await asyncio.shield(task)\n+            except asyncio.CancelledError:\n+                if task.done():\n+                    return task.result()\n+\n+    async def run_provider_worker(self, session_id: str, operation: Any) -> Any:\n+        \"\"\"Retain an exact native worker after cancellation of its awaiter.\"\"\"\n+        item = self._active.get(session_id)\n+        if item is None or not item.accepted:\n+            return await operation\n+        item.provider_worker = asyncio.create_task(operation)\n+        return await asyncio.shield(item.provider_worker)\n+\n+    async def _publish_outcome(\n+        self,\n+        request: AgentChatStartRequest,\n+        outcome: AgentChatStartOutcome,\n+        *,\n+        store: Any = None,\n+    ) -> AgentChatStartOutcome:\n+        from .message_metadata import AgentHandoffLaunchMetadata\n+\n+        launch = AgentHandoffLaunchMetadata(\n+            \"start\", outcome.launch_status, outcome.reason\n+        )\n+        store = store if store is not None else self._controller.store\n+        publication = asyncio.create_task(\n+            run_owned_db_call(\n+                store.persistence.db,\n+                store.persistence.update_agent_handoff_launch,\n+                request.conversation_id,\n+                launch,\n+            )\n+        )\n+        try:\n+            await asyncio.shield(publication)\n+        except asyncio.CancelledError:\n+            await self._drain_owned(publication)\n+            raise\n+        except Exception:\n+            outcome = AgentChatStartOutcome(\"review_required\", \"outcome_unconfirmed\")\n+            launch = AgentHandoffLaunchMetadata(\n+                \"start\", outcome.launch_status, outcome.reason\n+            )\n+        target = store._sessions.get(request.session_id)\n+        if (\n+            self._controller.store is store\n+            and target is not None\n+            and target.incarnation_id == request.session_incarnation\n+        ):\n+            target.agent_handoff_launch = launch\n+        return outcome\n+\n+    async def _resolve(\n+        self, item: AgentChatStartAuthorization, status: str, reason: str | None = None\n+    ) -> None:\n+        if not item.outcome.done():\n+            outcome = await self._publish_outcome(\n+                item.request, AgentChatStartOutcome(status, reason), store=item.store\n+            )\n+            item.outcome.set_result(outcome)\n+\n+    def _runtime_refusal(self, request: AgentChatStartRequest) -> str | None:\n+        \"\"\"Recheck current native support and enablement at each admission fence.\"\"\"\n+        from tldw_chatbook.Agents.agent_service import _coerce_autowake_enabled\n+        from tldw_chatbook.config import get_cli_setting\n+\n+        controller = self._controller\n+        if getattr(controller, \"_maintenance_paused\", False):\n+            return \"maintenance\"\n+        if (\n+            self._disposed\n+            or controller._disposed\n+            or not controller._agent_runtime_enabled\n+            or not _coerce_autowake_enabled(\n+                get_cli_setting(\"agents\", \"autowake_enabled\", True)\n+            )\n+        ):\n+            return \"runtime_disabled\"\n+        target = controller.store._sessions.get(request.session_id)\n+        if (\n+            not controller._agent_dispatch_is_eligible(target, prefill=None)\n+            or target.runtime_backend != \"local\"\n+        ):\n+            return \"runtime_unavailable\"\n+        return None\n+\n+    def _destination_available(self, request: AgentChatStartRequest) -> bool:\n+        global_scope = request.workspace_id in (None, CONSOLE_GLOBAL_WORKSPACE_ID)\n+        return self._controller._chat_creation_destination_available(\n+            scope_type=\"global\" if global_scope else \"workspace\",\n+            workspace_id=None if global_scope else request.workspace_id,\n+        )\n+\n+    async def start(self, request: AgentChatStartRequest) -> AgentChatStartOutcome:\n+        \"\"\"Return at refusal or both acceptance fences while owning the target task.\"\"\"\n+        controller = self._controller\n+        reason = self._runtime_refusal(request)\n+        if reason is None and not self._destination_available(request):\n+            reason = \"destination_unavailable\"\n+        if reason is not None:\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", reason)\n+            )\n+        if (\n+            request.configuration.session_settings is not None\n+            and not request.configuration.session_settings.provider.strip()\n+        ):\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"provider_unconfigured\")\n+            )\n+        if not self._source_live(request):\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"source_unavailable\")\n+            )\n+        if not self._target_unchanged(request) or request.session_id in self._active:\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"target_changed\")\n+            )\n+        ledger = getattr(controller._agent_bridge.runs_db, \"automatic_work\", None)\n+        if ledger is None:\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"lineage_unavailable\")\n+            )\n+        item = AgentChatStartAuthorization(self, request, None, key=_AUTHORIZATION_KEY)\n+        owner = controller._fleet_wake\n+        if not owner.try_claim_automatic_primary(request.session_id, item.token):\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"capacity\")\n+            )\n+        self._active[request.session_id] = item\n+        # Initial ledger work belongs to runtime shutdown before its first await.\n+        item.task = asyncio.create_task(self._run(item))\n+        self._tasks.add(item.task)\n+        item.task.add_done_callback(self._tasks.discard)\n+        try:\n+            return await asyncio.shield(item.outcome)\n+        except asyncio.CancelledError:\n+            self.withdraw_prepared(request.session_id, \"caller_cancelled\")\n+            raise\n+\n+    async def _prepare(self, item: AgentChatStartAuthorization) -> bool:\n+        \"\"\"Drain initial preparation before any withdrawal can settle its reservation.\"\"\"\n+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits\n+        from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext\n+\n+        request = item.request\n+        owner = item.capacity_owner\n+        ledger = item.ledger\n+        preparation = asyncio.create_task(\n+            run_owned_db_call(\n+                item.database,\n+                ledger.prepare_chat_start,\n+                attempt_id=request.attempt_id,\n+                source_run_id=request.source_run_id,\n+                target_conversation_id=request.conversation_id,\n+                target_session_id=request.session_id,\n+                target_session_incarnation=request.session_incarnation,\n+                owner_id=item.runtime_owner_id,\n+                draft_revision=request.draft_revision,\n+                context_epoch=request.context_epoch,\n+                request_fingerprint=hashlib.sha256(\n+                    request.opening_prompt.encode()\n+                ).hexdigest(),\n+                limits=AutomaticWorkLimits.from_settings(),\n+            )\n+        )\n+        try:\n+            attempt = await asyncio.shield(preparation)\n+        except asyncio.CancelledError:\n+            item.withdrawn = True\n+            attempt = await self._drain_owned(preparation)\n+        item.context = AutomaticWorkContext(\n+            ledger,\n+            attempt.chain_id,\n+            item.runtime_owner_id,\n+            request.attempt_id,\n+            attempt_kind=\"chat_start\",\n+        )\n+        return self.authorizes(item, request.session_id) and self._source_live(request)\n+\n+    async def _run(self, item: AgentChatStartAuthorization) -> None:\n+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused\n+        from .console_chat_models import (\n+            ConsoleSubmissionOrigin,\n+            ConsoleRunState,\n+            ConsoleRunStatus,\n+        )\n+\n+        controller, request = self._controller, item.request\n+        item.running = True\n+        status, reason = \"not_started\", \"preflight_refused\"\n+        controller._agent_wake_turn_sessions.add(request.session_id)\n+        try:\n+            if item.withdrawn:\n+                return\n+            if not await self._prepare(item):\n+                reason = \"source_unavailable\"\n+                return\n+            with item.context.scope():\n+                await controller.submit_draft(\n+                    request.opening_prompt,\n+                    session_id=request.session_id,\n+                    origin=ConsoleSubmissionOrigin.AGENT_CHAT_START,\n+                    chat_start_authorization=item,\n+                    configuration=request.configuration,\n+                    accepted_attachments=(),\n+                )\n+            if item.accepted and not item.receipted:\n+                status, reason = \"review_required\", \"receipt_unconfirmed\"",
+    "path": "tldw_chatbook/Chat/console_chat_start.py",
+    "commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "original_commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "user": {
+      "login": "qodo-code-review[bot]",
+      "id": 151058649,
+      "node_id": "BOT_kgDOCQD42Q",
+      "avatar_url": "https://avatars.githubusercontent.com/in/484649?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/qodo-code-review%5Bbot%5D",
+      "html_url": "https://github.com/apps/qodo-code-review",
+      "followers_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "<img src=\"https://img.shields.io/badge/Medium-634FD1?style=flat-square\" height=\"20px\" alt=\"Remediation recommended\">\n\n7\\. Chat statuses repeat as raw literals <code>\ud83d\udcd8 Rule violation</code> <code>\u2699 Maintainability</code>\n\n<pre>\nThe new chat-start flow assigns <b><i>review_required</i></b> as a raw status string in several outcome paths\ninstead of referencing one named status value. The saved launch metadata separately lists the same\nstatus, so a later status change must be made consistently across both files.\n</pre>\n\n\n<details>\n<summary><strong>Agent Prompt</strong></summary>\n\n```\n## Issue description\nThe chat-start outcome status is repeated as a raw string across runtime paths and metadata validation.\n\n## Fix Focus Areas\n- tldw_chatbook/Chat/console_chat_start.py[365-378]\n- tldw_chatbook/Chat/message_metadata.py[43-50]\n\n## Recommended Fix\nDefine shared named status values or an enum and use them in outcome assignments and saved-metadata validation.\n```\n\n<code>\u24d8 Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>\n</details>\n\n[Dismiss \u2197](https://app.qodo.ai/findings/5805a20d-daad-4119-bceb-ff79690aae08?action=dismiss&origin=git) | [View \u2197](https://app.qodo.ai/findings/5805a20d-daad-4119-bceb-ff79690aae08)",
+    "created_at": "2026-10-04T03:22:20Z",
+    "updated_at": "2026-10-04T03:22:20Z",
+    "html_url": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971062",
+    "pull_request_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971062"
+      },
+      "html": {
+        "href": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971062"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971062/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": null,
+    "original_start_line": null,
+    "start_side": null,
+    "line": 365,
+    "original_line": 365,
+    "side": "RIGHT",
+    "author_association": "NONE",
+    "original_position": 365,
+    "position": 365,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971066",
+    "pull_request_review_id": 5404068729,
+    "id": 4175971066,
+    "node_id": "PRRC_kwDOOcyyl8746EL6",
+    "diff_hunk": "@@ -880,6 +880,7 @@ def _actions_row_width(\n         return (\n             BASE_ACTIONS_WIDTH\n             + (self._send_button_width - 6)\n+            + (10 if self._run_active else 0)  # Visible Redirect control.",
+    "path": "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+    "commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "original_commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "user": {
+      "login": "qodo-code-review[bot]",
+      "id": 151058649,
+      "node_id": "BOT_kgDOCQD42Q",
+      "avatar_url": "https://avatars.githubusercontent.com/in/484649?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/qodo-code-review%5Bbot%5D",
+      "html_url": "https://github.com/apps/qodo-code-review",
+      "followers_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "<img src=\"https://img.shields.io/badge/Medium-634FD1?style=flat-square\" height=\"20px\" alt=\"Remediation recommended\">\n\n3\\. Redirect disappears on wider layouts <code>\ud83d\udc1e Bug</code> <code>\u2261 Correctness</code>\n\n<pre>\n<b><i>_actions_row_width()</i></b> adds ten cells for an active run even though <b><i>REDIRECT_ACTION_WIDTH</i></b> already\nreserves those same cells. When a run is active, <b><i>_redirect_fits()</i></b> double-counts Redirect, so\nlayouts with enough room can hide the control and needlessly narrow the draft.\n</pre>\n\n\n<details>\n<summary><strong>Agent Prompt</strong></summary>\n\n```\n## Issue description\nActive runs count Redirect twice in the composer width budget, which can hide a control that fits.\n\n## Fix Focus Areas\n- tldw_chatbook/Widgets/Console/console_composer_bar.py[880-885]\n\n## Recommended Fix\nRemove the active-run ten-cell addition. Keep the existing `REDIRECT_ACTION_WIDTH` reservation as the single source of Redirect's width.\n```\n\n<code>\u24d8 Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>\n</details>\n\n[Dismiss \u2197](https://app.qodo.ai/findings/c3d34ea3-28be-4547-8da9-922c38e89f77?action=dismiss&origin=git) | [View \u2197](https://app.qodo.ai/findings/c3d34ea3-28be-4547-8da9-922c38e89f77)",
+    "created_at": "2026-10-04T03:22:20Z",
+    "updated_at": "2026-10-04T03:22:20Z",
+    "html_url": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971066",
+    "pull_request_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971066"
+      },
+      "html": {
+        "href": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971066"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971066/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": null,
+    "original_start_line": null,
+    "start_side": null,
+    "line": 883,
+    "original_line": 883,
+    "side": "RIGHT",
+    "author_association": "NONE",
+    "original_position": 4,
+    "position": 4,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971069",
+    "pull_request_review_id": 5404068729,
+    "id": 4175971069,
+    "node_id": "PRRC_kwDOOcyyl8746EL9",
+    "diff_hunk": "@@ -263,7 +263,13 @@ def resolve_console_message_presentation(\n \n     if message.role is ConsoleMessageRole.USER:\n         speaker_label = sanitize_character_display_label(\n-            context.user_name,\n+            (\n+                \"Agent handoff\"\n+                if getattr(message.metadata, \"origin\", None) == \"agent_chat_start\"\n+                else \"Unverified handoff\"\n+                if getattr(message.metadata, \"origin\", None) == \"untrusted\"",
+    "path": "tldw_chatbook/Chat/console_roleplay_identity.py",
+    "commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "original_commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "user": {
+      "login": "qodo-code-review[bot]",
+      "id": 151058649,
+      "node_id": "BOT_kgDOCQD42Q",
+      "avatar_url": "https://avatars.githubusercontent.com/in/484649?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/qodo-code-review%5Bbot%5D",
+      "html_url": "https://github.com/apps/qodo-code-review",
+      "followers_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "<img src=\"https://img.shields.io/badge/Medium-634FD1?style=flat-square\" height=\"20px\" alt=\"Remediation recommended\">\n\n4\\. Saved notes mislabel agent messages <code>\ud83d\udc1e Bug</code> <code>\u2261 Correctness</code>\n\n<pre>\n<b><i>build_transcript_note()</i></b> prefixes every user-role message with <b><i>User</i></b> without inspecting the new\n<b><i>agent_chat_start</i></b> or <b><i>untrusted</i></b> origin. When a transcript includes an agent handoff or an\nunverified handoff, its saved note presents that message as human-authored despite the Console\ndisplaying a distinct speaker label.\n</pre>\n\n\n<details>\n<summary><strong>Agent Prompt</strong></summary>\n\n```\n## Issue description\nTranscript notes label newly distinguished agent and unverified handoffs as ordinary user messages.\n\n## Fix Focus Areas\n- tldw_chatbook/Chat/console_roleplay_identity.py[264-272]\n- tldw_chatbook/Chat/console_chat_controller.py[22246-22261]\n\n## Recommended Fix\nUse the message origin when choosing each exported note line's speaker label, retaining the agent-handoff and unverified-handoff distinctions.\n```\n\n<code>\u24d8 Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>\n</details>\n\n[Dismiss \u2197](https://app.qodo.ai/findings/bf9834b3-ac1c-4e33-8f0e-cf4ae255b8f2?action=dismiss&origin=git) | [View \u2197](https://app.qodo.ai/findings/bf9834b3-ac1c-4e33-8f0e-cf4ae255b8f2)",
+    "created_at": "2026-10-04T03:22:20Z",
+    "updated_at": "2026-10-04T03:22:20Z",
+    "html_url": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971069",
+    "pull_request_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971069"
+      },
+      "html": {
+        "href": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971069"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971069/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": 266,
+    "original_start_line": 266,
+    "start_side": "RIGHT",
+    "line": 270,
+    "original_line": 270,
+    "side": "RIGHT",
+    "author_association": "NONE",
+    "original_position": 9,
+    "position": 9,
+    "subject_type": "line"
+  },
+  {
+    "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971074",
+    "pull_request_review_id": 5404068729,
+    "id": 4175971074,
+    "node_id": "PRRC_kwDOOcyyl8746EMC",
+    "diff_hunk": "@@ -0,0 +1,524 @@\n+\"\"\"One runtime-owned, bounded start for an already durable agent-created chat.\"\"\"\n+\n+from __future__ import annotations\n+\n+import asyncio\n+import hashlib\n+from dataclasses import dataclass, field\n+from typing import Any, Literal\n+\n+from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call\n+\n+from .console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID\n+from .console_turn_context import ConsoleTurnConfigurationSnapshot\n+\n+\n+@dataclass(frozen=True, slots=True)\n+class AgentChatStartRequest:\n+    attempt_id: str\n+    source_run_id: str\n+    source_session_id: str\n+    source_session_incarnation: str\n+    conversation_id: str\n+    session_id: str\n+    session_incarnation: str\n+    draft_revision: int\n+    context_epoch: int\n+    opening_prompt: str = field(repr=False)\n+    configuration: ConsoleTurnConfigurationSnapshot = field(repr=False)\n+    workspace_id: str\n+\n+\n+@dataclass(frozen=True, slots=True)\n+class AgentChatStartOutcome:\n+    launch_status: Literal[\"not_started\", \"started\", \"review_required\"]\n+    reason: str | None = None\n+\n+\n+_AUTHORIZATION_KEY = object()\n+\n+\n+class AgentChatStartAuthorization:\n+    \"\"\"Exact live coordinator authority; persisted provenance never creates it.\"\"\"\n+\n+    def __init__(\n+        self, owner: Any, request: AgentChatStartRequest, context: Any, *, key: object\n+    ) -> None:\n+        if key is not _AUTHORIZATION_KEY:\n+            raise PermissionError(\"coordinator authorization required\")\n+        self.owner = owner\n+        self.request = request\n+        self.context = context\n+        self.bridge = owner._controller._agent_bridge\n+        self.store = owner._controller.store\n+        self.database = self.bridge.runs_db\n+        self.ledger = self.database.automatic_work\n+        self.capacity_owner = owner._controller._fleet_wake\n+        self.runtime_owner_id = self.capacity_owner.runtime_owner_id\n+        self.token = object()\n+        self.accepted = False\n+        self.receipted = False\n+        self.withdrawn = False\n+        self.outcome = asyncio.get_running_loop().create_future()\n+        self.task: asyncio.Task | None = None\n+        self.preparation_id: str | None = None\n+        self.validating_state: Any = None\n+        self.running = False\n+        self.provider_worker: asyncio.Task | None = None\n+        self.withdrawal_reason: str | None = None\n+\n+\n+class ConsoleChatStartCoordinator:\n+    \"\"\"Own starts until cleanup without adding a scheduler or retry queue.\"\"\"\n+\n+    def __init__(self, controller: Any) -> None:\n+        self._controller = controller\n+        self._active: dict[str, AgentChatStartAuthorization] = {}\n+        self._tasks: set[asyncio.Task] = set()\n+        self._disposed = False\n+\n+    def tasks(self) -> tuple[asyncio.Task, ...]:\n+        \"\"\"Return currently owned work for runtime drain and verification.\"\"\"\n+        return tuple(self._tasks)\n+\n+    async def withdraw_for_manual(self, session_id: str) -> None:\n+        \"\"\"Drain only the exact prepared target before ordinary manual admission.\"\"\"\n+        item = self._active.get(session_id)\n+        if item is None or item.accepted:\n+            return\n+        self.withdraw_prepared(session_id, \"manual_send\")\n+        if item.task is not None:\n+            await asyncio.gather(item.task, return_exceptions=True)\n+\n+    def is_accepted(self, session_id: str) -> bool:\n+        \"\"\"Return whether this runtime still owns an accepted target start.\"\"\"\n+        item = self._active.get(session_id)\n+        return bool(item and item.accepted and self.authorizes(item, session_id))\n+\n+    def is_prepared(self, session_id: str) -> bool:\n+        item = self._active.get(session_id)\n+        return bool(item and not item.accepted and not item.withdrawn)\n+\n+    def authorizes(\n+        self, authorization: AgentChatStartAuthorization | None, session_id: str\n+    ) -> bool:\n+        if not isinstance(authorization, AgentChatStartAuthorization):\n+            return False\n+        target = self._controller.store._sessions.get(session_id)\n+        return bool(\n+            not self._disposed\n+            and not authorization.withdrawn\n+            and authorization.owner is self\n+            and self._controller.store is authorization.store\n+            and self._active.get(session_id) is authorization\n+            and target is not None\n+            and target.incarnation_id == authorization.request.session_incarnation\n+        )\n+\n+    def _source_live(self, request: AgentChatStartRequest) -> bool:\n+        controller = self._controller\n+        return controller._chat_creation_source_live(\n+            {\n+                \"session_id\": request.source_session_id,\n+                \"source_incarnation\": request.source_session_incarnation,\n+                \"source_run_id\": request.source_run_id,\n+                \"source_message_id\": controller._active_assistant_message_ids.get(\n+                    request.source_session_id\n+                ),\n+            }\n+        )\n+\n+    def _target_unchanged(self, request: AgentChatStartRequest) -> bool:\n+        controller = self._controller\n+        store = controller.store\n+        target = store._sessions.get(request.session_id)\n+        return bool(\n+            target\n+            and target.incarnation_id == request.session_incarnation\n+            and target.workspace_id == request.workspace_id\n+            and target.persisted_conversation_id == request.conversation_id\n+            and target.agent_handoff_state == \"pending\"\n+            and target.agent_handoff_revision == request.draft_revision\n+            and target.draft == request.opening_prompt\n+            and target.settings == request.configuration.session_settings\n+            and store.conversation_context_epoch(target.id) == request.context_epoch\n+            and not store.pending_attachments(target.id)\n+            and not store.session_one_shot_prefill(target.id)\n+            and controller._has_explicit_staged_evidence(target.id) is False\n+            and not controller.prompt_queue_coordinator.controls_generation(target.id)\n+        )\n+\n+    @staticmethod\n+    async def _drain_owned(task: asyncio.Task) -> Any:\n+        \"\"\"A cancelled awaiter must not detach physical work from its slot.\"\"\"\n+        while True:\n+            try:\n+                return await asyncio.shield(task)\n+            except asyncio.CancelledError:\n+                if task.done():\n+                    return task.result()\n+\n+    async def run_provider_worker(self, session_id: str, operation: Any) -> Any:\n+        \"\"\"Retain an exact native worker after cancellation of its awaiter.\"\"\"\n+        item = self._active.get(session_id)\n+        if item is None or not item.accepted:\n+            return await operation\n+        item.provider_worker = asyncio.create_task(operation)\n+        return await asyncio.shield(item.provider_worker)\n+\n+    async def _publish_outcome(\n+        self,\n+        request: AgentChatStartRequest,\n+        outcome: AgentChatStartOutcome,\n+        *,\n+        store: Any = None,\n+    ) -> AgentChatStartOutcome:\n+        from .message_metadata import AgentHandoffLaunchMetadata\n+\n+        launch = AgentHandoffLaunchMetadata(\n+            \"start\", outcome.launch_status, outcome.reason\n+        )\n+        store = store if store is not None else self._controller.store\n+        publication = asyncio.create_task(\n+            run_owned_db_call(\n+                store.persistence.db,\n+                store.persistence.update_agent_handoff_launch,\n+                request.conversation_id,\n+                launch,\n+            )\n+        )\n+        try:\n+            await asyncio.shield(publication)\n+        except asyncio.CancelledError:\n+            await self._drain_owned(publication)\n+            raise\n+        except Exception:\n+            outcome = AgentChatStartOutcome(\"review_required\", \"outcome_unconfirmed\")\n+            launch = AgentHandoffLaunchMetadata(\n+                \"start\", outcome.launch_status, outcome.reason\n+            )\n+        target = store._sessions.get(request.session_id)\n+        if (\n+            self._controller.store is store\n+            and target is not None\n+            and target.incarnation_id == request.session_incarnation\n+        ):\n+            target.agent_handoff_launch = launch\n+        return outcome\n+\n+    async def _resolve(\n+        self, item: AgentChatStartAuthorization, status: str, reason: str | None = None\n+    ) -> None:\n+        if not item.outcome.done():\n+            outcome = await self._publish_outcome(\n+                item.request, AgentChatStartOutcome(status, reason), store=item.store\n+            )\n+            item.outcome.set_result(outcome)\n+\n+    def _runtime_refusal(self, request: AgentChatStartRequest) -> str | None:\n+        \"\"\"Recheck current native support and enablement at each admission fence.\"\"\"\n+        from tldw_chatbook.Agents.agent_service import _coerce_autowake_enabled\n+        from tldw_chatbook.config import get_cli_setting\n+\n+        controller = self._controller\n+        if getattr(controller, \"_maintenance_paused\", False):\n+            return \"maintenance\"\n+        if (\n+            self._disposed\n+            or controller._disposed\n+            or not controller._agent_runtime_enabled\n+            or not _coerce_autowake_enabled(\n+                get_cli_setting(\"agents\", \"autowake_enabled\", True)\n+            )\n+        ):\n+            return \"runtime_disabled\"\n+        target = controller.store._sessions.get(request.session_id)\n+        if (\n+            not controller._agent_dispatch_is_eligible(target, prefill=None)\n+            or target.runtime_backend != \"local\"\n+        ):\n+            return \"runtime_unavailable\"\n+        return None\n+\n+    def _destination_available(self, request: AgentChatStartRequest) -> bool:\n+        global_scope = request.workspace_id in (None, CONSOLE_GLOBAL_WORKSPACE_ID)\n+        return self._controller._chat_creation_destination_available(\n+            scope_type=\"global\" if global_scope else \"workspace\",\n+            workspace_id=None if global_scope else request.workspace_id,\n+        )\n+\n+    async def start(self, request: AgentChatStartRequest) -> AgentChatStartOutcome:\n+        \"\"\"Return at refusal or both acceptance fences while owning the target task.\"\"\"\n+        controller = self._controller\n+        reason = self._runtime_refusal(request)\n+        if reason is None and not self._destination_available(request):\n+            reason = \"destination_unavailable\"\n+        if reason is not None:\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", reason)\n+            )\n+        if (\n+            request.configuration.session_settings is not None\n+            and not request.configuration.session_settings.provider.strip()\n+        ):\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"provider_unconfigured\")\n+            )\n+        if not self._source_live(request):\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"source_unavailable\")\n+            )\n+        if not self._target_unchanged(request) or request.session_id in self._active:\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"target_changed\")\n+            )\n+        ledger = getattr(controller._agent_bridge.runs_db, \"automatic_work\", None)\n+        if ledger is None:\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"lineage_unavailable\")\n+            )\n+        item = AgentChatStartAuthorization(self, request, None, key=_AUTHORIZATION_KEY)\n+        owner = controller._fleet_wake\n+        if not owner.try_claim_automatic_primary(request.session_id, item.token):\n+            return await self._publish_outcome(\n+                request, AgentChatStartOutcome(\"not_started\", \"capacity\")\n+            )\n+        self._active[request.session_id] = item\n+        # Initial ledger work belongs to runtime shutdown before its first await.\n+        item.task = asyncio.create_task(self._run(item))\n+        self._tasks.add(item.task)\n+        item.task.add_done_callback(self._tasks.discard)\n+        try:\n+            return await asyncio.shield(item.outcome)\n+        except asyncio.CancelledError:\n+            self.withdraw_prepared(request.session_id, \"caller_cancelled\")\n+            raise\n+\n+    async def _prepare(self, item: AgentChatStartAuthorization) -> bool:\n+        \"\"\"Drain initial preparation before any withdrawal can settle its reservation.\"\"\"\n+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits\n+        from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext\n+\n+        request = item.request\n+        owner = item.capacity_owner\n+        ledger = item.ledger\n+        preparation = asyncio.create_task(\n+            run_owned_db_call(\n+                item.database,\n+                ledger.prepare_chat_start,\n+                attempt_id=request.attempt_id,\n+                source_run_id=request.source_run_id,\n+                target_conversation_id=request.conversation_id,\n+                target_session_id=request.session_id,\n+                target_session_incarnation=request.session_incarnation,\n+                owner_id=item.runtime_owner_id,\n+                draft_revision=request.draft_revision,\n+                context_epoch=request.context_epoch,\n+                request_fingerprint=hashlib.sha256(\n+                    request.opening_prompt.encode()\n+                ).hexdigest(),\n+                limits=AutomaticWorkLimits.from_settings(),\n+            )\n+        )\n+        try:\n+            attempt = await asyncio.shield(preparation)\n+        except asyncio.CancelledError:\n+            item.withdrawn = True\n+            attempt = await self._drain_owned(preparation)\n+        item.context = AutomaticWorkContext(\n+            ledger,\n+            attempt.chain_id,\n+            item.runtime_owner_id,\n+            request.attempt_id,\n+            attempt_kind=\"chat_start\",\n+        )\n+        return self.authorizes(item, request.session_id) and self._source_live(request)\n+\n+    async def _run(self, item: AgentChatStartAuthorization) -> None:\n+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused\n+        from .console_chat_models import (\n+            ConsoleSubmissionOrigin,\n+            ConsoleRunState,\n+            ConsoleRunStatus,\n+        )\n+\n+        controller, request = self._controller, item.request\n+        item.running = True\n+        status, reason = \"not_started\", \"preflight_refused\"\n+        controller._agent_wake_turn_sessions.add(request.session_id)\n+        try:\n+            if item.withdrawn:\n+                return\n+            if not await self._prepare(item):\n+                reason = \"source_unavailable\"\n+                return\n+            with item.context.scope():\n+                await controller.submit_draft(\n+                    request.opening_prompt,\n+                    session_id=request.session_id,\n+                    origin=ConsoleSubmissionOrigin.AGENT_CHAT_START,\n+                    chat_start_authorization=item,\n+                    configuration=request.configuration,\n+                    accepted_attachments=(),\n+                )\n+            if item.accepted and not item.receipted:\n+                status, reason = \"review_required\", \"receipt_unconfirmed\"",
+    "path": "tldw_chatbook/Chat/console_chat_start.py",
+    "commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "original_commit_id": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+    "user": {
+      "login": "qodo-code-review[bot]",
+      "id": 151058649,
+      "node_id": "BOT_kgDOCQD42Q",
+      "avatar_url": "https://avatars.githubusercontent.com/in/484649?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/qodo-code-review%5Bbot%5D",
+      "html_url": "https://github.com/apps/qodo-code-review",
+      "followers_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/qodo-code-review%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "<img src=\"https://img.shields.io/badge/Medium-634FD1?style=flat-square\" height=\"20px\" alt=\"Remediation recommended\">\n\n5\\. A failed background start blocks the chat's automatic work until restart <code>\ud83d\udc1e Bug</code> <code>\u263c Reliability</code>\n\n<pre>\nIn <b><i>ConsoleChatStartCoordinator._run</i></b>, cleanup calls <b><i>complete_chat_start</i></b> only when\n<b><i>item.receipted</i></b> is true and <b><i>abort_chat_start</i></b> only when <b><i>item.accepted</i></b> is false, so an attempt\nthat was accepted but never got a receipt is never settled in the ledger. This happens when\n<b><i>commit_durable_turn</i></b> raises after <b><i>accept()</i></b> (including <b><i>ContinuationAdmissionRefused</i></b>, where the\ntransaction is known to have rolled back) or when <b><i>confirm_receipt</i></b> fails. The row then stays\n<b><i>accepted</i></b>, its committed generation stays charged to the shared allowance, and <b><i>_target_active</i></b>\nrefuses every later wake or chat start for that conversation until <b><i>recover()</i></b> runs under a new\nruntime owner.\n</pre>\n\n\n<details>\n<summary><strong>Agent Prompt</strong></summary>\n\n```\n## Issue description\nWhen a chat start is accepted in the ledger (`accept_chat_start`) but the durable turn commit fails or `confirm_receipt` is never reached, `_run` leaves the `automatic_chat_start_attempts` row in state `accepted`. That row blocks every later wake or start for the conversation (`_target_active`) and keeps the generation charged until a process restart under a new owner.\n\n## Fix Focus Areas\n- tldw_chatbook/Chat/console_chat_start.py[364-408]\n- tldw_chatbook/DB/automatic_work.py[857-891]\n- tldw_chatbook/Chat/console_chat_controller.py[12773-12839]\n\n## Recommended Fix\nAdd a ledger transition for accepted-but-unreceipted attempts, for example `mark_chat_start_review_required(attempt_id, owner_id)`. It should move `accepted` to `review_required`, and it can pause the allowance root with `review_required`/`interrupted_work`. Call it from `_run`'s finally block when `item.accepted and not item.receipted`. Where the controller knows the commit rolled back (e.g. `ContinuationAdmissionRefused`), let the coordinator refund the reservation, either by setting a flag on the authorization or by adding a `revert_accepted_chat_start` operation. Add a test that makes `commit_durable_turn` raise after `accept()` and checks that the conversation can be woken or started again.\n```\n\n<code>\u24d8 Copy this prompt and use it to remediate the issue with your preferred AI generation tools</code>\n</details>\n\n[Dismiss \u2197](https://app.qodo.ai/findings/1f68c117-3ae2-45e3-a0c5-64a4e8834414?action=dismiss&origin=git) | [View \u2197](https://app.qodo.ai/findings/1f68c117-3ae2-45e3-a0c5-64a4e8834414)",
+    "created_at": "2026-10-04T03:22:20Z",
+    "updated_at": "2026-10-04T03:22:20Z",
+    "html_url": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971074",
+    "pull_request_url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995",
+    "_links": {
+      "self": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971074"
+      },
+      "html": {
+        "href": "https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4175971074"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/2995"
+      }
+    },
+    "reactions": {
+      "url": "https://api.github.com/repos/rmusser01/tldw_chatbook/pulls/comments/4175971074/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "start_line": 364,
+    "original_start_line": 364,
+    "start_side": "RIGHT",
+    "line": 365,
+    "original_line": 365,
+    "side": "RIGHT",
+    "author_association": "NONE",
+    "original_position": 365,
+    "position": 365,
+    "subject_type": "line"
+  }
+]

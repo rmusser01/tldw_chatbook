@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Literal
 
+from tldw_chatbook.Library.library_notes_lasting_sync_state import ROOT_STATUS_LABELS
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     format_console_relative_age,
     parse_browser_timestamp,
@@ -29,6 +30,12 @@ from tldw_chatbook.Library.library_notes_tree_paging import (
 
 LibraryNotesTreeRowKind = Literal["folder", "note", "unfiled", "pager"]
 LibraryNotesTreeSemanticStatus = Literal["normal", "connected", "needs_attention"]
+#: TASK-34000.2: a sync folder's tree row while its root is held for attention.
+NOTES_TREE_SYNC_ATTENTION_STATUS = "⚠ Needs attention"
+#: TASK-34000.50 fix round 1: a managed folder whose root is healthy but
+#: nothing watches wears the Manage sync folders row's own wording for that
+#: state (same width as "⇄ Sync managed").
+NOTES_TREE_SYNC_STOPPED_STATUS = ROOT_STATUS_LABELS["not_watching"]
 LibraryNotesTreePagingAction = Literal["earlier", "more", "retry"]
 LibraryNotesFilterApplyKind = Literal["applied", "ignored", "drift", "failed"]
 
@@ -239,9 +246,7 @@ class LibraryNotesFilterState:
             self,
             requested_direction=direction,
             requested_offset=self.requested_offset or 0,
-            requested_limit=(
-                self.requested_limit or LIBRARY_NOTES_TREE_PAGE_SIZE
-            ),
+            requested_limit=(self.requested_limit or LIBRARY_NOTES_TREE_PAGE_SIZE),
             loading=True,
         )
         return fail_library_notes_filter_load(
@@ -956,6 +961,8 @@ def build_paged_library_notes_tree(
     expanded_folder_ids: set[str] | frozenset[str],
     protected_folder_ids: frozenset[str] = frozenset(),
     inactive_managed_folder_ids: frozenset[str] = frozenset(),
+    attention_folder_ids: frozenset[str] = frozenset(),
+    unwatched_folder_ids: frozenset[str] = frozenset(),
     now: datetime | None = None,
 ) -> LibraryNotesTreeProjection:
     """Project independently loaded parent-keyed slices into one visible tree.
@@ -968,6 +975,11 @@ def build_paged_library_notes_tree(
         expanded_folder_ids: Folder identities whose children are projected.
         protected_folder_ids: Folders a sync root manages, marked read-only.
         inactive_managed_folder_ids: Managed folders whose owner is inactive.
+        attention_folder_ids: Sync folders held for attention (TASK-34000.2);
+            their row says so in place of "⇄ Sync managed".
+        unwatched_folder_ids: Sync folders whose root is healthy but has no
+            running watcher (TASK-34000.50); their row reads "⚠ Sync stopped"
+            in place of "⇄ Sync managed". A held folder outranks it.
         now: Instant every row's ``age_label`` is measured against; defaults
             to the current UTC time, as the flat list state does.
 
@@ -996,8 +1008,18 @@ def build_paged_library_notes_tree(
     ) -> LibraryNotesTreeRow:
         protected = folder.folder_id in protected_folder_ids
         owner_active = folder.folder_id not in inactive_managed_folder_ids
-        if protected and owner_active:
-            semantic_status: LibraryNotesTreeSemanticStatus = "connected"
+        if protected and folder.folder_id in attention_folder_ids:
+            # TASK-34000.2: a held folder is not syncing in either direction;
+            # that outranks any healthy wording this row could carry.
+            semantic_status: LibraryNotesTreeSemanticStatus = "needs_attention"
+            status_text = NOTES_TREE_SYNC_ATTENTION_STATUS
+        elif protected and owner_active and folder.folder_id in unwatched_folder_ids:
+            # TASK-34000.50 fix round 1 (AC#2): healthy, leased, and nothing
+            # polling it -- not "Sync managed" while no change can travel.
+            semantic_status = "needs_attention"
+            status_text = NOTES_TREE_SYNC_STOPPED_STATUS
+        elif protected and owner_active:
+            semantic_status = "connected"
             status_text = "⇄ Sync managed"
         elif protected:
             semantic_status = "needs_attention"

@@ -1,0 +1,28 @@
+Guard tests have teeth: five mutations applied together with Edit (never git checkout), one run, then Edit-restored; 2026-10-05.
+  A. BaseAppScreen.recompose: the ensure_surface_swap_not_self_awaited call replaced by 'pass'
+  B. LibraryScreen._project_library_canvas_child: children_safe_to_await_removing(canvas_host) -> tuple(canvas_host.children)
+  C. LibraryScreen._repair_library_entry_canvas_owner: same reversion
+  D. LibraryScreen._reconcile_library_entry_state: same reversion
+  E. LibraryMediaCanvas.handle_library_media_export made 'async' and awaiting the controller again (the 480eadbba8 shape)
+Command: pytest Tests/Architecture/test_surface_swap_guard.py Tests/UI/test_library_surface_swap_refused_on_real_screen.py -q -p no:randomly
+Expected: exactly A -> the two REFUSED shapes + real-screen export-open test; B/C/D -> their real-screen seam test; E -> the static pin.
+
+FAILED Tests/Architecture/test_surface_swap_guard.py::test_a_recompose_awaited_on_a_removed_widgets_pump_is_refused[handler-awaits]
+FAILED Tests/Architecture/test_surface_swap_guard.py::test_a_recompose_awaited_on_a_removed_widgets_pump_is_refused[own-call-later]
+FAILED Tests/Architecture/test_surface_swap_guard.py::test_no_library_widget_awaits_the_screen_owned_work_it_forwards_to
+FAILED Tests/UI/test_library_surface_swap_refused_on_real_screen.py::test_the_export_open_awaited_on_the_canvas_pump_lands_by_fallback
+FAILED Tests/UI/test_library_surface_swap_refused_on_real_screen.py::test_a_canvas_child_swap_awaited_inside_the_canvas_is_refused_not_hung
+FAILED Tests/UI/test_library_surface_swap_refused_on_real_screen.py::test_the_entry_lifecycle_seams_refuse_a_swap_awaited_inside_the_canvas[repair]
+FAILED Tests/UI/test_library_surface_swap_refused_on_real_screen.py::test_the_entry_lifecycle_seams_refuse_a_swap_awaited_inside_the_canvas[reconcile]
+7 failed, 12 passed, 3 warnings in 81.62s (0:01:21)
+
+Failure reasons (each bounded by the 10 s open budget; the run as a whole took 81 s, nothing hung):
+E               AssertionError: handler-awaits: the guard did not refuse a recompose awaited on the pump of a widget the recompose removes (seen: {}; parked: ["_SwapApp(title='_SwapApp', classes={'-da
+E               AssertionError: own-call-later: the guard did not refuse a recompose awaited on the pump of a widget the recompose removes (seen: {}; parked: ["_SwapApp(title='_SwapApp', classes={'-da
+E       AssertionError: Library widget(s) await screen-owned work on their own message pump. If that work swaps the surface, the widget waits on its own removal and the app freezes:
+E       AssertionError: an Export open awaited on the Media canvas's pump neither returned nor was refused; parked pumps: ["LibraryHarness(title='LibraryHarness', classes={'-dark-mode'}, pseudo_classe
+E       AssertionError: a canvas-child swap awaited inside the outgoing canvas neither returned nor was refused; parked pumps: ["LibraryHarness(title='LibraryHarness', classes={'-dark-mode'}, pseudo_c
+E       AssertionError: the repair seam awaited inside the outgoing canvas neither returned nor was refused; parked pumps: ["LibraryHarness(title='LibraryHarness', classes={'-dark-mode'}, pseudo_class
+E       AssertionError: the reconcile seam awaited inside the outgoing canvas neither returned nor was refused; parked pumps: ["LibraryHarness(title='LibraryHarness', classes={'-dark-mode'}, pseudo_cl
+
+After Edit-restoring all five: grep -rn 'MUTATION [A-E]' tldw_chatbook/ -> 0; the two files run green again (see 83).

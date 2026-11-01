@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import os
 from pathlib import Path
+import shlex
+import sys
 import time
 
 import pytest
@@ -15,6 +18,7 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Terminal.contracts import (
     AdmissionGate,
     BackendIdentity,
@@ -37,6 +41,10 @@ from tldw_chatbook.Widgets.Console.console_terminal_workspace import (
     ConsoleTerminalWorkspace,
     TerminalViewport,
 )
+from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+# These tests mount the real ChatScreen, which reads app config at build time.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class RecordingTerminalBackend:
@@ -137,8 +145,9 @@ async def _wait_until(
     predicate: Callable[[], bool],
     *,
     detail: Callable[[], object] | None = None,
+    timeout: float = 4.0,
 ) -> None:
-    deadline = time.monotonic() + 4.0
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
             await pilot.pause()
@@ -450,6 +459,8 @@ async def test_terminal_uses_painted_center_geometry_without_overflow(
     manager.finalize_shutdown()
 
 
+# The app factory reads the real collection-bound config source.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_terminal_rail_focus_capture_release_tab_and_return(
     tmp_path: Path,
@@ -488,8 +499,9 @@ async def test_terminal_rail_focus_capture_release_tab_and_return(
 
         assert await pilot.click("#console-terminal-return")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
-        await pilot.pause()
-        assert pilot.app.focused is console.query_one("#console-native-transcript")
+        # TASK-33622.8 AC#3: the return lands in the composer, not the transcript.
+        composer = console.query_one("#console-native-composer")
+        await _wait_until(pilot, lambda: pilot.app.focused is composer)
         assert console._terminal.is_open is False
 
     manager.finalize_shutdown()
@@ -557,14 +569,798 @@ async def test_unarmed_terminal_replaces_only_center_and_return_restores_transcr
         assert await pilot.click("#console-terminal-return")
         await _wait_for_selector(console, pilot, "#console-native-transcript")
         await pilot.pause()
-        transcript = console.query_one("#console-native-transcript")
         assert _surrounding_console_widgets(console) == surrounding
         assert all(widget.is_mounted for widget in surrounding.values())
         assert console._terminal.is_open is False
-        assert pilot.app.focused is transcript
+        # TASK-33622.8 AC#3: the return lands in the composer.
+        await _wait_until(
+            pilot, lambda: pilot.app.focused is surrounding["composer"]
+        )
         assert isinstance(
             console.query_one("#console-main-column"), ConsoleTranscriptRegion
         )
         assert backends == []
+
+    manager.finalize_shutdown()
+
+
+def _drain_terminal_input(manager: TerminalSessionManager, session_id: str) -> bytes:
+    """Return every input byte the session's actor has queued, in order."""
+    received = b""
+    while (event := manager.take_input(session_id)) is not None:
+        received += event.data
+    return received
+
+
+def _composer_draft(console: ChatScreen) -> str:
+    return console.query_one("#console-native-composer").draft_text()
+
+
+def _focused_in_terminal_workspace(console: ChatScreen) -> bool:
+    focused = console.app.focused
+    workspace = console.query_one("#console-main-column")
+    return (
+        isinstance(workspace, ConsoleTerminalWorkspace)
+        and focused is not None
+        and (focused is workspace or workspace in focused.ancestors)
+        and focused.display
+    )
+
+
+async def _create_session_through_new_modal(console: ChatScreen, pilot) -> None:
+    """Press New and Create exactly as the user does, through the real modal."""
+    assert await pilot.click("#console-terminal-new")
+    await _wait_for_selector(pilot.app.screen, pilot, "#console-terminal-session-save")
+    assert await pilot.click("#console-terminal-session-save")
+
+
+@pytest.mark.asyncio
+async def test_arm_and_create_hand_the_keyboard_to_the_new_terminal_session(
+    tmp_path: Path,
+) -> None:
+    """TASK-33622.5 AC#1/#3/#4/#5: after Arm and New, typing reaches the shell.
+
+    On dev the Arm dialog and the New modal both returned focus to the chat
+    composer, so typed shell commands became a chat draft (and Enter sent
+    them to the model) while the footer still offered "Enter send / queue".
+    """
+    app, manager, backends = _terminal_app(permitted=True)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-terminal-open")
+        draft_before = _composer_draft(console)
+
+        assert await pilot.click("#console-terminal-open")
+        await _wait_for_selector(console, pilot, "#console-terminal-arm")
+        assert await pilot.click("#console-terminal-arm")
+        await _wait_for_selector(pilot.app.screen, pilot, "#confirm-button")
+        assert await pilot.click("#confirm-button")
+        await _wait_until(pilot, lambda: manager.armed is True)
+
+        # AC#3: confirming Arm keeps focus in the Terminal center.
+        await _wait_until(
+            pilot,
+            lambda: _focused_in_terminal_workspace(console)
+            and pilot.app.focused.id == "console-terminal-new",
+            detail=lambda: pilot.app.focused,
+        )
+
+        await _create_session_through_new_modal(console, pilot)
+        await _wait_until(pilot, lambda: len(manager.projections()) == 1)
+        session_id = manager.projections()[0].session_id
+        viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+        # AC#1: the new session is selected and its viewport owns the keys.
+        await _wait_until(
+            pilot,
+            lambda: manager.selected_session_id == session_id
+            and pilot.app.focused is viewport,
+            detail=lambda: (manager.selected_session_id, pilot.app.focused),
+        )
+        assert backends[0].started[0][0].name
+
+        await pilot.press("e", "c", "h", "o", "space", "h", "i", "enter")
+        await pilot.pause()
+        assert _drain_terminal_input(manager, session_id) == b"echo hi\r"
+        assert _composer_draft(console) == draft_before
+        assert pilot.app.focused is viewport
+
+        # AC#4: the composer is collapsed out of view and takes no keys, and
+        # the footer names Terminal keys instead of the chat send.
+        composer = console.query_one("#console-native-composer")
+        assert composer.display is False
+        assert composer.focusable is False
+        source, shortcuts = console._footer_shortcut_registration
+        keys = [shortcut[0] for shortcut in shortcuts]
+        assert source == "console"
+        assert "Ctrl+]" in keys
+        assert "Enter" not in keys
+        assert "Y" not in keys
+
+        # The release chord parks the viewport; printable keys must not
+        # tunnel into the hidden composer from there either.
+        await pilot.press("ctrl+right_square_bracket")
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        assert _composer_draft(console) == draft_before
+
+    manager.finalize_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_creating_another_terminal_session_selects_and_focuses_it(
+    tmp_path: Path,
+) -> None:
+    """TASK-33622.5 AC#2: Terminal 2 takes the keys, not the older Terminal 1."""
+    app, manager, _backends = _terminal_app(permitted=True)
+    first_id = _create_running_terminal(manager, tmp_path, name="Terminal 1")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        # Current dev attaches/resumes in a worker before scheduling its focus
+        # restores. Reuse the qualified real-attach fixture; the create/selection
+        # checks below retain their original four-second bounds.
+        from Tests.UI.test_console_key_ownership import _mounted
+
+        console, _composer, _transcript = await _mounted(host, pilot, messages=False)
+        assert await pilot.click("#console-terminal-open")
+        await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+        viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.focused is viewport,
+            detail=lambda: pilot.app.focused,
+        )
+        assert manager.selected_session_id == first_id
+        draft_before = _composer_draft(console)
+
+        await _create_session_through_new_modal(console, pilot)
+        await _wait_until(pilot, lambda: len(manager.projections()) == 2)
+        second_id = next(
+            projection.session_id
+            for projection in manager.projections()
+            if projection.session_id != first_id
+        )
+        await _wait_until(
+            pilot,
+            lambda: manager.selected_session_id == second_id
+            and pilot.app.focused is viewport,
+            detail=lambda: (manager.selected_session_id, pilot.app.focused),
+        )
+        await pilot.press("l", "s")
+        await pilot.pause()
+        assert _drain_terminal_input(manager, second_id) == b"ls"
+        assert _drain_terminal_input(manager, first_id) == b""
+        assert _composer_draft(console) == draft_before
+
+        # F6 leaves the Terminal and Shift+F6 comes back to it: the center
+        # pane is the Terminal while it owns the center. The line under the
+        # terminal follows real focus both ways (live, it kept claiming
+        # "Ctrl+] Release input" after F6 had moved the keys to a rail).
+        status = console.query_one("#console-terminal-status")
+        assert str(status.renderable).startswith("Ctrl+] Release input")
+        await pilot.press("f6")
+        await pilot.pause()
+        assert pilot.app.focused is not viewport
+        assert str(status.renderable).startswith(
+            "Focus or click the terminal to type in it"
+        )
+        await pilot.press("shift+f6")
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.focused is viewport,
+            detail=lambda: pilot.app.focused,
+        )
+        await pilot.pause()
+        assert str(status.renderable).startswith("Ctrl+] Release input")
+
+    manager.finalize_shutdown()
+
+
+def _session_tab_labels(console: ChatScreen) -> list[str]:
+    strip = console.query_one("#console-native-tab-strip")
+    return [str(button.label) for button in strip.query(Button)]
+
+
+def _rendered_message_ids(console: ChatScreen) -> frozenset[str]:
+    transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    return transcript.mounted_message_content_ids()
+
+
+@pytest.mark.asyncio
+async def test_terminal_round_trip_restores_tabs_transcript_and_composer_focus() -> (
+    None
+):
+    """TASK-33622.8 AC#1-#4: Return to transcript restores what the user left.
+
+    On dev the swap back mounted a fresh transcript center and nothing
+    re-synced it: the tab strip showed only "New tab", the transcript said
+    "No messages yet." for a populated chat, and focus sat on the transcript
+    surface, where a typed "y" opened Trace.
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        for index in range(12):
+            store.append_message(
+                first.id,
+                role=ConsoleMessageRole.USER,
+                content=f"alpha question {index}",
+            )
+            store.append_message(
+                first.id,
+                role=ConsoleMessageRole.ASSISTANT,
+                content=f"alpha answer {index}\n\nwith a second paragraph",
+            )
+        second = store.create_session(title="Beta thread")
+        store.append_message(
+            second.id, role=ConsoleMessageRole.USER, content="beta question"
+        )
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_until(
+            pilot,
+            lambda: len(_rendered_message_ids(console)) >= 4,
+            detail=lambda: _rendered_message_ids(console),
+        )
+        labels_before = _session_tab_labels(console)
+        # Two chat tabs (each with its close button), New tab and Temporary.
+        assert labels_before.count("✕") == 2, labels_before
+        assert "Beta thread" in labels_before, labels_before
+        assert "Temporary" in labels_before, labels_before
+        ids_before = _rendered_message_ids(console)
+
+        # The reader scrolled up into the history before opening the Terminal.
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_until(pilot, lambda: transcript.max_scroll_y > 4)
+        transcript.release_anchor()
+        transcript.scroll_to(y=2, animate=False)
+        await _wait_until(pilot, lambda: transcript.scroll_y == 2)
+
+        assert await pilot.click("#console-terminal-open")
+        await _wait_for_selector(console, pilot, "#console-terminal-return")
+        assert await pilot.click("#console-terminal-return")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        restored = console.query_one("#console-native-transcript", ConsoleTranscript)
+        assert restored is not transcript  # the swap really remounted the center
+
+        composer = console.query_one("#console-native-composer")
+        await _wait_until(
+            pilot,
+            lambda: _session_tab_labels(console) == labels_before
+            and _rendered_message_ids(console) == ids_before
+            and restored.scroll_y == 2
+            and pilot.app.focused is composer,
+            detail=lambda: (
+                _session_tab_labels(console),
+                len(_rendered_message_ids(console)),
+                restored.scroll_y,
+                pilot.app.focused,
+            ),
+        )
+        # Never the quiet "No messages yet." body for this populated chat.
+        assert not [
+            body
+            for body in restored.query(".console-transcript-empty-body")
+            if body.display and body.region.area
+        ]
+        assert composer.display is True
+
+        draft_before = _composer_draft(console)
+        await pilot.press("y")
+        await pilot.pause()
+        assert _composer_draft(console) == draft_before + "y"
+        assert pilot.app.screen is console  # "y" did not open Trace
+
+    manager.finalize_shutdown()
+
+
+#: Prints, from the PTY's own ioctl size, one row per visible line but the
+#: prompt's: a leading-space status pair, a full-width A....Z line, then rows
+#: numbered to the bottom. Every cell the PTY thinks it has is accounted for.
+_FULL_SCREEN_PROBE = (
+    "import os, sys; "
+    "c, r = os.get_terminal_size(sys.stdout.fileno()); "
+    "rows = [' M a', '?? b', 'A' + '.' * (c - 2) + 'Z']; "
+    "rows += [f'R{i:03d}' for i in range(len(rows) + 1, r)]; "
+    "sys.stdout.write(chr(10).join(rows) + chr(10))"
+)
+
+
+def _pty_size(manager: TerminalSessionManager, console: ChatScreen) -> tuple[int, int]:
+    view = console._terminal._view
+    state = manager.view_state(view) if view is not None else None
+    if state is None or state.selected_session_id is None:
+        return (0, 0)
+    selected = next(
+        session
+        for session in state.sessions
+        if session.projection.session_id == state.selected_session_id
+    )
+    return (selected.columns, selected.rows)
+
+
+def _pty_screen_lines(manager: TerminalSessionManager, console: ChatScreen) -> list[str]:
+    view = console._terminal._view
+    state = manager.view_state(view) if view is not None else None
+    if state is None:
+        return []
+    selected = next(
+        (
+            session
+            for session in state.sessions
+            if session.projection.session_id == state.selected_session_id
+        ),
+        None,
+    )
+    return [] if selected is None else [line.text for line in selected.screen.lines]
+
+
+def _content_size(widget) -> tuple[int, int]:
+    region = widget.content_region
+    return (region.width, region.height)
+
+
+def _painted_rows(console: ChatScreen, widget) -> list[str]:
+    """The compositor's cells inside ``widget``'s content region, row by row."""
+    region = widget.content_region
+    strips = list(console._compositor.render_strips())
+    return [strips[y].crop(region.x, region.right).text for y in range(region.y, region.bottom)]
+
+
+def _assert_full_screen_probe_visible(rows: list[str], state: str) -> None:
+    width, height = len(rows[0]), len(rows)
+    assert rows[0].startswith(" M a"), (state, rows[:3])
+    assert rows[1].startswith("?? b"), (state, rows[:3])
+    assert rows[2] == "A" + "." * (width - 2) + "Z", (state, rows[2])
+    assert rows[height - 2].startswith(f"R{height - 1:03d}"), (state, rows[-3:])
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires a POSIX PTY")
+@pytest.mark.asyncio
+async def test_real_pty_cells_stay_visible_and_sized_in_both_focus_states(
+    tmp_path: Path,
+) -> None:
+    """TASK-33625.3 AC#1/#2/#4 with a real shell in a real PTY.
+
+    On dev the focused viewport drew a focus outline OVER its outermost cells:
+    column 0 (" M" read "M", "??" read "?"), the last column and the top and
+    bottom rows vanished while the PTY was sized to the full widget.
+    """
+    from tldw_chatbook.app_service_wiring import _build_terminal_backend
+
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    _configure_native_ready_console(app)
+    app.terminal_session_manager.finalize_shutdown()
+    manager = TerminalSessionManager(lambda: True, _build_terminal_backend)
+    app.terminal_session_manager = manager
+    assert manager.arm(acknowledge_disclosure=True).armed is True
+    created = manager.create_session(
+        TerminalLaunchRequest(
+            name="Real shell",
+            shell="default",
+            start_directory=str(tmp_path),
+            columns=80,
+            rows=24,
+        )
+    )
+    assert created.admitted is True
+    host = ConsoleHarness(app)
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-terminal-open")
+            assert await pilot.click("#console-terminal-open")
+            await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+            viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+            await _wait_until(pilot, lambda: pilot.app.focused is viewport, timeout=8)
+            await _wait_until(
+                pilot,
+                lambda: _pty_size(manager, console) == _content_size(viewport),
+                detail=lambda: (_pty_size(manager, console), _content_size(viewport)),
+                timeout=8,
+            )
+            command = f"{shlex.quote(sys.executable)} -c {shlex.quote(_FULL_SCREEN_PROBE)}"
+            assert console._terminal.send_paste(command, bracketed=False) is True
+            await pilot.press("enter")
+            height = viewport.content_region.height
+            # Wait on the PTY's own screen, then judge what the user sees.
+            await _wait_until(
+                pilot,
+                lambda: any(
+                    line.startswith(f"R{height - 1:03d}")
+                    for line in _pty_screen_lines(manager, console)
+                )
+                and any(
+                    line.startswith(f"R{height - 1:03d}")
+                    for line in viewport.renderable.plain.splitlines()
+                ),
+                detail=lambda: _pty_screen_lines(manager, console),
+                timeout=15,
+            )
+
+            # AC#1: focused -- every PTY cell is on screen, column 0 included.
+            assert pilot.app.focused is viewport
+            _assert_full_screen_probe_visible(_painted_rows(console, viewport), "focused")
+            assert _pty_size(manager, console) == _content_size(viewport)
+
+            # Unfocused: nothing shifts and nothing reappears or vanishes.
+            console.query_one("#console-terminal-return").focus()
+            await _wait_until(pilot, lambda: not viewport.has_focus)
+            _assert_full_screen_probe_visible(_painted_rows(console, viewport), "unfocused")
+            assert _pty_size(manager, console) == _content_size(viewport)
+
+            viewport.focus()
+            await _wait_until(pilot, lambda: viewport.has_focus)
+            _assert_full_screen_probe_visible(_painted_rows(console, viewport), "refocused")
+
+            # AC#2: the PTY follows the visible content through a rail toggle
+            # and a terminal resize.
+            before = _content_size(viewport)
+            console.action_toggle_console_context_rail()
+            await _wait_until(
+                pilot,
+                lambda: _content_size(viewport) != before
+                and _pty_size(manager, console) == _content_size(viewport),
+                detail=lambda: (before, _pty_size(manager, console), _content_size(viewport)),
+                timeout=8,
+            )
+            await pilot.resize_terminal(140, 40)
+            await _wait_until(
+                pilot,
+                lambda: _pty_size(manager, console) == _content_size(viewport)
+                and viewport.content_region.right <= 140,
+                detail=lambda: (_pty_size(manager, console), _content_size(viewport)),
+                timeout=8,
+            )
+    finally:
+        await manager.shutdown(deadline_seconds=5.0)
+        manager.finalize_shutdown()
+
+
+def _visible_terminal_buttons(workspace: ConsoleTerminalWorkspace) -> list[Button]:
+    return [
+        button
+        for button in workspace.query(Button)
+        if button.display and str(button.label).strip()
+    ]
+
+
+def _assert_labels_painted_whole(
+    console: ChatScreen, workspace: ConsoleTerminalWorkspace, context: object
+) -> list[str]:
+    """Every visible Terminal label is painted whole: never a word cut short."""
+    buttons = _visible_terminal_buttons(workspace)
+    strips = list(console._compositor.render_strips())
+    for button in buttons:
+        label = str(button.label)
+        region = button.content_region
+        painted = strips[region.y].crop(region.x, region.right).text.strip()
+        assert painted == label, (context, button.id, label, painted, region)
+    return [str(button.label) for button in buttons]
+
+
+@pytest.mark.parametrize(
+    ("terminal_size", "explicit_inspector", "rails_yield"),
+    [
+        ((80, 24), False, True),
+        ((80, 24), True, True),
+        ((100, 30), True, False),
+    ],
+    ids=["80x24", "80x24-inspector-opened", "100-columns-inspector-opened"],
+)
+@pytest.mark.asyncio
+async def test_narrow_terminal_gets_the_center_and_unclipped_labels(
+    tmp_path: Path,
+    terminal_size: tuple[int, int],
+    explicit_inspector: bool,
+    rails_yield: bool,
+) -> None:
+    """TASK-33625.3 AC#3: rails yield below 100 columns, labels never clip.
+
+    On dev an Inspector the user had opened stayed open at 80x24, leaving the
+    Terminal about 44x6 with tabs reading "Ter" and actions reading
+    "Ren / Focu / Clos / Jum / Return to".
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    _create_running_terminal(manager, tmp_path, name="Terminal 1")
+    second = manager.create_session(
+        TerminalLaunchRequest(
+            name="Terminal 2",
+            shell="default",
+            start_directory=str(tmp_path),
+            columns=80,
+            rows=24,
+        )
+    )
+    assert second.admitted is True
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=terminal_size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        left = console.query_one("#console-left-rail")
+        right = console.query_one("#console-right-rail")
+        if explicit_inspector:
+            console._set_console_rail_preference(right_open=True)
+            await _wait_until(pilot, lambda: right.display is True)
+        preferred = (
+            console._current_console_rail_state().preferred_left_open,
+            console._current_console_rail_state().preferred_right_open,
+        )
+
+        console.action_open_console_terminal()
+        await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+        workspace = console.query_one("#console-main-column", ConsoleTerminalWorkspace)
+        grid = console.query_one("#console-workspace-grid")
+        if rails_yield:
+            await _wait_until(
+                pilot,
+                lambda: not left.display
+                and not right.display
+                and workspace.region.width == grid.content_region.width,
+                detail=lambda: (left.display, right.display, workspace.region, grid.content_region),
+            )
+        await pilot.pause()
+        if not rails_yield:
+            # At 100 columns or more the rail the user opened stays put.
+            assert right.display is True
+            assert workspace.region.width < grid.content_region.width
+
+        # The user's rail preference is untouched by the yield.
+        state = console._current_console_rail_state()
+        assert (state.preferred_left_open, state.preferred_right_open) == preferred
+
+        # Every visible label is painted whole: never a word cut short.
+        labels = _assert_labels_painted_whole(console, workspace, terminal_size)
+        assert "Terminal 1" in labels and "Terminal 2" in labels, labels
+
+        assert await pilot.click("#console-terminal-return")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        if explicit_inspector and terminal_size[0] < 100:
+            # Returning gives the rail the user opened back to them.
+            await _wait_until(pilot, lambda: right.display is True)
+
+    manager.finalize_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_rail_toggles_still_open_a_rail_over_a_narrow_terminal(
+    tmp_path: Path,
+) -> None:
+    """TASK-33625.3: the yield is a default, never a lock on Alt+I / Alt+C.
+
+    Without this, a rail toggle under a narrow Terminal wrote a preference
+    and showed nothing -- the Alt+I "way back" (TASK-24604) went dead.
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    _create_running_terminal(manager, tmp_path, name="Terminal 1")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        left = console.query_one("#console-left-rail")
+        right = console.query_one("#console-right-rail")
+        console.action_open_console_terminal()
+        await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+        await _wait_until(pilot, lambda: not left.display and not right.display)
+        viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+        await _wait_until(pilot, lambda: viewport.input_focused is True)
+
+        # A capturing viewport sends Alt keys to the shell, so the user
+        # releases first, as the User Guide says -- then the real keys work.
+        await pilot.press("ctrl+right_square_bracket")
+        await _wait_until(pilot, lambda: viewport.input_focused is False)
+        await pilot.press("alt+i")
+        await _wait_until(
+            pilot,
+            lambda: right.display is True,
+            detail=lambda: (left.display, right.display),
+        )
+        # The Terminal beside a reclaimed Inspector is about 46 columns: its
+        # labels still never read "Renam" (live, 80x24, Alt+I after Ctrl+]).
+        workspace = console.query_one("#console-main-column", ConsoleTerminalWorkspace)
+        await _wait_until(pilot, lambda: workspace.region.width < 60)
+        await pilot.pause()
+        _assert_labels_painted_whole(console, workspace, "inspector reclaimed")
+        await pilot.press("alt+i")
+        await _wait_until(pilot, lambda: right.display is False)
+
+        await pilot.press("alt+c")
+        await _wait_until(
+            pilot,
+            lambda: left.display is True,
+            detail=lambda: (left.display, right.display),
+        )
+
+        # Opening the Terminal again starts from the yield once more.
+        assert await pilot.click("#console-terminal-return")
+        await _wait_for_selector(console, pilot, "#console-native-transcript")
+        console.action_open_console_terminal()
+        await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+        await _wait_until(
+            pilot,
+            lambda: not left.display and not right.display,
+            detail=lambda: (left.display, right.display),
+        )
+
+    manager.finalize_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_escape_from_a_rail_returns_to_the_open_terminal(
+    tmp_path: Path,
+) -> None:
+    """TASK-33622.5: with the composer collapsed, a rail's Esc exit names and
+    reaches the Terminal.
+
+    Collapsing the composer left the TASK-32322 rail exit dead: the footer
+    still taught "Esc composer" while Esc moved focus nowhere.
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    session_id = _create_running_terminal(manager, tmp_path, name="Terminal 1")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 50)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        right = console.query_one("#console-right-rail")
+        if not right.display:
+            await pilot.press("alt+i")
+            await _wait_until(pilot, lambda: right.display is True)
+        console.action_open_console_terminal()
+        await _wait_for_selector(
+            console, pilot, "#console-terminal-viewport", timeout=10.0
+        )
+        viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+        await _wait_until(pilot, lambda: pilot.app.focused is viewport)
+
+        for _ in range(4):
+            await pilot.press("f6")
+            await pilot.pause()
+            if console._console_rail_focus_active():
+                break
+        assert console._console_rail_focus_active(), pilot.app.focused
+        _source, shortcuts = console._footer_shortcut_registration
+        assert ("Esc", "terminal · F6 panes") in shortcuts, shortcuts
+        assert not any("composer" in label for _key, label in shortcuts), shortcuts
+
+        await pilot.press("escape")
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.focused is viewport,
+            detail=lambda: pilot.app.focused,
+        )
+        assert viewport.input_focused is True
+        composer = console.query_one("#console-native-composer")
+        assert composer.display is False
+        await pilot.press("l", "s")
+        await pilot.pause()
+        assert _drain_terminal_input(manager, session_id) == b"ls"
+
+    manager.finalize_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unsent_draft_survives_a_terminal_round_trip(tmp_path: Path) -> None:
+    """TASK-33622.5 / TASK-33622.8: shell typing never touches the chat draft.
+
+    The draft typed before opening the Terminal is still there, untouched by
+    the shell command, and typing after Return resumes it.
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    session_id = _create_running_terminal(manager, tmp_path, name="Terminal 1")
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer")
+        composer.focus()
+        await _wait_until(pilot, lambda: pilot.app.focused is composer)
+        await pilot.press("h", "e", "l", "l", "o")
+        await _wait_until(pilot, lambda: _composer_draft(console) == "hello")
+
+        assert await pilot.click("#console-terminal-open")
+        viewport_selector = "#console-terminal-viewport"
+        await _wait_for_selector(console, pilot, viewport_selector, timeout=10.0)
+        viewport = console.query_one(viewport_selector, TerminalViewport)
+        await _wait_until(pilot, lambda: pilot.app.focused is viewport)
+        await pilot.press("l", "s", "enter")
+        await pilot.pause()
+        assert _drain_terminal_input(manager, session_id) == b"ls\r"
+        assert _composer_draft(console) == "hello"
+
+        assert await pilot.click("#console-terminal-return")
+        await _wait_for_selector(
+            console, pilot, "#console-native-transcript", timeout=10.0
+        )
+        await _wait_until(
+            pilot,
+            lambda: pilot.app.focused is composer,
+            detail=lambda: pilot.app.focused,
+        )
+        await pilot.press("!")
+        await _wait_until(
+            pilot,
+            lambda: _composer_draft(console) == "hello!",
+            detail=lambda: _composer_draft(console),
+        )
+
+    manager.finalize_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_return_never_applies_one_conversations_reading_to_another() -> None:
+    """TASK-33622.8: the restored position belongs to the conversation it came
+    from.
+
+    If the active conversation changes while the Terminal is open, Return
+    shows the new one at its own (live) position, never the old one's offset.
+    """
+    app, manager, _backends = _terminal_app(permitted=True)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(
+            console, pilot, "#console-native-transcript", timeout=10.0
+        )
+        store = console._ensure_console_chat_store()
+        first = store.ensure_session()
+        second = store.create_session(title="Beta thread")
+        for session, word in ((first, "alpha"), (second, "beta")):
+            for index in range(12):
+                store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.USER,
+                    content=f"{word} question {index}",
+                )
+                store.append_message(
+                    session.id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content=f"{word} answer {index}\n\nwith a second paragraph",
+                )
+        store.switch_session(first.id)
+        await console._sync_native_console_chat_ui()
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_until(pilot, lambda: transcript.max_scroll_y > 4)
+        transcript.release_anchor()
+        transcript.scroll_to(y=2, animate=False)
+        await _wait_until(pilot, lambda: transcript.scroll_y == 2)
+        alpha_ids = _rendered_message_ids(console)
+
+        assert await pilot.click("#console-terminal-open")
+        await _wait_for_selector(
+            console, pilot, "#console-terminal-return", timeout=10.0
+        )
+        store.switch_session(second.id)  # e.g. Ctrl+K after Ctrl+]
+        assert await pilot.click("#console-terminal-return")
+        await _wait_for_selector(
+            console, pilot, "#console-native-transcript", timeout=10.0
+        )
+        restored = console.query_one("#console-native-transcript", ConsoleTranscript)
+        await _wait_until(
+            pilot,
+            lambda: _rendered_message_ids(console)
+            and not (_rendered_message_ids(console) & alpha_ids)
+            and restored.max_scroll_y > 4,
+            detail=lambda: len(_rendered_message_ids(console)),
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert restored.scroll_y != 2, restored.scroll_y
+        assert restored.scroll_y == restored.max_scroll_y, (
+            restored.scroll_y,
+            restored.max_scroll_y,
+        )
 
     manager.finalize_shutdown()

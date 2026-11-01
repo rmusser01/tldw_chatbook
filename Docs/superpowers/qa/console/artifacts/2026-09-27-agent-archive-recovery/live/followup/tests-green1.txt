@@ -1,0 +1,9 @@
+..                                                                       [100%]
+============================= slowest 25 durations =============================
+1.64s call     Tests/Chat/test_console_archive_recovery_followup.py::test_new_native_turn_restores_earlier_second_row_after_exact_confirmation[True]
+1.52s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_new_native_turn_restores_earlier_second_row_after_exact_confirmation[True]
+1.36s call     Tests/Chat/test_console_archive_recovery_followup.py::test_new_native_turn_restores_earlier_second_row_after_exact_confirmation[False]
+1.21s setup    Tests/Chat/test_console_archive_recovery_followup.py::test_new_native_turn_restores_earlier_second_row_after_exact_confirmation[False]
+
+(2 durations < 1s hidden.)
+2 passed in 7.11s

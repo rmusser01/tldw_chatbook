@@ -1,0 +1,45 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                                                                     │
+│ Author the pieces that shape a chat                                                                                                                          │
+│  Ready                                                                                                                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ ╭─────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────┐ │
+│ │  Library                         <  ││                     ▾ Try a test chat (nothing saved)                      ││                                     │ │
+│ │  Search...                          ││ Provider: OpenAI / gpt-4.1-mini                                            ││  Inspector                       >  │ │
+│ │                 New                 ││ Captain Isolde Varga: Isolde doesn't look up from the logbook. "You're     ││ Selected: Captain Isolde Varga      │ │
+│ │           New Actor Pack            ││ late. Debris field, nine o'clock. Tell me you can read a sensor sweep."    ││ Type: character                     │ │
+│ │               Import                ││ User: Captain, the derelict is hailing us.                                 ││ Validation: OK                      │ │
+│ │          Import Actor Pack          ││ Captain Isolde Varga: (mock reply) You said: "Captain, the derelict is     ││ Conversations (2)                   │ │
+│ │              Duplicate              ││ hailing us.". Staying in character as You are Captain Isolde Varga. Stay   ││   Search this character's chats     │ │
+│ │             Sort: Name              ││ in character; be terse an. The wind shifts, a lantern flickers, and the    ││  Shore leave on Kepler-9            │ │
+│ │              Tag: All               ││ story moves forward one beat.                                              ││  Debris field salvage               │ │
+│ │  Ada (Debugging Partner)            ││ Ready                                                                      ││  All conversations shown.           │ │
+│ │  A patient senior engineer who h…   ││  Greeting:                                                                 ││                                     │ │
+│ │  ARIA-7                             ││                                                                            ││ Readiness                           │ │
+│ │  A ship AI that has quietly beco…   ││                                                                            ││ Ready to chat in Console.           │ │
+│ │  Brother Anselm                     ││                                                                            ││              Chat now               │ │
+│ │  A monastery brewer with strong … ▁ ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││        Send to Console draft        │ │
+│ │  Captain Isolde Varga               ││ ▊  Test message...                                                       ▎ ││             Export JSON             │ │
+│ │  Captain Isolde Varga commands t…   ││ Character                                                                  ││             Export PNG              │ │
+│ │  Chef Auguste                       ││  there. In conversation she is economical with words, asks pointed       ▄ ││          Export Actor Pack          │ │
+│ │  A temperamental Parisian chef w…   ││  questions, and rewards competence with a rare half-smile. She             ││               Delete                │ │
+│ │  Coach Pemberton                    ││  distrusts corporate liaisons, adores the ship's cat (Ballast), and        ││            Manage Buddy             │ │
+│ │  A relentlessly upbeat running c…   ││  drinks her coffee strong enough to strip paint.                           ││             Show Buddy              │ │
+│ │  Default Assistant                  ││  Personality: Dry, precise, loyal, quietly haunted.                     ▁  ││             Close Buddy             │ │
+│ │  The built-in Default Assistant …   ││                                                                            ││            Disable Buddy            │ │
+│ │  Detective Rosa Calderón            ││  Scenario: The Meridian's Wake has just dropped out of a jump into an   ▁  ││                                     │ │
+│ │  A sharp, sardonic homicide dete…   ││  uncharted debris field.                                                   ││                                     │ │
+│ │  Dungeon Master Vex                 ││  First message: *Isolde doesn't look up from the logbook.* "You're         ││                                     │ │
+│ │  A theatrical game master who ru…   ││  late. Debris field, nine o'clock. Tell me you can read a sensor           ││                                     │ │
+│ │                                     ││    Edit     Conversations (2)                                            ▇ ││                                     │ │
+│ ╰─────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────┘ │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | [ ] mode | s sort | F1 help · Ctrl+P palette · Ctrl+Q quit

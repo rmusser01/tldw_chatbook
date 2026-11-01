@@ -10,6 +10,27 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
+@pytest.fixture(autouse=True)
+def owned_marks_databases(monkeypatch):
+    """Close exact test owners after the bodies and their worker pools stop."""
+    databases = []
+    native_database = CharactersRAGDB
+
+    def create(*args, **kwargs):
+        database = native_database(*args, **kwargs)
+        databases.append(database)
+        return database
+
+    monkeypatch.setitem(globals(), "CharactersRAGDB", create)
+    try:
+        yield
+    finally:
+        for database in reversed(databases):
+            with database.quiesce_connections(timeout_seconds=5):
+                pass
+            assert database.registered_connection_count() == 0
+
+
 def _db(tmp_path):
     return CharactersRAGDB(str(tmp_path / "chacha.sqlite"), client_id="test-client")
 

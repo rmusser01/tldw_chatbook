@@ -65,7 +65,7 @@ async def test_console_message_send_persists_user_and_assistant_rows():
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("characterisation probe")
 

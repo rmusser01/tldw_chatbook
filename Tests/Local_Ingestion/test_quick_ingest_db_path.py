@@ -39,7 +39,9 @@ def test_configured_media_db_path_is_honored(tmp_path, monkeypatch):
         config_module,
         "get_cli_setting",
         lambda section, key=None, default=None: (
-            str(configured) if (section, key) == ("database", "media_db_path") else default
+            str(configured)
+            if (section, key) == ("database", "media_db_path")
+            else default
         ),
     )
 

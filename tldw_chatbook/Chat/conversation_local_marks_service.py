@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -269,7 +270,17 @@ class ConversationLocalMarksService:
             Exception: Reading the persisted mark fails.
         """
         conversation_id = self._conversation_id(conversation_id)
-        with self._manual_lock:
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        # Finite reads own only newly opened native file handles, not callers'
+        # existing caches, transactions, memory databases or custom owners.
+        ownership = (
+            operation_owned_connection(self.db)
+            if type(self.db) is CharactersRAGDB and not self.db.is_memory_db
+            else nullcontext()
+        )
+        with self._manual_lock, ownership:
             if not self.has_mark(conversation_id, self.MANUAL_UNREAD):
                 self._manual_tokens.pop(conversation_id, None)
                 return None
@@ -335,8 +346,16 @@ class ConversationLocalMarksService:
         )
         if not ids:
             return frozenset()
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        ownership = (
+            operation_owned_connection(self.db)
+            if type(self.db) is CharactersRAGDB and not self.db.is_memory_db
+            else nullcontext()
+        )
         found: set[str] = set()
-        with self._manual_lock, self.db.transaction() as cursor:
+        with self._manual_lock, ownership, self.db.transaction() as cursor:
             for start in range(0, len(ids), 500):
                 chunk = ids[start : start + 500]
                 placeholders = ",".join("?" for _ in chunk)

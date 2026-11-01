@@ -1,12 +1,13 @@
-"""Unit tests for the Console cost chip (PR3 task-4).
+"""Unit tests for the Console cost segment in the status strip (PR3 task-4).
 
-Mirrors the mount/assert idioms in ``Tests/UI/test_console_status_chips.py``
-and the message-capture idiom in ``Tests/UI/test_console_shell_chip_actions.py``
-/``Tests/UI/test_console_status_chips.py::test_approvals_chip_posts_review_requested``.
+TASK-35160 collapsed the strip into one text line; the cost chip's contracts
+carry over to the cost SEGMENT: composed last, label from state (compact vs
+full by viewport width, live on resize), hidden without a state, alert/dim
+emphasis, whole-line equality guarding, and activation posting
+``ConsoleCostChip.ConsoleCostChipPressed``. The chip era's distinct "cold"
+styling flattened into dim (a markup span cannot carry an info color
+token-legally); the cold FACT stays on the cost state (tooltip/breakdown).
 """
-
-import re
-from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
@@ -18,23 +19,8 @@ from tldw_chatbook.Chat.console_display_state import ConsoleControlState
 from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleCostChip,
     ConsoleStatusChips,
+    ConsoleStatusText,
 )
-
-ROOT = Path(__file__).resolve().parents[2]
-_CSS_ROOT = ROOT / "tldw_chatbook" / "css"
-# ADR-161 task 10: the console-owned chip rules live in the console
-# source sheets (union: each rule exists in exactly one of the pair) and
-# ride the boot bundle.
-CONSOLE_SOURCES = (
-    _CSS_ROOT / "features" / "_console.tcss",
-    _CSS_ROOT / "features" / "_console_panels.tcss",
-)
-BUNDLE = _CSS_ROOT / "tldw_cli_modular.tcss"
-
-
-def _console_sources_text() -> str:
-    return "\n".join(p.read_text(encoding="utf-8") for p in CONSOLE_SOURCES)
-
 
 def _control_state(**overrides) -> ConsoleControlState:
     base = dict(
@@ -66,7 +52,7 @@ def _cost_state(**overrides) -> ConsoleCostState:
 
 
 class _ChipsApp(App):
-    CSS = ".console-control-chip { width: auto; }"
+    CSS = ".console-status-text { width: auto; }"
 
     def __init__(self, state: ConsoleControlState, *, cost_state=None) -> None:
         super().__init__()
@@ -88,152 +74,140 @@ class _ChipsApp(App):
         self.captured_pressed.append(event)
 
 
-class _ProductionChipsApp(_ChipsApp):
-    """Status-chip harness using the shipped stylesheet and hierarchy."""
+def _line(app: App) -> ConsoleStatusText:
+    return app.query_one("#console-status-text", ConsoleStatusText)
 
-    CSS = ""
-    # ADR-161 task 10: the console vocabulary rides the boot bundle via
-    # features/_console{,_panels}.tcss (the always-boot-parsed console
-    # split sheet was dissolved), so the bundle alone is the app-tier set.
-    CSS_PATH = [str(BUNDLE)]
+
+def _line_text(app: App) -> str:
+    renderable = _line(app).renderable
+    return (
+        renderable.plain if hasattr(renderable, "plain") else str(_line(app).render())
+    )
+
+
+def _visible_names(app: App) -> list[str]:
+    return [name for name, _s, _e in _line(app).segment_spans]
+
+
+def _cost_segment(app: App):
+    strip = app.query_one("#console-status-chips", ConsoleStatusChips)
+    for segment in strip._build_segments():
+        if segment.name == "cost":
+            return segment
+    raise AssertionError("cost segment missing")
 
 
 @pytest.mark.asyncio
-async def test_cost_chip_is_composed_last():
+async def test_cost_segment_is_composed_last():
     app = _ChipsApp(_control_state(), cost_state=_cost_state())
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
-        chips = app.query_one("#console-status-chips", ConsoleStatusChips)
-        visible_ids = [
-            chip.id for chip in chips.query(".console-control-chip") if chip.display
-        ]
-        assert visible_ids[-1] == "console-cost-chip"
-        assert isinstance(app.query_one("#console-cost-chip"), ConsoleCostChip)
+        assert _visible_names(app)[-1] == "cost"
 
 
 @pytest.mark.asyncio
-async def test_cost_chip_renders_label_from_state():
+async def test_cost_segment_renders_label_from_state():
     app = _ChipsApp(_control_state(), cost_state=_cost_state(label="$1.23 ● ~+$0.05"))
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
-        assert chip.display is True
-        assert "$1.23" in str(chip.render())
+        assert "$1.23" in _line_text(app)
 
 
 @pytest.mark.asyncio
-async def test_cost_chip_hidden_when_no_cost_state_at_compose():
+async def test_cost_segment_hidden_when_no_cost_state_at_compose():
     app = _ChipsApp(_control_state(), cost_state=None)
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
-        assert chip.display is False
+        assert "cost" not in _visible_names(app)
 
 
 @pytest.mark.asyncio
-async def test_sync_cost_state_hides_chip_when_state_becomes_none():
+async def test_sync_cost_state_hides_segment_when_state_becomes_none():
     app = _ChipsApp(_control_state(), cost_state=_cost_state())
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
         chips = app.query_one("#console-status-chips", ConsoleStatusChips)
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
-        assert chip.display is True
+        assert "cost" in _visible_names(app)
 
         chips.sync_cost_state(None)
         await pilot.pause()
-        assert chip.display is False
+        assert "cost" not in _visible_names(app)
 
 
 @pytest.mark.asyncio
-async def test_sync_cost_state_reveals_chip_from_hidden():
+async def test_sync_cost_state_reveals_segment_from_hidden():
     app = _ChipsApp(_control_state(), cost_state=None)
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
         chips = app.query_one("#console-status-chips", ConsoleStatusChips)
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
-        assert chip.display is False
+        assert "cost" not in _visible_names(app)
 
         chips.sync_cost_state(_cost_state(label="$0.02 ●"))
         await pilot.pause()
-        assert chip.display is True
-        assert "$0.02" in str(chip.render())
+        assert "cost" in _visible_names(app)
+        assert "$0.02" in _line_text(app)
 
 
 @pytest.mark.asyncio
-async def test_neutral_state_is_dim_not_alert_or_cold():
+async def test_neutral_state_is_dim_not_alert():
     app = _ChipsApp(_control_state(), cost_state=_cost_state(alert=False, cold=False))
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
-        assert chip.has_class("console-chip-dim")
-        assert not chip.has_class("console-chip-alert")
-        assert not chip.has_class("console-chip-cold")
+        segment = _cost_segment(app)
+        assert segment.dim is True
+        assert segment.alert is False
 
 
 @pytest.mark.asyncio
-async def test_sync_cost_state_toggles_alert_class():
+async def test_sync_cost_state_toggles_alert_emphasis():
     app = _ChipsApp(_control_state(), cost_state=_cost_state(alert=False, cold=False))
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
         chips = app.query_one("#console-status-chips", ConsoleStatusChips)
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
 
         chips.sync_cost_state(
             _cost_state(alert=True, cold=False, label="$0.48 ⚠ ~+$0.13")
         )
         await pilot.pause()
-        assert chip.has_class("console-chip-alert")
-        assert not chip.has_class("console-chip-dim")
-        assert not chip.has_class("console-chip-cold")
-        assert "$0.48" in str(chip.render())
+        segment = _cost_segment(app)
+        assert segment.alert is True
+        assert segment.dim is False
+        assert "$0.48" in _line_text(app)
 
-        # And back to neutral -- classes must not stick around.
+        # And back to neutral -- emphasis must not stick around.
         chips.sync_cost_state(_cost_state(alert=False, cold=False, label="$0.50 ●"))
         await pilot.pause()
-        assert chip.has_class("console-chip-dim")
-        assert not chip.has_class("console-chip-alert")
-        assert not chip.has_class("console-chip-cold")
+        segment = _cost_segment(app)
+        assert segment.dim is True
+        assert segment.alert is False
 
 
 @pytest.mark.asyncio
-async def test_sync_cost_state_toggles_cold_class():
-    app = _ChipsApp(_control_state(), cost_state=_cost_state(alert=False, cold=False))
-    async with app.run_test(size=(200, 6)) as pilot:
-        await pilot.pause()
-        chips = app.query_one("#console-status-chips", ConsoleStatusChips)
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
-
-        chips.sync_cost_state(_cost_state(alert=False, cold=True, label="$0.48 ○"))
-        await pilot.pause()
-        assert chip.has_class("console-chip-cold")
-        assert not chip.has_class("console-chip-dim")
-        assert not chip.has_class("console-chip-alert")
-
-
-@pytest.mark.asyncio
-async def test_cold_state_at_compose_time():
-    """The cold class must also apply on the very first frame (F1 precedent)."""
+async def test_sync_cost_state_cold_renders_like_neutral_without_alert():
+    """The chip era's info-colored "cold" state flattened into dim on the
+    text line (a markup span cannot carry a token-legal info color); the
+    load-bearing parts are alert=False and the segment staying visible."""
     app = _ChipsApp(_control_state(), cost_state=_cost_state(alert=False, cold=True))
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
-        assert chip.has_class("console-chip-cold")
-        assert not chip.has_class("console-chip-dim")
-        assert not chip.has_class("console-chip-alert")
+        segment = _cost_segment(app)
+        assert segment.alert is False
+        assert segment.dim is True
+        assert "cost" in _visible_names(app)
 
 
 @pytest.mark.asyncio
 async def test_sync_cost_state_equality_guard_skips_redundant_render():
-    """An equal-by-value (but not identical) state must not re-render the chip."""
+    """An equal-by-value (but not identical) state must not re-render the line."""
     app = _ChipsApp(_control_state(), cost_state=_cost_state())
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
         chips = app.query_one("#console-status-chips", ConsoleStatusChips)
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        line = _line(app)
 
         calls: list[object] = []
-        original_update = chip.update
-        chip.update = lambda *a, **k: calls.append((a, k)) or original_update(*a, **k)
+        original_update = line.update
+        line.update = lambda *a, **k: calls.append((a, k)) or original_update(*a, **k)
         try:
             same_by_value = _cost_state()
             assert same_by_value is not chips._cost_state
@@ -241,9 +215,9 @@ async def test_sync_cost_state_equality_guard_skips_redundant_render():
             chips.sync_cost_state(same_by_value)
             await pilot.pause()
         finally:
-            chip.update = original_update
+            line.update = original_update
 
-        assert calls == [], "equal cost state must not re-render the chip"
+        assert calls == [], "equal cost state must not re-render the line"
 
 
 @pytest.mark.asyncio
@@ -253,7 +227,6 @@ async def test_sync_cost_state_uses_compact_label_when_narrow():
         await pilot.pause()
         chips = app.query_one("#console-status-chips", ConsoleStatusChips)
         assert chips.size.width < 120
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
 
         chips.sync_cost_state(
             _cost_state(
@@ -263,7 +236,7 @@ async def test_sync_cost_state_uses_compact_label_when_narrow():
             )
         )
         await pilot.pause()
-        rendered = str(chip.render())
+        rendered = _line_text(app)
         assert "$0.48" in rendered
         assert "~+$0.13" not in rendered
 
@@ -275,7 +248,6 @@ async def test_sync_cost_state_uses_full_label_when_wide():
         await pilot.pause()
         chips = app.query_one("#console-status-chips", ConsoleStatusChips)
         assert chips.size.width >= 120
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
 
         chips.sync_cost_state(
             _cost_state(
@@ -285,8 +257,7 @@ async def test_sync_cost_state_uses_full_label_when_wide():
             )
         )
         await pilot.pause()
-        rendered = str(chip.render())
-        assert "~+$0.13" in rendered
+        assert "~+$0.13" in _line_text(app)
 
 
 @pytest.mark.asyncio
@@ -299,8 +270,7 @@ async def test_context_cost_label_uses_compact_copy_on_initial_narrow_mount():
 
     async with app.run_test(size=(80, 6)) as pilot:
         await pilot.pause()
-        rendered = str(app.query_one("#console-cost-chip", ConsoleCostChip).render())
-
+        rendered = _line_text(app)
         assert "Ctx 45% · Now $0.48 · Next ~+$0.13" in rendered
         assert "On next send" not in rendered
 
@@ -315,18 +285,15 @@ async def test_context_cost_label_tracks_live_resize_without_state_change():
 
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
-        assert "On next send" in str(chip.render())
+        assert "On next send" in _line_text(app)
 
         await pilot.resize_terminal(80, 6)
         await pilot.pause()
-        assert "Ctx 45% · Now $0.48 · Next ~+$0.13" in str(chip.render())
+        assert "Ctx 45% · Now $0.48 · Next ~+$0.13" in _line_text(app)
 
         await pilot.resize_terminal(200, 6)
         await pilot.pause()
-        assert "Context 45% · Current $0.48 · On next send ~+$0.13" in str(
-            chip.render()
-        )
+        assert "Context 45% · Current $0.48 · On next send ~+$0.13" in _line_text(app)
 
 
 @pytest.mark.parametrize(
@@ -344,7 +311,7 @@ async def test_context_cost_label_tracks_live_resize_without_state_change():
 async def test_context_cost_label_fits_shipped_status_strip(
     width: int, height: int, expected: str
 ) -> None:
-    app = _ProductionChipsApp(
+    app = _ChipsApp(
         _control_state(),
         cost_state=_cost_state(
             label="Context 100%+ · Current $12,345.67 · On next send ~+$987.65",
@@ -353,32 +320,29 @@ async def test_context_cost_label_fits_shipped_status_strip(
     )
     async with app.run_test(size=(width, height)) as pilot:
         await pilot.pause()
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        line = _line(app)
         scroll = app.query_one("#console-status-chip-scroll")
 
-        rendered = str(chip.render())
-        assert rendered == expected
+        rendered = _line_text(app)
+        assert expected in rendered
         assert "…" not in rendered and "..." not in rendered
-        assert chip.region.height == 1
-        assert chip.region.y == scroll.content_region.y
-        assert chip.content_region.width >= cell_len(expected)
+        assert line.region.height == 1
+        assert line.region.y == scroll.content_region.y
 
 
 @pytest.mark.asyncio
-async def test_cost_chip_click_posts_pressed_message():
-    """A real ``pilot.click`` must dispatch through the normal message pump.
-
-    Unlike the keyboard-activation test below, this must NOT monkeypatch
-    ``chip.post_message`` before the click: Textual posts the internal
-    ``Click`` event to the widget through that same method, so stubbing it
-    out first would swallow the click event itself and never reach
-    ``_on_click``. Instead this captures the bubbled
-    ``ConsoleCostChipPressed`` at the App via a real ``@on`` handler.
-    """
+async def test_cost_segment_click_posts_pressed_message():
+    """A real ``pilot.click`` on the cost segment must dispatch through the
+    normal message pump, captured at the App via a real ``@on`` handler."""
     app = _ChipsApp(_control_state(), cost_state=_cost_state())
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
-        clicked = await pilot.click("#console-cost-chip")
+        spans = {
+            name: start for name, start, _end in _line(app).segment_spans
+        }
+        clicked = await pilot.click(
+            "#console-status-text", offset=(spans["cost"] + 2, 0)
+        )
         await pilot.pause()
         assert clicked
         assert any(
@@ -388,50 +352,13 @@ async def test_cost_chip_click_posts_pressed_message():
 
 
 @pytest.mark.asyncio
-async def test_cost_chip_keyboard_activation_posts_pressed_message():
+async def test_cost_segment_keyboard_activation_posts_pressed_message():
     app = _ChipsApp(_control_state(), cost_state=_cost_state())
     async with app.run_test(size=(200, 6)) as pilot:
         await pilot.pause()
-        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
-        posted: list[object] = []
-        original_post_message = chip.post_message
-        chip.post_message = lambda message: posted.append(message)  # type: ignore[assignment]
-        try:
-            chip.action_open_cost_breakdown()
-        finally:
-            chip.post_message = original_post_message
+        _line(app).action_open_segment("cost")
+        await pilot.pause()
         assert any(
             isinstance(message, ConsoleCostChip.ConsoleCostChipPressed)
-            for message in posted
+            for message in app.captured_pressed
         )
-
-
-def test_cost_chip_uses_markup_false():
-    """Cost labels are machine-generated, but the house rule is uniform
-    (dollar amounts don't need it, but a stray ``[`` should never raise)."""
-    import inspect
-
-    source = inspect.getsource(ConsoleStatusChips._cost_chip)
-    assert "chip_class=ConsoleCostChip" in source
-
-
-def _chip_cold_body(css_text: str) -> str:
-    uncommented = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
-    match = re.search(r"\.console-chip-cold\s*\{([^}]*)\}", uncommented)
-    return match.group(1) if match else ""
-
-
-def test_console_chip_cold_css_exists_in_source_and_generated_screen_sheet():
-    """The chip rule exists in the console sources and the shipped bundle.
-
-    ADR-161 task 10: the TASK-25812 console split sheet was dissolved --
-    the console vocabulary rides the boot bundle via the console source
-    sheets -- so the pair is (console sources union, bundle).
-    """
-    for label, css_text in (
-        ("console sources", _console_sources_text()),
-        ("bundle", BUNDLE.read_text(encoding="utf-8")),
-    ):
-        body = _chip_cold_body(css_text)
-        assert body, f"{label}: no .console-chip-cold rule"
-        assert "$ds-status-info" in body or "color" in body

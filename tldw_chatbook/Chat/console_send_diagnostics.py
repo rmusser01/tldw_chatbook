@@ -48,6 +48,10 @@ class SendDiagnostic:
     started: float = field(default_factory=time.monotonic)
     phase: str = "controller_submit"
     outcome: str = "completed"
+    #: TASK-33621.23: a code-owned token naming why the outcome is what it
+    #: is (a blocked submit's blocker), written as the final line's
+    #: ``error_category``. Never user content.
+    outcome_category: str | None = None
     count: int = 0
     submission_started: bool = False
     metadata: dict[str, object] = field(default_factory=dict)
@@ -101,6 +105,17 @@ _CURRENT: ContextVar[SendDiagnostic | None] = ContextVar(
 )
 
 
+#: TASK-33620.15.4: when a send last made its provider request (monotonic
+#: seconds, any send in the process). A Console send's start ends there; see
+#: ``config_sync.send_start_in_progress``.
+_provider_entered_at = 0.0
+
+
+def provider_entered_at() -> float:
+    """When a send last made its provider request (monotonic; 0.0 if never)."""
+    return _provider_entered_at
+
+
 def record_send_stage(
     phase: str,
     status: str = "entered",
@@ -111,7 +126,9 @@ def record_send_stage(
     """Record a stage without changing delivery if diagnostic emission fails.
 
     Call within ``send_diagnostic_scope`` or its inherited worker context;
-    without an active scope this is a no-op. No file I/O runs on the caller.
+    without an active scope this records nothing, except that a provider
+    request is still noted (``provider_entered_at``). No file I/O runs on the
+    caller.
 
     Args:
         phase: Code-owned lifecycle stage, never user-provided text.
@@ -122,6 +139,9 @@ def record_send_stage(
             credentials, paths or database identifiers.
     """
     with contextlib.suppress(Exception):
+        if phase == "provider_entry" and status == "entered":
+            global _provider_entered_at
+            _provider_entered_at = time.monotonic()  # TASK-33620.15.4
         current = _CURRENT.get()
         if current is None:
             return
@@ -214,7 +234,10 @@ async def send_diagnostic_scope(
         )
         raise
     finally:
-        record_send_stage(phase, current.outcome)
+        category = current.outcome_category
+        record_send_stage(
+            phase, current.outcome, **({"error_category": category} if category else {})
+        )
         if token is not None:
             _CURRENT.reset(token)
         if owns_monitor:

@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+from Tests.subprocess_pipes import pipe_ready, popen_with_captured_stderr
+
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root
 
@@ -282,15 +284,47 @@ def test_installed_default_selector_changes_cannot_demote_to_custom(
 
     selected = tmp_path / "eval.yaml"
     selected.write_text("budget: {default_limit: 7}\n")
-    monkeypatch.setattr(Evals, "_default_config_path", lambda: selected)
+    monkeypatch.setattr(Evals, "_override_config_path", lambda: selected)
     loader = EvalConfigLoader()
     participant = raw._raw_participant(loader)
-    loader.config_path = tmp_path / "other.yaml"
-    loader.save()
-    assert loader.persistence_error == "eval_save_failed"
-    assert not loader.config_path.exists()
-    with pytest.raises(bootstrap.RecoveryRequired, match="selection_changed"):
+    original_bytes = selected.read_bytes()
+    changed = tmp_path / "other.yaml"
+    operations = set(storage._raw_operations)
+    raw_states = set(raw._states)
+    leases = set(storage._live_leases)
+    pending = set(storage._pending_acquisitions)
+    retiring = set(storage._retiring_holds)
+    reached = []
+    try:
+        loader.config_path = changed
+        loader.save()
+        assert loader.persistence_error == "eval_save_failed"
+        assert not loader.config_path.exists()
         participant.close_admission()
+        assert raw._source_participants[loader] is participant
+        assert raw._participants[participant].closed
+        with pytest.raises(bootstrap.RecoveryRequired, match="^raw_source_selection_changed$"):
+            with raw._scope(
+                loader, "eval_config", writing=True, selected_read=loader.config_path
+            ):
+                reached.append("closed")
+        participant.resume()
+        with pytest.raises(bootstrap.RecoveryRequired, match="^raw_source_selection_changed$"):
+            with raw._scope(
+                loader, "eval_config", writing=True, selected_read=loader.config_path
+            ):
+                reached.append("resumed")
+        assert not reached
+        assert selected.read_bytes() == original_bytes
+        assert not changed.exists() and not changed.with_suffix(".yaml.tmp").exists()
+        assert set(storage._raw_operations) == operations
+        assert set(raw._states) == raw_states
+        assert set(storage._pending_acquisitions) == pending
+        assert set(storage._retiring_holds) == retiring
+        assert set(storage._live_leases) == leases
+    finally:
+        loader.config_path = selected
+        participant.resume()
 
 
 def test_pet_pruning_preserves_exact_backup_bytes_and_unknown_sibling(
@@ -393,7 +427,6 @@ async def test_theme_save_failure_and_pause_preserve_draft_and_tree(
 
 
 import os
-import select
 import threading
 from Tests.Backup_Recovery.test_admission import launch, line, release
 
@@ -423,11 +456,11 @@ def test_actual_settings_writer_holds_independent_maintenance_until_close(
     elif family == "eval":
         selected = tmp_path / "eval.yaml"
         selected.write_text("budget: {default_limit: 7}\n")
-        monkeypatch.setattr(Evals, "_default_config_path", lambda: selected)
+        monkeypatch.setattr(Evals, "_override_config_path", lambda: selected)
         source = EvalConfigLoader()
         source.update({"budget": {"default_limit": 9}})
         work = source.save
-        target, name = yaml, "dump"
+        target, name = yaml, "safe_dump"
     elif family == "templates":
         monkeypatch.setattr(
             config, "_get_effective_config_path", lambda: tmp_path / "config.toml"
@@ -472,7 +505,7 @@ def test_actual_settings_writer_holds_independent_maintenance_until_close(
         observer = launch(hold.authority.control_root, "maintenance", hold.names)
         try:
             assert not pause.drain(time.monotonic() + 0.03)
-            assert not select.select([observer.stdout], [], [], 0.03)[0]
+            assert not pipe_ready(observer.stdout, 0.03)
             finish.set()
             thread.join(5)
             assert not thread.is_alive() and not errors
@@ -613,7 +646,7 @@ def test_runtime_private_native_uncertainty_blocks_independent_maintenance(
     )
 
     authority = admission_authority(local_root)
-    child = subprocess.Popen(
+    child = popen_with_captured_stderr(
         [
             sys.executable,
             "-u",
@@ -623,9 +656,9 @@ def test_runtime_private_native_uncertainty_blocks_independent_maintenance(
             str(tmp_path / "runtime_policy.json"),
             failure,
         ],
+        tmp_path / "runtime-child.stderr",
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
     )
@@ -636,7 +669,7 @@ def test_runtime_private_native_uncertainty_blocks_independent_maintenance(
             child.wait(timeout=5)
             pytest.fail(child.stderr.read())
         observer = launch(authority.control_root, "maintenance", (UNBOUND_NAMESPACE,))
-        assert not select.select([observer.stdout], [], [], 0.05)[0]
+        assert not pipe_ready(observer.stdout, 0.05)
         child.stdin.write("exit\n")
         child.stdin.flush()
         child.wait(timeout=5)
@@ -759,7 +792,7 @@ def test_settings_sources_preserve_portable_ordinary_io(
     monkeypatch.setattr(raw, "_pinned_io_available", lambda: False)
     if family == "eval":
         selected = tmp_path / "eval.yaml"
-        monkeypatch.setattr(Evals, "_default_config_path", lambda: selected)
+        monkeypatch.setattr(Evals, "_override_config_path", lambda: selected)
         source = EvalConfigLoader()
         source.save()
         assert selected.exists() and source.persistence_safe_point() == "ready"
@@ -793,7 +826,7 @@ def test_installed_eval_drain_reports_unsaved_mutable_draft(
 
     selected = tmp_path / "eval.yaml"
     selected.write_text("budget: {default_limit: 7}\n")
-    monkeypatch.setattr(Evals, "_default_config_path", lambda: selected)
+    monkeypatch.setattr(Evals, "_override_config_path", lambda: selected)
     source = EvalConfigLoader()
     source.get("budget")["default_limit"] = 9
     participant = raw._raw_participant(source)

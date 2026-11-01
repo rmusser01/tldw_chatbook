@@ -14,7 +14,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Callable
+from typing import TYPE_CHECKING, Optional, List, Dict, Any, Callable
 from urllib.parse import urlparse
 from loguru import logger
 
@@ -39,6 +39,10 @@ from ..config import get_media_ingestion_defaults, get_cli_setting
 from ..Chat.Chat_Functions import chat_api_call
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Utils.text import sanitize_filename
+from ..STT.failure_diagnostics import STTFailureDiagnostic
+
+if TYPE_CHECKING:
+    from ..Utils.egress import UrlProvenance
 
 # NOTE: `ChunkingService` (RAG_Search.chunking_service) is intentionally NOT
 # imported at module level -- it transitively pulls in nltk (via
@@ -246,6 +250,8 @@ class LocalAudioProcessor:
         target_dir: str,
         use_cookies: bool = False,
         cookies: Optional[Dict] = None,
+        *,
+        url_provenance: Optional["UrlProvenance"] = None,
     ) -> str:
         """
         Download an audio file from a URL.
@@ -255,6 +261,10 @@ class LocalAudioProcessor:
             target_dir: Directory to save the file
             use_cookies: Whether to use cookies for download
             cookies: Cookie dict if use_cookies is True
+            url_provenance: (TASK-20973) How this process came to hold
+                ``url``. Only ``UrlProvenance.USER_ENTERED`` lets the URL
+                vouch for its own (possibly private) origin; ``None``
+                means ``UNKNOWN`` and fails closed.
 
         Returns:
             Path to downloaded file
@@ -265,8 +275,9 @@ class LocalAudioProcessor:
         from ..Utils.egress import (
             EgressBlockedError,
             EgressFetchError,
+            UrlProvenance,
             guarded_fetch_requests,
-            origin_set,
+            trusted_origins_for,
         )
 
         tmp_path: Optional[Path] = None
@@ -283,7 +294,7 @@ class LocalAudioProcessor:
                     [f"{k}={v}" for k, v in cookie_dict.items()]
                 )
 
-            trusted = origin_set(url)
+            trusted = trusted_origins_for(url, url_provenance or UrlProvenance.UNKNOWN)
             # Fast-fail on declared size, then enforce the REAL streamed size.
             save_path = None
             try:
@@ -438,6 +449,7 @@ class LocalAudioProcessor:
         transcription_local_files_only: bool = False,
         transcription_batch_route_resolved: bool = False,
         transcription_context: Optional[Dict[str, Any]] = None,
+        url_provenance: Optional["UrlProvenance"] = None,
     ) -> Dict[str, Any]:
         """Process multiple audio inputs from URLs or local files.
 
@@ -485,6 +497,9 @@ class LocalAudioProcessor:
                 resolved provider/model semantics.
             transcription_context: Optional worker-private direct-local model
                 path and retry-lineage values.
+            url_provenance: (TASK-20973) How this process came to hold any
+                URL in ``inputs``; forwarded to the plain-HTTP download.
+                ``None`` means ``UNKNOWN`` and fails closed.
 
         Returns:
             A dictionary containing per-input processing results and errors.
@@ -544,6 +559,7 @@ class LocalAudioProcessor:
                         custom_title=custom_title,
                         author=author,
                         transcription_progress_callback=transcription_progress_callback,
+                        url_provenance=url_provenance,
                     )
                     results.append(result)
 
@@ -581,6 +597,9 @@ class LocalAudioProcessor:
 
         # Check if this is being called from video processing with an original URL
         original_url = kwargs.pop("original_url", None)
+        # (TASK-20973) Consumed here so it never rides ``**kwargs`` into the
+        # transcription call; only the plain-HTTP download below reads it.
+        url_provenance = kwargs.pop("url_provenance", None)
 
         result = {
             "status": "Pending",
@@ -619,6 +638,7 @@ class LocalAudioProcessor:
                         processing_dir,
                         kwargs.get("use_cookies", False),
                         kwargs.get("cookies"),
+                        url_provenance=url_provenance,
                     )
                 # Don't overwrite processing_source for URLs - keep the original URL
             else:
@@ -678,8 +698,7 @@ class LocalAudioProcessor:
                         ),
                         "timestamps": kwargs.get("timestamp_option", True),
                     }
-                    if provider
-                    in {"faster-whisper", "parakeet-onnx", "transcribe-cpp"}
+                    if provider in {"faster-whisper", "parakeet-onnx", "transcribe-cpp"}
                     else {}
                 )
                 transcription_result = self._transcribe_audio(
@@ -855,6 +874,9 @@ class LocalAudioProcessor:
             failed_attempt = getattr(e, "stt_failure_provenance", None)
             if isinstance(failed_attempt, dict):
                 result["stt_failure_provenance"] = failed_attempt
+            diagnostic = getattr(e, "stt_diagnostic", None)
+            if type(diagnostic) is STTFailureDiagnostic:
+                result["stt_diagnostic"] = diagnostic
 
         return result
 
@@ -1013,7 +1035,9 @@ class LocalAudioProcessor:
                         retry_of_attempt_id=kwargs.get("retry_of_attempt_id"),
                         retry_of_job_id=kwargs.get("retry_of_job_id"),
                         provider_id="faster-whisper",
-                        model_id=str(result.get("model") or kwargs.get("model") or "base"),
+                        model_id=str(
+                            result.get("model") or kwargs.get("model") or "base"
+                        ),
                         artifact_root=None,
                         artifact_dependencies=(),
                         precision=str(

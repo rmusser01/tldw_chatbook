@@ -22,8 +22,9 @@ class ConsoleRenameSessionModal(SafeModalDismissMixin, ModalScreen[str | None]):
     #console-rename-session-modal {
         width: 56;
         height: auto;
-        border: tall gray;
-        background: black;
+        border: tall $tldw-boundary;
+        background: $panel;
+        color: $text;
         padding: 1 2;
     }
 
@@ -35,7 +36,7 @@ class ConsoleRenameSessionModal(SafeModalDismissMixin, ModalScreen[str | None]):
     #console-rename-session-error {
         height: auto;
         min-height: 1;
-        color: red;
+        color: $text-error;
     }
 
     #console-rename-session-actions {

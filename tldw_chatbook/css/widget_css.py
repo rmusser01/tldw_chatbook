@@ -97,6 +97,7 @@ from __future__ import annotations
 
 import ast
 import re
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -997,8 +998,11 @@ def render_stylesheets(
         # fallbacks *before* splitting/scoping, so they cannot leak into a
         # later block's rules once every block lands in the same generated
         # file -- see `isolate_local_variables`.
+        # TASK-36386: dedent first. A class-body string carries its Python
+        # indentation on every line, and these sheets are parsed before
+        # first paint; the CSS keeps only its own relative indentation.
         isolated_css = isolate_local_variables(
-            block.css, scope=block.class_name, variables=variables
+            textwrap.dedent(block.css), scope=block.class_name, variables=variables
         )
         split = split_scoped_css(
             isolated_css, block.class_name, scope_every_selector=scope_every_selector

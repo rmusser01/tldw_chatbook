@@ -100,6 +100,7 @@ def _reset_notes_service_cache() -> None:
     with _SERVICE_LOCK:
         _SERVICE_CACHE = None
 
+
 #: Matches config.py's own `default_users_name_fallback`, so an
 #: unconfigured user sees no change from the previously hardcoded value.
 _DEFAULT_USER_ID = "default_user"

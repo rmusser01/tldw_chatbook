@@ -12,6 +12,7 @@ from textual.geometry import Region
 from textual.widgets import TextArea
 
 from tldw_chatbook.Widgets.detach_safe_text_area import DetachSafeTextArea
+from tldw_chatbook.Widgets.Library.library_notes_canvas import NoteEditorTextArea
 
 
 class _Host(App):
@@ -70,3 +71,21 @@ async def test_attached_detach_safe_text_area_renders_like_stock():
                 line.text for line in editor.render_lines(Region(0, 0, 20, 3))
             ]
     assert rendered[DetachSafeTextArea] == rendered[TextArea]
+
+
+@pytest.mark.asyncio
+async def test_library_note_body_renders_blank_after_detach():
+    """TASK-34789: the Library note body is a ``DetachSafeTextArea``.
+
+    A rail switch away from an open note removes its work pane
+    (``LibraryBrowseReaderShell.swap_work``) while the screen's handler is
+    still running, so the screen cannot reflow yet and the next repaint still
+    renders the removed body. RED on dev 1115b492f8 with the KeyError the UI
+    Fast Lane hit in
+    ``test_new_note_with_saved_content_survives_a_rail_round_trip``.
+    """
+    lines = await _render_after_removal(NoteEditorTextArea)
+
+    assert len(lines) == 3
+    assert all(line.cell_length == 20 for line in lines)
+    assert all(not line.text.strip() for line in lines)

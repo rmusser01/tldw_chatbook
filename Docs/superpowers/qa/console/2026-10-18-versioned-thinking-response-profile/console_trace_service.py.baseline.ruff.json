@@ -1,0 +1,992 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 2,
+      "row": 85
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport asyncio\nimport json\nimport sqlite3\nfrom collections import Counter\nfrom collections.abc import Callable, Iterable, Iterator, Mapping, Sequence\nfrom contextlib import contextmanager\nfrom dataclasses import dataclass, field, replace\nfrom types import MappingProxyType\nfrom typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast, overload\nfrom weakref import ReferenceType, ref\n\nfrom tldw_chatbook.Chat.console_prepared_request import freeze_json\nfrom tldw_chatbook.Chat.console_semantic_revision import (\n    project_semantic_revision_provider_continuations,\n    project_semantic_revision_provider_message,\n    project_semantic_revision_provider_messages,\n)\nfrom tldw_chatbook.Chat.console_trace_custom_pii import (\n    CUSTOM_PII_RULESET_UNAVAILABLE,\n    redact_pii_value_for_ruleset_revision,\n)\nfrom tldw_chatbook.Chat.console_trace_final_values import (\n    _SURFACE_VERIFICATION_ISSUER,\n    CompletedToolTurnWitness,\n    FinalValueBinding,\n    ProviderCredentialSource,\n    ProviderOverlayProvenance,\n    ProviderRequestShadowBundle,\n    SurfaceDeltaAdmission,\n    VerifiedSurfaceDelta,\n    VerifiedSurfaceDeltaItem,\n    VerifiedSurfaceReplacement,\n    VerifiedSurfaceReplacementRange,\n    _checkpoint_semantic_value,\n    build_verified_surface_delta,\n)\nfrom tldw_chatbook.Chat.console_trace_models import (\n    MAX_SURFACE_REPLACEMENT_SPAN,\n    FrozenTracePolicy,\n    SemanticRevisionRef,\n    SurfaceReplacement,\n    TraceCallState,\n    TraceContentRef,\n    TraceOmission,\n)\nfrom tldw_chatbook.Chat.console_trace_provenance import (\n    DerivedTraceProvenance,\n    OmittedTraceProvenance,\n    ProviderArtifactTraceProvenance,\n    ProviderRequestProvenance,\n    RequestRouteTraceProvenance,\n    SavedRevisionTraceProvenance,\n    TraceOmissionReason,\n    TraceProvenance,\n    TraceProvenanceSource,\n    TraceTransformKind,\n    _project_verified_provider_request_provenance,\n)\nfrom tldw_chatbook.Chat.console_trace_redaction import (\n    CredentialSanitizer,\n    PIIRedactionSpan,\n)\nfrom tldw_chatbook.Chat.console_trace_repository import (\n    ConsoleTraceRepository,\n    HeaderComponentRef,\n    RequestHeaderRecord,\n    SurfaceNodeRecord,\n    SurfaceReplacementRecord,\n    TraceCallRecord,\n    TraceEventType,\n)\nfrom tldw_chatbook.Chat.conversation_local_marks_service import (\n    ConversationLocalMarksService,\n)\nfrom tldw_chatbook.Chat.message_metadata import MessageMetadata\nfrom tldw_chatbook.Chat.provider_continuation import parse_provider_continuation_json\nfrom tldw_chatbook.DB.base_db import operation_owned_connection\nfrom tldw_chatbook.DB.transaction_observer import (\n    current_managed_transaction,\n    register_transaction_completion,\n)\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 87
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "RUF100",
+    "end_location": {
+      "column": 74,
+      "row": 188
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 74,
+            "row": 188
+          },
+          "location": {
+            "column": 54,
+            "row": 188
+          }
+        }
+      ],
+      "message": "Remove unused `noqa` directive"
+    },
+    "location": {
+      "column": 56,
+      "row": 188
+    },
+    "message": "Unused `noqa` directive (unused: `F401`; non-enabled: `E402`)",
+    "name": "unused-noqa",
+    "noqa_row": 188,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-noqa"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 341
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 341
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 341,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 365
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 365
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 365,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 397
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 397
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 397,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 413
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 413
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 413,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 463
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 463
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 463,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 497
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 497
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 497,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 545
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"key\",\n        \"left\",\n        \"max_sequence\",\n        \"parent\",\n        \"priority\",\n        \"right\",\n        \"sequence\",\n        \"size\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 545
+          },
+          "location": {
+            "column": 17,
+            "row": 536
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `_SequenceNode.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 536
+    },
+    "message": "`_SequenceNode.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 536,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "UP046",
+    "end_location": {
+      "column": 54,
+      "row": 684
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 30,
+            "row": 684
+          },
+          "location": {
+            "column": 30,
+            "row": 684
+          }
+        },
+        {
+          "content": "",
+          "end_location": {
+            "column": 55,
+            "row": 684
+          },
+          "location": {
+            "column": 30,
+            "row": 684
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 31,
+      "row": 684
+    },
+    "message": "Generic class `_PersistentSequenceNode` uses `Generic` subclass instead of type parameters",
+    "name": "non-pep695-generic-class",
+    "noqa_row": 684,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-class"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 746
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 21,
+            "row": 744
+          },
+          "location": {
+            "column": 21,
+            "row": 744
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 744
+    },
+    "message": "Generic function `_persistent_size` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 744,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 753
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 22,
+            "row": 750
+          },
+          "location": {
+            "column": 22,
+            "row": 750
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 750
+    },
+    "message": "Generic function `_persistent_merge` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 750,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 778
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 22,
+            "row": 775
+          },
+          "location": {
+            "column": 22,
+            "row": 775
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 775
+    },
+    "message": "Generic function `_persistent_split` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 775,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 811
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 40,
+            "row": 807
+          },
+          "location": {
+            "column": 40,
+            "row": 807
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 807
+    },
+    "message": "Generic function `_persistent_first_position_in_range` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 807,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 831
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 39,
+            "row": 827
+          },
+          "location": {
+            "column": 39,
+            "row": 827
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 827
+    },
+    "message": "Generic function `_persistent_without_sequence_range` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 827,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 855
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 31,
+            "row": 851
+          },
+          "location": {
+            "column": 31,
+            "row": 851
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 851
+    },
+    "message": "Generic function `_persistent_insert_entries` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 851,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 868
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 21,
+            "row": 866
+          },
+          "location": {
+            "column": 21,
+            "row": 866
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 866
+    },
+    "message": "Generic function `_persistent_iter` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 866,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "UP047",
+    "end_location": {
+      "column": 2,
+      "row": 884
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "[_SequenceValue]",
+          "end_location": {
+            "column": 36,
+            "row": 880
+          },
+          "location": {
+            "column": 36,
+            "row": 880
+          }
+        }
+      ],
+      "message": "Use type parameters"
+    },
+    "location": {
+      "column": 5,
+      "row": 880
+    },
+    "message": "Generic function `_persistent_domain_count_before` should use type parameters",
+    "name": "non-pep695-generic-function",
+    "noqa_row": 880,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/non-pep695-generic-function"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 1081
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"_console_trace_delta\",\n        \"_console_trace_delta_ordinal\",\n        \"_domain\",\n        \"_root\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 1081
+          },
+          "location": {
+            "column": 17,
+            "row": 1076
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `_ProjectedDescriptors.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 1076
+    },
+    "message": "`_ProjectedDescriptors.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 1076,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 1134
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"_appended\",\n        \"_cache\",\n        \"_cursor\",\n        \"_descriptor_root\",\n        \"_domain\",\n        \"_owner_id\",\n        \"_parent\",\n        \"_replacement\",\n        \"_retained_artifact_values\",\n        \"_service\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 1134
+          },
+          "location": {
+            "column": 17,
+            "row": 1123
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `_ProjectedProviderValues.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 1123
+    },
+    "message": "`_ProjectedProviderValues.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 1123,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 1254
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"_delta_values\",\n        \"_issued_values\",\n        \"_service\",\n        \"messages_payload\",\n        \"provenance\",\n        \"provider_continuations\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 1254
+          },
+          "location": {
+            "column": 17,
+            "row": 1247
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `_PreparedSurfaceBoundary.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 1247
+    },
+    "message": "`_PreparedSurfaceBoundary.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 1247,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "RUF023",
+    "end_location": {
+      "column": 6,
+      "row": 1523
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\n        \"_child_capabilities\",\n        \"_parent_capabilities\",\n        \"_pending_child_uses\",\n        \"_prepared_capabilities\",\n        \"_settlement\",\n        \"_surface_ref_cache\",\n        \"repository\",\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 1523
+          },
+          "location": {
+            "column": 17,
+            "row": 1515
+          }
+        }
+      ],
+      "message": "Apply a natural sort to `ConsoleTraceService.__slots__`"
+    },
+    "location": {
+      "column": 17,
+      "row": 1515
+    },
+    "message": "`ConsoleTraceService.__slots__` is not sorted",
+    "name": "unsorted-dunder-slots",
+    "noqa_row": 1515,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-dunder-slots"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 10,
+      "row": 1691
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "        from tldw_chatbook.Chat.console_voice_trace_gateway import (\n            ProvisionalTraceRegistry,\n            ProvisionalTraceUnavailable,\n            VoiceTraceImportContext,\n            _ClaimReleaseDisposition,\n        )\n        from tldw_chatbook.Chat.console_voice_trace_promotion import (\n            ConfirmedPreCommitTraceImportError,\n        )\n",
+          "end_location": {
+            "column": 1,
+            "row": 1692
+          },
+          "location": {
+            "column": 1,
+            "row": 1683
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 9,
+      "row": 1683
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 1683,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 25,
+      "row": 1716
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 1716
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1716,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 1719
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 1719
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1719,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 1750
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 1750
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1750,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 33,
+      "row": 1787
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 1787
+    },
+    "message": "Do not catch blind exception: `Exception`",
+    "name": "blind-except",
+    "noqa_row": 1787,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "PLC0208",
+    "end_location": {
+      "column": 73,
+      "row": 4168
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\"messages_payload\", \"provider_continuations\")",
+          "end_location": {
+            "column": 73,
+            "row": 4168
+          },
+          "location": {
+            "column": 27,
+            "row": 4168
+          }
+        }
+      ],
+      "message": "Convert to `tuple`"
+    },
+    "location": {
+      "column": 27,
+      "row": 4168
+    },
+    "message": "Use a sequence type instead of a `set` when iterating over values",
+    "name": "iteration-over-set",
+    "noqa_row": 4168,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/iteration-over-set"
+  },
+  {
+    "cell": null,
+    "code": "B009",
+    "end_location": {
+      "column": 69,
+      "row": 4213
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "replacement_range.start_sequence",
+          "end_location": {
+            "column": 69,
+            "row": 4213
+          },
+          "location": {
+            "column": 25,
+            "row": 4213
+          }
+        }
+      ],
+      "message": "Replace `getattr` with attribute access"
+    },
+    "location": {
+      "column": 25,
+      "row": 4213
+    },
+    "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "get-attr-with-constant",
+    "noqa_row": 4213,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/get-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "B009",
+    "end_location": {
+      "column": 67,
+      "row": 4214
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "replacement_range.end_sequence",
+          "end_location": {
+            "column": 67,
+            "row": 4214
+          },
+          "location": {
+            "column": 25,
+            "row": 4214
+          }
+        }
+      ],
+      "message": "Replace `getattr` with attribute access"
+    },
+    "location": {
+      "column": 25,
+      "row": 4214
+    },
+    "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "get-attr-with-constant",
+    "noqa_row": 4214,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/get-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "PLC0208",
+    "end_location": {
+      "column": 77,
+      "row": 4336
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "(\"messages_payload\", \"provider_continuations\")",
+          "end_location": {
+            "column": 77,
+            "row": 4336
+          },
+          "location": {
+            "column": 31,
+            "row": 4336
+          }
+        }
+      ],
+      "message": "Convert to `tuple`"
+    },
+    "location": {
+      "column": 31,
+      "row": 4336
+    },
+    "message": "Use a sequence type instead of a `set` when iterating over values",
+    "name": "iteration-over-set",
+    "noqa_row": 4336,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/iteration-over-set"
+  },
+  {
+    "cell": null,
+    "code": "B009",
+    "end_location": {
+      "column": 53,
+      "row": 4593
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "admission.route_identity",
+          "end_location": {
+            "column": 53,
+            "row": 4593
+          },
+          "location": {
+            "column": 17,
+            "row": 4593
+          }
+        }
+      ],
+      "message": "Replace `getattr` with attribute access"
+    },
+    "location": {
+      "column": 17,
+      "row": 4593
+    },
+    "message": "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.",
+    "name": "get-attr-with-constant",
+    "noqa_row": 4593,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/get-attr-with-constant"
+  },
+  {
+    "cell": null,
+    "code": "TRY004",
+    "end_location": {
+      "column": 59,
+      "row": 4927
+    },
+    "filename": "/private/tmp/task4-static-final/baseline/tldw_chatbook/Chat/console_trace_service.py",
+    "fix": null,
+    "location": {
+      "column": 13,
+      "row": 4927
+    },
+    "message": "Prefer `TypeError` exception for invalid type",
+    "name": "type-check-without-type-error",
+    "noqa_row": 4927,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/type-check-without-type-error"
+  }
+]

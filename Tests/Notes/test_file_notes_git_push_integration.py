@@ -123,11 +123,15 @@ def _owner_for_candidate(
     assert owner.record_change(binding, SessionChange("modified", "note.md"))
     assert owner.publish_trust(binding, repository)
     parent_blob = _git(source, "rev-parse", f"{parent_oid}:note.md").decode().strip()
-    candidate_blob = _git(
-        source,
-        "rev-parse",
-        f"{candidate_oid}:note.md",
-    ).decode().strip()
+    candidate_blob = (
+        _git(
+            source,
+            "rev-parse",
+            f"{candidate_oid}:note.md",
+        )
+        .decode()
+        .strip()
+    )
     old_head = HeadIdentity.attached(BRANCH_REF, parent_oid)
     ownership = StagingOwnership(
         repository=repository,
@@ -136,13 +140,9 @@ def _owner_for_candidate(
         approved_move_edges=(),
         approved_current_path="note.md",
         original_baselines={
-            "note.md": IndexBaseline(
-                IndexEntry("note.md", "100644", parent_blob)
-            )
+            "note.md": IndexBaseline(IndexEntry("note.md", "100644", parent_blob))
         },
-        post_stage_entries={
-            "note.md": IndexEntry("note.md", "100644", candidate_blob)
-        },
+        post_stage_entries={"note.md": IndexEntry("note.md", "100644", candidate_blob)},
     )
     assert owner.publish_ownership(binding, {1: ownership})
     lease = owner.try_acquire_mutation(binding)
@@ -264,14 +264,18 @@ def _service(
 ) -> FileNotesGitService:
     executable = shutil.which("git")
     assert executable is not None
-    exec_path = subprocess.run(
-        (executable, "--exec-path"),
-        env={"LC_ALL": "C", "PATH": os.defpath},
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=True,
-    ).stdout.decode().strip()
+    exec_path = (
+        subprocess.run(
+            (executable, "--exec-path"),
+            env={"LC_ALL": "C", "PATH": os.defpath},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
     binding = owner.current_binding()
     assert binding is not None
     temporary_parent = Path(binding.root_key).parent / "network-contexts"
@@ -353,8 +357,8 @@ def _replica_rows(
 async def test_exact_push_compare_and_swap_updates_only_reviewed_remote_ref(
     tmp_path: Path,
 ) -> None:
-    source, destination, (parent_oid, candidate_oid) = (
-        _init_source_and_destination(tmp_path)
+    source, destination, (parent_oid, candidate_oid) = _init_source_and_destination(
+        tmp_path
     )
     owner, binding = _owner_for_candidate(source, parent_oid, candidate_oid)
     runner = _RecordingRunner()
@@ -394,16 +398,26 @@ async def test_exact_push_compare_and_swap_updates_only_reviewed_remote_ref(
         assert _git_dir(destination, "rev-parse", BRANCH_REF).decode().strip() == (
             candidate_oid
         )
-        assert _git_dir(
-            destination,
-            "rev-parse",
-            "refs/heads/untouched",
-        ).decode().strip() == parent_oid
-        assert _git_dir(
-            destination,
-            "rev-parse",
-            "refs/tags/untouched-tag",
-        ).decode().strip() == parent_oid
+        assert (
+            _git_dir(
+                destination,
+                "rev-parse",
+                "refs/heads/untouched",
+            )
+            .decode()
+            .strip()
+            == parent_oid
+        )
+        assert (
+            _git_dir(
+                destination,
+                "rev-parse",
+                "refs/tags/untouched-tag",
+            )
+            .decode()
+            .strip()
+            == parent_oid
+        )
         expected_remote = dict(remote_before)
         expected_remote[BRANCH_REF] = candidate_oid
         assert _ref_map(destination, bare=True) == expected_remote
@@ -429,8 +443,8 @@ async def test_exact_push_compare_and_swap_never_recreates_or_overwrites_race(
     tmp_path: Path,
     race: str,
 ) -> None:
-    source, destination, (parent_oid, candidate_oid) = (
-        _init_source_and_destination(tmp_path)
+    source, destination, (parent_oid, candidate_oid) = _init_source_and_destination(
+        tmp_path
     )
     owner, binding = _owner_for_candidate(source, parent_oid, candidate_oid)
     barrier = _Barrier()
@@ -444,19 +458,23 @@ async def test_exact_push_compare_and_swap_never_recreates_or_overwrites_race(
         expected = None
     else:
         tree_oid = _git(source, "rev-parse", f"{parent_oid}^{{tree}}").decode().strip()
-        divergent_oid = _git(
-            source,
-            "commit-tree",
-            tree_oid,
-            input_bytes=b"divergent\n",
-            environment={
-                **os.environ,
-                "GIT_AUTHOR_NAME": "Other",
-                "GIT_AUTHOR_EMAIL": "other@example.test",
-                "GIT_COMMITTER_NAME": "Other",
-                "GIT_COMMITTER_EMAIL": "other@example.test",
-            },
-        ).decode().strip()
+        divergent_oid = (
+            _git(
+                source,
+                "commit-tree",
+                tree_oid,
+                input_bytes=b"divergent\n",
+                environment={
+                    **os.environ,
+                    "GIT_AUTHOR_NAME": "Other",
+                    "GIT_AUTHOR_EMAIL": "other@example.test",
+                    "GIT_COMMITTER_NAME": "Other",
+                    "GIT_COMMITTER_EMAIL": "other@example.test",
+                },
+            )
+            .decode()
+            .strip()
+        )
         _git(source, "push", str(destination), f"{divergent_oid}:refs/heads/race")
         _git_dir(destination, "update-ref", BRANCH_REF, divergent_oid)
         expected = divergent_oid
@@ -523,8 +541,8 @@ async def test_second_guarded_commit_does_not_range_push_from_older_remote(
 async def test_exact_push_uses_frozen_context_during_concurrent_edit_and_config_drift(
     tmp_path: Path,
 ) -> None:
-    source, destination, (parent_oid, candidate_oid) = (
-        _init_source_and_destination(tmp_path)
+    source, destination, (parent_oid, candidate_oid) = _init_source_and_destination(
+        tmp_path
     )
     decoy = tmp_path / "decoy.git"
     _git(tmp_path, "init", "--bare", str(decoy))
@@ -578,7 +596,7 @@ async def test_exact_push_uses_frozen_context_during_concurrent_edit_and_config_
     )
     assert (source / ".git" / "config.worktree").is_file()
     global_config.write_text(
-        f"[url \"{decoy}\"]\n\tinsteadOf = {destination}\n",
+        f'[url "{decoy}"]\n\tinsteadOf = {destination}\n',
         encoding="utf-8",
     )
     system_config.write_text(
@@ -624,8 +642,8 @@ async def test_uncertain_push_recovery_queries_original_without_touching_notes(
     tmp_path: Path,
 ) -> None:
     """A lost response recovers desired state with one query and no retry."""
-    source, destination, (parent_oid, candidate_oid) = (
-        _init_source_and_destination(tmp_path)
+    source, destination, (parent_oid, candidate_oid) = _init_source_and_destination(
+        tmp_path
     )
     decoy = tmp_path / "replacement.git"
     _git(tmp_path, "init", "--bare", str(decoy))

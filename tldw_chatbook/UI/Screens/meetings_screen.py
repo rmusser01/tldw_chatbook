@@ -183,6 +183,10 @@ class MeetingsScreen(BaseAppScreen):
         # once the first prepare cycle has settled.
         self._syncing_pickers = True
         self.rendered_lines: list[str] = []
+        # TASK-34941: cached refs for the per-event widgets (the ASR
+        # partial stream is the highest-frequency event in the app).
+        self._partial_static: Any = None
+        self._transcript_log: Any = None
         # seq -> index into `rendered_lines`, so a re-delivered segment (its
         # near-live speaker-id refinement, or the Stop pass's reconciled id)
         # UPDATES its transcript line in place instead of appending a second
@@ -202,6 +206,12 @@ class MeetingsScreen(BaseAppScreen):
         # goes back to once that engine reports itself ready.
         self._live_labels_line = ""
         self._live_engine_name = ""
+        # TASK-35028: the last text written into the two timer-driven rail
+        # lines, so a 5 Hz / 1 s tick whose copy is unchanged costs a string
+        # compare instead of a repaint (each row is a bare height:auto
+        # Static, so an ungated write arms a whole-screen relayout).
+        self._last_timer_text: str | None = None
+        self._enroll_progress_line: str | None = None
         # ---- self voiceprint (TASK-31826) ----
         # The store is built lazily, OFF the UI thread (the prepare worker),
         # and never imported at module scope: `Audio.voiceprint` pulls the
@@ -583,7 +593,7 @@ class MeetingsScreen(BaseAppScreen):
         self.query_one("#meetings-start", Button).disabled = True
         self.rendered_lines.clear()
         self._line_index_by_seq.clear()
-        self.query_one("#meetings-transcript", RichLog).clear()
+        self._transcript_widget().clear()
         self.query_one("#meetings-footer", Static).update("")
         self.query_one("#meetings-open-library", Button).disabled = True
         self._seen_speakers.clear()
@@ -756,7 +766,7 @@ class MeetingsScreen(BaseAppScreen):
             self.app_instance.notify(STOP_REASON_COPY[result.stop_reason], severity="error")
         self.query_one("#meetings-footer", Static).update(" ".join(parts))
         self.query_one("#meetings-open-library", Button).disabled = not bool(job_id)
-        self.query_one("#meetings-partial", Static).update("")
+        self._partial_widget().update("")
         self._show_learning_offer(offer)
 
     # ---- session events (capture threads -> loop) -------------------------
@@ -775,14 +785,14 @@ class MeetingsScreen(BaseAppScreen):
         if kind == "segment":
             self._render_segment(payload)
             self._transcribing = False
-            self.query_one("#meetings-partial", Static).update("")
+            self._partial_widget().update("")
         elif kind == "partial":
             text, label = payload
             prefix = f"{self._coarse_label(label)}: " if label else ""
-            self.query_one("#meetings-partial", Static).update(f"{prefix}{text}…")
+            self._partial_widget().update(f"{prefix}{text}…")
         elif kind == "transcribing":
             self._transcribing = bool(payload)
-            partial = self.query_one("#meetings-partial", Static)
+            partial = self._partial_widget()
             if self._transcribing and not str(getattr(partial.renderable, "plain", partial.renderable)):
                 partial.update("transcribing…")
             elif not self._transcribing and str(getattr(partial.renderable, "plain", partial.renderable)) == "transcribing…":
@@ -823,6 +833,25 @@ class MeetingsScreen(BaseAppScreen):
         if offer is not None:
             self.app.call_from_thread(self._show_learning_offer, offer)
 
+
+    def _partial_widget(self):
+        """Cached #meetings-partial ref (TASK-34941) with staleness re-query."""
+        widget = self._partial_static
+        if widget is not None and widget.is_attached:
+            return widget
+        widget = self.query_one("#meetings-partial", Static)
+        self._partial_static = widget
+        return widget
+
+    def _transcript_widget(self):
+        """Cached #meetings-transcript ref (TASK-34941) with staleness re-query."""
+        widget = self._transcript_log
+        if widget is not None and widget.is_attached:
+            return widget
+        widget = self.query_one("#meetings-transcript", RichLog)
+        self._transcript_log = widget
+        return widget
+
     def _render_segment(self, segment: MeetingSegment) -> None:
         self._note_speaker(segment)
         line = self._line_for_segment(segment)
@@ -831,7 +860,7 @@ class MeetingsScreen(BaseAppScreen):
             # First time we've seen this seq: append a new line.
             self._line_index_by_seq[segment.seq] = len(self.rendered_lines)
             self.rendered_lines.append(line)
-            self.query_one("#meetings-transcript", RichLog).write(line)
+            self._transcript_widget().write(line)
         elif self.rendered_lines[idx] != line:
             # A re-delivery whose label changed (coarse "Others: hi" becoming
             # "Speaker 1: hi"): update in place. RichLog can't rewrite one
@@ -843,7 +872,7 @@ class MeetingsScreen(BaseAppScreen):
         """Clear the transcript log and rewrite it from `rendered_lines`."""
         if not self.is_mounted:
             return
-        log = self.query_one("#meetings-transcript", RichLog)
+        log = self._transcript_widget()
         log.clear()
         for line in self.rendered_lines:
             log.write(line)
@@ -1031,7 +1060,13 @@ class MeetingsScreen(BaseAppScreen):
         if session is None or not self.is_mounted:
             return
         try:
-            self.query_one("#meetings-timer", Static).update(format_clock(float(session.capture.audio_position_s)))
+            # TASK-35028: the clock only repaints when the formatted time
+            # actually moved; #meetings-timer is height:auto, so an
+            # unchanged tick must not arm a layout pass.
+            timer_text = format_clock(float(session.capture.audio_position_s))
+            if timer_text != self._last_timer_text:
+                self._last_timer_text = timer_text
+                self.query_one("#meetings-timer", Static).update(timer_text)
             mic, sys_ = session.capture.levels()
             self.query_one("#meetings-level-mic", ProgressBar).progress = int(mic * 100)
             self.query_one("#meetings-level-sys", ProgressBar).progress = int(sys_ * 100)
@@ -1339,8 +1374,12 @@ class MeetingsScreen(BaseAppScreen):
             self._enroll_timer = None
 
     def _set_enroll_progress(self, copy: str) -> None:
-        if not self.is_mounted:
+        if not self.is_mounted or copy == self._enroll_progress_line:
+            # TASK-35028: unchanged countdown copy (the 1 s tick between
+            # whole-second boundaries) costs a compare, not a repaint of the
+            # height:auto row.
             return
+        self._enroll_progress_line = copy
         self.query_one("#meetings-enroll-progress", Static).update(copy)
 
     @on(Button.Pressed, "#meetings-enroll-cancel")

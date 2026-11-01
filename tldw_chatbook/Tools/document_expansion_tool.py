@@ -520,5 +520,7 @@ class ExpandDocumentTool(Tool):
                 f"expand_document failed for {requested_type}:{requested_id}: {exc}"
             )
             failure = _empty_result("error", requested_type, requested_id)
-            failure["error"] = f"Could not expand {requested_type} {requested_id}: {exc}"
+            failure["error"] = (
+                f"Could not expand {requested_type} {requested_id}: {exc}"
+            )
             return failure

@@ -1,0 +1,42 @@
+{
+  "server": "fireworks",
+  "base_url": "https://api.fireworks.ai/inference/v1",
+  "probe_model": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+  "listing": {
+    "status": 401,
+    "body": {
+      "error": {
+        "message": "You must provide an API key. See https://docs.fireworks.ai/api-reference/introduction#authentication for more information.",
+        "param": null,
+        "code": "UNAUTHORIZED",
+        "type": "error"
+      },
+      "request_id": "f110e289-0be5-4d59-a943-a849859db101"
+    }
+  },
+  "chat_no_key": {
+    "status": 404,
+    "body": {
+      "error": {
+        "message": "Model not found, inaccessible, and/or not deployed",
+        "param": "model",
+        "code": "NOT_FOUND",
+        "type": "error"
+      },
+      "request_id": "chatcmpl-85cd3393f3814f2ca11da01bfaaca05e"
+    }
+  },
+  "chat_bad_key": {
+    "status": 404,
+    "body": {
+      "error": {
+        "message": "Model not found, inaccessible, and/or not deployed",
+        "param": "model",
+        "code": "NOT_FOUND",
+        "type": "error"
+      },
+      "request_id": "chatcmpl-b8b94a568e454ea4ae843b64e4143c43"
+    }
+  },
+  "probed_at": "2026-09-30T04:19:38+00:00"
+}

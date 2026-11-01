@@ -172,7 +172,9 @@ def test_enclosure_length_is_bytes_and_type_is_audio_wav():
     directly by podcast clients to decide how to fetch and play the
     file."""
     episode = _episode(length_bytes=98765)
-    enclosure = ET.fromstring(_build([episode])).find("channel").find("item").find("enclosure")
+    enclosure = (
+        ET.fromstring(_build([episode])).find("channel").find("item").find("enclosure")
+    )
     assert enclosure.get("length") == "98765"
     assert enclosure.get("type") == "audio/wav"
 
@@ -318,7 +320,9 @@ def test_hostile_description_round_trips_exactly_through_parse():
 # --- the path-separator guard ------------------------------------------------
 
 
-@pytest.mark.parametrize("bad_filename", ["../evil.wav", "sub/evil.wav", "sub\\evil.wav"])
+@pytest.mark.parametrize(
+    "bad_filename", ["../evil.wav", "sub/evil.wav", "sub\\evil.wav"]
+)
 def test_filename_with_a_path_separator_raises_feed_build_error_naming_it(bad_filename):
     """A path-shaped `FeedEpisode.filename` (parent reference, POSIX or
     Windows separator) must raise rather than be emitted into an enclosure

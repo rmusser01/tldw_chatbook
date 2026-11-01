@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import replace
 from typing import Any
@@ -125,6 +126,7 @@ class BuddyManagementCoordinator:
         self._opening = False
         self._modal: Any = None
         self._scope_timer: Any = None
+        self._scope_reconcile_fingerprint: tuple[Any, ...] | None = None
         self._scope_configured = "buddy_interaction" in app.app_config
         self._promotion_pending = False
         self._promotion_retry_after = 0.0
@@ -479,6 +481,61 @@ class BuddyManagementCoordinator:
         store = getattr(runtime, "chat_store", None)
         return tuple(store.sessions()) if store is not None else ()
 
+    async def _saved_binding_metadata(
+        self, binding: BuddyBinding
+    ) -> dict[str, Any] | None:
+        """Recognize an unloaded saved owner without constructing execution services."""
+        if (
+            binding.kind != "conversation"
+            or not binding.conversation_id
+            or binding.ephemeral
+        ):
+            return None
+        runtime = getattr(self.app, "console_runtime", None)
+        service = getattr(self.app, "local_chat_conversation_service", None)
+        if service is None:
+            return None
+
+        def has_loaded_slot() -> bool:
+            return any(
+                row.id == binding.target_id
+                or row.persisted_conversation_id == binding.conversation_id
+                for row in self._runtime_sessions()
+            )
+
+        if has_loaded_slot():
+            return None
+        db = getattr(service, "db", None)
+        memory_db = getattr(db, "is_memory_db", False)
+
+        def read() -> dict[str, Any] | None:
+            try:
+                record = service.get_conversation_metadata(binding.conversation_id)
+                if (
+                    record
+                    and record.get("id") == binding.conversation_id
+                    and not record.get("deleted")
+                    and record.get("runtime_backend", "local") == "local"
+                ):
+                    return record
+                return None
+            except Exception:  # noqa: BLE001 - unavailable owners stay unselectable
+                return None
+            finally:
+                if not memory_db:
+                    close = getattr(db, "close_connection", None)
+                    if callable(close):
+                        close()
+
+        record = read() if memory_db else await asyncio.to_thread(read)
+        if (
+            getattr(self.app, "console_runtime", None) is not runtime
+            or getattr(self.app, "local_chat_conversation_service", None) is not service
+            or has_loaded_slot()
+        ):
+            return None
+        return record
+
     def _binding_for_form(self, targets: tuple[Any, ...]) -> BuddyBinding | None:
         """Match a restored/first-saved conversation while preserving stale-slot guards."""
         binding = self.preferences.binding
@@ -602,6 +659,27 @@ class BuddyManagementCoordinator:
                     ),
                 )
             )
+        binding = self.preferences.binding
+        if binding is not None and binding.kind == "conversation":
+            record = await self._saved_binding_metadata(binding)
+            if record is not None:
+                targets.append(
+                    BuddyTargetChoice(
+                        f"conversation:{binding.target_id}",
+                        f"Conversation: {record.get('title') or 'Untitled'} · {binding.conversation_id[:8]}",
+                        binding,
+                        current_persona=await asyncio.to_thread(
+                            self._persona_label,
+                            record.get("assistant_id")
+                            if record.get("assistant_kind") == "persona"
+                            else None,
+                        ),
+                        persona_editable=False,
+                        persona_unavailable_reason=(
+                            "Open this conversation with Buddy or Console before changing its Persona."
+                        ),
+                    )
+                )
         registry = getattr(self.app, "workspace_registry_service", None)
         if registry is not None:
             workspaces = await asyncio.to_thread(registry.list_workspaces)
@@ -662,7 +740,8 @@ class BuddyManagementCoordinator:
         try:
             await self.apply_choice(choice)
         except ValueError as exc:
-            self.app.notify(str(exc), severity="error")
+            # TASK-34400: exception text is not ours; a markup toast can exit the app.
+            self.app.notify(str(exc), severity="error", markup=False)
         except Exception:  # noqa: BLE001 - app boundary keeps storage faults out of the message pump
             self.app.notify(
                 "Could not finish applying Buddy settings. Reopen Buddy settings to review the current selection and retry.",
@@ -680,6 +759,10 @@ class BuddyManagementCoordinator:
         if binding.kind == "conversation":
             session = binding.resolve_session(self._runtime_sessions())
             if session is None:
+                if await self._saved_binding_metadata(binding) is not None:
+                    # Presentation changes need only the saved owner. Returning no
+                    # live session keeps Persona assignment behind its existing gate.
+                    return None
                 raise ValueError(
                     "The bound conversation is unavailable. Open it in Console or choose another target."
                 )
@@ -932,29 +1015,90 @@ class BuddyManagementCoordinator:
         if self._scope_timer is None and hasattr(self.app, "set_interval"):
             self._scope_timer = self.app.set_interval(0.5, self.reconcile_scope)
 
+    def stop_scope_tracking(self) -> None:
+        """Stop the periodic scope reconcile once no Buddy presentation remains.
+
+        One final reconcile settles speech/sink state for the closed
+        presentation; ``start_scope_tracking`` re-arms on the next Buddy view.
+        Callers already holding the presentation lock cannot race a concurrent
+        ``reconcile`` re-arm.
+        """
+        timer = self._scope_timer
+        if timer is None:
+            return
+        self._scope_timer = None
+        try:
+            self.reconcile_scope()
+        except Exception:  # noqa: BLE001 -- teardown must always stop the timer
+            pass
+        finally:
+            with contextlib.suppress(Exception):
+                timer.stop()
+
     def reconcile_scope(self) -> None:
         """Filter trusted lifecycle events and replay current state after a rebind."""
         if not self._scope_configured:
             return
         speech = getattr(self.app, "buddy_speech_coordinator", None)
+        runtime = getattr(self.app, "console_runtime", None)
+        binding = self.preferences.binding
+        sessions = self._runtime_sessions()
+        presentation_flags: tuple[bool, bool] | None = None
         if speech is not None or self.preferences.speak_responses:
+            presentation = self.controller.current_preferences()
+            presentation_flags = (presentation.enabled, presentation.open)
+        # Cheap no-op gate: scope depends only on the binding, the speech and
+        # presentation flags, and the live session set. Runtime object identity
+        # covers rebinding replays; persisted ids cover session promotion.
+        # Promotion retries are deadline-driven and bypass the gate.
+        fingerprint = (
+            runtime,
+            binding,
+            self.preferences.speak_responses,
+            speech is not None,
+            presentation_flags,
+            tuple(
+                # Review fix: scope-affecting attributes ride the tuple --
+                # resolve/includes read runtime_backend, the conversation
+                # binding revision, ephemerality, and workspace, so an
+                # in-place change of any of them (a live slot re-bound to
+                # another conversation, a workspace move, a backend flip)
+                # must reopen the gate; id/persisted alone missed those.
+                (
+                    session.id,
+                    session.persisted_conversation_id,
+                    getattr(session, "conversation_binding_revision", None),
+                    getattr(session, "ephemeral", None),
+                    getattr(session, "runtime_backend", None),
+                    getattr(session, "workspace_id", None),
+                )
+                for session in sessions
+            ),
+        )
+        promotion_due = bool(
+            binding is not None
+            and binding.kind == "conversation"
+            and binding.conversation_id is None
+            and not binding.ephemeral
+            and not self._promotion_pending
+            and time.monotonic() >= self._promotion_retry_after
+        )
+        if fingerprint == self._scope_reconcile_fingerprint and not promotion_due:
+            return
+        self._scope_reconcile_fingerprint = fingerprint
+        if presentation_flags is not None:
             from .buddy_speech import ensure_buddy_speech
 
-            presentation = self.controller.current_preferences()
+            enabled, open_ = presentation_flags
             ensure_buddy_speech(self.app).configure(
-                self.preferences.binding,
-                self.preferences.speak_responses
-                and presentation.enabled
-                and presentation.open,
+                binding,
+                self.preferences.speak_responses and enabled and open_,
             )
-        runtime = getattr(self.app, "console_runtime", None)
         if runtime is None:
             return
         controller = getattr(runtime, "chat_controller", None)
         if controller is None:
             return
-        binding = self.preferences.binding
-        sessions = self._runtime_sessions()
         if binding is None:
             selected = ()
         elif binding.kind == "conversation":

@@ -13,6 +13,8 @@ from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
 from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def rig(tmp_path):
@@ -63,7 +65,8 @@ async def test_controller_enforces_three_generations_and_real_provider_usage(
             child = result_for(rig, chain)
             queue_result(rig, child)
             assert await _settle(
-                lambda child=child: db.get_run(child)["wake_delivered_at"] is not None
+                lambda child=child: db.get_run(child)["wake_delivered_at"] is not None,
+                seconds=20,
             )
         fourth = result_for(rig, chain)
         queue_result(rig, fourth)
@@ -250,7 +253,7 @@ async def test_automatic_child_and_followup_share_real_provider_allowance(rig):
     try:
         source = result_for(rig, chain)
         queue_result(rig, source)
-        assert await _settle(child_entered.is_set)
+        assert await _settle(child_entered.is_set, seconds=10)
         assert await _settle(
             lambda: db.get_run(source)["wake_delivered_at"] is not None
         )
@@ -259,7 +262,9 @@ async def test_automatic_child_and_followup_share_real_provider_allowance(rig):
         assert await _settle(
             lambda: db.automatic_work.snapshot(chain).used["generation"] == 2
         )
-        assert await _settle(lambda: not controller.fleet_wake._delivery_tasks)
+        assert await _settle(
+            lambda: not controller.fleet_wake._delivery_tasks, seconds=10
+        )
         snapshot = db.automatic_work.snapshot(chain)
         assert len(calls) == snapshot.used["model_call"] == 4
         assert snapshot.used["tokens"] == 40

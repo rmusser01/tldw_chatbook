@@ -290,7 +290,9 @@ def _wait_until(predicate: Callable[[], bool], timeout: float) -> bool:
     return predicate()
 
 
-def _stub_settings(monkeypatch, buffer_duration_ms: int, silence_threshold: float) -> None:
+def _stub_settings(
+    monkeypatch, buffer_duration_ms: int, silence_threshold: float
+) -> None:
     """Make config lookups hermetic for the full `start_dictation()` API tests."""
     from tldw_chatbook.Audio import dictation_service_lazy
 
@@ -313,7 +315,11 @@ def _stub_settings(monkeypatch, buffer_duration_ms: int, silence_threshold: floa
 
 
 def _build_stop_path_service(
-    monkeypatch, transcription, recorder, *, buffer_duration_ms: int = 500,
+    monkeypatch,
+    transcription,
+    recorder,
+    *,
+    buffer_duration_ms: int = 500,
     silence_threshold: float = 2.0,
 ):
     _stub_settings(monkeypatch, buffer_duration_ms, silence_threshold)
@@ -502,9 +508,9 @@ def test_speech_during_an_in_flight_transcription_completes_as_the_next_segment(
             time.sleep(0.05)
 
         deadline = 2 * latency + threshold + 1.0
-        assert _wait_until(
-            lambda: len(sink.finals) >= 2, timeout=deadline
-        ), f"utterance 2 never finalized within {deadline}s: finals={sink.finals!r}"
+        assert _wait_until(lambda: len(sink.finals) >= 2, timeout=deadline), (
+            f"utterance 2 never finalized within {deadline}s: finals={sink.finals!r}"
+        )
 
         assert sink.errors == []
         assert sink.finals == ["w1", "w2 w3 w4 w5"], (

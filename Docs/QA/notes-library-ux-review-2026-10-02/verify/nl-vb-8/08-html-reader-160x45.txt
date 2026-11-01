@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  web-page-spaced-repetition                               │
+│ │ Navigation                     │  a  │ Media (28)      Sets                                 │  t  file://$TMPROOT/… │
+│ │     Import…                    │  v  │ Media · 28 of 28 · all types · sort: Newest          │  e  nts-GitHub-tldw-chatbook/9a6612d8-88a3-469a-a5da-1307bdf │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m  f44b8/scratchpad/nlrev/runs/nl-vb-8-1/home/fixtures/impo │
+│ │ ▊ Search Library…         ▎▊x▎ │     │  ▊  Title/keyword…                  ▎                │  s  rt-docs/web-page-spaced-repetition.html                  │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │       Find  Read later  Use in Console  More                 │
+│ │                                │     │    type: All types    sort: Newest                   │       Read (selected)  Analysis  Highlights  Info            │
+│ │ ────────────────────────────── │     │                                                      │     ┌──────────────────────────────────────────────────────┐ │
+│ │ Browse                     ▾   │     │    Export…     Trash     Select                      │     │ Spaced repetition, explained                         │ │
+│ │  ▸ Media (28) — your files     │     │    Review these                                      │     │ Spaced repetition, explained                         │ │
+│ │    Conversations (12)          │     │    team-handbook                                     │     │ By N. Ahmed                                          │ │
+│ │    Notes (122)                 │     │      document · updated 1m                           │     │ Spaced repetition schedules reviews just before you  │ │
+│ │    Prompts (10) — reuse        │     │    podcast-transcript-ep12                           │     │ would forget.                                        │ │
+│ │    Skills (4) — AI add-ons     │<--- │      plaintext · updated 1m                          │     │ Why it works                                         │ │
+│ │    Collections (6)             │     │    paper-retrieval-practice                          │     │ Each successful retrieval strengthens the memory     │ │
+│ │    Search / RAG — find all     │     │      pdf · updated 1m                                │     │ trace.                                               │ │
+│ │ ────────────────────────────── │     │    article-local-first                               │     │ Short sessions                                       │ │
+│ │ Artifacts                  ▾   │     │      plaintext · updated 1m                          │     │ Daily habit                                          │ │
+│ │    All artifacts               │     │ █▸ web-page-spaced-repetition                        │<--- │ Honest grading                                       │ │
+│ │    Chatbooks                   │     │ █    html · updated 1m · loaded                      │     │ Interval                                             │ │
+│ │    Reports                     │     │    A field guide to Markdown tables                  │     │ Days                                                 │ │
+│ │ ────────────────────────────── │     │      article · updated 2d                            │     │ 1                                                    │ │
+│ │ Create                     ▾   │     │    Voice memo 2026-09-29                             │     │ 1                                                    │ │
+│ │    New note                    │     │      audio · updated 3d                              │     │ 2                                                    │ │
+│ │    New prompt                  │<--- │    学習メモ — 日本語の文法                         ▄ │     │ 3                                                    │ │
+│ │    New skill                   │     │      document · updated 4d                           │     │ Site navigation that should be stripped              │ │
+│ │ ────────────────────────────── │     │    Server logs excerpt 2026-09-27                    │     │                                                      │ │
+│ │ Study                      ▾   │     │      plaintext · updated 5d                          │     │                                                      │ │
+│ │    Study decks (0)             │     │    Spaced repetition, explained                      │     │                                                      │ │
+│ │    Flashcards due: 0           │     │      article · updated 5d                            │     │                                                      │ │
+│ │    Quizzes (0)                 │     │    Podcast: Deep Work revisited (ep. 112) — trans…   │     │                                                      │ │
+│ │ ────────────────────────────── │     │      audio · updated 1w                              │     │                                                      │ │
+│ │ Import / Export            ▾   │     │    Grocery receipt (OCR text)                        │     │                                                      │ │
+│ │    Import…                     │     │      plaintext · updated 1w                          │     │                                                      │ │
+│ │    Export                      │     │               1-20 of 28 · Page 1 of 2               │     │                                                      │ │
+│ │ ────────────────────────────── │     │              Already on the first page.              │     │                                                      │ │
+│ │ Details                    ▸   │     │                 ○ Previous     Next                  │     └──────────────────────────────────────────────────────┘ │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ] next item | [ prev item | ctrl+f find | l read later | c use in Console | t trash | s select | F1 · Ctrl+P · Ctrl+Q

@@ -86,9 +86,11 @@ def svc(db):
 
 
 def _raw_row(db, template_id):
-    return db.get_connection().execute(
-        "SELECT * FROM ChunkingTemplates WHERE id = ?", (template_id,)
-    ).fetchone()
+    return (
+        db.get_connection()
+        .execute("SELECT * FROM ChunkingTemplates WHERE id = ?", (template_id,))
+        .fetchone()
+    )
 
 
 def _insert_stored_invalid(db, name="broken"):
@@ -143,7 +145,10 @@ class TestNoIsSystemAnywhere:
                 continue
             source = path.read_text(encoding="utf-8", errors="replace")
             posix = rel.as_posix()
-            if re.search(r"\bis_system\b", source) and posix not in _JUSTIFIED_IS_SYSTEM_FILES:
+            if (
+                re.search(r"\bis_system\b", source)
+                and posix not in _JUSTIFIED_IS_SYSTEM_FILES
+            ):
                 offenders.append(posix)
             elif (
                 re.search(r"\binclude_system\b", source)
@@ -240,9 +245,10 @@ class TestCreate:
     def test_uuids_are_unique_per_row(self, svc):
         first = svc.create_template("a", "d", VALID_BODY)
         second = svc.create_template("b", "d", VALID_BODY)
-        assert svc.get_template_by_id(first)["uuid"] != svc.get_template_by_id(second)[
-            "uuid"
-        ]
+        assert (
+            svc.get_template_by_id(first)["uuid"]
+            != svc.get_template_by_id(second)["uuid"]
+        )
 
     def test_create_writes_tags_as_json_column(self, db, svc):
         template_id = svc.create_template(
@@ -254,22 +260,28 @@ class TestCreate:
 
     def test_create_moves_body_tags_into_the_column(self, db, svc):
         body = {**VALID_BODY, "tags": ["from-body"]}
-        template_id = svc.create_template(name="bodytags", description="d", template_json=body)
+        template_id = svc.create_template(
+            name="bodytags", description="d", template_json=body
+        )
         row = _raw_row(db, template_id)
         assert json.loads(row["tags"]) == ["from-body"]
         assert "tags" not in json.loads(row["template_json"])
 
     def test_create_refuses_invalid_template_with_named_error(self, db, svc):
-        before = db.get_connection().execute(
-            "SELECT COUNT(*) AS n FROM ChunkingTemplates"
-        ).fetchone()["n"]
+        before = (
+            db.get_connection()
+            .execute("SELECT COUNT(*) AS n FROM ChunkingTemplates")
+            .fetchone()["n"]
+        )
 
         with pytest.raises(InvalidTemplateError, match="valid"):
             svc.create_template(name="bad", description="d", template_json=INVALID_BODY)
 
-        after = db.get_connection().execute(
-            "SELECT COUNT(*) AS n FROM ChunkingTemplates"
-        ).fetchone()["n"]
+        after = (
+            db.get_connection()
+            .execute("SELECT COUNT(*) AS n FROM ChunkingTemplates")
+            .fetchone()["n"]
+        )
         assert after == before  # refused, not written
 
     def test_create_refuses_non_json_body(self, svc):
@@ -398,7 +410,9 @@ class TestReservedSentinelName:
         # Auto option, so all are refused. Only non-sentinel names stay
         # legal (the contains-case is pinned below).
         with pytest.raises(InvalidTemplateError, match="reserv"):
-            svc.create_template(name=" auto ", description="d", template_json=VALID_BODY)
+            svc.create_template(
+                name=" auto ", description="d", template_json=VALID_BODY
+            )
         with pytest.raises(InvalidTemplateError, match="reserv"):
             svc.create_template(name="AUTO", description="d", template_json=VALID_BODY)
         with pytest.raises(InvalidTemplateError, match="reserv"):
@@ -468,9 +482,10 @@ class TestDuplicateAndStatistics:
         assert duplicate["uuid"] != original["uuid"]
         assert duplicate["is_builtin"] is False
         assert duplicate["tags"] == ["t"]
-        assert json.loads(duplicate["template_json"])["chunking"] == json.loads(
-            original["template_json"]
-        )["chunking"]
+        assert (
+            json.loads(duplicate["template_json"])["chunking"]
+            == json.loads(original["template_json"])["chunking"]
+        )
 
     def test_statistics_speak_v7_columns_and_exclude_deleted(self, db, svc):
         # A fresh v7 DB carries the six built-ins plus the three old seeds

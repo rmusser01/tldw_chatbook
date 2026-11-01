@@ -965,3 +965,127 @@ def test_v2_import_module_has_no_database_or_textual_imports() -> None:
     assert not any(name.startswith("textual") for name in imported_names)
     assert "ChaChaNotes_DB" not in source
     assert "sqlite3" not in imported_names
+
+
+# TASK-33621.8: the exact orphan a stored staged-Library turn carries.
+_UNRECORDED_RETRIEVAL = (
+    "console-trace:3c8cc2a1-d7a3-4ca3-b775-f178ffe438bb:retrieval:retrieval_completed"
+)
+
+
+@pytest.mark.parametrize("profile", list(trajectory_export.TraceExportProfile))
+def test_stored_unrecorded_references_are_cleared_disclosed_and_reimportable(
+    profile: trajectory_export.TraceExportProfile,
+) -> None:
+    attached_id = "console-trace:3c8cc2a1:retrieval:context_attached"
+    attached = _record(
+        event_id=attached_id,
+        kind="context_attached",
+        parent_event_id=_UNRECORDED_RETRIEVAL,
+        source_event_id=_UNRECORDED_RETRIEVAL,
+    )
+    injected = _record(
+        event_id="console-trace:3c8cc2a1:retrieval:context_injected",
+        seq=2,
+        kind="context_injected",
+        parent_event_id=attached_id,
+        source_event_id=attached_id,
+    )
+
+    payload = _build(
+        _snapshot(attached, injected),
+        profile,
+        confirm_full=profile is trajectory_export.TraceExportProfile.FULL_TRACE,
+    )
+
+    first, second = payload["events"][:2]
+    assert first["parent_event_id"] is None
+    assert first["source_event_id"] is None
+    # The recorded link is kept; only the unrecorded one is cleared.
+    assert second["parent_event_id"] == first["event_id"]
+    assert second["source_event_id"] == first["event_id"]
+    for field in ("parent_event_id", "source_event_id"):
+        assert first["field_states"][field] == "not_available"
+        assert {
+            "event_id": first["event_id"],
+            "field": field,
+            "state": "not_available",
+        } in payload["manifest"]["missing_metadata"]
+        assert {
+            "event_id": first["event_id"],
+            "field": field,
+            "state": "not_available",
+            "reason": "reference_not_recorded",
+        } in payload["manifest"]["redaction_provenance"]
+    assert _UNRECORDED_RETRIEVAL not in json.dumps(payload)
+    imported = trajectory_import.load_imported_trace(payload)
+    assert (
+        imported.manifest["missing_metadata"] == payload["manifest"]["missing_metadata"]
+    )
+
+
+def test_clearing_unrecorded_references_logs_metadata_only() -> None:
+    """A future producer that leaves orphans must surface in the app log, not
+    only inside shared bundles; the line carries field names and event kinds,
+    never event ids or content (review follow-up, TASK-33621.8)."""
+    from loguru import logger
+
+    attached = _record(
+        event_id="console-trace:3c8cc2a1:retrieval:context_attached",
+        kind="context_attached",
+        parent_event_id=_UNRECORDED_RETRIEVAL,
+        source_event_id=_UNRECORDED_RETRIEVAL,
+    )
+    records: list[str] = []
+    sink_id = logger.add(lambda message: records.append(str(message)), level="WARNING")
+    try:
+        trajectory_export.preflight_trace_export(_snapshot(attached))
+        orphaned = "".join(records)
+        records.clear()
+        trajectory_export.preflight_trace_export(_snapshot(_record()))
+        clean = "".join(records)
+    finally:
+        logger.remove(sink_id)
+
+    assert "cleared 2 reference(s) to unrecorded events" in orphaned
+    assert "parent_event_id" in orphaned and "source_event_id" in orphaned
+    assert "context_attached" in orphaned
+    assert "3c8cc2a1" not in orphaned
+    assert "A bounded diagnostic summary" not in orphaned
+    assert clean == ""
+
+
+@pytest.mark.parametrize("profile", list(trajectory_export.TraceExportProfile))
+def test_credential_block_raises_its_own_error_type(
+    profile: trajectory_export.TraceExportProfile,
+) -> None:
+    """Review follow-up (TASK-33621.8): the final credential check has its own
+    error type, so the export dialog can say what stopped the export instead
+    of the generic "could not be checked" copy and its retry advice.
+
+    A credential-looking field name survives every scrubber (field names are
+    kept verbatim), so it is blocked under every profile alike.
+    """
+    blocked = _record(
+        field_states={
+            "content_preview": "observed",
+            "payload": "observed",
+            "password=hunter22": "observed",
+        }
+    )
+
+    with pytest.raises(
+        trajectory_export.TraceExportCredentialBlocked, match="credential material"
+    ) as raised:
+        _build(
+            _snapshot(blocked),
+            profile,
+            confirm_full=profile is trajectory_export.TraceExportProfile.FULL_TRACE,
+        )
+    assert isinstance(raised.value, trajectory_export.TrajectoryExportError)
+    # Every other validation failure keeps the base type.
+    with pytest.raises(trajectory_export.TrajectoryExportError) as duplicate:
+        _build(_snapshot(_record(), _record(seq=2)), profile, confirm_full=True)
+    assert not isinstance(
+        duplicate.value, trajectory_export.TraceExportCredentialBlocked
+    )

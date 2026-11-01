@@ -1,0 +1,1015 @@
+.............FFFFFFFFFFF........FFFFFFFFFFFFFFF...FFFF.................. [ 80%]
+F..............F.F                                                       [100%]
+=================================== FAILURES ===================================
+_________ test_real_source_is_bound_to_installed_participant[EvalsDB] __________
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_real_source_is_bound_to_i0')
+owner_type = <class 'tldw_chatbook.DB.Evals_DB.EvalsDB'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_real_source_is_bound_to_installed_participant(tmp_path, owner_type):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "store.sqlite")
+        try:
+>           participant = participant(owner)
+                          ^^^^^^^^^^^
+E           UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:125: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:39.785 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-10-03 09:26:39.785 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_real_source_is_bound_to_i0/store.sqlite
+_____ test_real_source_is_bound_to_installed_participant[SubscriptionsDB] ______
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_real_source_is_bound_to_i1')
+owner_type = <class 'tldw_chatbook.DB.Subscriptions_DB.SubscriptionsDB'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_real_source_is_bound_to_installed_participant(tmp_path, owner_type):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "store.sqlite")
+        try:
+>           participant = participant(owner)
+                          ^^^^^^^^^^^
+E           UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:125: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:39.947 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_real_source_is_bound_to_i1/store.sqlite [Client: default]
+_____ test_real_source_is_bound_to_installed_participant[FileNotesReplica] _____
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_real_source_is_bound_to_i2')
+owner_type = <class 'tldw_chatbook.Notes.file_notes_replica.FileNotesReplica'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_real_source_is_bound_to_installed_participant(tmp_path, owner_type):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "store.sqlite")
+        try:
+>           participant = participant(owner)
+                          ^^^^^^^^^^^
+E           UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:125: UnboundLocalError
+_ test_real_source_is_bound_to_installed_participant[NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_real_source_is_bound_to_i3')
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_real_source_is_bound_to_installed_participant(tmp_path, owner_type):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "store.sqlite")
+        try:
+>           participant = participant(owner)
+                          ^^^^^^^^^^^
+E           UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:125: UnboundLocalError
+____ test_real_source_is_bound_to_installed_participant[LocalKanbanService] ____
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_real_source_is_bound_to_i4')
+owner_type = <class 'tldw_chatbook.Kanban_Interop.local_kanban_service.LocalKanbanService'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_real_source_is_bound_to_installed_participant(tmp_path, owner_type):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "store.sqlite")
+        try:
+>           participant = participant(owner)
+                          ^^^^^^^^^^^
+E           UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:125: UnboundLocalError
+________ test_site_setup_source_refuses_paused_schema_before_allocation ________
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_site_setup_source_refuses0')
+
+    def test_site_setup_source_refuses_paused_schema_before_allocation(tmp_path):
+        from tldw_chatbook.Subscriptions.site_config_manager import SiteConfigManager
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = SiteConfigManager(str(tmp_path / "hybrid.sqlite"))
+        try:
+>           participant = participant(owner)
+                          ^^^^^^^^^^^
+E           UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:143: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:40.281 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3376 - Initializing CharactersRAGDB db_sha256=8c8f51f386b7 [Client ID: tldw_cli_local_instance_v1]
+2026-10-03 09:26:40.325 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=8c8f51f386b7 thread=8494865792
+2026-10-03 09:26:40.326 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+2026-10-03 09:26:40.326 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8550 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 76
+2026-10-03 09:26:40.326 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4437 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.326 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.333 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4478 - [rag_char_chat_schema V4] Full schema script executed.
+2026-10-03 09:26:40.334 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4485 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.334 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4749 - [task-2451] Default Assistant enrichment UPDATE affected 1 row(s) in DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.334 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4770 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.334 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.346 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4780 - [rag_char_chat_schema V4→V5] Migration script executed.
+2026-10-03 09:26:40.346 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4789 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.346 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4823 - Migrating schema from V5 to V6 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.346 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.347 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4831 - [rag_char_chat_schema V5→V6] Migration script executed.
+2026-10-03 09:26:40.347 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4840 - [rag_char_chat_schema V5→V6] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.348 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4874 - Migrating schema from V6 to V7 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.348 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.350 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4882 - [rag_char_chat_schema V6→V7] Migration script executed.
+2026-10-03 09:26:40.350 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4891 - [rag_char_chat_schema V6→V7] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.350 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8464 - Migrating schema from V7 to V8 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.350 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.352 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8472 - [rag_char_chat_schema V7→V8] Migration script executed.
+2026-10-03 09:26:40.352 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8481 - [rag_char_chat_schema V7→V8] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.352 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4925 - Migrating schema from V8 to V9 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.352 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.355 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4933 - [rag_char_chat_schema V8→V9] Migration script executed.
+2026-10-03 09:26:40.355 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4942 - [rag_char_chat_schema V8→V9] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.355 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4976 - Migrating schema from V9 to V10 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.355 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.356 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4984 - [rag_char_chat_schema V9→V10] Migration script executed.
+2026-10-03 09:26:40.356 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4993 - [rag_char_chat_schema V9→V10] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.356 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:5027 - Migrating schema from V10 to V11 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.356 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.359 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:5035 - [rag_char_chat_schema V10→V11] Migration script executed.
+2026-10-03 09:26:40.359 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:5044 - [rag_char_chat_schema V10→V11] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.359 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:5078 - Migrating schema from V11 to V12 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.360 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.368 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:5086 - [rag_char_chat_schema V11→V12] Migration script executed.
+2026-10-03 09:26:40.368 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:5095 - [rag_char_chat_schema V11→V12] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.368 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:5121 - Migrating schema from V12 to V13 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.368 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.396 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:5129 - [rag_char_chat_schema V12→V13] Migration script executed.
+2026-10-03 09:26:40.396 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:5137 - [rag_char_chat_schema V12→V13] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.396 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:5162 - Migrating schema from V13 to V14 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.396 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.404 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:5170 - [rag_char_chat_schema V13→V14] Migration script executed.
+2026-10-03 09:26:40.404 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:5178 - [rag_char_chat_schema V13→V14] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.404 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:5203 - Migrating schema from V14 to V15 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.404 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.405 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:5211 - [rag_char_chat_schema V14→V15] Migration script executed.
+2026-10-03 09:26:40.406 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:5219 - [rag_char_chat_schema V14→V15] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.406 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:5245 - Migrating schema from V15 to V16 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.406 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.406 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:5288 - [rag_char_chat_schema V15→V16] Migration script executed.
+2026-10-03 09:26:40.407 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:5298 - [rag_char_chat_schema V15→V16] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.407 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5324 - Migrating schema from V16 to V17 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.407 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.407 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5332 - [rag_char_chat_schema V16→V17] Migration script executed.
+2026-10-03 09:26:40.407 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:5340 - [rag_char_chat_schema V16→V17] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.407 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5368 - Migrating schema from V17 to V18 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.407 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.411 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5376 - [rag_char_chat_schema V17→V18] Migration script executed.
+2026-10-03 09:26:40.411 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:5384 - [rag_char_chat_schema V17→V18] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.411 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8414 - Migrating schema from V18 to V19 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.411 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.411 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8422 - [rag_char_chat_schema V18→V19] Migration script executed.
+2026-10-03 09:26:40.411 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8430 - [rag_char_chat_schema V18→V19] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.411 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5412 - Migrating schema from V19 to V20 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.412 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.415 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5431 - [rag_char_chat_schema V19→V20] Migration script executed.
+2026-10-03 09:26:40.415 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:5439 - [rag_char_chat_schema V19→V20] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.415 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5467 - Migrating schema from V20 to V21 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.415 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.416 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5488 - [rag_char_chat_schema V20→V21] Migration script executed.
+2026-10-03 09:26:40.416 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5496 - [rag_char_chat_schema V20→V21] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.416 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5518 - Migrating schema from V21 to V22 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.416 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.417 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5536 - [rag_char_chat_schema V21→V22] Migration script executed.
+2026-10-03 09:26:40.417 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5542 - [rag_char_chat_schema V21→V22] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.417 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5564 - Migrating schema from V22 to V23 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.417 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.418 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5572 - [rag_char_chat_schema V22→V23] Migration script executed.
+2026-10-03 09:26:40.418 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5578 - [rag_char_chat_schema V22→V23] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.418 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5601 - Migrating schema from V23 to V24 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.418 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.420 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5619 - [rag_char_chat_schema V23→V24] Migration script executed.
+2026-10-03 09:26:40.420 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5625 - [rag_char_chat_schema V23→V24] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.420 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5648 - Migrating schema from V24 to V25 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.421 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.421 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5656 - [rag_char_chat_schema V24→V25] Migration script executed.
+2026-10-03 09:26:40.421 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5662 - [rag_char_chat_schema V24→V25] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.421 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5686 - Migrating schema from V25 to V26 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.421 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.426 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5708 - [rag_char_chat_schema V25→V26] Migration script executed.
+2026-10-03 09:26:40.426 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5714 - [rag_char_chat_schema V25→V26] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.426 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.430 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.430 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-03 09:26:40.433 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5901 - Migrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.433 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.434 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5909 - [rag_char_chat_schema V28→V29] Migration script executed.
+2026-10-03 09:26:40.434 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5917 - [rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.434 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5944 - Migrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.434 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.437 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5970 - [rag_char_chat_schema V29→V30] Migration script executed.
+2026-10-03 09:26:40.438 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5994 - [rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.438 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:6021 - Migrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.438 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.441 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:6047 - [rag_char_chat_schema V30→V31] Migration script executed.
+2026-10-03 09:26:40.441 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:6071 - [rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.441 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:6104 - Migrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.441 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4749 - [task-2451] Default Assistant enrichment UPDATE affected 0 row(s) in DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.441 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:6130 - [rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.442 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.443 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.447 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.448 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.450 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.454 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.455 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.456 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.457 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.458 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6450 - Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.459 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6514 - [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-10-03 09:26:40.459 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6564 - Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.459 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.460 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6703 - [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.460 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6733 - Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.461 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.471 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6773 - [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.471 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6842 - Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-10-03 09:26:40.471 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.472 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6875 - Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-10-03 09:26:40.473 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6919 - Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.473 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.478 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6965 - [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=8c8f51f386b7. Purged 0 unreachable sync_log row(s) of 1.
+2026-10-03 09:26:40.478 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:7007 - Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.478 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.479 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:7042 - [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.479 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.485 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:7198 - Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.485 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.486 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:7233 - [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.486 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:7281 - Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.487 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.487 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:7315 - [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.487 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.492 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.502 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7440 - Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=8c8f51f386b7...
+2026-10-03 09:26:40.502 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.502 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7505 - [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=8c8f51f386b7 (examined 0, compacted 0, skipped 0 unreadable).
+2026-10-03 09:26:40.503 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.507 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.509 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.525 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.527 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.548 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.550 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.551 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.552 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.573 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.580 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.601 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.602 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.607 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-03 09:26:40.608 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-03 09:26:40.609 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.612 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.639 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.641 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.642 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.651 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.668 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.675 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.676 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-03 09:26:40.700 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8685 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 76.
+2026-10-03 09:26:40.706 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-03 09:26:40.706 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3399 - CharactersRAGDB initialization completed successfully db_sha256=8c8f51f386b7
+2026-10-03 09:26:40.706 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3874 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=8c8f51f386b7 thread=8494865792.
+2026-10-03 09:26:40.712 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3880 - WAL checkpoint TRUNCATE executed db_sha256=8c8f51f386b7.
+2026-10-03 09:26:40.713 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3900 - Closed SQLite connection db_sha256=8c8f51f386b7 thread=8494865792.
+___ test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[EvalsDB] ___
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_fixed_managed_scope_conti0')
+owner_type = <class 'tldw_chatbook.DB.Evals_DB.EvalsDB'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_fixed_managed_scope_continues_but_new_raw_borrower_refuses(
+        tmp_path, owner_type
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "scope.sqlite")
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:173: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:40.818 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-10-03 09:26:40.819 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_fixed_managed_scope_conti0/scope.sqlite
+_ test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[SubscriptionsDB] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_fixed_managed_scope_conti1')
+owner_type = <class 'tldw_chatbook.DB.Subscriptions_DB.SubscriptionsDB'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_fixed_managed_scope_continues_but_new_raw_borrower_refuses(
+        tmp_path, owner_type
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "scope.sqlite")
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:173: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:40.938 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_fixed_managed_scope_conti1/scope.sqlite [Client: default]
+_ test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[FileNotesReplica] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_fixed_managed_scope_conti2')
+owner_type = <class 'tldw_chatbook.Notes.file_notes_replica.FileNotesReplica'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_fixed_managed_scope_continues_but_new_raw_borrower_refuses(
+        tmp_path, owner_type
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "scope.sqlite")
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:173: UnboundLocalError
+_ test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_fixed_managed_scope_conti3')
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_fixed_managed_scope_continues_but_new_raw_borrower_refuses(
+        tmp_path, owner_type
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "scope.sqlite")
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:173: UnboundLocalError
+_ test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[LocalKanbanService] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_fixed_managed_scope_conti4')
+owner_type = <class 'tldw_chatbook.Kanban_Interop.local_kanban_service.LocalKanbanService'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_fixed_managed_scope_continues_but_new_raw_borrower_refuses(
+        tmp_path, owner_type
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = make(owner_type, tmp_path / "scope.sqlite")
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:173: UnboundLocalError
+_ test_native_allocation_and_setup_races_retire_only_new_native[allocated-EvalsDB] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d9c4560>
+owner_type = <class 'tldw_chatbook.DB.Evals_DB.EvalsDB'>, point = 'allocated'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:43.394 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-10-03 09:26:43.394 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set0/race.sqlite
+_ test_native_allocation_and_setup_races_retire_only_new_native[allocated-SubscriptionsDB] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1195bd880>
+owner_type = <class 'tldw_chatbook.DB.Subscriptions_DB.SubscriptionsDB'>
+point = 'allocated'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:43.500 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set1/race.sqlite [Client: default]
+_ test_native_allocation_and_setup_races_retire_only_new_native[allocated-FileNotesReplica] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x119297530>
+owner_type = <class 'tldw_chatbook.Notes.file_notes_replica.FileNotesReplica'>
+point = 'allocated'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+_ test_native_allocation_and_setup_races_retire_only_new_native[allocated-NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set3')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11964ba40>
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+point = 'allocated'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+_ test_native_allocation_and_setup_races_retire_only_new_native[allocated-LocalKanbanService] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set4')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1192dc6e0>
+owner_type = <class 'tldw_chatbook.Kanban_Interop.local_kanban_service.LocalKanbanService'>
+point = 'allocated'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup-EvalsDB] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set5')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1192dc7a0>
+owner_type = <class 'tldw_chatbook.DB.Evals_DB.EvalsDB'>, point = 'setup'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:43.794 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-10-03 09:26:43.794 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set5/race.sqlite
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup-SubscriptionsDB] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set6')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x119754890>
+owner_type = <class 'tldw_chatbook.DB.Subscriptions_DB.SubscriptionsDB'>
+point = 'setup'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:44.071 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set6/race.sqlite [Client: default]
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup-FileNotesReplica] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set7')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d790c80>
+owner_type = <class 'tldw_chatbook.Notes.file_notes_replica.FileNotesReplica'>
+point = 'setup'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup-NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set8')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11964bd70>
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+point = 'setup'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup-LocalKanbanService] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set9')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a21b8c0>
+owner_type = <class 'tldw_chatbook.Kanban_Interop.local_kanban_service.LocalKanbanService'>
+point = 'setup'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-EvalsDB] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set10')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1192975c0>
+owner_type = <class 'tldw_chatbook.DB.Evals_DB.EvalsDB'>
+point = 'setup_failure'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:44.343 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-10-03 09:26:44.344 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set10/race.sqlite
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-SubscriptionsDB] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set11')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x119648f20>
+owner_type = <class 'tldw_chatbook.DB.Subscriptions_DB.SubscriptionsDB'>
+point = 'setup_failure'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:44.442 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set11/race.sqlite [Client: default]
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-FileNotesReplica] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set12')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x119757860>
+owner_type = <class 'tldw_chatbook.Notes.file_notes_replica.FileNotesReplica'>
+point = 'setup_failure'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set13')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1192dc890>
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+point = 'setup_failure'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+_ test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-LocalKanbanService] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_native_allocation_and_set14')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x119297380>
+owner_type = <class 'tldw_chatbook.Kanban_Interop.local_kanban_service.LocalKanbanService'>
+point = 'setup_failure'
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    @pytest.mark.parametrize("point", ["allocated", "setup", "setup_failure"])
+    def test_native_allocation_and_setup_races_retire_only_new_native(
+        tmp_path, monkeypatch, owner_type, point
+    ):
+        import importlib
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.DB.base_db import BaseDB
+    
+        owner = make(owner_type, tmp_path / "race.sqlite")
+        close(owner)
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:276: UnboundLocalError
+____________ test_subscriptions_schema_tail_stays_in_original_scope ____________
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_subscriptions_schema_tail0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x119297ef0>
+
+    def test_subscriptions_schema_tail_stays_in_original_scope(tmp_path, monkeypatch):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = SubscriptionsDB(tmp_path / "schema.sqlite")
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:417: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:45.067 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_subscriptions_schema_tail0/schema.sqlite [Client: default]
+_____ test_actual_worker_retirement_and_escaped_native_reference[EvalsDB] ______
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_actual_worker_retirement_0')
+local_root = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_actual_worker_retirement_0/bootstrap')
+launch = <function launch.<locals>.start at 0x119785e40>
+owner_type = <class 'tldw_chatbook.DB.Evals_DB.EvalsDB'>
+
+    @pytest.mark.parametrize("owner_type", CACHED)
+    def test_actual_worker_retirement_and_escaped_native_reference(
+        tmp_path, local_root, launch, owner_type
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        ready, finish = threading.Event(), threading.Event()
+        owners, natives, errors = [], [], []
+    
+        def work():
+            owner = None
+            try:
+                owner = make(owner_type, tmp_path / "worker.sqlite")
+                owners.append(owner)
+                with scope(owner) as native:
+                    native.execute("SELECT 42")
+                    natives.append(
+                        native.connection if isinstance(native, sqlite3.Cursor) else native
+                    )
+                    ready.set()
+                    assert finish.wait(4)
+                # A retained source cache still holds an escaped real native object.
+                assert natives[0].execute("SELECT 43").fetchone()[0] == 43
+                owner.close()
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    natives[0].execute("SELECT 1")
+            except BaseException as error:
+                errors.append(error)
+                ready.set()
+            finally:
+                if owner is not None:
+                    owner.close()
+    
+        thread = threading.Thread(target=work)
+        thread.start()
+        assert ready.wait(4)
+        assert not errors
+        owner = owners[0]
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:470: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:45.302 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:559 - Created EvalsDB schema version 5
+2026-10-03 09:26:45.303 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:193 - EvalsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_actual_worker_retirement_0/worker.sqlite
+_ test_actual_worker_retirement_and_escaped_native_reference[SubscriptionsDB] __
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_actual_worker_retirement_1')
+local_root = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_actual_worker_retirement_1/bootstrap')
+launch = <function launch.<locals>.start at 0x119786840>
+owner_type = <class 'tldw_chatbook.DB.Subscriptions_DB.SubscriptionsDB'>
+
+    @pytest.mark.parametrize("owner_type", CACHED)
+    def test_actual_worker_retirement_and_escaped_native_reference(
+        tmp_path, local_root, launch, owner_type
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        ready, finish = threading.Event(), threading.Event()
+        owners, natives, errors = [], [], []
+    
+        def work():
+            owner = None
+            try:
+                owner = make(owner_type, tmp_path / "worker.sqlite")
+                owners.append(owner)
+                with scope(owner) as native:
+                    native.execute("SELECT 42")
+                    natives.append(
+                        native.connection if isinstance(native, sqlite3.Cursor) else native
+                    )
+                    ready.set()
+                    assert finish.wait(4)
+                # A retained source cache still holds an escaped real native object.
+                assert natives[0].execute("SELECT 43").fetchone()[0] == 43
+                owner.close()
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    natives[0].execute("SELECT 1")
+            except BaseException as error:
+                errors.append(error)
+                ready.set()
+            finally:
+                if owner is not None:
+                    owner.close()
+    
+        thread = threading.Thread(target=work)
+        thread.start()
+        assert ready.wait(4)
+        assert not errors
+        owner = owners[0]
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:470: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:45.527 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_actual_worker_retirement_1/worker.sqlite [Client: default]
+_ test_actual_worker_retirement_and_escaped_native_reference[FileNotesReplica] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_actual_worker_retirement_2')
+local_root = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_actual_worker_retirement_2/bootstrap')
+launch = <function launch.<locals>.start at 0x119787c40>
+owner_type = <class 'tldw_chatbook.Notes.file_notes_replica.FileNotesReplica'>
+
+    @pytest.mark.parametrize("owner_type", CACHED)
+    def test_actual_worker_retirement_and_escaped_native_reference(
+        tmp_path, local_root, launch, owner_type
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        ready, finish = threading.Event(), threading.Event()
+        owners, natives, errors = [], [], []
+    
+        def work():
+            owner = None
+            try:
+                owner = make(owner_type, tmp_path / "worker.sqlite")
+                owners.append(owner)
+                with scope(owner) as native:
+                    native.execute("SELECT 42")
+                    natives.append(
+                        native.connection if isinstance(native, sqlite3.Cursor) else native
+                    )
+                    ready.set()
+                    assert finish.wait(4)
+                # A retained source cache still holds an escaped real native object.
+                assert natives[0].execute("SELECT 43").fetchone()[0] == 43
+                owner.close()
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    natives[0].execute("SELECT 1")
+            except BaseException as error:
+                errors.append(error)
+                ready.set()
+            finally:
+                if owner is not None:
+                    owner.close()
+    
+        thread = threading.Thread(target=work)
+        thread.start()
+        assert ready.wait(4)
+        assert not errors
+        owner = owners[0]
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:470: UnboundLocalError
+_ test_subclass_has_no_installed_source_authority[NoteImportReceiptRepository] _
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_subclass_has_no_installed3')
+owner_type = <class 'tldw_chatbook.Notes.note_import_receipts.NoteImportReceiptRepository'>
+
+    @pytest.mark.parametrize("owner_type", CACHED + FRESH)
+    def test_subclass_has_no_installed_source_authority(tmp_path, owner_type):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        class Ordinary(owner_type):
+            pass
+    
+        owner = (
+            Ordinary(db_path=tmp_path / "ordinary.sqlite")
+            if owner_type is LocalKanbanService
+            else Ordinary(tmp_path / "ordinary.sqlite")
+        )
+        try:
+>           with pytest.raises(ValueError, match="not_installed"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE <class 'ValueError'>
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:571: Failed
+_____ test_subscription_pause_after_config_input_refuses_database_mutation _____
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_subscription_pause_after_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1197ae810>
+
+    def test_subscription_pause_after_config_input_refuses_database_mutation(
+        tmp_path, monkeypatch
+    ):
+        import tldw_chatbook.DB.Subscriptions_DB as module
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+    
+        owner = SubscriptionsDB(tmp_path / "paused-input.sqlite")
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:861: UnboundLocalError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 09:26:52.769 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_subscription_pause_after_0/paused-input.sqlite [Client: default]
+_____ test_kanban_source_pause_after_allocation_precedes_journal_mutation ______
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green-01a0fa6c/test_kanban_source_pause_after0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1197ad340>
+
+    def test_kanban_source_pause_after_allocation_precedes_journal_mutation(
+        tmp_path, monkeypatch
+    ):
+        from tldw_chatbook.Backup_Recovery.participants import _repository_participant
+        from tldw_chatbook.Kanban_Interop import local_kanban_db
+    
+        path = tmp_path / "kanban.sqlite"
+        owner = LocalKanbanService(db_path=path)
+        with sqlite3.connect(path) as check:
+            assert check.execute("PRAGMA journal_mode = DELETE").fetchone()[0] == "delete"
+        check.close()
+>       participant = participant(owner)
+                      ^^^^^^^^^^^
+E       UnboundLocalError: cannot access local variable 'participant' where it is not associated with a value
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:901: UnboundLocalError
+============================= slowest 25 durations =============================
+1.71s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[closed_entry]
+1.66s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[error]
+1.60s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[resume]
+1.59s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[active]
+1.59s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[torn_down]
+1.45s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[timeout]
+1.17s call     Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_new_source_dispatch_does_not_eagerly_import_their_modules
+
+(18 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_real_source_is_bound_to_installed_participant[EvalsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_real_source_is_bound_to_installed_participant[SubscriptionsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_real_source_is_bound_to_installed_participant[FileNotesReplica]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_real_source_is_bound_to_installed_participant[NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_real_source_is_bound_to_installed_participant[LocalKanbanService]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_site_setup_source_refuses_paused_schema_before_allocation
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[EvalsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[SubscriptionsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[FileNotesReplica]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_fixed_managed_scope_continues_but_new_raw_borrower_refuses[LocalKanbanService]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[allocated-EvalsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[allocated-SubscriptionsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[allocated-FileNotesReplica]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[allocated-NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[allocated-LocalKanbanService]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup-EvalsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup-SubscriptionsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup-FileNotesReplica]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup-NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup-LocalKanbanService]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-EvalsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-SubscriptionsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-FileNotesReplica]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_native_allocation_and_setup_races_retire_only_new_native[setup_failure-LocalKanbanService]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_subscriptions_schema_tail_stays_in_original_scope
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_actual_worker_retirement_and_escaped_native_reference[EvalsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_actual_worker_retirement_and_escaped_native_reference[SubscriptionsDB]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_actual_worker_retirement_and_escaped_native_reference[FileNotesReplica]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_subclass_has_no_installed_source_authority[NoteImportReceiptRepository]
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_subscription_pause_after_config_input_refuses_database_mutation
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_kanban_source_pause_after_allocation_precedes_journal_mutation
+33 failed, 57 passed in 24.62s

@@ -66,6 +66,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches, QueryError
+from textual.dom import NoScreen
 from textual.events import DescendantBlur, DescendantFocus, Key, Resize
 from textual.geometry import Size
 from textual.message import Message
@@ -200,9 +201,7 @@ class ConsoleSelectedTurnActivity(Vertical):
         if record.occurred_at is None:
             return "time unavailable"
         try:
-            occurred_at = datetime.fromtimestamp(
-                record.occurred_at, tz=timezone.utc
-            )
+            occurred_at = datetime.fromtimestamp(record.occurred_at, tz=timezone.utc)
         except (OSError, OverflowError, ValueError):
             return "time unavailable"
         return occurred_at.strftime("%H:%M:%S UTC")
@@ -549,9 +548,7 @@ class ConsoleInspectorRail(Vertical):
             selected_turn_id=None,
             actions=(),
         )
-        self._library_activity_citation_count = max(
-            0, library_activity_citation_count
-        )
+        self._library_activity_citation_count = max(0, library_activity_citation_count)
         self._library_activity_flush_result = library_activity_flush_result
         self._library_activity_retry = library_activity_retry
         self._ownership_policy = (
@@ -575,6 +572,10 @@ class ConsoleInspectorRail(Vertical):
         self._outer_reconcile_owner_demand = False
         self._outer_owner_reconcile_count = 0
         self._library_activity_focus_pending = False
+        #: (P1-C final fix round, M2) ``screen.focused`` when the activity
+        #: focus was requested; a retry that finds focus moved to another
+        #: live widget since then is a user's keystroke or click, not ours.
+        self._library_activity_focus_anchor: Widget | None = None
         self._inspector_focus_active = False
         self._navigation_generation = 0
         #: TASK-24704: the boundary `n`/`p` last moved to, kept ONLY while the
@@ -654,6 +655,13 @@ class ConsoleInspectorRail(Vertical):
         """Focus activity after the selected-turn and outer rail settle."""
 
         self._library_activity_focus_pending = True
+        # (P1-C final fix round, M2) Remember where focus was when the user
+        # asked; ``_focus_library_activity`` compares against it on every
+        # retry so a click or keystroke made inside the settle window wins.
+        try:
+            self._library_activity_focus_anchor = self.screen.focused
+        except NoScreen:
+            self._library_activity_focus_anchor = None
         self.request_outer_reconcile()
 
     @on(ConsoleSelectedTurnActivity.RetryRequested)
@@ -750,7 +758,11 @@ class ConsoleInspectorRail(Vertical):
         # A local pass may have changed a fixed-height owner in this refresh.
         # Let Textual commit that physical geometry before measuring the outer
         # body; descendant Resize is not guaranteed for such changes.
-        self.refresh(layout=True)
+        # TASK-36012: a collapsed (display: none) rail has no geometry to
+        # commit, and the measure below reads an empty viewport and stops.
+        # Opening the rail resizes it, which requests this reconcile again.
+        if self.display:
+            self.refresh(layout=True)
         self.call_after_refresh(self._finish_scheduled_outer_reconcile)
 
     def _finish_scheduled_outer_reconcile(self) -> None:
@@ -783,13 +795,85 @@ class ConsoleInspectorRail(Vertical):
             self._library_activity_focus_pending = False
             self._focus_library_activity()
 
-    def _focus_library_activity(self) -> None:
-        """Focus and reveal the settled selected-turn activity heading."""
+    #: Refresh passes the activity-heading focus waits for a LIVE heading.
+    #: Each pass is one frame; twenty covers a rail whose selected-turn
+    #: section recomposes several times while the inspector settles.
+    _LIBRARY_ACTIVITY_FOCUS_ATTEMPTS = 20
 
+    #: Widget ids the screen's reveal-inspector path may focus when it opens
+    #: this rail (``chat_screen.CONSOLE_FOCUS_REGISTRY``'s entry targets for
+    #: ``console-right-rail``, plus the body scroller). Focus landing on one
+    #: of these inside the activity-focus settle window is the rail opening,
+    #: not the user moving focus (P1-C final fix round, M2).
+    _RAIL_ENTRY_CHROME_IDS = frozenset(
+        {
+            "console-inspector-rail-body",
+            "console-inspector-rail-collapse",
+            CONSOLE_AUTHORITY_SUMMARY_ID,
+        }
+    )
+
+    def _is_rail_entry_chrome(self, widget: Widget) -> bool:
+        """True for the rail root or one of its entry-chrome widgets."""
+
+        return widget is self or (widget.id or "") in self._RAIL_ENTRY_CHROME_IDS
+
+    def _focus_library_activity(
+        self, attempts: int = _LIBRARY_ACTIVITY_FOCUS_ATTEMPTS
+    ) -> None:
+        """Focus and reveal the settled selected-turn activity heading.
+
+        TASK-34000.26 fix round 1: the heading this runs after is often the
+        one a selected-turn recompose is still replacing -- it answers the
+        query while ``_pruning``. Textual 8.2.8 used to accept the focus
+        write and leave the keyboard dead on the detached heading (review
+        S-10, in Console); ``BaseAppScreen.set_focus`` now refuses it, which
+        left focus on the rail instead of the heading. So only an attached,
+        non-pruning heading is a target, and when every match is being
+        removed the focus is re-attempted after the next refresh, bounded by
+        ``attempts``, never against a rail or screen that has itself gone.
+
+        (P1-C final fix round, M2) Each pass also compares ``screen.focused``
+        with the anchor ``request_library_activity_focus`` captured: focus on
+        a DIFFERENT live widget means the user clicked or typed inside the
+        settle window, and the request yields to them. Two moves are not the
+        user's and the pass goes ahead: focus on nothing (the anchor itself
+        may have been pruned by the same recompose), and focus on the rail's
+        own entry chrome -- the rail root, its body scroller, the authority
+        summary or the collapse button -- which is where the screen's
+        reveal-inspector path parks focus when it opens the rail for this
+        very request (``CONSOLE_FOCUS_REGISTRY``'s ``console-right-rail``
+        entry targets).
+
+        Args:
+            attempts: Refresh passes left to find a live heading.
+        """
+
+        if not self.is_attached or self._pruning:
+            return
         try:
-            heading = self.query_one(
-                "#console-selected-turn-library-activity-heading", Static
-            )
+            current = self.screen.focused
+        except NoScreen:
+            return
+        if (
+            current is not None
+            and current is not self._library_activity_focus_anchor
+            and not self._is_rail_entry_chrome(current)
+        ):
+            return
+        headings = [
+            heading
+            for heading in self.query(
+                "#console-selected-turn-library-activity-heading"
+            ).results(Static)
+            if heading.is_attached and not getattr(heading, "_pruning", False)
+        ]
+        if not headings:
+            if attempts > 0:
+                self.call_after_refresh(self._focus_library_activity, attempts - 1)
+            return
+        heading = headings[0]
+        try:
             body = self.query_one("#console-inspector-rail-body", VerticalScroll)
         except (NoMatches, QueryError):
             return
@@ -1050,9 +1134,8 @@ class ConsoleInspectorRail(Vertical):
             # Continue from where navigation actually was instead. Only for
             # the outer body, and only when navigation has run: entering the
             # rail cold still starts at boundary 0.
-            if (
-                self._last_boundary_index is not None
-                and focused is self.query_one("#console-inspector-rail-body")
+            if self._last_boundary_index is not None and focused is self.query_one(
+                "#console-inspector-rail-body"
             ):
                 target_index = self._last_boundary_index + direction
                 if target_index < 0 or target_index >= len(boundaries):
@@ -1666,7 +1749,10 @@ class ConsoleInspectorRail(Vertical):
                 id="console-agent-section-subagents",
             )
             fleet_section.styles.display = (
-                "block" if self._agent_fleet_section_state.rows or self._agent_fleet_section_state.summary else "none"
+                "block"
+                if self._agent_fleet_section_state.rows
+                or self._agent_fleet_section_state.summary
+                else "none"
             )
             yield fleet_section
 

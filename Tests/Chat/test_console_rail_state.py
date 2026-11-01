@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.console_rail_state import (
     console_rail_width_band,
     resolve_console_rail_priority,
     serialize_console_rail_preferences,
+    yield_console_rails_to_terminal,
 )
 
 
@@ -1321,3 +1322,107 @@ def test_reveal_derived_right_close_does_not_mark_explicit():
         explicit_right_toggle=True,
     )
     assert console_rail_right_open_explicit(direct)
+
+
+def test_seed_flush_writes_held_defaults_before_a_record_that_could_seed_them():
+    """TASK-36385: seeding stays one-time once defaults are no longer saved at mount."""
+    take = console_rail_state_module.take_console_rail_seed_flush
+    shared = build_console_rail_preference_key(layout_scope="global").value
+    ws_a = build_console_rail_preference_key(
+        workspace_id="A", layout_scope="workspace"
+    ).value
+    ws_b = build_console_rail_preference_key(
+        workspace_id="B", layout_scope="workspace"
+    ).value
+    defaults = console_rail_state_module.serialize_console_rail_stored_preferences(None)
+
+    # A workspace save with no shared layout anywhere writes the shared defaults.
+    records: dict = {}
+    unsaved: dict = {}
+    assert take(records, unsaved, ws_a) == [(shared, defaults)]
+    assert records == {shared: defaults} and unsaved == {}
+
+    # A shared save writes a workspace's held defaults, not its own record.
+    held_b = dict(defaults)
+    records = {shared: dict(defaults), ws_b: held_b}
+    unsaved = {shared: records[shared], ws_b: held_b}
+    assert take(records, unsaved, shared) == [(ws_b, held_b)]
+    assert unsaved == {}
+
+    # A record the user edited (a new object) is no longer held defaults.
+    records = {shared: {**defaults, "model_open": True}}
+    assert take(records, {shared: dict(defaults)}, ws_a) == []
+
+
+@pytest.mark.parametrize("columns", [80, 84, 99])
+def test_terminal_takes_both_rails_below_100_columns_without_touching_preference(
+    columns: int,
+) -> None:
+    """TASK-33625.3: rails the user opened yield to a narrow Terminal, render-only."""
+    key = build_console_rail_preference_key(workspace_id="w", session_id="s")
+    stored = {
+        "left_open": True,
+        CONSOLE_RAIL_LEFT_OPEN_EXPLICIT_KEY: True,
+        "right_open": True,
+    }
+    state = build_console_rail_state(
+        preference_key=key, stored_preferences=stored, available_columns=columns
+    )
+    assert state.left_open or state.right_open  # an explicit open is honored
+
+    yielded = yield_console_rails_to_terminal(state, columns)
+
+    assert (yielded.left_open, yielded.right_open) == (False, False)
+    assert yielded.compact_override is False
+    assert (yielded.preferred_left_open, yielded.preferred_right_open) == (True, True)
+
+
+@pytest.mark.parametrize("columns", [100, 160, None])
+def test_terminal_leaves_rails_alone_at_100_columns_and_up(columns: int | None) -> None:
+    key = build_console_rail_preference_key(workspace_id="w", session_id="s")
+    state = build_console_rail_state(
+        preference_key=key,
+        stored_preferences={"left_open": True, "right_open": True},
+        available_columns=columns,
+    )
+    assert yield_console_rails_to_terminal(state, columns) is state
+
+
+@pytest.mark.parametrize(
+    ("reclaimed", "expected"),
+    [
+        (frozenset({"right"}), (False, True)),
+        (frozenset({"left"}), (True, False)),
+        (frozenset({"left", "right"}), (True, True)),
+    ],
+)
+def test_a_rail_the_user_asks_for_under_the_terminal_is_not_yielded(
+    reclaimed: frozenset[str], expected: tuple[bool, bool]
+) -> None:
+    """TASK-33625.3: Alt+I / Alt+C under a narrow Terminal must still work.
+
+    The yield is the Terminal's default, not a lock: a rail the user opens
+    while the Terminal owns the center shows, so the toggles stay the way
+    back (TASK-24604) instead of silently writing a preference nobody sees.
+    """
+    state = replace(
+        build_console_rail_state(
+            preference_key=build_console_rail_preference_key(
+                workspace_id="w", session_id="s"
+            ),
+            stored_preferences={"left_open": True, "right_open": True},
+            available_columns=80,
+        ),
+        left_open=True,
+        right_open=True,
+        left_compact_override=True,
+        right_compact_override=True,
+        compact_override=True,
+    )
+
+    yielded = yield_console_rails_to_terminal(state, 80, reclaimed=reclaimed)
+
+    assert (yielded.left_open, yielded.right_open) == expected
+    assert yielded.left_compact_override is expected[0]
+    assert yielded.right_compact_override is expected[1]
+    assert yielded.compact_override is True

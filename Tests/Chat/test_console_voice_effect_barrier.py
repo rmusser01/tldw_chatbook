@@ -374,6 +374,10 @@ def test_public_accepted_voice_handoff_enters_runtime_custody() -> None:
     accepted: list[ConsoleTurnCustodyRequest] = []
 
     class Store:
+        def session_input_snapshot(self, session_id):
+            assert session_id == context.session_id
+            return SimpleNamespace(draft="", draft_revision=17)
+
         def session_one_shot_prefill_snapshot(self, session_id: str):
             assert session_id == context.session_id
             return "captured prefill", 7
@@ -407,6 +411,8 @@ def test_public_accepted_voice_handoff_enters_runtime_custody() -> None:
     assert request.one_shot_prefill == "captured prefill"
     assert request.one_shot_prefill_revision == 7
     assert request.staged_evidence_launch == "captured launch"
+    assert request.draft_revision == 17
+    assert request._pressed_inputs is None
 
 
 @pytest.mark.asyncio

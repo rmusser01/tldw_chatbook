@@ -1,7 +1,7 @@
 """TASK-18414: per-model Anthropic request capabilities must be capability
 predicates, not hand-maintained name checks in the request builder.
 
-Every expectation below is pinned to a *live-observed* response from
+The original model expectations are pinned to *live-observed* responses from
 api.anthropic.com (captured 2026-08-18 with a real key, recorded verbatim in
 `Docs/superpowers/plans/2026-08-18-task-18414-report.md`):
 
@@ -20,6 +20,9 @@ api.anthropic.com (captured 2026-08-18 with a real key, recorded verbatim in
   claude-sonnet-4-5 + temperature -> 200 <- must stay unchanged (AC #6)
   claude-haiku-4-5  + temperature + top_k -> 200 <- must stay unchanged (AC #6)
 
+Haiku 5.5 expectations follow the official migration guide, not the August probes:
+https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide
+
 The harness mirrors `Tests/Chat/test_anthropic_native_tools.py`: patch
 `requests.Session.post`, drive the real dispatcher through `chat_api_call`, and
 inspect the JSON body actually put on the wire.
@@ -34,10 +37,14 @@ from tldw_chatbook.model_capabilities import (
     anthropic_model_rejects_sampling_params,
 )
 
+# The real provider guard retains the collection-bound private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 SAMPLING_KEYS = ("temperature", "top_p", "top_k")
 
-# Families the live API rejects sampling parameters / a fixed thinking budget on.
+# Families rejecting sampling parameters / a fixed thinking budget.
 NO_SAMPLING_MODELS = [
+    "claude-haiku-5-5",
     "claude-opus-5",
     "claude-opus-4-8",
     "claude-opus-4-7",
@@ -145,6 +152,36 @@ def test_no_sampling_model_never_sends_fixed_thinking_budget(mock_post, model):
 
 
 @patch("requests.Session.post")
+def test_haiku_5_5_omits_explicit_sampling_params(mock_post):
+    """The actual dispatcher must remove the defaults rejected by Haiku 5.5."""
+    sent = _sent_payload(
+        mock_post, "claude-haiku-5-5", topp=0.9, topk=50, max_tokens=4096
+    )
+    assert not any(key in sent for key in SAMPLING_KEYS)
+    assert sent["max_tokens"] == 4096
+
+
+@pytest.mark.parametrize("effort", [None, "high"])
+@patch("requests.Session.post")
+def test_haiku_5_5_drops_fixed_budget_and_preserves_effort(mock_post, effort):
+    """Use the existing adaptive mapping; never send a legacy fixed budget."""
+    sent = _sent_payload(
+        mock_post,
+        "claude-haiku-5-5",
+        thinking_effort=effort,
+        thinking_budget_tokens=4096,
+        max_tokens=4096,
+    )
+    if effort is None:
+        assert "thinking" not in sent
+        assert "output_config" not in sent
+    else:
+        assert sent["thinking"] == {"type": "adaptive"}
+        assert sent["output_config"] == {"effort": "high"}
+    assert sent["max_tokens"] == 4096
+
+
+@patch("requests.Session.post")
 def test_opus_5_with_effort_sends_adaptive_thinking_and_effort(mock_post):
     """AC #2 wire shape: live-verified as HTTP 200 (probe M in the report)."""
     sent = _sent_payload(mock_post, "claude-opus-5", thinking_effort="high")
@@ -186,17 +223,21 @@ def test_opus_4_8_and_4_7_omit_sampling_with_no_effort(mock_post, model):
 @pytest.mark.parametrize("model", LEGACY_SAMPLING_MODELS)
 @patch("requests.Session.post")
 def test_legacy_models_still_receive_temperature(mock_post, model):
-    """AC #6 regression pin: Opus 4.6 and earlier, Sonnet 4.6/4.5 and Haiku
+    """AC #6 regression pin: Opus 4.6 and earlier, Sonnet 4.6/4.5 and Haiku 4.5
     still accept sampling parameters live, so they must still get them."""
     sent = _sent_payload(mock_post, model)
     assert sent.get("temperature") == 0.7, f"{model} lost its temperature"
 
 
+@pytest.mark.parametrize("model", ["claude-opus-4-6", "claude-haiku-4-5"])
 @patch("requests.Session.post")
-def test_legacy_model_still_receives_fixed_thinking_budget(mock_post):
-    """AC #6 regression pin: `budget_tokens` is live-verified 200 on Opus 4.6."""
+def test_legacy_model_still_receives_fixed_thinking_budget(mock_post, model):
+    """Older families must keep their existing fixed-budget mapping."""
     sent = _sent_payload(
-        mock_post, "claude-opus-4-6", thinking_effort="high", thinking_budget_tokens=4096
+        mock_post,
+        model,
+        thinking_effort="high",
+        thinking_budget_tokens=4096,
     )
     assert sent["thinking"] == {"type": "enabled", "budget_tokens": 4096}
     # thinking enabled -> sampling suppressed, as before this change.
@@ -223,6 +264,7 @@ def test_sonnet_4_6_still_uses_adaptive_without_a_capability_flag(mock_post):
     "model",
     [
         # bare ids
+        "claude-haiku-5-5",
         "claude-opus-5",
         "claude-opus-4-8",
         "claude-opus-4-7",

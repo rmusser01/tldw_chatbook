@@ -314,9 +314,7 @@ async def test_boundary_crossing_reconciles_only_the_workspace_section(
 
 
 @pytest.mark.asyncio
-async def test_scoped_reconcile_swallows_a_demand_delta_plain_still_escalates() -> (
-    None
-):
+async def test_scoped_reconcile_swallows_a_demand_delta_plain_still_escalates() -> None:
     """The scoped/plain contract on ``_ContextBoundedSection`` itself.
 
     In BOTH mounted probes above, the workspaces tray sits at its 12-row cap
@@ -539,9 +537,7 @@ async def test_tooltip_target_removed_by_projection_push_is_not_served_stale() -
                 WorkspaceTreeWorkspace(
                     workspace_id="ws-alpha",
                     label="Workspace Alpha " + "研究🙂" * 12,
-                    conversations=(
-                        _conversation("conv-a0", "Alpha conversation 0"),
-                    ),
+                    conversations=(_conversation("conv-a0", "Alpha conversation 0"),),
                     next_cursor=None,
                     active=True,
                 ),
@@ -561,9 +557,7 @@ async def test_tooltip_target_removed_by_projection_push_is_not_served_stale() -
                 WorkspaceTreeWorkspace(
                     workspace_id="ws-gamma",
                     label="Short",
-                    conversations=(
-                        _conversation("conv-g0", "Gamma conversation 0"),
-                    ),
+                    conversations=(_conversation("conv-g0", "Gamma conversation 0"),),
                     next_cursor=None,
                     active=True,
                 ),

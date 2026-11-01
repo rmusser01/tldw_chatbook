@@ -66,8 +66,7 @@ def _index_names(connection: sqlite3.Connection) -> set[str]:
 
 def _receipt_columns(connection: sqlite3.Connection) -> tuple[str, ...]:
     return tuple(
-        str(row[1])
-        for row in connection.execute(f"PRAGMA table_info({RECEIPT_TABLE})")
+        str(row[1]) for row in connection.execute(f"PRAGMA table_info({RECEIPT_TABLE})")
     )
 
 
@@ -82,10 +81,19 @@ def _receipt_schema(connection: sqlite3.Connection) -> tuple[object, ...]:
     ).fetchone()
     assert table_sql is not None and index_sql is not None
     return (
-        tuple(tuple(row) for row in connection.execute(f"PRAGMA table_info({RECEIPT_TABLE})")),
+        tuple(
+            tuple(row)
+            for row in connection.execute(f"PRAGMA table_info({RECEIPT_TABLE})")
+        ),
         str(table_sql[0]),
-        tuple(tuple(row) for row in connection.execute(f"PRAGMA index_list({RECEIPT_TABLE})")),
-        tuple(tuple(row) for row in connection.execute(f"PRAGMA index_info({RECEIPT_INDEX})")),
+        tuple(
+            tuple(row)
+            for row in connection.execute(f"PRAGMA index_list({RECEIPT_TABLE})")
+        ),
+        tuple(
+            tuple(row)
+            for row in connection.execute(f"PRAGMA index_info({RECEIPT_INDEX})")
+        ),
         str(index_sql[0]),
     )
 
@@ -238,13 +246,27 @@ def test_real_v58_reopen_adds_empty_content_free_receipt_state(tmp_path: Path) -
             "keyword_collections": 0,
             "note_folders": 0,
         }
-        assert connection.execute(f"SELECT COUNT(*) FROM {RECEIPT_TABLE}").fetchone()[0] == 0
-        assert connection.execute(
-            f"SELECT COUNT(*) FROM {PUBLICATION_TABLE}"
-        ).fetchone()[0] == 0
+        assert (
+            connection.execute(f"SELECT COUNT(*) FROM {RECEIPT_TABLE}").fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(f"SELECT COUNT(*) FROM {PUBLICATION_TABLE}").fetchone()[
+                0
+            ]
+            == 0
+        )
 
         column_names = {name.casefold() for name in _receipt_columns(connection)}
-        forbidden_fragments = ("body", "content", "file", "path", "secret", "token", "credential")
+        forbidden_fragments = (
+            "body",
+            "content",
+            "file",
+            "path",
+            "secret",
+            "token",
+            "credential",
+        )
         assert not {
             name
             for name in column_names
@@ -336,9 +358,12 @@ def test_real_v59_reopen_adds_publication_intents_without_rewriting_receipts(
     migrated = CharactersRAGDB(path, client_id="publication-v60-migrate")
     try:
         connection = migrated.get_connection()
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
         assert _schema_version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert _receipt_schema(connection) == receipt_schema
         assert PUBLICATION_TABLE in _table_names(connection)
@@ -360,12 +385,13 @@ def test_real_v59_reopen_adds_publication_intents_without_rewriting_receipts(
             "ORDER BY note_id, entity_version, intent_id",
             ("server-a", "dataset-a"),
         ).fetchall()
-        assert any(
-            f"USING INDEX {PUBLICATION_INDEX}" in str(row[3]) for row in plan
+        assert any(f"USING INDEX {PUBLICATION_INDEX}" in str(row[3]) for row in plan)
+        assert (
+            connection.execute(f"SELECT COUNT(*) FROM {PUBLICATION_TABLE}").fetchone()[
+                0
+            ]
+            == 0
         )
-        assert connection.execute(
-            f"SELECT COUNT(*) FROM {PUBLICATION_TABLE}"
-        ).fetchone()[0] == 0
         receipt = connection.execute(
             f"SELECT receipt_id, note_id FROM {RECEIPT_TABLE}"
         ).fetchone()
@@ -413,9 +439,10 @@ def test_v60_migration_failure_rolls_back_publication_state_and_version(
         assert _schema_version(connection) == 59
         assert PUBLICATION_TABLE not in _table_names(connection)
         assert PUBLICATION_INDEX not in _index_names(connection)
-        assert connection.execute(
-            f"SELECT COUNT(*) FROM {RECEIPT_TABLE}"
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(f"SELECT COUNT(*) FROM {RECEIPT_TABLE}").fetchone()[0]
+            == 1
+        )
 
 
 def test_current_schema_reopen_repairs_missing_organization_sync_ids(
@@ -474,17 +501,21 @@ def test_current_schema_reopen_restores_link_lookup_indexes_and_query_plans(
     reopened = CharactersRAGDB(path, client_id="receipt-v59-index-open")
     try:
         connection = reopened.get_connection()
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
         assert LINK_LOOKUP_INDEXES <= _index_names(connection)
 
         traced: list[str] = []
         connection.set_trace_callback(traced.append)
         try:
-            assert reopened.get_library_note_text(
-                note_id, start=0, max_chars=20
-            ) is not None
+            assert (
+                reopened.get_library_note_text(note_id, start=0, max_chars=20)
+                is not None
+            )
         finally:
             connection.set_trace_callback(None)
         lookups = [
@@ -515,9 +546,12 @@ def test_receipt_constraints_enforce_one_unresolved_state_per_note() -> None:
         first_note_id = str(db.add_note("First", "Body"))
         second_note_id = str(db.add_note("Second", "Body"))
 
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
         plan = connection.execute(
             "EXPLAIN QUERY PLAN SELECT receipt_id "
             "FROM note_organization_receipts WHERE note_id = ?",

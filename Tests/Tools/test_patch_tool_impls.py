@@ -399,7 +399,9 @@ def test_gnu_u0_diff_applies_byte_exact(tmp_path):
     (ws / "b/f.txt").write_text(new)
     proc = subprocess.run(
         [diff_bin, "-U0", "a/f.txt", "b/f.txt"],
-        cwd=ws, capture_output=True, text=True,
+        cwd=ws,
+        capture_output=True,
+        text=True,
     )
     assert proc.returncode == 1  # files differ; diff(1) exits 1
     assert "@@ -2,0 +3" in proc.stdout  # pure insertion hunk (`,1` optional)
@@ -417,7 +419,10 @@ def test_gnu_u0_diff_applies_byte_exact(tmp_path):
         # target file explicitly; the hunks (what we cross-check) are the same.
         subprocess.run(
             [patch_bin, "-s", "f.txt"],
-            cwd=ws / "ref", input=proc.stdout, text=True, check=True,
+            cwd=ws / "ref",
+            input=proc.stdout,
+            text=True,
+            check=True,
         )
         assert (ws / "ref/f.txt").read_bytes() == ours
 
@@ -427,7 +432,11 @@ def test_gnu_u0_diff_applies_byte_exact(tmp_path):
 
 def _git(repo, *args, **kwargs):
     return subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, **kwargs,
+        ["git", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        **kwargs,
     )
 
 
@@ -440,8 +449,19 @@ def test_real_git_diff_multi_file_applies(tmp_path):
     (repo / "one.txt").write_text("alpha\nbeta\ngamma\n")
     (repo / "two.txt").write_text("red\ngreen\nblue\n")
     _git(repo, "add", "-A", check=True)
-    _git(repo, "-c", "user.email=t@t", "-c", "user.name=t",
-         "-c", "commit.gpgsign=false", "commit", "-qm", "init", check=True)
+    _git(
+        repo,
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-qm",
+        "init",
+        check=True,
+    )
     (repo / "one.txt").write_text("alpha\nBETA\ngamma\n")
     (repo / "two.txt").write_text("red\ngreen\nblue\nviolet\n")
     (repo / "added.txt").write_text("brand\nnew\n")

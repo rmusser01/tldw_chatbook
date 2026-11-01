@@ -28,6 +28,8 @@ import asyncio
 import pytest
 from textual.widgets import Static
 
+from Tests.private_profile import private_profile_test
+
 from Tests.UI.test_console_fleet_panel import (
     _real_fleet_recovery_database,
     _AGENT_SECTION_SIZE,
@@ -197,7 +199,8 @@ async def test_survivor_elapsed_advances_with_no_other_interaction():
 
 
 @pytest.mark.asyncio
-async def test_survivor_tick_observes_new_published_usage_without_a_new_timer():
+@private_profile_test
+async def test_survivor_tick_observes_new_published_usage_without_a_new_timer(request):
     """The owned one-second survivor clock must advance a child's published scalar."""
     import time as _time
 
@@ -213,7 +216,7 @@ async def test_survivor_tick_observes_new_published_usage_without_a_new_timer():
         section = console.query_one(
             "#console-agent-section-subagents", ConsoleInspectorSection
         )
-        assert section.rows[0].secondary_text == "long job · ~3 local output tok"
+        assert section.rows[0].secondary_text == "Target unavailable · long job · ~3 local output tok"
 
         console._start_console_transcript_sync_timer()
         await pilot.pause(0.5)
@@ -223,7 +226,7 @@ async def test_survivor_tick_observes_new_published_usage_without_a_new_timer():
         await pilot.pause(1.5)
 
         assert console._fleet._console_fleet_survivor_timer is timer
-        assert section.rows[0].secondary_text == "long job · ~11 local output tok"
+        assert section.rows[0].secondary_text == "Target unavailable · long job · ~11 local output tok"
 
 
 @pytest.mark.asyncio

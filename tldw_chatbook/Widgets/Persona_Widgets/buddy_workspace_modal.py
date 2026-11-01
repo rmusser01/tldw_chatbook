@@ -56,6 +56,11 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
         self._refreshing = False
         self._loaded = False
         self._fresh = False
+        # TASK-35028: the two 1 Hz poll writes that sit BEFORE the
+        # `entries == self._entries` gate; each compares its own last-written
+        # copy so an unchanged tick repaints neither height:auto row.
+        self._last_inbox_title: str | None = None
+        self._last_inbox_error: str | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="buddy-inbox"):
@@ -111,8 +116,15 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
             if not self.is_mounted:
                 return
             self._fresh = True
-            self.query_one("#buddy-inbox-title", Static).update(f"Buddy · {title}")
-            self.query_one("#buddy-inbox-error", Static).update("")
+            # TASK-35028: these two writes used to fire every poll, before
+            # the entries gate below; gate each on its own last-written copy.
+            title_copy = f"Buddy · {title}"
+            if title_copy != self._last_inbox_title:
+                self._last_inbox_title = title_copy
+                self.query_one("#buddy-inbox-title", Static).update(title_copy)
+            if self._last_inbox_error != "":
+                self._last_inbox_error = ""
+                self.query_one("#buddy-inbox-error", Static).update("")
             if entries == self._entries and self._loaded:
                 self._sync_actions()
                 return
@@ -154,7 +166,11 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
                     if isinstance(exc, ValueError)
                     else "Could not refresh the inbox. Retry by reopening it."
                 )
-                self.query_one("#buddy-inbox-error", Static).update(message)
+                # TASK-35028: a persistent snapshot failure re-raises every
+                # tick; only repaint when the message actually changed.
+                if message != self._last_inbox_error:
+                    self._last_inbox_error = message
+                    self.query_one("#buddy-inbox-error", Static).update(message)
                 self.query_one("#buddy-inbox-open", Button).disabled = True
                 self.query_one("#buddy-inbox-seen", Button).disabled = True
         finally:
@@ -212,6 +228,7 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
                 if isinstance(exc, ValueError)
                 else "Could not mark the result seen. Retry.",
                 severity="warning",
+                markup=False,  # TASK-34400: exception text is not ours
             )
         if self.is_mounted:
             await self.refresh_inbox()

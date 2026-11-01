@@ -142,3 +142,104 @@ async def test_failed_refresh_blocks_enter_highlight_and_acknowledgement_until_r
         await modal.refresh_inbox()
         await pilot.press("enter")
         assert opened == [entry()]
+
+
+# --- TASK-35028: the two pre-gate poll writes are equality-gated --------------
+
+
+def _spy_updates(widget):
+    """Wrap ``widget.update`` so each call is recorded."""
+    calls = []
+    original_update = widget.update
+
+    def counting_update(*args, **kwargs):
+        calls.append(args)
+        return original_update(*args, **kwargs)
+
+    widget.update = counting_update
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_healthy_poll_repaints_title_and_error_only_on_change():
+    """The 1 s self-poll rewrote 'Buddy · <title>' and '' every tick before
+    the entries gate (TASK-34991); TASK-35028 gates each on its own copy."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Widgets.Persona_Widgets.buddy_workspace_modal import (
+        BuddyWorkspaceModal,
+    )
+
+    title_holder = ["Research workspace"]
+
+    async def snapshot():
+        return title_holder[0], ()
+
+    app = App()
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = BuddyWorkspaceModal(
+            snapshot=snapshot, open_entry=lambda e: None, acknowledge=lambda e: None
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        title = modal.query_one("#buddy-inbox-title", Static)
+        error = modal.query_one("#buddy-inbox-error", Static)
+        title_calls = _spy_updates(title)
+        error_calls = _spy_updates(error)
+        # The mount's own refresh already painted both rows and consumed the
+        # gates; reset them so the baseline here is a real first paint.
+        modal._last_inbox_title = None
+        modal._last_inbox_error = None
+        await modal.refresh_inbox()
+        await pilot.pause()
+        assert len(title_calls) == 1 and len(error_calls) == 1
+        painted_once_title, painted_once_error = len(title_calls), len(error_calls)
+        await modal.refresh_inbox()
+        await modal.refresh_inbox()
+        assert len(title_calls) == painted_once_title, (
+            "unchanged title copy must not repaint"
+        )
+        assert len(error_calls) == painted_once_error, (
+            "unchanged (empty) error line must not repaint"
+        )
+        title_holder[0] = "Renamed workspace"
+        await modal.refresh_inbox()
+        await pilot.pause()
+        assert len(title_calls) == painted_once_title + 1
+        assert "Buddy · Renamed workspace" in str(title.renderable)
+
+
+@pytest.mark.asyncio
+async def test_persistent_snapshot_failure_rewrites_the_error_only_once():
+    """A failing snapshot re-raises every tick; the error arm is gated too."""
+    from textual.widgets import Static
+
+    from tldw_chatbook.Widgets.Persona_Widgets.buddy_workspace_modal import (
+        BuddyWorkspaceModal,
+    )
+
+    class Boom(ValueError):
+        pass
+
+    async def snapshot():
+        raise Boom("storage is gone")
+
+    app = App()
+    async with app.run_test(size=(100, 40)) as pilot:
+        modal = BuddyWorkspaceModal(
+            snapshot=snapshot, open_entry=lambda e: None, acknowledge=lambda e: None
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        error = modal.query_one("#buddy-inbox-error", Static)
+        error_calls = _spy_updates(error)
+        # The mount's own refresh already wrote the failure and consumed the
+        # gate; reset it so the baseline here is a real first paint.
+        modal._last_inbox_error = None
+        await modal.refresh_inbox()
+        await pilot.pause()
+        assert len(error_calls) == 1
+        await modal.refresh_inbox()
+        await modal.refresh_inbox()
+        assert len(error_calls) == 1, "the same failure message must not repaint"
+        assert "storage is gone" in str(error.renderable)

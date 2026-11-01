@@ -122,7 +122,9 @@ class LabScreen(BaseAppScreen):
         ("Enter", "Go"),
     )
 
-    def __init__(self, app_instance: "TldwCli", screen_name: str, **kwargs: Any) -> None:
+    def __init__(
+        self, app_instance: "TldwCli", screen_name: str, **kwargs: Any
+    ) -> None:
         """Create a Lab screen.
 
         Args:
@@ -132,9 +134,7 @@ class LabScreen(BaseAppScreen):
             kwargs: Forwarded to ``BaseAppScreen``.
         """
         super().__init__(app_instance, screen_name, **kwargs)
-        self.rail_layout: LabRailLayout = load_rail_layout(
-            self.LAB_FIRST_RUN_RAILS
-        )
+        self.rail_layout: LabRailLayout = load_rail_layout(self.LAB_FIRST_RUN_RAILS)
         #: Ids this screen has already warned about missing, so a 2-second
         #: refresh timer logs a stale/unknown chip or row once rather than
         #: forever.
@@ -469,9 +469,9 @@ class LabScreen(BaseAppScreen):
         header_state = self.lab_header_state()
         if header_state != self._last_header_state:
             try:
-                self.query_one(
-                    "#lab-destination-header", DestinationHeader
-                ).sync_state(header_state)
+                self.query_one("#lab-destination-header", DestinationHeader).sync_state(
+                    header_state
+                )
             except QueryError:
                 self._warn_once(
                     "header",

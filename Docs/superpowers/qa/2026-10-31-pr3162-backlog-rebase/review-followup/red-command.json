@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "pytest",
+    "-q",
+    "--junitxml=Docs\\superpowers\\qa\\2026-10-31-pr3162-backlog-rebase\\review-followup\\red.xml",
+    "Tests/Chat/test_archive_recovery_coordinator.py::test_runtime_retry_retains_pending_and_completed_outcomes_after_page_eviction",
+    "Tests/UI/test_console_archive_recovery_cards.py::test_receipt_only_retires_its_own_mounted_confirmation"
+  ],
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\review-red-cabc35c52c",
+  "outer_timeout_seconds": 180
+}

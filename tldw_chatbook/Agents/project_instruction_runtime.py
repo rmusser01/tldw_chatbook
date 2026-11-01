@@ -164,7 +164,7 @@ def build_project_instruction_deferral_rows(
         {
             "role": "tool",
             "tool_call_id": call.call_id,
-            "name": call.name,
+            **({"name": call.name} if not call.call_id else {}),
             "content": _DEFERRAL_TEXT,
         }
         for call in calls
@@ -383,9 +383,8 @@ class InstructionActivationLedger:
         self, prepared: InstructionPromotionSnapshot
     ) -> PromotionSnapshotRevalidation:
         """Recompute and compare every authority-bearing snapshot field."""
-        if (
-            isinstance(self._snapshot.binding_root, RemoteRoot)
-            or isinstance(prepared.binding_root, RemoteRoot)
+        if isinstance(self._snapshot.binding_root, RemoteRoot) or isinstance(
+            prepared.binding_root, RemoteRoot
         ):
             # Remote promotion is never created (see snapshot_promotion_target)
             # and always revalidates ineligible — before any path work on
@@ -491,9 +490,7 @@ class InstructionActivationLedger:
                     if target.path is None:
                         continue
                     path = target.path.absolute()
-                    call_targets.add(
-                        path.parent if target.kind == "exact" else path
-                    )
+                    call_targets.add(path.parent if target.kind == "exact" else path)
             except Exception:  # noqa: BLE001 - untrusted provider mapping boundary
                 outside = True
                 continue

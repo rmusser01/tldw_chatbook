@@ -9,7 +9,10 @@ duplicating the fixture or importing across test modules.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
+import pytest_asyncio
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 
@@ -17,6 +20,35 @@ from Tests.console_provider_doubles import (
     persisted_console_store,
     provider_resolution,
 )
+
+
+@pytest_asyncio.fixture
+async def owned_console_databases():
+    """Retire explicitly registered test owners after supported shutdown.
+
+    Yields:
+        Registration for an exact database and its optional controller.
+    """
+    owners = []
+
+    def register(database, controller=None):
+        owners.append((database, controller))
+
+    try:
+        yield register
+    finally:
+        errors = []
+        for database, controller in reversed(owners):
+            try:
+                if controller is not None:
+                    await asyncio.wait_for(controller.shutdown(), 5)
+                with database.quiesce_connections(timeout_seconds=5):
+                    pass
+                assert database.registered_connection_count() == 0
+            except BaseException as error:  # noqa: BLE001 - retain undrained owners
+                errors.append(error)
+        if errors:
+            raise BaseExceptionGroup("Console test-owner retirement failed", errors)
 
 
 class StreamingGateway:

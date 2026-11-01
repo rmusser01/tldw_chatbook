@@ -1,0 +1,10 @@
+{
+  "read_at_utc": "2026-10-04T23:28:27.614468+00:00",
+  "remote_head": "b1efc37ae8f481c1df01e2f253d5878ba68e35a4",
+  "latest_dev": "a78a9a900b4901e33c031f830dd2d80224d5147d",
+  "state": "open",
+  "auto_merge": null,
+  "human_dirty_status_sha256": "3facdb7db9cbe0a89bb9e51433a2c7626aa8800933a8ed7403a24c08c1062568",
+  "human_dirty_status_entries": 269,
+  "no_human_checkout_write": true
+}

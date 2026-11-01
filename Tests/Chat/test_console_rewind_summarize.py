@@ -844,6 +844,7 @@ async def test_controller_dispatch_projects_repository_memory_without_leaks(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_range_projection_is_shared_by_preflight_and_next_send_preview(
     tmp_path,
@@ -905,6 +906,7 @@ async def test_range_projection_is_shared_by_preflight_and_next_send_preview(
     assert "q4 preview" in preview_text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_preview_duplicates_complete_system_and_memory_dispatch_block(
     tmp_path,
@@ -954,6 +956,7 @@ async def test_preview_duplicates_complete_system_and_memory_dispatch_block(
     assert prepared.system_message.count("RANGE-MEMORY") == 1
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_effective_legacy_memory_makes_automatic_and_compact_now_zero_call(
     tmp_path,

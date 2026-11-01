@@ -169,8 +169,10 @@ def test_invalid_arguments_fail_before_permission_or_launch(
         runtime=runtime,
         console_session_id="console-session",
         initial_directory=lambda: tmp_path,
-        resolve_state=lambda hub: permission_reads.append(hub.name)
-        or EffectiveToolState(state="allow", origin="tool_override"),
+        resolve_state=lambda hub: (
+            permission_reads.append(hub.name)
+            or EffectiveToolState(state="allow", origin="tool_override")
+        ),
         local_tools_enabled=lambda: True,
         kill_switch=lambda: False,
     )
@@ -192,8 +194,10 @@ def test_missing_initial_directory_fails_before_permission_or_launch(
         runtime=runtime,
         console_session_id="console-session",
         initial_directory=lambda: tmp_path,
-        resolve_state=lambda hub: permission_reads.append(hub.name)
-        or EffectiveToolState(state="ask", origin="global_default"),
+        resolve_state=lambda hub: (
+            permission_reads.append(hub.name)
+            or EffectiveToolState(state="ask", origin="global_default")
+        ),
         local_tools_enabled=lambda: True,
         kill_switch=lambda: False,
     )
@@ -264,9 +268,7 @@ def test_console_raw_shell_resolution_captures_the_exact_named_profile(
     state = provider._resolve_state(provider.hub_tool())
 
     assert state.state == "allow"
-    assert service.calls == [
-        (RAW_SHELL_SERVER_KEY, RAW_SHELL_TOOL_NAME, "research")
-    ]
+    assert service.calls == [(RAW_SHELL_SERVER_KEY, RAW_SHELL_TOOL_NAME, "research")]
 
 
 @pytest.mark.parametrize(

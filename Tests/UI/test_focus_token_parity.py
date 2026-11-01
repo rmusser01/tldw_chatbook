@@ -12,6 +12,7 @@ These tests pin the RESOLVED colour on the real CSS stack -- a class-toggle
 assertion cannot catch this failure mode (the class always toggled; the
 colour was what silently diverged).
 """
+
 from pathlib import Path
 
 import pytest

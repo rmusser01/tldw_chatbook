@@ -46,7 +46,9 @@ def test_character_display_sanitizer_bounds_before_projecting() -> None:
 
 
 @pytest.mark.parametrize("max_characters", [-1, True, 1.5, "4"])
-def test_character_display_sanitizer_rejects_invalid_maximum(max_characters: object) -> None:
+def test_character_display_sanitizer_rejects_invalid_maximum(
+    max_characters: object,
+) -> None:
     with pytest.raises((TypeError, ValueError)):
         sanitize_character_display_text("text", max_characters=max_characters)  # type: ignore[arg-type]
 
@@ -86,7 +88,9 @@ def test_character_display_sanitizer_never_calls_custom_string_conversion() -> N
     assert calls == []
 
 
-def test_character_display_label_collapses_multiline_whitespace_without_merging_words() -> None:
+def test_character_display_label_collapses_multiline_whitespace_without_merging_words() -> (
+    None
+):
     raw = "  Captain\n\tRowan\u2003of  the Guard  "
 
     assert sanitize_character_display_label(raw, max_characters=100) == (
@@ -94,7 +98,9 @@ def test_character_display_label_collapses_multiline_whitespace_without_merging_
     )
 
 
-def test_character_display_items_are_bounded_and_do_not_consume_custom_iterables() -> None:
+def test_character_display_items_are_bounded_and_do_not_consume_custom_iterables() -> (
+    None
+):
     calls: list[str] = []
 
     class DangerousIterable:
@@ -166,7 +172,9 @@ def test_wcwidth_is_declared_in_both_runtime_dependency_lists() -> None:
     project = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
     requirements = {
         line.strip()
-        for line in (repo_root / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        for line in (repo_root / "requirements.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
 
@@ -208,9 +216,7 @@ async def test_ccp_read_only_display_sanitizes_without_changing_source_data() ->
         handler.current_character_data = source
 
         handler._update_field("#ccp-card-name-display", source["name"])
-        handler._update_textarea(
-            "#ccp-card-description-display", source["description"]
-        )
+        handler._update_textarea("#ccp-card-description-display", source["description"])
         await pilot.pause()
 
         assert str(app.query_one("#ccp-card-name-display", Static).renderable) == "N?me"
@@ -313,7 +319,9 @@ class _CCPFallbackDisplayApp(App[None]):
 
 
 @pytest.mark.asyncio
-async def test_ccp_fallback_display_handles_malformed_collection_shapes_without_mutation() -> None:
+async def test_ccp_fallback_display_handles_malformed_collection_shapes_without_mutation() -> (
+    None
+):
     calls: list[str] = []
 
     class DangerousIterable:
@@ -338,10 +346,13 @@ async def test_ccp_fallback_display_handles_malformed_collection_shapes_without_
         await pilot.pause()
 
         assert str(app.query_one("#ccp-card-tags-display", Static).renderable) == "solo"
-        assert str(app.query_one("#ccp-card-keywords-display", Static).renderable) == "7"
-        assert app.query_one(
-            "#ccp-card-alternate-greetings-display", TextArea
-        ).text == "<dict>"
+        assert (
+            str(app.query_one("#ccp-card-keywords-display", Static).renderable) == "7"
+        )
+        assert (
+            app.query_one("#ccp-card-alternate-greetings-display", TextArea).text
+            == "<dict>"
+        )
 
         handler.current_character_data = source_with_iterable
         handler._display_character_card()

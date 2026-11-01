@@ -1,0 +1,74 @@
+exec(open('/private/tmp/pr2995-task16-runner.py').read().split('mode=sys.argv[1]')[0])
+import copy,difflib
+E=P/'task-16-fixture-fix-safe-evidence';E.mkdir(exist_ok=True)
+BASE='b084d720e98e4c2a7aaaf17ab5c8386c84495aa9'
+PROPOSAL=json.loads((P/'task-16-safe-evidence/proposed-exact-reader-bootstrap-marker.json').read_text())
+OWNED=[r['path'] for r in PROPOSAL['rows']]
+NODES=['Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer','Tests/UI/test_personas_workbench.py::TestPreviewIntegration::test_open_in_console_stages_preview_transcript']
+def initial_manifest_verify():
+ m=json.loads((P/'task-16-safe-evidence-manifest-before-fixture-fix.json').read_text());actual={}
+ for rel,pin in m['files'].items():
+  path=P/rel
+  if rel=='task-16-report.md':path=P/'task-16-report-before-fixture-fix.md'
+  b=path.read_bytes();row={'sha256':sha(b),'bytes':len(b)};assert row==pin,rel;actual[str(path.relative_to(P))]=row
+ for name in ['task-16-safe-evidence-manifest-before-fixture-fix.json','task-16-report-before-fixture-fix.md','task-16-brief-before-fixture-fix.md']:
+  b=(P/name).read_bytes();actual[name]={'sha256':sha(b),'bytes':len(b)}
+ return actual
+mode=sys.argv[1]
+if mode=='prepare':
+ assert git('rev-parse','HEAD').decode().strip()==BASE and not git('status','--porcelain')
+ assert (P/'task-16-report.md').read_bytes()==(P/'task-16-report-before-fixture-fix.md').read_bytes()
+ rows={}
+ for p in git('ls-files','-z').decode().split('\0'):
+  if p and (WT/p).is_file():b=(WT/p).read_bytes();rows[p]={'sha256':sha(b),'bytes':len(b)}
+ for r in PROPOSAL['rows']:assert rows[r['path']]['sha256']==r['current_sha256']
+ save('before-tracked',{'HEAD':BASE,'files':rows});save('before-private-carry',{'files':private_carry()});save('before-initial-task16-carry',{'files':initial_manifest_verify()})
+ r=capture('pin-fixture-fix-recovery',['git','update-ref','refs/recovery/pr2995-task16-fixture-fix-b084d720',BASE]);assert not r.returncode
+ print('Extension prepared',len(rows),'tracked files')
+elif mode=='apply':
+ for r in PROPOSAL['rows']:
+  p=WT/r['path'];old=p.read_text();assert sha(old.encode())==r['current_sha256'];indent='    ' if r['path'].endswith('test_personas_workbench.py') else ''
+  needle=indent+'async def '+r['function']+'(';assert old.count(needle)==1
+  new=old.replace(needle,indent+'@pytest.mark.bootstrap_profile\n'+needle,1);assert sha(new.encode())==r['proposed_sha256'];p.write_text(new)
+ capture('exact-two-marker-patch',['git','diff','--',*OWNED],hashpaths=OWNED)
+elif mode=='verify':
+ baseline=json.loads((E/'before-tracked.json').read_text())['files'];files={};errors=[]
+ for p,pin in baseline.items():
+  b=(WT/p).read_bytes();actual={'sha256':sha(b),'bytes':len(b)};files[p]=actual
+  expected=next((r['proposed_sha256'] for r in PROPOSAL['rows'] if r['path']==p),pin['sha256'])
+  if actual['sha256']!=expected:errors.append(p)
+ assert not errors,errors
+ pri=private_carry();assert pri==json.loads((E/'before-private-carry.json').read_text())['files'];ini=initial_manifest_verify();assert ini==json.loads((E/'before-initial-task16-carry.json').read_text())['files']
+ for r in S['source_exceptions']:assert files[r['path']]['sha256']==r['expected_after_sha256']
+ for r in S['protected_feature_sources']:
+  if r['path'] not in OWNED:assert files[r['path']]['sha256']==r['expected_sha256']
+ reversed_rows=[];fmt=[]
+ for r in PROPOSAL['rows']:
+  p=r['path'];current=(WT/p).read_text();prior=git('show',BASE+':'+p).decode();indent='    ' if p.endswith('test_personas_workbench.py') else '';insertion=indent+'@pytest.mark.bootstrap_profile\n'+indent+'async def '+r['function']+'('
+  assert current.count(insertion)==1
+  reverse=current.replace(insertion,indent+'async def '+r['function']+'(',1);assert reverse==prior
+  bt=ast.parse(prior);at=ast.parse(current);anode=next(n for n in ast.walk(at) if isinstance(n,ast.AsyncFunctionDef) and n.name==r['function']);assert ast.unparse(anode.decorator_list.pop())=='pytest.mark.bootstrap_profile';assert ast.dump(at,include_attributes=False)==ast.dump(bt,include_attributes=False)
+  bnode=next(n for n in ast.walk(bt) if isinstance(n,ast.AsyncFunctionDef) and n.name==r['function']);bodysha=sha(ast.dump(ast.Module(body=bnode.body,type_ignores=[]),include_attributes=False).encode());assert bodysha==r['body_AST_sha256']
+  reversed_rows.append({'path':p,'function':r['function'],'before_sha256':sha(prior.encode()),'after_sha256':sha(current.encode()),'reverse_exact_entire_owner':True,'whole_owner_AST_reverse_exact':True,'body_AST_sha256':bodysha,'all_original_signatures_decorators_bodies_assertions_waits_imports_unrelated_definitions_preserved':True})
+  def formatted(text):return subprocess.run([PYTHON,'-m','ruff','format','--stdin-filename',p,'-'],input=text.encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True).stdout.decode()
+  pf=formatted(prior);cf=formatted(current);expectedpf=pf.replace(indent+'async def '+r['function']+'(',indent+'@pytest.mark.bootstrap_profile\n'+indent+'async def '+r['function']+'(',1);assert cf==expectedpf
+  units=lambda text,f:sum(max(i2-i1,j2-j1) for tag,i1,i2,j1,j2 in difflib.SequenceMatcher(a=text.splitlines(),b=f.splitlines(),autojunk=False).get_opcodes() if tag!='equal')
+  assert units(prior,pf)==units(current,cf)==r['actual_formatter_debt_units']
+  fmt.append({'path':p,'before_debt_units':units(prior,pf),'after_debt_units':units(current,cf),'entire_formatter_output_changes_only_selected_added_marker':True,'added_hunk_format_preserved':True,'no_owner_reflow':True})
+ save('source-AST-body-marker-reversal',{'rows':reversed_rows,'no_production_or_shared_fixture_changes':True})
+ save('added-hunk-format-and-inherited-debt',{'rows':fmt,'only_two_marker_hunks_formatted':True})
+ save('source-QA-private-snapshots-ZIP-limits-carry',{'HEAD':git('rev-parse','HEAD').decode().strip(),'metadata_BASE':BASE,'files':files,'unowned_tracked_paths_exact':len(files)-2,'incoming49_hashes_exact':True,'protected_feature_sources':{'unchanged':132,'marker_overrides_in_full_tracked_union':OWNED},'prior_Task14_15_R1_private_pins':len(pri),'initial140_artifact_manifest_and_snapshots_verified':len(ini),'QA1983_exact_unchanged':True,'ZIP_original2118_entries_exact':json.loads((P/'task-16-safe-evidence/before-original-zip.json').read_text()),'limits_and_named_AST_import_runtime_carry_exact':'initial Task16 maps preserved and no production/limit/import changes','passing_source_phase_receipts_preserved':{'source':'749e7540affab2b543f472fcf6fae6bff34d8122','runtime':23,'CI':24,'ratchet':8,'payload':1},'no56_61_27_35_replay':True})
+ print('Full extension carry and AST/body reversal verified',len(files)-2,'unowned paths')
+elif mode=='test':
+ paths=sorted(set(OWNED)|set(r['path'] for r in S['protected_feature_sources'])|set(r['path'] for r in S['source_exceptions'] if r['path'].endswith('.py'))|{'Tests/conftest.py','Tests/UI/conftest.py','Tests/console_provider_doubles.py','Tests/UI/consolidated_css.py'})
+ argv=[PYTHON,'-m','pytest','-q','-p','no:randomly','--basetemp=/private/tmp/pr2995-task16/fixture-fix-two-nodes',*NODES,'--junitxml='+str(E/'two-reader-nodes.xml')]
+ r=capture('two-reader-nodes',argv,{'PYTHONPATH':str(WT)},paths)
+ root=ET.parse(E/'two-reader-nodes.xml').getroot();cases=[]
+ for c in root.iter('testcase'):
+  outcome=next((n.tag for n in c if n.tag in ['failure','error','skipped']),'passed');cases.append({'classname':c.get('classname'),'name':c.get('name'),'time':c.get('time'),'outcome':outcome})
+ save('two-reader-nodes-cases',{'actual_cases':len(cases),'outcomes':dict(collections.Counter(x['outcome'] for x in cases)),'cases':cases})
+ print('Actual extension cases',cases);sys.exit(r.returncode)
+elif mode=='static':
+ r=capture('fatal-ruff',[PYTHON,'-m','ruff','check','--select','E9,F63,F7,F82',*OWNED],hashpaths=OWNED);assert not r.returncode
+ capture('whole-owner-format-check',[PYTHON,'-m','ruff','format','--check','--diff',*OWNED],hashpaths=OWNED)
+ r=capture('whitespace',['git','diff','--check',BASE],hashpaths=OWNED);assert not r.returncode

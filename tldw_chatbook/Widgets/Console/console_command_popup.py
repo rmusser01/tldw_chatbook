@@ -155,9 +155,7 @@ class ConsoleCommandPopup(Widget):
         except Exception as exception:
             # Unexpected failure: keep the popup from crashing the screen,
             # but leave a diagnostic trail instead of swallowing it silently.
-            logger.warning(
-                f"ConsoleCommandPopup.reposition failed: {exception!r}"
-            )
+            logger.warning(f"ConsoleCommandPopup.reposition failed: {exception!r}")
             return
         anchor = composer.region
         # DS-09 (TASK-2154.15): anchor the bottom edge above the topmost

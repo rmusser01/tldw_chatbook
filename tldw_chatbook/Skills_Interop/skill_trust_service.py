@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import threading
+import time
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from functools import wraps
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
 
 _SKILL_FILENAME = "SKILL.md"
 _SCRIPT_GRANTS_FILENAME = "skill_script_grants.json"
+_CONVENIENCE_RETRY_SECONDS = 60.0
 
 
 def _now_iso() -> str:
@@ -204,6 +206,8 @@ class SkillTrustService:
         self.reduced_rollback_protection = reduced_rollback_protection
         self._keys: SkillTrustKeys | None = None
         self._salt: bytes | None = None
+        # Failed automatic attempts back off; explicit Retry remains immediate.
+        self._convenience_retry_not_before = 0.0
         self._reviews: dict[str, dict[str, Any]] = {}
         self._recovery_original_store = trust_store
         from .recovery_activation import select
@@ -220,6 +224,7 @@ class SkillTrustService:
             salt = self.trust_store.load_salt()
         self._keys = derive_skill_trust_keys(passphrase, salt=salt)
         self._salt = salt
+        self._convenience_retry_not_before = 0.0
 
     @content_call(_content_sources)
     def enable_keyring_convenience(self) -> None:
@@ -238,46 +243,40 @@ class SkillTrustService:
         self.keyring_convenience_enabled = True
 
     def _try_cached_unlock(self) -> None:
-        """Load cached trust keys if this session has none yet (task-624).
-
-        Enabling keyring convenience persists the derived keys precisely so the
-        passphrase need not be re-entered, but nothing consumed them: every
-        lockedness decision saw ``self._keys is None`` and reported "locked for
-        this session" while the keys sat unused in the keychain. Every such
-        decision point now calls this first.
-
-        Deliberately silent and non-raising: a missing, stale, or broken cache
-        simply leaves the session locked, so the existing Unlock path stays the
-        fallback.
-
-        NOT latched on failure. An earlier revision cached the negative result
-        to spare the keychain on every render, but a *transient* backend error
-        would then suppress every later attempt for the life of the process --
-        directly contradicting ``trust_posture()``'s contract that an
-        unavailable keyring is recoverable by Retry. A successful load needs no
-        latch anyway: it sets ``self._keys``, which short-circuits this method
-        thereafter, so the happy path still reads the keychain exactly once.
-        """
-        if self._keys is not None or self.key_cache is None:
-            # Already unlocked, or there is no cache to consult -- the only
-            # definitively hopeless case, and it costs nothing to re-check.
+        """Try automatic unlock, cooling down failures without blocking Retry."""
+        if (
+            self._keys is not None
+            or self.key_cache is None
+            or time.monotonic() < self._convenience_retry_not_before
+        ):
             return
         try:
             with _execution_scope(self) as allowed:
-                if allowed:
-                    self.unlock_from_keyring_convenience()
+                if not allowed or not self.trust_store.has_manifest():
+                    return
+                if self.unlock_from_keyring_convenience():
+                    return
         except Exception:  # noqa: BLE001 — an unusable cache is just "locked"
             logger.opt(exception=True).debug(
                 "Cached skill-trust key unlock failed; staying locked"
             )
+        # A blocked backend may take longer than the cooldown to return.
+        self._convenience_retry_not_before = (
+            time.monotonic() + _CONVENIENCE_RETRY_SECONDS
+        )
 
     @content_call(_content_sources)
     def unlock_from_keyring_convenience(self) -> bool:
         """Load derived trust keys from a salt-bound secure keyring cache."""
 
+        if self._keys is not None:
+            return True
         if self.key_cache is None or not self.trust_store.has_manifest():
             return False
         try:
+            invalidate = getattr(self.key_cache, "invalidate_cached_read", None)
+            if callable(invalidate):
+                invalidate()
             salt = self.trust_store.load_salt()
             keys = self.key_cache.load_keys(expected_salt=salt)
         except (OSError, ValueError, SkillTrustMarkerUnavailable):
@@ -287,6 +286,7 @@ class SkillTrustService:
         self._keys = keys
         self._salt = salt
         self.keyring_convenience_enabled = True
+        self._convenience_retry_not_before = 0.0
         return True
 
     @content_call(_content_sources)
@@ -348,6 +348,7 @@ class SkillTrustService:
         self._keys = None
         self._salt = None
         self.keyring_convenience_enabled = False
+        self._convenience_retry_not_before = 0.0
 
     def _safe_load_marker(self) -> tuple[dict[str, Any] | None, bool]:
         """Return (marker, available). available=False iff the marker store raised."""
@@ -357,6 +358,18 @@ class SkillTrustService:
             return None, False
         except Exception:
             return None, False
+
+    @content_call(_content_sources)
+    def retry_trust_posture(self) -> str:
+        """Refresh transient failures on explicit Retry, retaining recovery gates."""
+        with _execution_scope(self) as allowed:
+            if allowed:
+                self._convenience_retry_not_before = 0.0
+                for target in (self.key_cache, self.trust_store.marker_store):
+                    invalidate = getattr(target, "invalidate_cached_read", None)
+                    if callable(invalidate):
+                        invalidate()
+            return self.recovery_posture()
 
     @content_call(_content_sources)
     def recovery_posture(self) -> str:

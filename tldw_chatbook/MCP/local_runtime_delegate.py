@@ -7,6 +7,7 @@ from tldw_chatbook.config import get_chachanotes_db_lazy, get_media_db_lazy
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 
 from .activation import batch_guard, guarded, in_worker, request_guard
+from .hub_tool_catalog import DIRECT_RUNTIME_UNAVAILABLE_TOOLS
 from .server import MCP_AVAILABLE, describe_local_mcp_capabilities
 
 # Fix Round A (PR-T3 whole-branch review), Item 2. Task 6 (PR-T3) refused a
@@ -160,7 +161,7 @@ class LocalMCPRuntimeDelegate:
         "resources/read",
         "prompts/get",
     )
-    _UNAVAILABLE_DIRECT_TOOLS = {"chat_with_llm"}
+    _UNAVAILABLE_DIRECT_TOOLS = set(DIRECT_RUNTIME_UNAVAILABLE_TOOLS)
     #: Fix Round C (PR-T3 review), Item 1. `request()`'s `tools/call` branch
     #: below refuses unconditionally (`RAW_TOOL_CALL_REFUSED_MESSAGE`), but
     #: `tools/call` stayed listed as an ordinary, fully-supported entry in
@@ -406,9 +407,7 @@ class LocalMCPRuntimeDelegate:
             # and the service payload returns unchanged (structured errors
             # included -- they are data, not exceptions).
             service = self._get_library_service()
-            return await in_worker(
-                self, service.invoke, normalized_name, payload
-            )
+            return await in_worker(self, service.invoke, normalized_name, payload)
         handler = getattr(self, f"_tool_{normalized_name}", None)
         if handler is None:
             raise KeyError(f"Unsupported local MCP tool: {normalized_name}")

@@ -331,7 +331,9 @@ async def test_server_study_dashboard_observes_completed_source_pack_for_reuse()
             "job": {"id": 42, "status": "completed"},
             "study_pack": {
                 "id": 9,
-                "title": "Research Note Study Pack",
+                # #3057 review, fix round 6, finding 3: a bracketed title
+                # raised MarkupError in the generation worker (the app exited).
+                "title": "Arr [/] x",
                 "deck_id": 7,
                 "status": "active",
                 "deleted": False,
@@ -365,10 +367,9 @@ async def test_server_study_dashboard_observes_completed_source_pack_for_reuse()
         recent_decks = screen.query_one("#study-recent-decks", Static)
         resume_button = screen.query_one("#study-resume-last", Button)
 
-        assert "ready" in _static_text(status).lower()
-        assert "Research Note Study Pack" in _static_text(status)
+        assert _static_text(status).startswith("Study pack ready: Arr [/] x")
         assert "deck 7" in _static_text(status)
-        assert "Research Note Study Pack" in _static_text(recent_decks)
+        assert "Arr [/] x" in _static_text(recent_decks)
         assert resume_button.disabled is False
         assert "flashcards" in str(resume_button.label).lower()
 
@@ -389,7 +390,9 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
     service.study_pack_job_statuses = [
         {
             "job": {"id": 42, "status": "failed"},
-            "error": "<b>Embedding service unavailable</b> javascript: onerror=retry",
+            # "[/]" survives clean_material_text: the status Static and the
+            # error notify must both carry it literally (markup=False).
+            "error": "<b>Embedding service unavailable</b> [/] javascript: onerror=retry",
         }
     ]
     app = _build_test_app()
@@ -418,6 +421,7 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
 
         assert "failed" in _static_text(status).lower()
         assert "Embedding service unavailable" in _static_text(status)
+        assert "[/]" in _static_text(status)
         assert "<b>" not in _static_text(status)
         assert "javascript:" not in _static_text(status)
         assert "onerror=" not in _static_text(status)
@@ -435,6 +439,12 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
     assert all("<b>" not in message for message in error_notifications)
     assert all("javascript:" not in message for message in error_notifications)
     assert all("onerror=" not in message for message in error_notifications)
+    assert any("[/]" in message for message in error_notifications)
+    assert all(
+        call.kwargs.get("markup") is False
+        for call in notifications.call_args_list
+        if call.kwargs.get("severity") == "error"
+    )
 
 
 @pytest.mark.asyncio

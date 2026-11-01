@@ -50,9 +50,7 @@ def test_selection_result_rejects_duplicate_owner_ids() -> None:
 
 
 def test_selection_result_rejects_oversized_owner_identity() -> None:
-    ref = QualifiedWorkspaceRef(
-        WorkspaceDataSource.SERVER, "workspace-1", "profile-1"
-    )
+    ref = QualifiedWorkspaceRef(WorkspaceDataSource.SERVER, "workspace-1", "profile-1")
 
     with pytest.raises(ValueError, match="too long"):
         SourceSelectionResult(ref=ref, desired_source_ids=("x" * 1025,))
@@ -189,7 +187,9 @@ def test_unknown_capability_fails_closed_with_typed_exact_capability() -> None:
 
 
 @pytest.mark.parametrize("available", ["false", 0, 1, None])
-def test_research_capability_rejects_non_boolean_availability(available: object) -> None:
+def test_research_capability_rejects_non_boolean_availability(
+    available: object,
+) -> None:
     with pytest.raises(TypeError, match="available must be bool"):
         ResearchCapability(
             available=available,  # type: ignore[arg-type]

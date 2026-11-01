@@ -9,7 +9,9 @@ def test_semantic_offsets_match_source_slices():
         pytest.skip("scikit-learn not available for semantic chunking")
 
     text = "Alpha one.\n\nBeta two?  Gamma three!"
-    chunks = strategy.chunk_with_metadata(text, max_size=1, overlap=0, unit="characters")
+    chunks = strategy.chunk_with_metadata(
+        text, max_size=1, overlap=0, unit="characters"
+    )
 
     assert chunks, "Expected semantic chunking to return chunks"
     for chunk in chunks:

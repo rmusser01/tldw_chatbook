@@ -21,6 +21,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_MASTER_KEY,
     ToolGate,
     all_tool_gates,
+    tool_gate_effect_suffix,
 )
 from tldw_chatbook.MCP.readiness import (
     STATE_CSS_CLASSES,
@@ -214,14 +215,22 @@ _BUILTIN_CHECKBOX_KEYS: dict[str, str] = {
 _TOOL_GATE_ID_PREFIX = "mcp-gate-"
 
 
-def _tool_gate_label(title: str, enabled: bool) -> str:
+def _tool_gate_label(title: str, enabled: bool, effect_scope: str) -> str:
     """Render one gate Button's state-carrying label.
 
     Qodo #2600 #15: factored out of `_gate_button()` because the press
     handler repaints the SAME label optimistically -- two renderings of
     "on"/"off" would be two chances to drift.
+
+    task-35153: the label also carries the gate's effect scope as a suffix
+    ("Read file (next chat): on ▸"), read from the row's shared
+    `effect_scope` field -- the same field the first-run wizard renders,
+    so a gate can never promise "next chat" here and "restart" there.
     """
-    return f"{escape_markup(title)}: {'on' if enabled else 'off'} ▸"
+    return (
+        f"{escape_markup(title)}{tool_gate_effect_suffix(effect_scope)}: "
+        f"{'on' if enabled else 'off'} ▸"
+    )
 
 
 # task-3240 (spec §5) / task-32284: the adapted apply note -- NOT
@@ -1012,6 +1021,15 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         snapshot = self._detail_snapshot
         if snapshot is None or snapshot.source != "local":
             return []
+        if isinstance(snapshot.detail.get("plugin_owner"), dict):
+            return [
+                Button(
+                    "Manage in Plugins…",
+                    id="mcp-detail-edit",
+                    classes="console-action-secondary",
+                    compact=True,
+                )
+            ]
         if self._delete_armed:
             return [
                 Button(
@@ -1327,6 +1345,35 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if widgets:
             await container.mount_all(widgets)
 
+    @staticmethod
+    def mirror_saved_tool_gate(
+        app: Any, section: str, key: str, value: bool, *, saved: bool
+    ) -> None:
+        """After a gate write, keep the app's in-memory config in step.
+
+        TASK-34100.5.3 review round 1 (B-F5): the write reached config.toml
+        but not ``app.app_config``, which setup's Tools step prefills from,
+        so re-running setup in the same session showed a gate switched on
+        here as OFF while its Summary (persisted config) said ON. A write
+        that did not land changes nothing and says so, as before.
+
+        Args:
+            app: The running app (its ``app_config`` dict, when it has one).
+            section: The gate's config section (``tools``/``console``).
+            key: The gate key written.
+            value: The value written.
+            saved: Whether the write landed.
+        """
+        if not saved:
+            app.notify(f"Failed to save {key}.", severity="error", markup=False)
+            return
+        config = getattr(app, "app_config", None)
+        if isinstance(config, dict):
+            current = config.get(section)
+            if not isinstance(current, dict):
+                current = config[section] = {}
+            current[key] = value
+
     def _gate_button(self, gate: ToolGate, *, disabled: bool = False) -> Button:
         """Build one gate's toggle Button.
 
@@ -1356,7 +1403,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         is_master = (gate.section, gate.key) == ("console", LOCAL_TOOLS_MASTER_KEY)
         button_type = MCPLocalMasterButton if is_master else Button
         button = button_type(
-            _tool_gate_label(gate.title, gate.enabled),
+            _tool_gate_label(gate.title, gate.enabled, gate.effect_scope),
             id=f"{_TOOL_GATE_ID_PREFIX}{gate.key}",
             classes="console-action-secondary",
             compact=True,
@@ -1393,7 +1440,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
             self._tool_gates_by_id[button_id] = replace(gate, enabled=enabled)
             for button in self.query(f"#{button_id}"):
                 button.enabled, button.config_path = enabled, config_path
-                button.label = _tool_gate_label(gate.title, enabled)
+                button.label = _tool_gate_label(gate.title, enabled, gate.effect_scope)
         for status in self.query("#mcp-gate-local-master-status"):
             status.update(message)
             status.set_class(error, "ds-text-error")
@@ -1442,6 +1489,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         }
         builtin_gates = [gate for gate in gates if gate.group == "builtin"]
         local_gates = [gate for gate in gates if gate.group == "local"]
+        # TASK-34100.5.3: plain chat's light surface vs the full agent
+        # surface -- the switch that matters most, so it leads the pane.
+        agent_gates = [gate for gate in gates if gate.group == "agent"]
 
         widgets: list[Widget] = [
             Static(
@@ -1451,6 +1501,27 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 markup=False,
             ),
         ]
+        if agent_gates:
+            from tldw_chatbook.Agents.plain_chat_tool_surface import (
+                light_surface_note,
+                summarize_tool_surface,
+            )
+
+            # Review round 1 (F4/B-F3): the line is read off the switches
+            # this pane shows, so it names only the light tools that are on.
+            shown = {
+                section: {g.key: g.enabled for g in gates if g.section == section}
+                for section in ("tools", "console")
+            }
+            widgets.append(
+                Static(
+                    light_surface_note(summarize_tool_surface(shown)),
+                    id="mcp-gate-heading-agent",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+            widgets.extend(self._gate_button(gate) for gate in agent_gates)
         if builtin_gates:
             widgets.append(
                 Static(
@@ -1708,7 +1779,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 else (not gate.enabled, None)
             )
             self._tool_gates_by_id[button_id] = replace(gate, enabled=requested)
-            event.button.label = _tool_gate_label(gate.title, requested)
+            event.button.label = _tool_gate_label(
+                gate.title, requested, gate.effect_scope
+            )
             if is_master:
                 event.button.enabled = requested
             if is_master and self.submit_local_master is not None:

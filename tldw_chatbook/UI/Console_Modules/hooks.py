@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from types import MethodType
+from typing import TYPE_CHECKING, Any
 
 from textual.worker import NoActiveWorker, get_current_worker
 
@@ -22,10 +23,9 @@ if TYPE_CHECKING:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class HookReviewResult:
-    kind: Literal["ready", "cancel", "settings"]
-    snapshot: HookReviewSnapshot | None = None
+from tldw_chatbook.Chat.console_hook_review import (
+    HookReviewResult as HookReviewResult,  # noqa: PLC0414 - explicit compatibility or pytest-fixture re-export.
+)
 
 
 def same_captured_draft(
@@ -82,6 +82,19 @@ def in_worker_task() -> bool:
     return task is asyncio.current_task()
 
 
+@dataclass(slots=True)
+class _HookRefreshFlight:
+    generation: int
+    sequence: int
+    accessor: Callable[[], HookPermissions]
+    publisher: Callable[[HookReviewSnapshot], None]
+    owner: HookPermissions
+    reader: Callable[[], HookReviewSnapshot]
+    producer: asyncio.Task[HookReviewSnapshot]
+    published: bool = False
+    publication_error: BaseException | None = None
+
+
 class ConsoleHooksController:
     """Keep review cancellation separate from persistent explicit consent."""
 
@@ -99,6 +112,8 @@ class ConsoleHooksController:
         start_worker: (
             Callable[[Coroutine[Any, Any, ConsolePromptDispatchResult]], object] | None
         ) = None,
+        session_label: Callable[[str], str] | None = None,
+        on_send_settled: Callable[[], None] | None = None,
     ) -> None:
         """Wire the controller to its owners.
 
@@ -108,6 +123,8 @@ class ConsoleHooksController:
                 worker hands its review to it instead of awaiting the review
                 itself (TASK-33621.28). ``None`` keeps every review inline,
                 for callers that own their own task.
+            session_label: Names a chat for the "already in progress"
+                refusal when the busy Send is another tab's (TASK-33620.15.2).
         """
         self._permissions = hook_permissions_accessor
         self._review = request_review
@@ -116,9 +133,25 @@ class ConsoleHooksController:
         self._on_state = on_state
         self._notify = notify
         self._start_worker = start_worker
+        self._session_label = session_label
+        self._on_send_settled = on_send_settled
+        self._send_in_progress = False
+        self._refresh_deferred = False
+        self._refresh_sequence = 0
+        self._refresh_flight: _HookRefreshFlight | None = None
+        self._native_reads = set()
         self._generation = 0
         self._busy = False
+        #: The chat whose Send holds ``_busy``; ``None`` for a plain review.
+        self._busy_session: str | None = None
+        self._pending_send_identity: tuple[str, int] | None = None
         self.review_open = False
+
+    @property
+    def pending_send_identity(self) -> tuple[str, int] | None:
+        """Expose only this original Send generation to the stock runtime bridge."""
+        identity = self._pending_send_identity
+        return identity if identity and identity[1] == self._generation else None
 
     async def _request_review(self, snapshot, waiting):
         self.review_open = True
@@ -131,22 +164,168 @@ class ConsoleHooksController:
         """Invalidate a continuation synchronously before navigation/dismissal."""
         self._generation += 1
 
-    async def refresh(self) -> None:
-        generation = self._generation
+    @staticmethod
+    def _same_reader(current, captured) -> bool:
+        if isinstance(current, MethodType) and isinstance(captured, MethodType):
+            return (
+                current.__self__ is captured.__self__
+                and current.__func__ is captured.__func__
+            )
+        return current is captured
+
+
+    def _refresh_current(self, flight: _HookRefreshFlight) -> bool:
+        if (
+            self._generation != flight.generation
+            or self._refresh_sequence != flight.sequence
+            or self._permissions is not flight.accessor
+            or self._on_state is not flight.publisher
+        ):
+            return False
         try:
-            owner = self._permissions()
-        except RuntimeError:  # Runtime disposal may precede a queued UI refresh.
+            owner = flight.accessor()
+        except RuntimeError:  # The runtime may have been disposed meanwhile.
+            return False
+        return (
+            owner is flight.owner
+            and self._same_reader(owner.visit_snapshot, flight.reader)
+            and self._generation == flight.generation
+            and self._permissions is flight.accessor
+            and self._on_state is flight.publisher
+        )
+
+
+    async def refresh(self) -> None:
+        """Join one in-flight indicator read and retain its physical lifetime."""
+        while True:
+            if self._send_in_progress:
+                self._refresh_deferred = True
+                return
+            accessor, publisher = self._permissions, self._on_state
+            generation = self._generation
+            try:
+                owner = accessor()
+            except RuntimeError:  # Disposal can precede a queued UI refresh.
+                return
+            reader = owner.visit_snapshot
+            flight = self._refresh_flight
+            if flight is not None and flight.producer.done():
+                self._refresh_flight = None
+                flight = None
+            if flight is not None and not (
+                flight.generation == generation
+                and flight.accessor is accessor
+                and flight.publisher is publisher
+                and flight.owner is owner
+                and self._same_reader(reader, flight.reader)
+            ):
+                # A different owner waits for the actual old reader, then
+                # recaptures every source rather than retaining a stale waiter.
+                try:
+                    await self._owned_result(flight.producer, discard_source_error=True)
+                finally:
+                    if self._refresh_flight is flight and flight.producer.done():
+                        self._refresh_flight = None
+                continue
+            if flight is None:
+                self._refresh_sequence += 1
+                flight = _HookRefreshFlight(
+                    generation,
+                    self._refresh_sequence,
+                    accessor,
+                    publisher,
+                    owner,
+                    reader,
+                    asyncio.Task(self._read_native(reader), loop=asyncio.get_running_loop()),
+                )
+                self._refresh_flight = flight
+            try:
+                snapshot = await self._owned_result(flight.producer)
+                if flight.publication_error is not None:
+                    raise flight.publication_error
+                if not flight.published and self._refresh_current(flight):
+                    flight.published = True
+                    try:
+                        flight.publisher(snapshot)
+                    except BaseException as error:
+                        flight.publication_error = error
+                        raise
+                return
+            finally:
+                if self._refresh_flight is flight and flight.producer.done():
+                    self._refresh_flight = None
+
+
+    def _finish_send(self, session_id: str, generation: int) -> None:
+        if self._pending_send_identity != (session_id, generation):
             return
-        snapshot = await asyncio.to_thread(owner.snapshot)
-        if generation == self._generation:
-            self._on_state(snapshot)
+        self._pending_send_identity = None
+        self._send_in_progress = False
+        self._busy = False
+        if self._refresh_deferred:
+            self._refresh_deferred = False
+            if self._on_send_settled is not None:
+                try:
+                    self._on_send_settled()
+                except (Exception, asyncio.CancelledError):  # noqa: BLE001 - preserve caller cancellation precedence and the settled Send outcome.
+                    # Indicator scheduling cannot change an actual Send outcome.
+                    self._refresh_deferred = True
+
+
+    @staticmethod
+    async def _owned_result(producer, *, discard_source_error=False):
+        """Drain a shared native producer through repeated caller cancellation."""
+        cancelled = None
+        while not producer.done():
+            try:
+                await asyncio.shield(producer)
+            except asyncio.CancelledError as error:
+                task = asyncio.current_task()
+                if not (
+                    discard_source_error
+                    and producer.cancelled()
+                    and task is not None
+                    and task.cancelling() == 0
+                ):
+                    cancelled = error
+            except BaseException:
+                if cancelled is None and not discard_source_error:
+                    raise
+        if cancelled is not None:
+            # Consume any producer failure; caller cancellation takes precedence.
+            try:
+                producer.result()
+            except BaseException:  # noqa: BLE001, S110 - preserve caller cancellation precedence and the settled Send outcome.
+                pass
+            raise cancelled
+        try:
+            return producer.result()
+        except (Exception, asyncio.CancelledError):
+            if discard_source_error:
+                return None
+            raise
+
+
+    async def _read_native(self, reader):
+        """Retain the exact native Future even when every helper Task is cancelled."""
+        from tldw_chatbook.Chat.console_preparation_reads import run_preparation_read
+
+        return await run_preparation_read(
+            reader, creator=self, session_id=self._busy_session,
+            reads=self._native_reads, require_current=lambda: None,
+        )
+
+    async def _owned_snapshot(self, reader):
+        producer = asyncio.Task(self._read_native(reader), loop=asyncio.get_running_loop())
+        return await self._owned_result(producer)
+
 
     async def review_current(self) -> None:
         if self._busy:
             return
-        self._busy = True
+        self._busy, self._busy_session = True, None
         try:
-            snapshot = await asyncio.to_thread(self._permissions().snapshot)
+            snapshot = await self._owned_snapshot(self._permissions().snapshot)
             self._on_state(snapshot)
             await self._request_review(snapshot, False)
             await self.refresh()
@@ -163,26 +342,26 @@ class ConsoleHooksController:
     ) -> ConsolePromptDispatchResult:
         """Review hooks if the Send needs it, then run the captured dispatch.
 
-        Called anywhere but a worker's own task -- a Send button or Workbench
-        handler on the Console's pump, or Enter's ``app.call_later`` callback
-        on the APP pump -- a Send that needs review returns
-        ``AWAITING_REVIEW`` at once and its review-then-dispatch continuation
-        runs in a worker. That caller's pump must stay free: the app pump
-        delivers every key and click the review needs, so awaiting the review
-        there froze the whole app, Ctrl+Q included (TASK-33621.28). A worker
+        Called anywhere but a worker's own task -- the task Enter, Send and
+        the Workbench's send run in (TASK-33620.15), or a handler on a pump
+        -- a Send that needs review returns ``AWAITING_REVIEW`` at once and
+        its review-then-dispatch continuation runs in a worker. The app pump
+        must stay free: it delivers every key and click the review needs, so
+        awaiting the review there froze the whole app, Ctrl+Q included
+        (TASK-33621.28). A worker
         caller (spoken "send") awaits the whole continuation and gets its
         settled outcome. ``in_worker_task`` decides which, by task identity.
         """
         if self._busy:
-            return self._refused(
-                session_id, "Hook review or Send is already in progress."
-            )
-        self._busy = True
+            return self._refused(session_id, self._busy_copy(session_id))
+        self._busy, self._busy_session = True, session_id
         self._generation += 1
         generation = self._generation
+        self._pending_send_identity = (session_id, generation)
+        self._send_in_progress = True
         owns_busy = True
         try:
-            snapshot = await asyncio.to_thread(self._permissions().snapshot)
+            snapshot = await self._owned_snapshot(self._permissions().snapshot)
             self._on_state(snapshot)
             if (
                 not snapshot.ready
@@ -206,7 +385,7 @@ class ConsoleHooksController:
             )
         finally:
             if owns_busy:
-                self._busy = False
+                self._finish_send(session_id, generation)
 
     async def _continue_in_worker(
         self,
@@ -231,7 +410,7 @@ class ConsoleHooksController:
                 diagnostic.outcome = result.status.value
                 return result
         finally:
-            self._busy = False
+            self._finish_send(session_id, generation)
 
     async def _continue(
         self,
@@ -241,17 +420,22 @@ class ConsoleHooksController:
         stash: ConsoleDraftStash | None,
         dispatch: Callable[[], Awaitable[ConsolePromptDispatchResult]],
     ) -> ConsolePromptDispatchResult:
-        if not snapshot.ready:
+        reviewed = not snapshot.ready
+        if reviewed:
             result = await self._request_review(snapshot, True)
             if result.kind != "ready":
                 return self._refused(session_id, "Send cancelled; draft kept.")
-            snapshot = await asyncio.to_thread(self._permissions().snapshot)
+            snapshot = await self._owned_snapshot(self._permissions().snapshot)
             self._on_state(snapshot)
+        # The chat is always re-checked: the dispatcher reads the visible
+        # chat's send gate next. The draft only after a review: keys flow
+        # during the snapshot read, and text typed after the capture belongs
+        # to the next draft (TASK-340), not a reason to refuse this send.
         if (
             not snapshot.ready
             or generation != self._generation
             or self._session() != session_id
-            or not same_captured_draft(self._stash(), stash)
+            or (reviewed and not same_captured_draft(self._stash(), stash))
         ):
             return self._refused(
                 session_id, "Draft, chat or hooks changed; Send again."
@@ -259,6 +443,14 @@ class ConsoleHooksController:
         # The captured continuation is consumed before the normal dispatcher awaits.
         self._generation += 1
         return await dispatch()
+
+    def _busy_copy(self, session_id: str) -> str:
+        """The "already in progress" refusal, naming another tab's busy Send."""
+        busy = self._busy_session
+        if busy is None or busy == session_id or self._session_label is None:
+            return "Hook review or Send is already in progress."
+        label = self._session_label(busy)
+        return f"Hook review or Send is already in progress in “{label}”."
 
     def _refused(self, session_id: str, detail: str) -> ConsolePromptDispatchResult:
         self._notify(detail, "warning")

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 # Imports
 import json  # For MediaWiki streaming
-import math
 import ssl
 from pathlib import Path  # For utils.prepare_files_for_httpx
 from typing import (
@@ -14,7 +13,6 @@ from typing import (
     Any,
     List,
     AsyncGenerator,
-    NoReturn,
     Union,
     Literal,
 )
@@ -48,7 +46,7 @@ from .schemas import (
     ProcessXMLResponseItem,  # Add specific XML/MediaWiki later if needed
 )
 from .notes_workspace_schemas import (
-    MAX_WORKSPACE_SOURCE_ID_CHARS,
+    MAX_WORKSPACE_SOURCE_ID_CHARS as MAX_WORKSPACE_SOURCE_ID_CHARS,  # noqa: PLC0414 -- retain the original module export.
     MediaSearchRequest,
     NoteLinkCreate,
     NoteCreateRequest,
@@ -1059,11 +1057,16 @@ from .web_clipper_schemas import (
     WebClipperStatusResponse,
 )
 from .exceptions import (
+    _raise_api_error_from as _raise_api_error_from,  # noqa: PLC0414 -- retain the original module export.
     APIConnectionError,
     APIRequestError,
     APIResponseError,
-    AuthenticationError,
+    AuthenticationError as AuthenticationError,  # noqa: PLC0414 -- retain the original module export.
     PersonalContextBootstrapAttentionError,
+)
+from . import utils as _client_utils
+from .utils import (
+    _workspace_source_path_id as _workspace_source_path_id,  # noqa: PLC0414 -- retain the original module export.
 )
 from .utils import model_to_form_data, prepare_files_for_httpx, cleanup_file_objects
 #
@@ -1092,22 +1095,6 @@ class ChatQueueActivityResponse(BaseModel):
 _REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 
 
-def _workspace_source_path_id(value: Any, field_name: str) -> str:
-    """Validate and quote one opaque workspace/source path segment."""
-
-    if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be text")
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{field_name} must not be blank")
-    if (
-        len(normalized) > MAX_WORKSPACE_SOURCE_ID_CHARS
-        or len(normalized.encode("utf-8")) > 4096
-    ):
-        raise ValueError(f"{field_name} is too long")
-    return quote(normalized, safe="")
-
-
 def _reject_unsafe_endpoint(endpoint: str) -> str:
     """Route the assembled request path through the shared input boundary.
 
@@ -1132,80 +1119,6 @@ def _reject_unsafe_endpoint(endpoint: str) -> str:
         raise APIRequestError(str(exc)) from exc
 
 
-def _raise_api_error_from(error: httpx.HTTPStatusError) -> NoReturn:
-    """Translate a non-2xx response into this package's exception family.
-
-    One implementation for all five request primitives. There were five
-    hand-rolled copies and only ``_request``'s carried the structured
-    ``{"detail": {...}}`` branch, so a tldw_server refusal reached the user
-    as the raw httpx text on the other four -- the "schedules task 6
-    round 2, D9" regression, still live on both streaming paths. ``detail``
-    is handled in all three shapes the server sends: a pydantic validation
-    list, a string, or the structured refusal object.
-
-    The streaming primitives read the body before ``raise_for_status()``,
-    so ``response.json()`` works here; the ``except`` arm covers a non-JSON
-    body and an unread stream (``.text`` then raises ``ResponseNotRead``,
-    a ``RuntimeError``, not a ``ValueError``).
-
-    Args:
-        error: The ``httpx.HTTPStatusError`` from ``raise_for_status()``.
-
-    Raises:
-        AuthenticationError: On 401.
-        APIRequestError: On 422.
-        APIResponseError: On any other non-2xx status.
-    """
-    response = error.response
-    error_detail = str(error)
-    response_data: Any
-    try:
-        response_data = response.json()
-    except Exception:
-        try:
-            raw_text = response.text
-        except Exception:  # unread streaming response
-            raw_text = ""
-        response_data = {"raw_text": raw_text}
-    else:
-        detail = (
-            response_data.get("detail") if isinstance(response_data, dict) else None
-        )
-        if isinstance(detail, list) and detail:
-            first = detail[0] if isinstance(detail[0], dict) else {}
-            loc = ".".join(map(str, first.get("loc", [])))
-            error_detail = f"Validation Error: {first.get('msg', '')} for field '{loc}'"
-        elif isinstance(detail, str):
-            error_detail = detail
-        elif isinstance(detail, dict):
-            # Structured refusal: tldw_server returns `{"detail": {"code",
-            # "message", "details", "retryable"}}` for its deterministic
-            # 4xx refusals. Without this branch `error_detail` stayed the
-            # raw httpx text ("Client error '409 Conflict' for url ... For
-            # more information check: https://developer.mozilla.org/..."),
-            # so the server's own explanation was dropped on the floor and
-            # callers could only report a generic failure -- exactly what
-            # made a 409 `scheduled_task_definition_archived` surface to
-            # the user as "this action requires a server connection"
-            # (schedules task 6 round 2, D9). `message` is the human
-            # sentence, `code` the machine token; prefer the former, fall
-            # back to the latter, and only then to the raw text.
-            error_detail = str(
-                detail.get("message") or detail.get("code") or error_detail
-            )
-
-    status_code = response.status_code
-    if status_code == 401:
-        raise AuthenticationError(
-            f"Authentication failed: {error_detail}", response_data=response_data
-        )
-    if status_code == 422:  # Unprocessable Entity (pydantic validation error)
-        raise APIRequestError(
-            f"Validation Error: {error_detail}", response_data=response_data
-        )
-    raise APIResponseError(status_code, error_detail, response_data=response_data)
-
-
 class TLDWAPIClient:
     # Ceiling on how long a *connection* may take to establish.
     #
@@ -1224,37 +1137,7 @@ class TLDWAPIClient:
 
     @staticmethod
     def _validate_timeout(value: Any, field: str) -> float:
-        """Reject a nonsensical timeout at the boundary instead of at request time.
-
-        httpx validates none of this -- ``httpx.Timeout(300.0, connect=-5)``,
-        ``connect=nan`` and even ``connect="abc"`` are all accepted -- so an
-        invalid value would otherwise cross this public boundary and only
-        misbehave later, at the request, far from the call that caused it.
-        NaN is the sharp case: ``min(nan, cap)`` is ``nan``, which would
-        silently defeat the connect ceiling that keeps an unreachable host
-        from freezing the app.
-
-        Args:
-            value: The candidate timeout, in seconds.
-            field: Parameter name, used in the error message.
-
-        Returns:
-            The validated timeout as a float.
-
-        Raises:
-            TypeError: If ``value`` is not a real number.
-            ValueError: If ``value`` is not finite and positive.
-        """
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise TypeError(
-                f"{field} must be a number of seconds, got {type(value).__name__}"
-            )
-        value = float(value)
-        if not math.isfinite(value) or value <= 0:
-            raise ValueError(
-                f"{field} must be a finite, positive number of seconds, got {value!r}"
-            )
-        return value
+        return _client_utils._validate_timeout(value, field)
 
     def __init__(
         self,
@@ -2644,9 +2527,7 @@ class TLDWAPIClient:
             "DELETE", f"/api/v1/workspaces/{workspace_id}/notes/{note_id}"
         )
 
-    async def list_workspace_sources(
-        self, workspace_id: str
-    ) -> list[Dict[str, Any]]:
+    async def list_workspace_sources(self, workspace_id: str) -> list[Dict[str, Any]]:
         workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
         response = await self._request(
             "GET", f"/api/v1/workspaces/{workspace_path}/sources"
@@ -2688,9 +2569,7 @@ class TLDWAPIClient:
         )
         return WorkspaceSourceResponse.model_validate(response).model_dump(mode="json")
 
-    async def delete_workspace_source(
-        self, workspace_id: str, source_id: str
-    ) -> Any:
+    async def delete_workspace_source(self, workspace_id: str, source_id: str) -> Any:
         workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
         source_path = _workspace_source_path_id(source_id, "source_id")
         response = await self._request(
@@ -2724,9 +2603,7 @@ class TLDWAPIClient:
             mode="json"
         )
 
-    async def get_workspace_source_status(
-        self, workspace_id: str
-    ) -> Dict[str, Any]:
+    async def get_workspace_source_status(self, workspace_id: str) -> Dict[str, Any]:
         workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
         response = await self._request(
             "GET", f"/api/v1/workspaces/{workspace_path}/sources/status"
@@ -2735,9 +2612,7 @@ class TLDWAPIClient:
             mode="json"
         )
 
-    async def get_workspace_capabilities(
-        self, workspace_id: str
-    ) -> Dict[str, Any]:
+    async def get_workspace_capabilities(self, workspace_id: str) -> Dict[str, Any]:
         workspace_path = _workspace_source_path_id(workspace_id, "workspace_id")
         response = await self._request(
             "GET", f"/api/v1/workspaces/{workspace_path}/capabilities"
@@ -2832,27 +2707,13 @@ class TLDWAPIClient:
         )
         return ServerMediaListResponse.model_validate(response)
 
-
-
-
-
-
     async def get_media_transcription_models(self) -> MediaTranscriptionModelsResponse:
         response = await self._request("GET", "/api/v1/media/transcription-models")
         return MediaTranscriptionModelsResponse.model_validate(response)
 
-
-
     async def trash_media_item(self, media_id: int) -> Dict[str, Any]:
         response = await self._request("DELETE", f"/api/v1/media/{media_id}")
         return {"deleted": True, **response}
-
-
-
-
-
-
-
 
     async def list_media_keywords(
         self, *, query: str | None = None, limit: int = 100
@@ -6296,7 +6157,6 @@ class TLDWAPIClient:
         )
         return [IngestionSourceItemResponse.model_validate(item) for item in response]
 
-
     async def trigger_ingestion_source_sync(
         self, source_id: int
     ) -> IngestionSourceSyncTriggerResponse:
@@ -8143,9 +8003,7 @@ class TLDWAPIClient:
         Returns:
             The parsed capabilities response.
         """
-        response = await self._request(
-            "GET", "/api/v1/scheduled-tasks/capabilities"
-        )
+        response = await self._request("GET", "/api/v1/scheduled-tasks/capabilities")
         return ScheduledTaskAutomationCapabilities.model_validate(response)
 
     async def list_scheduled_task_automation_definitions(
@@ -10031,8 +9889,6 @@ class TLDWAPIClient:
             params={"expected_version": expected_version},
         )
 
-
-
     async def create_flashcard(
         self,
         request_data: FlashcardCreateRequest,
@@ -10056,7 +9912,6 @@ class TLDWAPIClient:
             ],
         )
         return FlashcardListResponse.model_validate(response)
-
 
     async def update_flashcard(
         self,
@@ -10082,11 +9937,6 @@ class TLDWAPIClient:
             ],
         )
         return FlashcardBulkUpdateResponse.model_validate(response)
-
-
-
-
-
 
     async def import_flashcards_tsv(
         self,
@@ -10167,7 +10017,6 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-
     async def get_flashcard_study_assistant_context(
         self,
         card_uuid: str,
@@ -10189,13 +10038,6 @@ class TLDWAPIClient:
             json_data=request_data.model_dump(exclude_none=True, mode="json"),
         )
         return StudyAssistantRespondResponse.model_validate(response)
-
-
-
-
-
-
-
 
     async def delete_flashcard(
         self,
@@ -11904,7 +11746,6 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-
     async def process_email(
         self, request_data: ProcessEmailRequest, file_paths: Optional[List[str]] = None
     ) -> BatchMediaProcessResponse:
@@ -12198,9 +12039,6 @@ class TLDWAPIClient:
         )
         return PromptResponse.model_validate(response)
 
-
-
-
     async def update_prompt(
         self, prompt_identifier: Union[str, int], request_data: PromptCreateRequest
     ) -> Dict[str, Any]:
@@ -12351,10 +12189,6 @@ class TLDWAPIClient:
         self, prompt_identifier: Union[str, int]
     ) -> Dict[str, Any]:
         return await self._request("POST", f"/api/v1/prompts/{prompt_identifier}/use")
-
-
-
-
 
     async def call_server_characters_endpoint(
         self,
@@ -13057,11 +12891,39 @@ class TLDWAPIClient:
         page: int = 1,
         size: int = 50,
         order: Literal["asc", "desc"] = "asc",
-    ) -> Dict[str, Any]:
+        scope_type: Literal["global", "workspace"] | None = None,
+        workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Export lorebook diagnostics for a conversation.
+
+        Args:
+            chat_id: Conversation ID.
+            page: Page number, starting at one.
+            size: Number of diagnostic turns per page.
+            order: Ascending or descending turn order.
+            scope_type: Global or workspace scope. If omitted, a supplied
+                workspace_id infers workspace scope; with neither, no scope
+                parameters are sent, preserving the server's global default.
+            workspace_id: Required for workspace scope; ignored for global scope.
+
+        Returns:
+            The server's diagnostics and pagination response dictionary.
+
+        Raises:
+            ValidationError: Scope is invalid or workspace scope has no ID.
+            APIResponseError: The server returns an unsuccessful response.
+            APIConnectionError: The request cannot connect to the server.
+        """
+        scope_params = self._normalize_conversation_scope_params(
+            scope_type=scope_type, workspace_id=workspace_id
+        )
+        params: dict[str, Any] = {"page": page, "size": size, "order": order}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
         return await self._request(
             "GET",
             f"/api/v1/chats/{chat_id}/diagnostics/lorebook",
-            params={"page": page, "size": size, "order": order},
+            params=params,
         )
 
     async def list_chat_conversations(
@@ -13181,8 +13043,6 @@ class TLDWAPIClient:
             "GET", f"/api/v1/chat/conversations/{conversation_id}/tree", params=params
         )
 
-
-
     @staticmethod
     def _chat_knowledge_save_request(
         request_data: ChatKnowledgeSaveRequest | Dict[str, Any],
@@ -13198,8 +13058,6 @@ class TLDWAPIClient:
         if isinstance(request_data, ConversationShareLinkCreateRequest):
             return request_data
         return ConversationShareLinkCreateRequest(**dict(request_data))
-
-
 
     async def create_chat_conversation_share_link(
         self,
@@ -13274,12 +13132,6 @@ class TLDWAPIClient:
             params={"limit": limit},
         )
         return SharedConversationResolveResponse.model_validate(response)
-
-
-
-
-
-
 
     async def list_chat_dictionaries(
         self,
@@ -13482,7 +13334,6 @@ class TLDWAPIClient:
         return await self._request(
             "GET", f"/api/v1/chat/dictionaries/{dictionary_id}/statistics"
         )
-
 
     async def get_chat_conversation_messages_with_context(
         self,
@@ -13895,8 +13746,6 @@ class TLDWAPIClient:
         finally:
             cleanup_file_objects(httpx_files)
 
-
-
     async def get_chatbook_export_job(self, job_id: str) -> ChatbookExportJobResponse:
         response = await self._request(
             "GET",
@@ -13904,15 +13753,11 @@ class TLDWAPIClient:
         )
         return ChatbookExportJobResponse.model_validate(response)
 
-
     async def get_chatbook_import_job(self, job_id: str) -> Dict[str, Any]:
         return await self._request(
             "GET",
             f"/api/v1/chatbooks/import/jobs/{job_id}",
         )
-
-
-
 
     async def cleanup_chatbook_exports(self) -> ChatbookCleanupResponse:
         response = await self._request(
@@ -13938,7 +13783,6 @@ class TLDWAPIClient:
             f"/api/v1/chatbooks/download/{job_id}",
             params=params or None,
         )
-
 
     async def list_chatbook_export_jobs(
         self, *, limit: int = 100, offset: int = 0
@@ -16534,8 +16378,10 @@ class TLDWAPIClient:
             if exc.status_code != 409:
                 raise
             try:
-                error_response = SyncPersonalContextBootstrapErrorResponse.model_validate(
-                    exc.response_data
+                error_response = (
+                    SyncPersonalContextBootstrapErrorResponse.model_validate(
+                        exc.response_data
+                    )
                 )
             except ValidationError:
                 raise exc from None

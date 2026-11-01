@@ -261,7 +261,9 @@ async def test_idle_stop_button_has_no_unreachable_tooltip(request):
             can_save_chatbook=False,
             send_blocked=True,
         )
-        await pilot.pause(0.1)
+
+        # This synchronous widget projection does not start a runtime run.
+        # A later app refresh correctly restores the real idle state.
 
         assert stop_button.styles.display == "block"
         assert stop_button.tooltip == "Stop this tab's run."
@@ -312,7 +314,7 @@ async def test_enter_hotkey_queues_draft_behind_accepted_run(request):
 
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
-        _select_llamacpp_console(console)
+        await _select_llamacpp_console(console)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         send_button = composer.query_one("#console-send-message", Button)
         reason = composer.query_one("#console-send-disabled-reason", Static)

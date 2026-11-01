@@ -4,6 +4,9 @@ import asyncio
 
 import pytest
 
+# Wake admission reads the guarded collection-time config participant.
+pytestmark = pytest.mark.bootstrap_profile
+
 from Tests.Chat.test_console_fleet_wake import (
     _controller_rig,
     _drain,
@@ -11,6 +14,8 @@ from Tests.Chat.test_console_fleet_wake import (
     _survivor,
     _terminal_subagent_run,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.fixture

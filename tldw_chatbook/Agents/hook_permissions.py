@@ -5,12 +5,14 @@ from __future__ import annotations
 import copy
 import fnmatch
 import json
+import os
 import re
 import threading
+import time
 from collections import Counter
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -30,13 +32,24 @@ from tldw_chatbook.Agents.run_hooks import (
     inspect_hooks_config,
 )
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.private_paths import (
     PrivateFileWritePrecondition,
+    _lock_stream_for_callbacks,
     atomic_private_write_text,
     create_private_text,
     open_private_binary,
+    open_private_lock_stream,
     open_private_text_append_stream,
 )
+
+_LOCK_STREAM_SELECTOR_BINDING = (
+    _lock_stream_for_callbacks,
+    _lock_stream_for_callbacks.__code__,
+    _lock_stream_for_callbacks.__globals__,
+    tuple(cell.cell_contents for cell in _lock_stream_for_callbacks.__closure__),
+)
+
 
 _STORE_MAX_BYTES = 4 * 1024 * 1024
 _FINGERPRINT = re.compile(r"[0-9a-f]{64}")
@@ -75,9 +88,80 @@ class HookReviewSnapshot:
         return sum(row.state in {"pending", "invalid", "recovery"} for row in self.rows)
 
 
+@dataclass(frozen=True, slots=True, eq=False)
+class HookAuthorityRead:
+    """One full reconciled read, kept only by the Send attempt that made it.
+
+    ADR-230 decision 3: one attempt's pre-commit preparation consumers share
+    one immutable authority observation instead of each repeating the config
+    write lock, config read, store lock and raw admission. The owner never
+    stores or reuses this object; the attempt passes it explicitly to its own
+    later consumers, which re-validate it in memory
+    (``attempt_read_current``) and fall back to their fresh read on any
+    mismatch. It authorizes no effect: every hook launch still enters
+    ``launch_guard`` (a fresh read) immediately before process creation, and
+    the final pre-dispatch admission stays a fresh read.
+
+    It only ever answers "nothing to do": admission that it does not refuse,
+    and hook selections (legacy targets, v2 grants) that are empty. Anything
+    that would select, build or refuse from it is decided by a fresh read,
+    because a consent change made by another process after this read is
+    invisible in memory -- a target selected from it could reach its launch
+    guard stale and be refused (blocking the Send) where a fresh selection
+    would have omitted it.
+
+    Attributes:
+        owner: The exact consent owner that performed the read.
+        snapshot: The review state the read reconciled and published.
+        targets: The grant targets published together with ``snapshot``, or
+            ``None`` when another read published in between (unusable).
+        config_identity: ``config.current_config_identity()`` taken before
+            the read, or ``None`` when it could not be observed (unusable).
+    """
+
+    owner: HookPermissions = field(repr=False)
+    snapshot: HookReviewSnapshot = field(repr=False)
+    targets: tuple[HookTarget, ...] | None = field(repr=False)
+    config_identity: tuple[int, str] | None = field(repr=False)
+
+
 def default_hook_permissions_path() -> Path:
     """Resolve the live canonical profile directory, never a startup constant."""
     return Path(config.get_user_data_dir()) / "hook_permissions.json"
+
+
+#: A visit snapshot is kept only once both hook files' last change is this
+#: old (storage_admission's _EVIDENCE_SETTLE_NS): a same-size edit inside one
+#: coarse timestamp tick leaves an identical stamp.
+_VISIT_SETTLE_NS = 1_000_000_000
+
+
+def _file_stamp(path: Path) -> tuple[int, int, int, int, int, int] | None:
+    """A file's type, identity, size and change times, without following links.
+
+    Args:
+        path: The file to observe.
+
+    Returns:
+        ``(st_mode, st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)`` of the
+        entry itself (so a symlink swapped in is a different stamp), or
+        ``None`` when it is absent.
+
+    Raises:
+        OSError: The file could not be observed for another reason.
+    """
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    return (
+        info.st_mode,
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
 
 
 def _empty_state() -> dict:
@@ -140,34 +224,65 @@ class HookPermissions:
         self._closed = threading.Event()
         self._published: HookReviewSnapshot | None = None
         self._published_targets: tuple[HookTarget, ...] = ()
+        #: TASK-33642: ``(snapshot, stamp)`` a Console visit may reuse.
+        self._visit_reuse: tuple[HookReviewSnapshot, tuple] | None = None
 
-    @contextmanager
-    def _store_lock(self, path: Path) -> Iterator[None]:
-        from tldw_chatbook.Backup_Recovery import raw_participants
+    def _bind_store_lock(definition):
+        """Capture the original optional selector before caller-marker lookup."""
+        @contextmanager
+        def _store_lock(self, path: Path) -> Iterator[None]:
+            from tldw_chatbook.Backup_Recovery import raw_participants
 
-        # Retain config's lease and writer locks while independently admitting
-        # this concrete store; config helpers keep their original narrow scope.
-        with raw_participants._scope(
-            self, "hook_permissions", writing=True, selected_read=path
-        ):
-            lock_path = path.with_name(path.name + ".lock")
-            try:
-                create_private_text(
-                    lock_path, "", application_owned_directory=path.parent
-                )
-            except FileExistsError:
-                pass
-            stream = open_private_text_append_stream(
-                lock_path, application_owned_directory=path.parent
-            )
-            try:
-                portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
+            # Retain config's lease and writer locks while independently admitting
+            # this concrete store; config helpers keep their original narrow scope.
+            with raw_participants._scope(
+                self, "hook_permissions", writing=True, selected_read=path
+            ):
+                lock_path = path.with_name(path.name + ".lock")
+                lock_opener = None
+                binding = globals().get("_LOCK_STREAM_SELECTOR_BINDING")
+                if binding is definition:
+                    selector, selector_code, selector_globals, selector_closure = definition
+                    if (
+                        globals().get("_lock_stream_for_callbacks") is selector
+                        and selector.__code__ is selector_code
+                        and selector.__globals__ is selector_globals
+                        and selector.__defaults__ is None
+                        and selector.__kwdefaults__ is None
+                        and selector.__closure__ is not None
+                        and len(selector.__closure__) == len(selector_closure)
+                        and all(cell.cell_contents is value for cell, value in zip(selector.__closure__, selector_closure, strict=True))
+                    ):
+                        lock_opener = selector(
+                            create_private_text, open_private_text_append_stream, open_private_lock_stream, globals()
+                        )
+                if lock_opener is None:
+                    try:
+                        create_private_text(
+                            lock_path, "", application_owned_directory=path.parent
+                        )
+                    except FileExistsError:
+                        pass
+                    stream = open_private_text_append_stream(
+                        lock_path, application_owned_directory=path.parent
+                    )
+                else:
+                    stream = lock_opener(
+                        lock_path, application_owned_directory=path.parent
+                    )
                 try:
-                    yield
+                    portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE)
+                    try:
+                        yield
+                    finally:
+                        portalocker.unlock(stream)
                 finally:
-                    portalocker.unlock(stream)
-            finally:
-                stream.close()
+                    stream.close()
+
+        return _store_lock
+
+    _store_lock = _bind_store_lock(_LOCK_STREAM_SELECTOR_BINDING)
+    del _bind_store_lock
 
     def _read_state(
         self, path: Path
@@ -391,6 +506,10 @@ class HookPermissions:
                 path = cfg.profile_data_dir / "hook_permissions.json"
                 # Raw admission also checks this exact selected_read against the
                 # bound cache; a throttled previous profile must never supply grants.
+                # Not derivable from ``cfg``: ``profile_data_dir`` comes from the
+                # raw file read under this lock, while this follows the runtime's
+                # cached selection (and its posture checks). Comparing the two
+                # IS the selection check, so the second lookup stays.
                 if default_hook_permissions_path() != path:
                     raise RecoveryRequired("raw_source_selection_changed")
                 stack.enter_context(self._store_lock(path))
@@ -412,6 +531,133 @@ class HookPermissions:
                     state = None
                     error = "Hook permission state could not be saved; retry."
             yield self._make_snapshot(cfg, path, state, error), state, precondition
+
+    def _visit_stamp(self, config_path: Path, store_path: Path) -> tuple:
+        """Everything a visit snapshot depends on, read without opening a file.
+
+        Args:
+            config_path: The config file holding the hook section.
+            store_path: The hook permission store.
+
+        Returns:
+            First, both files' type, identity and change times taken
+            without following links (``None`` for a missing file); the
+            config selection (the effective config path as well as the
+            loaded source), generation and the environment that selects the
+            data root; the no-follow posture of both lock files and of every
+            component of both parent directories (the full read refuses an
+            unsafe one); the storage admission epoch and the serving state of
+            its native holds; and last, the in-memory sealing, refresh and
+            closed state the snapshot also reflects (``_memory_state()``).
+            Admission records other processes keep on disk are not mirrored:
+            no authority derives from a visit snapshot, and Send and review
+            always run the full read.
+        """
+        from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission
+
+        with self._cache_lock:
+            memory = self._memory_state()
+        with storage_admission._lock:
+            holds = tuple(
+                sorted(
+                    (str(key), storage_admission._hold_serving(hold))
+                    for key, hold in storage_admission._holds.items()
+                )
+            )
+        chain, posture = storage_admission._chain, storage_admission._posture
+        return (
+            (_file_stamp(config_path), _file_stamp(store_path)),
+            str(config.get_cli_config_path()),
+            config._CONFIG_CACHE_SOURCE,
+            config._CONFIG_GENERATION,
+            # The data root (and so the store) follows HOME and the XDG
+            # variables as well as config; a retarget forces a full read.
+            os.environ.copy(),
+            posture(config_path.with_name(config_path.name + ".lock")),
+            posture(store_path.with_name(store_path.name + ".lock")),
+            tuple(posture(part) for part in chain(config_path.parent)),
+            tuple(posture(part) for part in chain(store_path.parent)),
+            bootstrap._admission_epoch,
+            holds,
+            memory,
+        )
+
+    def _memory_state(self) -> tuple:
+        """Sealing, refresh and closed state; the caller holds ``_cache_lock``."""
+        return (
+            frozenset(self._sealed),
+            frozenset(self._refresh_pending),
+            self._closed.is_set(),
+        )
+
+    def visit_snapshot(self) -> HookReviewSnapshot:
+        """``snapshot()`` for a Console visit, reused while nothing it read moved.
+
+        TASK-33642: every Console visit re-read the hook section and the
+        permission store under their locks. A snapshot is reused only when
+        stamps taken before and after the read that produced it are equal and
+        still equal now, so a write at any time -- including during that read
+        -- forces a full read on the next visit. It is kept only once both
+        files' last change is ``_VISIT_SETTLE_NS`` old, so a same-size write
+        inside one timestamp tick cannot hide behind an equal stamp. Sending
+        and reviewing keep using ``snapshot()``.
+
+        Returns:
+            The current review state.
+        """
+        from tldw_chatbook.Backup_Recovery import storage_admission
+
+        with self._cache_lock:
+            reusable = self._visit_reuse
+            published = self._published
+        # A maintenance pause refuses the full read; show what it reports.
+        paused = storage_admission._pause is not None
+        if reusable is not None and reusable[0] is published and not paused:
+            try:
+                stamp = self._visit_stamp(
+                    published.config.config_path, published.store_path
+                )
+            except OSError:
+                stamp = None
+            if stamp is not None and stamp == reusable[1]:
+                # Re-read under the lock sealing takes: a hook sealed while
+                # the probes ran is never served as approved.
+                with self._cache_lock:
+                    if (
+                        self._visit_reuse is reusable
+                        and self._memory_state() == stamp[-1]
+                    ):
+                        return published
+        try:
+            # Validated as locked_hooks_config_snapshot validates it, before any
+            # metadata probe touches the environment-selected path.
+            selected = validate_path_simple(
+                config.get_cli_config_path(),
+                require_exists=False,
+                probe_existing=False,
+                reject_shell_metacharacters=False,
+            )
+            before = self._visit_stamp(selected, default_hook_permissions_path())
+        except (OSError, ValueError, RecoveryRequired):
+            before = None
+        snapshot = self.snapshot()
+        try:
+            after = self._visit_stamp(snapshot.config.config_path, snapshot.store_path)
+        except OSError:
+            after = None
+        settled = time.time_ns() - _VISIT_SETTLE_NS
+        keep = (
+            after is not None
+            and after == before
+            and all(
+                stamp is None or max(stamp[4], stamp[5]) <= settled
+                for stamp in after[0]
+            )
+            and not any(row.state == "recovery" for row in snapshot.rows)
+        )
+        with self._cache_lock:
+            self._visit_reuse = (snapshot, after) if keep else None
+        return snapshot
 
     def snapshot(self) -> HookReviewSnapshot:
         """Reconcile the current saved section and return review state."""
@@ -440,6 +686,147 @@ class HookPermissions:
                 None,
                 "Hook configuration or permission state unavailable; retry.",
             )
+
+    def authority_read(self) -> HookAuthorityRead:
+        """``snapshot()`` plus the exact grant targets published with it.
+
+        One Send attempt's first full read (ADR-230 decision 3). It runs the
+        unchanged ``snapshot()`` -- the same reconciliation, locks, errors and
+        review state -- and additionally keeps the targets ``_make_snapshot``
+        published atomically with that snapshot. When another read published
+        in between, the targets are unknown and the result is unusable for
+        sharing; the caller still gets the snapshot it read.
+
+        Returns:
+            The attempt-bound read; never stored by this owner.
+        """
+        try:
+            # Taken before the read: any later reload or retarget, including
+            # one racing the read itself, makes the result unusable.
+            identity = config.current_config_identity()
+        except Exception:  # noqa: BLE001 -- unobservable identity only disables sharing
+            identity = None
+        snapshot = self.snapshot()
+        with self._cache_lock:
+            targets = self._published_targets if self._published is snapshot else None
+        return HookAuthorityRead(self, snapshot, targets, identity)
+
+    def attempt_read_current(self, read: HookAuthorityRead) -> bool:
+        """Whether an attempt's earlier full read still stands for that attempt.
+
+        In memory only (no I/O, no lock wait beyond ``_cache_lock``). A read is
+        usable only when it was ready, error-free and read this owner's store,
+        and nothing this process has since observed or done moved it: the
+        latest published read must have the same config file, section stamp,
+        profile and store revision; no runtime refresh may be pending; no
+        definition of that scope may be sealed by an in-flight decision; the
+        owner must be open; and the effective config must be the same
+        generation and file. Any mismatch returns False and the consumer
+        performs its own fresh read. This is a narrowing check, never a grant:
+        a change only another process has made is invisible here, which is
+        why a standing read still answers only "nothing to do"
+        (``attempt_targets``, ``attempt_v2_configuration``) and why the final
+        admission and every launch's ``launch_guard`` read fresh.
+
+        Args:
+            read: A read this owner produced for the asking attempt.
+
+        Returns:
+            Whether the attempt may use ``read`` instead of a fresh read.
+        """
+        if type(read) is not HookAuthorityRead or read.owner is not self:
+            return False
+        snapshot = read.snapshot
+        try:
+            identity_current = (
+                read.config_identity is not None
+                and config.current_config_identity() == read.config_identity
+            )
+        except Exception:  # noqa: BLE001 -- unknown currency falls back to a fresh read
+            return False
+        if (
+            not identity_current
+            or read.targets is None
+            or not snapshot.ready
+            or snapshot.store_revision == ("", 0)
+            or any(row.state == "recovery" for row in snapshot.rows)
+        ):
+            return False
+        scope = (str(snapshot.store_path), str(snapshot.config.config_path))
+        with self._cache_lock:
+            published = self._published
+            return (
+                not self._closed.is_set()
+                and published is not None
+                and published.config.config_path == snapshot.config.config_path
+                and published.config.section_stamp == snapshot.config.section_stamp
+                and published.config.profile_data_dir
+                == snapshot.config.profile_data_dir
+                and published.store_path == snapshot.store_path
+                and published.store_revision == snapshot.store_revision
+                and scope not in self._refresh_pending
+                and not any(sealed[:2] == scope for sealed in self._sealed)
+            )
+
+    def attempt_v2_configuration(
+        self, read: HookAuthorityRead
+    ) -> tuple[HookReviewSnapshot, tuple[()]] | None:
+        """``v2_configuration()``'s answer from the attempt's read, if it is "none".
+
+        Like ``attempt_targets``, an earlier read may only answer that there is
+        nothing to authorize. A v2 grant captured from it could be stale --
+        another process may have disabled, removed or revoked the handler since
+        -- and an engine built around it would have that handler refused by its
+        fresh authority check (blocking the Send when the handler is required)
+        where a fresh read would simply not configure it. So any read that
+        grants a v2 handler is left to the fresh ``v2_configuration()``.
+
+        Args:
+            read: The asking attempt's earlier full read.
+
+        Returns:
+            The read's review state with its (empty) v2 grant selection, or
+            ``None`` when the read no longer stands (``attempt_read_current``)
+            or grants any v2 handler, and a fresh read is required.
+        """
+        if not self.attempt_read_current(read) or any(
+            not isinstance(target.spec, HookSpec) for target in read.targets
+        ):
+            return None
+        return read.snapshot, ()
+
+    def attempt_targets(
+        self, read: HookAuthorityRead, event: str, tool_name: str | None
+    ) -> tuple[()] | None:
+        """``targets()``'s answer from the attempt's read, if it selects nothing.
+
+        An earlier read may only answer "no hook to launch". A target selected
+        from it could be stale: if another process disabled, removed or
+        revoked that hook since, the target still reaches its fresh
+        ``launch_guard``, whose refusal blocks a blocking event such as
+        UserPromptSubmit -- where a fresh selection would simply have omitted
+        the hook and the Send proceeded. Likewise a refusal derived from the
+        earlier read is never issued from it. Both go to the fresh
+        ``targets()`` read, which reproduces the existing selection and
+        refusals exactly; only a firing with nothing to launch saves the read.
+
+        Args:
+            read: The asking attempt's earlier full read.
+            event: Lifecycle event being fired.
+            tool_name: Tool name for tool events, else ``None``.
+
+        Returns:
+            ``()`` when the standing read selects no target and refuses
+            nothing; ``None`` when it no longer stands, selects any target or
+            would refuse, and a fresh read is required.
+        """
+        if not self.attempt_read_current(read):
+            return None
+        try:
+            selected = self._select(read.snapshot, read.targets, event, tool_name)
+        except HookLaunchRefused:
+            return None
+        return None if selected else ()
 
     @staticmethod
     def _expect_current(
@@ -910,3 +1297,83 @@ class HookPermissions:
     def close(self) -> None:
         """Fence every later launch without waiting for existing processes."""
         self._closed.set()
+
+    def _session_end_current(
+        self,
+        expected: HookReviewSnapshot,
+        target: HookTarget,
+        current: Callable[[], bool],
+    ) -> bool:
+        """Re-read the original grant for an authentic bounded host delivery."""
+        try:
+            with self._session_end_launch_guard(expected, target, current):
+                return True
+        except HookLaunchRefused:
+            return False
+
+    @contextmanager
+    def _session_end_launch_guard(
+        self,
+        expected: HookReviewSnapshot,
+        target: HookTarget,
+        current: Callable[[], bool],
+    ) -> Iterator[None]:
+        """Validate teardown under the existing locks without reopening targets."""
+        entered = False
+        try:
+            if (
+                not current()
+                or isinstance(target.spec, HookSpec)
+                or target.spec.event != "SessionEnd"
+                or target.spec.type != "command"
+                or target.spec.effects
+                or target.spec.required
+            ):
+                raise HookLaunchRefused("Host teardown delivery is unavailable.")
+            with self._current() as (snapshot, state, _precondition):
+                row = next(
+                    (
+                        row.entry
+                        for row in snapshot.rows
+                        if row.entry
+                        and row.entry.key == target.key
+                        and row.state == "approved"
+                    ),
+                    None,
+                )
+                grant = (
+                    state["configs"]
+                    .get(target.config_scope, {})
+                    .get("grants", {})
+                    .get(target.key)
+                    if state
+                    else None
+                )
+                if (
+                    snapshot.config.config_path != expected.config.config_path
+                    or snapshot.config.profile_data_dir
+                    != expected.config.profile_data_dir
+                    or snapshot.config.section_stamp != expected.config.section_stamp
+                    or snapshot.store_path != expected.store_path
+                    or target.config_scope != str(snapshot.config.config_path)
+                    or row is None
+                    or row.spec != target.spec
+                    or grant is None
+                    or grant["fingerprint"] != target.fingerprint
+                    or state["store_id"] + ":" + grant["token"] != target.approval_token
+                    or self._is_sealed(
+                        snapshot.store_path, target.config_scope, target.key
+                    )
+                    or not current()
+                ):
+                    raise HookLaunchRefused("Captured teardown hook authority changed.")
+                entered = True
+                yield
+        except HookLaunchRefused:
+            raise
+        except Exception:
+            if entered:
+                raise
+            raise HookLaunchRefused(
+                "Teardown hook authority unavailable at launch."
+            ) from None

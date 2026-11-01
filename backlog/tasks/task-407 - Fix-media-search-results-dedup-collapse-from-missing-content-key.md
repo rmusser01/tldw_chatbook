@@ -1,9 +1,11 @@
 ---
 id: TASK-407
 title: Fix media search results dedup collapse from missing content key
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@claude'
 created_date: '2026-07-21 09:48'
+updated_date: '2026-10-10 21:47'
 labels:
   - rag
   - bug
@@ -19,6 +21,135 @@ Pre-existing bug confirmed twice during the RAG scope program (Task 5 review tra
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 An unscoped media FTS search with 3+ distinct matches returns all of them through the pipeline
-- [ ] #2 Dedup still collapses true duplicates
+- [x] #1 An unscoped media FTS search with 3+ distinct matches returns all of them through the pipeline
+- [x] #2 Dedup still collapses true duplicates
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Premise re-verified at branch base `cddc89d3e7` (2026-10-06, real in-memory
+`MediaDatabase`): `search_media_db` returns no `content` key, the media leg
+builds `SearchResult(content="")` for every hit, and `deduplicate_results`
+(content[:200] key) collapses 3 distinct matches to 1.
+
+1. Add a batched content-prefix fetch to `MediaDatabase`
+   (`fetch_content_prefixes_for_media_batch`, SQL-side `substr` so full
+   transcripts are never hauled) mirroring `fetch_keywords_for_media_batch`.
+2. In `pipeline_functions_simple.search_media_fts5`, fetch prefixes for the
+   matched ids in one threaded call and populate `content` with the prefix,
+   falling back to the title when content is empty/null (task's
+   "title+snippet fallback").
+3. Red-first regression tests (`Tests/RAG/test_pipeline_media_dedup.py`):
+   3+ distinct unscoped matches all survive the pipeline including
+   `deduplicate_results`; true duplicates (identical content, different ids)
+   still collapse; media-leg results carry non-empty content.
+4. Targeted runs: the new file plus the existing suites that exercise the
+   media leg (`Tests/RAG/test_scope_pipeline_enforcement.py`,
+   `Tests/RAG/test_fusion.py`, `Tests/RAG/test_local_citation_capture.py`).
+
+Post-merge review follow-up (2026-10-10; base bade7c9a9d)
+1. Reproduce repeated-title media collapse with real NULL/empty content rows through the media-plus-dedup pipeline.
+2. Mark title-fallback media results for record-identity dedup; retain title display, bounded snippets, source isolation, and real-content duplicate semantics.
+3. Verify repeated fallback hits still collapse by record identity; run the targeted media/pipeline regressions and preflight.
+ADR required: no
+ADR path: N/A
+Reason: complete the existing dedup bug fix using SearchResult metadata; no schema, source authority, or persistence changes.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Premise CONFIRMED at base `cddc89d3e7` (2026-10-06): with a real tmp-path
+`MediaDatabase` seeded 3 distinct media, `search_media_db`'s row has no
+`content` key, `search_media_fts5` returned 3 hits all with `content=''`,
+and `deduplicate_results` collapsed them to 1 (repro script output captured
+in the transcript; red-first tests below pin the same).
+
+Approach — both mechanisms the description named, composed:
+
+1. **Media leg populates content** (`pipeline_functions_simple.py`): new
+   `_MEDIA_SNIPPET_PREFIX_CHARS = 500` (> the dedup key's 200 chars); after
+   the search the leg makes one batched thread call to the new
+   `MediaDatabase.fetch_content_prefixes_for_media_batch`
+   (`Client_Media_DB_v2.py`) — a SQL-side `substr(content, 1, ?)` over the
+   matched ids so multi-megabyte transcripts are never hauled — and builds
+   each `SearchResult.content` from the prefix, falling back to the title
+   when a row's content is empty/NULL. `search_media_db` itself and the
+   unscoped call shape are byte-identical (zero drift preserved).
+2. **Dedup key scoped by source** (`deduplicate_results`): key is now
+   `(source, content[:200])`, not a bare content prefix. Required by the
+   existing E2E suite once media hits carry real content:
+   `test_scope_pipeline_enforcement.py` seeds a media doc and a note with
+   IDENTICAL text; a bare content key made the media hit eat the note
+   (red with fix-1 alone: `Note 0` vanished from the built context).
+   Within one source, identical content is still a true duplicate (same
+   document found by two legs, e.g. FTS + vector both `source="media"`).
+
+Evidence (venv `3.12.13`, `-p no:xdist`):
+
+- Red first: `Tests/RAG/test_pipeline_media_dedup.py` → 3 failed / 3
+  passed pre-fix (failures = the collapse `1 == 4`, empty content, title
+  fallback); post-fix **7 passed** (`test_three_plus_distinct_matches_
+  survive_the_pipeline`, `test_media_leg_populates_nonempty_content`,
+  `test_contentless_media_falls_back_to_title`, premise pin
+  `test_search_media_db_row_has_no_content_key`, and both AC2 pins).
+- Repro script post-fix: leg returns 3 hits with distinct contents; dedup
+  keeps all 3.
+- Regression sweep, my-change vs HEAD (file-swap A/B, no stash): identical
+  results — `test_scope_pipeline_enforcement.py` 4 failed / 73 passed
+  BOTH sides (`TestActiveConsoleSessionRealGlue` quartet, pre-existing);
+  `test_fusion.py` + `test_local_citation_capture.py` 163 passed;
+  `Tests/RAG_Search/test_pipeline_notes_search.py` +
+  `test_conversation_search_batch.py` + `test_pipeline_middleware_contract.py`
+  2 failed / 21 passed BOTH sides (`RecoveryRequired:
+  raw_source_selection_changed`, pre-existing);
+  `Tests/Chat/test_scope_picker_listers.py` +
+  `Tests/Media/test_local_media_reading_service.py` 13 failed / 93 passed
+  BOTH sides (pre-existing); `Tests/UI/test_library_media_trash.py` 92
+  setup errors BOTH sides (pre-existing asyncio-fixture environment issue).
+
+ADR required: no — routine bug fix (dedup-key correction + one read-only
+helper method); no schema, sync, boundary, or contract change.
+Files: `tldw_chatbook/RAG_Search/pipeline_functions_simple.py`,
+`tldw_chatbook/DB/Client_Media_DB_v2.py`,
+`Tests/RAG/test_pipeline_media_dedup.py` (new).
+
+Post-commit correction (2026-10-06): the first TASK-407 commit
+(`4934bd262f`) silently lost the dedup-key half of the fix — a baseline
+A/B file-swap had restored `pipeline_functions_simple.py` from a /tmp
+backup taken BEFORE the dedup edit, and the clobbered file was committed.
+Caught by the final pre-push rerun of the pin suite (the cross-source
+survival test went red against the committed tree); restored in
+`f079f808d9` and re-verified: `test_pipeline_media_dedup.py` 7 passed;
+scope-enforcement + fusion + citation suites 243 passed with only the 4
+pre-existing `TestActiveConsoleSessionRealGlue` reds (identical at base).
+Incident recorded in `backlog/docs/lessons-backlog-hygiene.md`
+("stale /tmp backup" entry).
+
+Post-merge review completion (2026-10-10)
+The NULL/empty-content fallback retains the original title for display but is marked in SearchResult metadata and deduplicated by source plus media record ID. Real-content prefix dedup and highest-score selection remain unchanged. Added real-database repeated-title, repeated-hit and fallback-versus-real-content regressions; strengthened the existing real-content control so ingestion itself cannot collapse its two records before the pipeline runs.
+Red/green: the new media cases failed with 1 result instead of 3/2 before the repair; all pass afterward. Combined guard/media/widget/fusion/citation run: 218 passed; post-format changed-module plus scoped-media/custom-pipeline/chat-context run: 49 passed. Black 25.1.0 and focused Ruff 0.13.1 error checks passed; preflight passed. No full-suite run. Independent review pending; task remains In Progress until that review.
+ADR required: no; routine completion of this task's existing dedup fix; no schema or source-authority change.
+
+Independent immutable review closeout (2026-10-10)
+Reviewer review_3029 cleared committed head 4d0130496caf35f76d61ec987f794420414ed5fc after reviewing the post-merge follow-up and its correction; no actionable findings remain in the authorized scope. All acceptance criteria are checked, self-review and independent review are complete, and the task is Done. Prior red/green receipts remain above; targeted checks, formatting, focused lint, whitespace checks and preflight passed. No full-suite run or push.
+ADR required: no; routine completion of the existing bug-fix/guard boundaries.
+The reviewed media change preserves display titles, real-content prefix dedup and highest-score selection while contentless rows retain distinct record identity. Validation receipts are separate runs: 218 passed for the base fixes and 49 passed for the post-format scoped checks.
+
+Local reviewed-stack integration (2026-10-10)
+stack_parent: 595618f4592a3495a251ae0e187980b793c12e74
+Verification head: 7d9b32474269b0b30a39db72c5e01de011a4036d (rebased C follow-up before this evidence-only commit). The rebase's only conflict was the lessons append; complete upstream lesson text and the reviewed markup lesson are preserved. All follow-up production/test changes matched the previously reviewed tree exactly. Config-fixture ownership and trace-recovery changes from the stack remain intact.
+Fresh combined interaction run: 231 passed in 20.47s across the guard, real widget parser pins, real SQLite media dedup, fusion, citation capture, and TestMediaLegScopeEnforcement/TestCustomPipelineInheritance/TestChatEntryPointScopedE2E. This is a separate run from the earlier 218 base-fix, 49 post-format and 50 correction receipts.
+Black 25.1.0 checked all four follow-up Python files; focused Ruff 0.13.1 and stack-diff whitespace checks passed. Complete preflight passed (543 markup occurrences pinned; 175 Tests/UI gate entries). No full suite, push or PR creation. Task remains Done; no runtime behavior was changed during integration.
+ADR required: no; rebase and verification of previously reviewed routine fixes, with existing boundaries unchanged.
+
+Reviewed sequence carry qualification (2026-10-10)
+stack_parent: 3810f8aab9a8c318003281f51f5e47b8e1b72570 (exact drop boundary for later publication onto the actual merged sequence).
+Verification source: cf57afa64d373517788c5ee3419495f18e1a6ea3. Carried the six follow-up patches from c08aa049ed2b7d50188e63a105d15e74de60c715 / parent 595618f4592a3495a251ae0e187980b793c12e74 without conflicts or runtime edits. Complete --no-renames correspondence: ten own paths, nine identical nonlesson blob/mode entries, and exact upstream-plus-own lesson union; all six range-diff patches equal. Source proof: /private/tmp/pr3040-3810-correspondence.json and pr3040-3810-range-diff.log.
+Fresh functional interaction qualification: 231 passed in 24.71s in the same guard/widget/media/fusion/citation and selected scoped-media/custom-pipeline/chat cases. Separately, all Tests/CI passed: 749 in 9.97s. Both XML receipts have zero failures, errors and skips; logs have no warnings. These are distinct from the historical 218/49/50, 231 in 20.47s and 749 in 8.44s receipts above. Logs/XML: /private/tmp/pr3040-3810-targeted.{log,xml} and pr3040-3810-ci.{log,xml}; complete counts in pr3040-3810-evidence-summary.json.
+Preflight passed: 543 markup pins (396 notify, 84 Button labels, 63 tooltips), 175 UI gate entries, all derived guards green. Black 25.1.0 checked four functional Python files and the modified CHECKERS block; syntax and focused Ruff 0.13.1 fatal checks passed for all five owned Python files. Whitespace checks passed and all 5104 task files were readable. Receipts: /private/tmp/pr3040-3810-preflight.log and pr3040-3810-static.log.
+Independent reviewer review_3029 cleared immutable cf57afa64d373517788c5ee3419495f18e1a6ea3 onto the exact 3810 parent: source correspondence, connected callers, required failure-propagating guard and final preflight remain correct; no actionable introduced findings. All acceptance criteria remain checked and the task remains Done. This closeout changes metadata only; verified source is unchanged.
+The census still includes exactly 41 inherited occurrences across 36 symbols (40 label assignments and one pre-escaped Watchlist parser). Pins are baseline migration debt, not runtime safety approvals; the scanner is syntactic without dataflow. No broad UI cleanup, full suite, hosted Actions, push or PR creation was performed. The preparatory 175-entry local gate is not an exact published-head 178-entry or hosted-CI qualification. Publication remains after original PR3038 merges; later reviewed architecture-copy changes arrive via the actual base.
+ADR required: no. ADR path: N/A. Reason: source-equivalent carry and fresh verification of existing routine fixes; no schema, authority, runtime, lane or required-context decision changed.
+<!-- SECTION:NOTES:END -->

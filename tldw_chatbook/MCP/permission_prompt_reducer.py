@@ -12,17 +12,28 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from tldw_chatbook.MCP.hub_tool_catalog import HubTool
-from tldw_chatbook.MCP.permission_store import EffectiveToolState
+from tldw_chatbook.MCP.permission_store import (
+    ALWAYS_ASK_TOOLS,
+    HIGH_RISK_TAGS,
+    EffectiveToolState,
+    definition_hash,
+)
+
+from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
 
 APPROVED_DECISION = "approved"
 AGENT_INITIATOR = "agent"
 DEFAULT_MIN_APPROVED_COUNT = 2
+# The first explicit approve_session records "approved" too. Subsequent
+# "approved-session" rows reuse that grant and are not human decisions.
+COUNTED_APPROVAL_DECISIONS = frozenset({APPROVED_DECISION})
 
 _EXCLUSION_LABELS = {
     "below-threshold": "below threshold",
     "already-allowed": "already allowed",
     "denied": "explicitly denied",
     "definition-changed": "definition changed",
+    "definition-unverified": "approval definition unavailable or changed",
     "high-risk-floor": "high-risk safety floor",
     "tool-not-found": "missing from the current catalog",
     "tool-unavailable": "currently unavailable",
@@ -44,6 +55,7 @@ class PermissionPromptRecommendation:
     last_seen: str
     current_state: str
     reason: str
+    definition_hash: str = ""
 
     @property
     def tool_id(self) -> str:
@@ -86,9 +98,7 @@ def format_permission_prompt_report(
         for index, recommendation in enumerate(
             report.recommendations[:max_recommendations], start=1
         ):
-            approval_word = (
-                "time" if recommendation.approved_count == 1 else "times"
-            )
+            approval_word = "time" if recommendation.approved_count == 1 else "times"
             label = recommendation.server_label or recommendation.server_key
             last_seen = (
                 f", last seen {recommendation.last_seen}"
@@ -119,7 +129,8 @@ def format_permission_prompt_report(
             if reason_counts[reason]
         ]
         unknown_count = sum(
-            count for reason, count in reason_counts.items()
+            count
+            for reason, count in reason_counts.items()
             if reason not in _EXCLUSION_LABELS
         )
         if unknown_count:
@@ -164,20 +175,33 @@ def build_permission_prompt_report(
     threshold = max(1, int(min_approved_count or DEFAULT_MIN_APPROVED_COUNT))
     tool_by_key = {(tool.server_key, tool.name): tool for tool in tools}
     stats_by_key: dict[PromptKey, _ApprovalStats] = {}
+    qualified_stats: dict[PromptKey, _ApprovalStats] = {}
+    live_hashes = {
+        key: definition_hash(tool.description, tool.input_schema)
+        for key, tool in tool_by_key.items()
+    }
     approval_records = 0
 
     for record in records:
-        if record.get("decision") != APPROVED_DECISION:
+        if record.get("decision") not in COUNTED_APPROVAL_DECISIONS:
             continue
         if record.get("initiator") != AGENT_INITIATOR:
             continue
-        server_key = str(record.get("server_key") or "").strip()
-        tool_name = str(record.get("tool_name") or "").strip()
-        if not server_key or not tool_name:
+        server_key = record.get("server_key")
+        tool_name = record.get("tool_name")
+        if any(
+            identity == "invalid" or safe_metadata_token(identity) != identity
+            for identity in (server_key, tool_name)
+        ):
             continue
         approval_records += 1
         stats = stats_by_key.setdefault((server_key, tool_name), _ApprovalStats())
         stats.add_seen(str(record.get("ts") or ""))
+        key = (server_key, tool_name)
+        if key in live_hashes and record.get("definition_hash") == live_hashes[key]:
+            qualified_stats.setdefault(key, _ApprovalStats()).add_seen(
+                str(record.get("ts") or "")
+            )
 
     recommendations: list[PermissionPromptRecommendation] = []
     excluded: dict[PromptKey, str] = {}
@@ -211,10 +235,31 @@ def build_permission_prompt_report(
         if state.config_changed:
             excluded[key] = "definition-changed"
             continue
-        if state.risk_floored:
+        # TASK-18928 AC#4: "high-risk classes are never suggested" is a
+        # CLASS guarantee shared with the approval card's badge machinery,
+        # not only the resolved downgrade flag. ``risk_floored`` is set
+        # only when an inherited allow was floored back to ask; a
+        # high-risk-tagged tool sitting at plain ask under the global
+        # default carries risk_floored=False, so the tag set and the
+        # code-owned ALWAYS_ASK identities are checked directly against
+        # the SAME constants permission_store's resolution uses -- the
+        # reducer re-derives nothing, it cannot drift.
+        if (
+            state.risk_floored
+            or set(tool.tags) & HIGH_RISK_TAGS
+            or (tool.server_key, tool.name) in ALWAYS_ASK_TOOLS
+        ):
             excluded[key] = "high-risk-floor"
             continue
 
+        reviewed_stats = qualified_stats.get(key)
+        if reviewed_stats is None:
+            excluded[key] = "definition-unverified"
+            continue
+        if reviewed_stats.count < threshold:
+            excluded[key] = "below-threshold"
+            continue
+        stats = reviewed_stats
         recommendations.append(
             PermissionPromptRecommendation(
                 server_key=tool.server_key,
@@ -225,6 +270,7 @@ def build_permission_prompt_report(
                 last_seen=stats.last_seen,
                 current_state=state.state,
                 reason="Repeatedly approved while still ask-gated.",
+                definition_hash=live_hashes[key],
             )
         )
 

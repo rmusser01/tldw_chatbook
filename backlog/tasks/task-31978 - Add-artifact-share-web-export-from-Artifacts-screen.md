@@ -1,7 +1,7 @@
 ---
 id: TASK-31978
 title: Add artifact share web export from Artifacts screen
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-06 02:18'
 labels: []
@@ -94,3 +94,19 @@ ADR path: backlog/decisions/123-artifact-share-web-export.md
   sweep cleans up); future work.
 - **Plain-HTTP caveat** documented in the user guide: Basic auth is an
   access gate, not encryption; hostile networks need a TLS reverse proxy.
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+Work completed and landed on dev; the file already carries ticked ACs (#1-#5) and full
+Implementation Notes naming the SDD plan, ADR-123 and branch `codex/artifact-share-web-export`
+(verified at 0f62ae58e). Tree check (this audit, worktree at origin/dev a3c47c6c72):
+`tldw_chatbook/Web_Server/artifact_share.py`, `artifact_share_manifest.py`,
+`artifact_share_server.py`, `UI/Screens/artifact_share_dialog.py`, and all five named test files
+(`Tests/Web_Server/test_artifact_share_{manifest,server,controller}.py`,
+`Tests/UI/test_artifact_share_dialog.py`, `Tests/UI/test_artifacts_screen_share.py`) exist.
+The status field was the only field never flipped.
+
+AC checkboxes are left as found; this section is the audit's evidence record.

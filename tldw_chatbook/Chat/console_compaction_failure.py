@@ -100,7 +100,7 @@ _TRANSIENT_REASONS = frozenset(
 _STALE_REASONS = frozenset({"admission_changed", "branch_memory_changed_before_commit"})
 
 NEXT_STEP_SETTINGS = (
-    "Next: in Conversation settings > Context and memory, raise Conversation "
+    "Next: in Chat settings > Context and memory, raise Conversation "
     "max tokens, set If compaction fails to Omit older context to send without "
     "compacting, or set When limit nears to Off; or start a new chat."
 )
@@ -199,7 +199,7 @@ def compaction_failure_copy(
         return _omitted_copy(reason, usage=usage)
     clause = compaction_failure_reason_clause(reason)
     retry = (
-        "Try Compact now in Conversation settings > Context and memory later. "
+        "Try Compact now in Chat settings > Context and memory later. "
         if reason in _TRANSIENT_REASONS
         else ""
     )

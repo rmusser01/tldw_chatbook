@@ -32,6 +32,7 @@ barge-in path, also holds under cancellation). N1's pin lives in
 test, not a `pump()` one); N2's pin lives there too (`settle()`); N4 is a
 docstring-only nit with no new test.
 """
+
 import asyncio
 import contextlib
 
@@ -39,7 +40,11 @@ import pytest
 
 from Tests.Audio.test_streaming_sink import BLOCK_MS, RATE, _mk, _pcm
 from tldw_chatbook.Audio.streaming_sink import (
-    BUFFER_CAP_SECONDS, SinkBufferFull, SinkStopped, StreamingPcmSink, pump,
+    BUFFER_CAP_SECONDS,
+    SinkBufferFull,
+    SinkStopped,
+    StreamingPcmSink,
+    pump,
     stop_live_sink,
 )
 
@@ -73,12 +78,12 @@ async def _aiter(chunks, delay_between=0):
 
 @pytest.mark.asyncio
 async def test_pump_feeds_everything_closes_and_reports_drained():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     result_task = asyncio.ensure_future(pump(sink, _aiter([_pcm(8), _pcm(8)])))
-    await asyncio.sleep(0)                     # let pump feed
-    h["s"].tick(20)                            # drain everything
+    await asyncio.sleep(0)  # let pump feed
+    h["s"].tick(20)  # drain everything
     result = await result_task
     assert result.outcome == "drained"
     assert result.bytes_fed == len(_pcm(8)) * 2
@@ -86,13 +91,14 @@ async def test_pump_feeds_everything_closes_and_reports_drained():
 
 @pytest.mark.asyncio
 async def test_pump_skip_bytes_drops_wav_header():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
-    header = b"RIFF" + b"\x00" * 40            # 44 bytes
+    header = b"RIFF" + b"\x00" * 40  # 44 bytes
     body = _pcm(16)
-    task = asyncio.ensure_future(pump(sink, _aiter([header + body[:100], body[100:]]),
-                                      skip_bytes=44))
+    task = asyncio.ensure_future(
+        pump(sink, _aiter([header + body[:100], body[100:]]), skip_bytes=44)
+    )
     await asyncio.sleep(0)
     h["s"].tick(1)
     played = b"".join(h["s"].out)
@@ -103,7 +109,7 @@ async def test_pump_skip_bytes_drops_wav_header():
 
 @pytest.mark.asyncio
 async def test_pump_exits_promptly_when_sink_stopped_midstream():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
 
@@ -121,7 +127,7 @@ async def test_pump_exits_promptly_when_sink_stopped_midstream():
 
 @pytest.mark.asyncio
 async def test_pump_source_error_stops_sink_and_reports():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
 
@@ -149,6 +155,7 @@ def test_opening_a_second_sink_displaces_the_first():
 # Fix-round: H1 -- a cancelled pump must not abandon a playing sink
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_pump_cancelled_mid_feed_still_terminalizes_the_sink():
     """H1 pin: pre-fix, `except Exception` did not catch `CancelledError`
@@ -173,25 +180,34 @@ async def test_pump_cancelled_mid_feed_still_terminalizes_the_sink():
     task = asyncio.ensure_future(pump(sink, endless()))
     for _ in range(10):
         await asyncio.sleep(0)
-    assert sink.buffered_seconds > 0, "pump had not fed anything yet -- not genuinely mid-feed"
+    assert sink.buffered_seconds > 0, (
+        "pump had not fed anything yet -- not genuinely mid-feed"
+    )
     assert sink.state == "open"
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    assert sink.terminal_reason is not None, "cancellation must still terminalize the sink"
+    assert sink.terminal_reason is not None, (
+        "cancellation must still terminalize the sink"
+    )
     assert sink.state in ("stopped", "failed")
     notify_thread = sink._notify_thread
     assert notify_thread is not None
     notify_thread.join(timeout=2.0)
-    assert not notify_thread.is_alive(), "notify thread parked forever after cancellation"
-    assert mod._LIVE_SINK is not sink, "registry must not still point at a cancelled-away sink"
+    assert not notify_thread.is_alive(), (
+        "notify thread parked forever after cancellation"
+    )
+    assert mod._LIVE_SINK is not sink, (
+        "registry must not still point at a cancelled-away sink"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Fix-round: M3 -- an oversized chunk must not livelock the retry loop
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_pump_slices_a_chunk_larger_than_the_buffer_cap():
@@ -201,11 +217,11 @@ async def test_pump_slices_a_chunk_larger_than_the_buffer_cap():
     20Hz backpressure interval, never terminalizing. It must instead be
     sliced into placeable pieces.
     """
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     cap_blocks = BUFFER_CAP_SECONDS * 1000 // BLOCK_MS
-    huge = _pcm(cap_blocks + 50)          # ~1s more audio than the cap holds
+    huge = _pcm(cap_blocks + 50)  # ~1s more audio than the cap holds
 
     async def one_huge_chunk():
         yield huge
@@ -217,7 +233,7 @@ async def test_pump_slices_a_chunk_larger_than_the_buffer_cap():
         # seconds, while still leaving pump's real 50ms backpressure
         # retries room to matter.
         while True:
-            h["s"].tick(50)              # 1s of simulated audio per round
+            h["s"].tick(50)  # 1s of simulated audio per round
             await asyncio.sleep(0.01)
 
     ticker_task = asyncio.ensure_future(ticker())
@@ -236,6 +252,7 @@ async def test_pump_slices_a_chunk_larger_than_the_buffer_cap():
 # Fix-round: M4 -- the backpressure retry itself (previously unpinned)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_pump_backpressure_retry_eventually_feeds_everything_byte_exact():
     """M4 pin: a mutation that replaced the retry with "feed once, drop
@@ -245,7 +262,7 @@ async def test_pump_backpressure_retry_eventually_feeds_everything_byte_exact():
     refused at least once, and every byte pump was given must still
     eventually reach playback, byte-for-byte.
     """
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     # Pre-fill the (real, un-shrunk) buffer to within a couple of blocks of
@@ -258,10 +275,10 @@ async def test_pump_backpressure_retry_eventually_feeds_everything_byte_exact():
     # undivided piece -- exactly what's needed to test the retry itself).
     cap_bytes = BUFFER_CAP_SECONDS * RATE * 2
     block_bytes = h["s"].blocksize * 2
-    headroom = block_bytes * 2                      # 2 blocks of free space left
+    headroom = block_bytes * 2  # 2 blocks of free space left
     prefill_blocks = (cap_bytes - headroom) // block_bytes
-    sink.feed(_pcm(prefill_blocks, value=1))         # buffer now within 2 blocks of the cap
-    body = _pcm(5, value=9)                          # 5 blocks > 2-block headroom -> rejected first try
+    sink.feed(_pcm(prefill_blocks, value=1))  # buffer now within 2 blocks of the cap
+    body = _pcm(5, value=9)  # 5 blocks > 2-block headroom -> rejected first try
 
     async def one_chunk():
         yield body
@@ -281,15 +298,19 @@ async def test_pump_backpressure_retry_eventually_feeds_everything_byte_exact():
 
     assert result.outcome == "drained"
     assert result.bytes_fed == len(body)
-    assert sum(isinstance(e, SinkBufferFull) for e in events) >= 1, \
+    assert sum(isinstance(e, SinkBufferFull) for e in events) >= 1, (
         "backpressure was never actually exercised -- test setup is not testing what it claims"
+    )
     played = b"".join(h["s"].out)
-    assert body in played, "every fed byte must eventually reach playback, byte-for-byte, undropped"
+    assert body in played, (
+        "every fed byte must eventually reach playback, byte-for-byte, undropped"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Fix-round: M5 -- a barge-in in the drain tail must report "stopped"
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_pump_barge_in_during_drain_tail_reports_stopped_not_drained():
@@ -301,7 +322,7 @@ async def test_pump_barge_in_during_drain_tail_reports_stopped_not_drained():
     reported exactly as if it had played to completion. `pump` must
     report the sink's own `terminal_reason` instead.
     """
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     body = _pcm(40)
@@ -310,10 +331,10 @@ async def test_pump_barge_in_during_drain_tail_reports_stopped_not_drained():
         yield body
 
     task = asyncio.ensure_future(pump(sink, one_chunk()))
-    await asyncio.sleep(0)           # let pump feed everything + close()
+    await asyncio.sleep(0)  # let pump feed everything + close()
     assert sink.state == "draining"
-    h["s"].tick(2)                   # only 2 of 40 blocks actually played
-    sink.stop()                      # barge-in mid-tail
+    h["s"].tick(2)  # only 2 of 40 blocks actually played
+    sink.stop()  # barge-in mid-tail
     result = await asyncio.wait_for(task, timeout=1.0)
 
     assert result.outcome == "stopped"
@@ -323,6 +344,7 @@ async def test_pump_barge_in_during_drain_tail_reports_stopped_not_drained():
 # ---------------------------------------------------------------------------
 # Fix-round: M6 -- the chunk source must be released on every exit
 # ---------------------------------------------------------------------------
+
 
 class _RecordingAsyncSource:
     """Class-based (non-generator) `AsyncIterator` fake for M6.
@@ -351,7 +373,7 @@ class _RecordingAsyncSource:
 
 @pytest.mark.asyncio
 async def test_pump_closes_a_class_based_source_on_early_exit():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     source = _RecordingAsyncSource()
@@ -394,6 +416,7 @@ async def test_pump_cancelled_mid_feed_still_closes_the_class_based_source():
 # Fix-round Lows
 # ---------------------------------------------------------------------------
 
+
 def test_failed_open_does_not_evict_the_live_sink():
     """L7 pin (the implementer's own self-flagged concern, confirmed real
     by the reviewer): a sink whose `open()` fails before ever playing a
@@ -407,15 +430,21 @@ def test_failed_open_does_not_evict_the_live_sink():
     def failing_factory(**kw):
         raise RuntimeError("device busy")
 
-    s2 = StreamingPcmSink(on_event=e2.append, blocksize_ms=BLOCK_MS, stream_factory=failing_factory)
+    s2 = StreamingPcmSink(
+        on_event=e2.append, blocksize_ms=BLOCK_MS, stream_factory=failing_factory
+    )
     s2.open(sample_rate=RATE)
 
     assert s2.state == "failed"
-    assert s1.state == "open", "a sink that never played one sample must not evict the healthy live voice"
+    assert s1.state == "open", (
+        "a sink that never played one sample must not evict the healthy live voice"
+    )
     assert h1["s"].aborted is False
 
 
-def test_stop_between_became_open_and_registration_does_not_leave_a_dead_sink_live(monkeypatch):
+def test_stop_between_became_open_and_registration_does_not_leave_a_dead_sink_live(
+    monkeypatch,
+):
     """Re-review fix-round N3 pin: `open()` commits `state="open"` under
     the lock, then registers a few statements later. A `stop()` landing
     in that gap must not leave the (now dead) sink installed as the
@@ -450,7 +479,7 @@ def test_stop_between_became_open_and_registration_does_not_leave_a_dead_sink_li
 
     def hooked_register(sink):
         if sink is holder.get("s2"):
-            holder["s2"].stop()   # reentrant, landing exactly in the N3 gap
+            holder["s2"].stop()  # reentrant, landing exactly in the N3 gap
         real_register(sink)
 
     monkeypatch.setattr(mod, "_register_live_sink", hooked_register)
@@ -461,8 +490,9 @@ def test_stop_between_became_open_and_registration_does_not_leave_a_dead_sink_li
 
     assert s2.state == "stopped"
     assert s2.terminal_reason == "stopped"
-    assert mod._LIVE_SINK is None, \
+    assert mod._LIVE_SINK is None, (
         "a dead sink must not remain the registered live one -- must self-heal within this open() call"
+    )
 
 
 @pytest.mark.asyncio
@@ -495,23 +525,25 @@ async def test_pump_external_close_mid_stream_falls_through_to_drain_wait():
     the drain instead of recognizing there is nowhere left for them to
     go; it must stop trying to feed and just await the drain.
     """
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     first = _pcm(2)
 
     async def source():
         yield first
-        sink.close()                 # external close(), not pump's own
-        yield _pcm(2)                 # must never be fed -- already draining
+        sink.close()  # external close(), not pump's own
+        yield _pcm(2)  # must never be fed -- already draining
 
     task = asyncio.ensure_future(pump(sink, source()))
     await asyncio.sleep(0)
-    h["s"].tick(20)                  # drain fully
+    h["s"].tick(20)  # drain fully
     result = await asyncio.wait_for(task, timeout=1.0)
 
     assert result.outcome == "drained"
-    assert result.bytes_fed == len(first), "the chunk offered after the external close() must not be fed"
+    assert result.bytes_fed == len(first), (
+        "the chunk offered after the external close() must not be fed"
+    )
 
 
 @pytest.mark.asyncio
@@ -522,9 +554,10 @@ async def test_pump_drain_wait_deadline_expiry_reports_failed(monkeypatch):
     and report `"failed"` (with a reason), not silently hang the caller.
     """
     import tldw_chatbook.Audio.streaming_sink as mod
+
     monkeypatch.setattr(mod, "_DRAIN_WAIT_MARGIN_SECONDS", 0.05)
 
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     body = _pcm(2)
@@ -537,13 +570,14 @@ async def test_pump_drain_wait_deadline_expiry_reports_failed(monkeypatch):
 
     assert result.outcome == "failed"
     assert result.reason
-    assert sink.state == "stopped"    # pump's own stop() call landed
+    assert sink.state == "stopped"  # pump's own stop() call landed
 
 
 # ---------------------------------------------------------------------------
 # Task-4: `max_bytes` bound (WAV trailing-chunk data_bytes contract) and the
 # `stop_live_sink()` registry helper the consumer needs for its stop action.
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_pump_max_bytes_stops_feeding_at_the_bound_even_mid_chunk():
@@ -555,11 +589,11 @@ async def test_pump_max_bytes_stops_feeding_at_the_bound_even_mid_chunk():
     even a naive `chunk[:n]`-only implementation that forgot to also stop
     reading further chunks).
     """
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
-    first = _pcm(2)                      # audio, entirely within budget
-    second = _pcm(2)                     # only half of this is audio
+    first = _pcm(2)  # audio, entirely within budget
+    second = _pcm(2)  # only half of this is audio
     trailer = b"NOT-AUDIO-TRAILER-BYTES"
     budget = len(first) + len(second) // 2
 
@@ -569,7 +603,7 @@ async def test_pump_max_bytes_stops_feeding_at_the_bound_even_mid_chunk():
 
     task = asyncio.ensure_future(pump(sink, source(), max_bytes=budget))
     await asyncio.sleep(0)
-    h["s"].tick(20)                      # drain everything fed
+    h["s"].tick(20)  # drain everything fed
     result = await asyncio.wait_for(task, timeout=1.0)
 
     assert result.outcome == "drained"
@@ -585,7 +619,7 @@ async def test_pump_max_bytes_none_is_unbounded_pcm_default():
     default) must feed everything the source yields, exactly as before this
     parameter existed.
     """
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     body = _pcm(8)
@@ -615,4 +649,4 @@ def test_stop_live_sink_stops_whatever_is_currently_registered():
 
 
 def test_stop_live_sink_is_a_no_op_when_nothing_is_live():
-    stop_live_sink()   # must not raise
+    stop_live_sink()  # must not raise

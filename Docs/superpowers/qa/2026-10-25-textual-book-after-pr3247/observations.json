@@ -1,0 +1,445 @@
+{
+  "study": {
+    "publication-ordinary.json": {
+      "transition": "ordinary",
+      "before_release": {
+        "mode": "server",
+        "scope": {
+          "scope_type": "global",
+          "workspace_id": null
+        },
+        "selected_quiz": "Global server quiz",
+        "draft": "new-context draft",
+        "attempt_id": null,
+        "attached": true
+      },
+      "after_release": {
+        "mode": "server",
+        "scope": {
+          "scope_type": "global",
+          "workspace_id": null
+        },
+        "draft": "",
+        "attempt_id": "21",
+        "question": "Two plus two",
+        "status": "Question 1 of 1.",
+        "selected_quiz": "Global server quiz"
+      },
+      "local_submissions": [],
+      "server_submissions": [
+        {
+          "attempt_id": 21,
+          "answers": {
+            "answers": [
+              {
+                "question_id": "11",
+                "user_answer": "4",
+                "hint_used": null,
+                "time_spent_ms": null
+              }
+            ]
+          }
+        }
+      ],
+      "notices": [],
+      "final_status": "Score: 1 / 1",
+      "app_exception": "None",
+      "server_starts": 1,
+      "cancelled": 0
+    },
+    "publication-runtime-away-back.json": {
+      "transition": "runtime-away-back",
+      "before_release": {
+        "mode": "server",
+        "scope": {
+          "scope_type": "global",
+          "workspace_id": null
+        },
+        "selected_quiz": "Global server quiz",
+        "draft": "new-context draft",
+        "attempt_id": null,
+        "attached": true
+      },
+      "after_release": {
+        "mode": "server",
+        "scope": {
+          "scope_type": "global",
+          "workspace_id": null
+        },
+        "draft": "",
+        "attempt_id": "21",
+        "question": "Two plus two",
+        "status": "Question 1 of 1.",
+        "selected_quiz": "Global server quiz"
+      },
+      "local_submissions": [],
+      "server_submissions": [
+        {
+          "attempt_id": 21,
+          "answers": {
+            "answers": [
+              {
+                "question_id": "11",
+                "user_answer": "4",
+                "hint_used": null,
+                "time_spent_ms": null
+              }
+            ]
+          }
+        }
+      ],
+      "notices": [],
+      "final_status": "Score: 1 / 1",
+      "app_exception": "None",
+      "server_starts": 1,
+      "cancelled": 0
+    },
+    "publication-runtime-local.json": {
+      "transition": "runtime-local",
+      "before_release": {
+        "mode": "local",
+        "scope": {
+          "scope_type": "global",
+          "workspace_id": null
+        },
+        "selected_quiz": "Local only quiz",
+        "draft": "new-context draft",
+        "attempt_id": null,
+        "attached": true
+      },
+      "after_release": {
+        "mode": "local",
+        "scope": {
+          "scope_type": "global",
+          "workspace_id": null
+        },
+        "draft": "",
+        "attempt_id": "21",
+        "question": "Two plus two",
+        "status": "Question 1 of 1.",
+        "selected_quiz": "Local only quiz"
+      },
+      "local_submissions": [
+        {
+          "attempt_id": "21",
+          "answers": [
+            {
+              "question_id": "11",
+              "user_answer": "4"
+            }
+          ]
+        }
+      ],
+      "server_submissions": [],
+      "notices": [
+        "Failed to submit quiz attempt."
+      ],
+      "final_status": "Question 1 of 1.",
+      "app_exception": "None",
+      "server_starts": 1,
+      "cancelled": 0
+    },
+    "publication-workspace-B.json": {
+      "transition": "workspace-B",
+      "before_release": {
+        "mode": "server",
+        "scope": {
+          "scope_type": "workspace",
+          "workspace_id": "B"
+        },
+        "selected_quiz": "Workspace B quiz",
+        "draft": "new-context draft",
+        "attempt_id": null,
+        "attached": true
+      },
+      "after_release": {
+        "mode": "server",
+        "scope": {
+          "scope_type": "workspace",
+          "workspace_id": "B"
+        },
+        "draft": "",
+        "attempt_id": "21",
+        "question": "Two plus two",
+        "status": "Question 1 of 1.",
+        "selected_quiz": "Workspace B quiz"
+      },
+      "local_submissions": [],
+      "server_submissions": [
+        {
+          "attempt_id": 21,
+          "answers": {
+            "answers": [
+              {
+                "question_id": "11",
+                "user_answer": "4",
+                "hint_used": null,
+                "time_spent_ms": null
+              }
+            ]
+          }
+        }
+      ],
+      "notices": [],
+      "final_status": "Score: 1 / 1",
+      "app_exception": "None",
+      "server_starts": 1,
+      "cancelled": 0
+    },
+    "resume-policy.json": {
+      "failure": "policy",
+      "session": {
+        "section": "quizzes",
+        "topic": "Global server quiz",
+        "start_time": null,
+        "materials": []
+      },
+      "is_studying": true,
+      "resume_label": "Resume quizzes: Global server quiz",
+      "resume_enabled": true,
+      "notices": [],
+      "calls": 0,
+      "app_exception": "None",
+      "section_after_resume": "quizzes",
+      "attempt_after_resume": null
+    },
+    "resume-request.json": {
+      "failure": "request",
+      "session": {
+        "section": "quizzes",
+        "topic": "Global server quiz",
+        "start_time": null,
+        "materials": []
+      },
+      "is_studying": true,
+      "resume_label": "Resume quizzes: Global server quiz",
+      "resume_enabled": true,
+      "notices": [
+        "Failed to start quiz attempt."
+      ],
+      "calls": 1,
+      "app_exception": "None",
+      "section_after_resume": "quizzes",
+      "attempt_after_resume": null
+    }
+  },
+  "watchlists": {
+    "ordinary.json": {
+      "scenario": "ordinary",
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "calls": [
+        {
+          "item_id": 1,
+          "thread": 83196,
+          "at": 340159.015
+        },
+        {
+          "item_id": 2,
+          "thread": 84260,
+          "at": 340161.0
+        },
+        {
+          "item_id": 3,
+          "thread": 58520,
+          "at": 340163.062
+        }
+      ],
+      "main_thread": 68456,
+      "production_modules": {
+        "WatchlistsCollectionsScreen": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\watchlists_collections_screen.py",
+        "LocalWatchlistsService": "<audit-checkout>\\tldw_chatbook\\Subscriptions\\local_watchlists_service.py",
+        "SubscriptionsDB": "<audit-checkout>\\tldw_chatbook\\DB\\Subscriptions_DB.py",
+        "ArticleListPane": "<audit-checkout>\\tldw_chatbook\\UI\\Watchlists_Modules\\article_list.py",
+        "ContentPane": "<audit-checkout>\\tldw_chatbook\\UI\\Watchlists_Modules\\content_pane.py"
+      },
+      "page_ids": [
+        "local:watchlist_item:1",
+        "local:watchlist_item:2",
+        "local:watchlist_item:3"
+      ],
+      "initial_body": "Article A\nAudit feed · Yesterday 03:00 · 2 words\n\nBody A",
+      "final_body": "Article C\nAudit feed · Oct 22 03:00 · 2 words\n\nBody C",
+      "final_section": "sources"
+    },
+    "held_selection.json": {
+      "scenario": "held_selection",
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "calls": [
+        {
+          "item_id": 1,
+          "thread": 82380,
+          "at": 340192.328
+        },
+        {
+          "item_id": 2,
+          "thread": 68572,
+          "at": 340194.343
+        },
+        {
+          "item_id": 3,
+          "thread": 78224,
+          "at": 340195.171
+        }
+      ],
+      "main_thread": 73376,
+      "production_modules": {
+        "WatchlistsCollectionsScreen": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\watchlists_collections_screen.py",
+        "LocalWatchlistsService": "<audit-checkout>\\tldw_chatbook\\Subscriptions\\local_watchlists_service.py",
+        "SubscriptionsDB": "<audit-checkout>\\tldw_chatbook\\DB\\Subscriptions_DB.py",
+        "ArticleListPane": "<audit-checkout>\\tldw_chatbook\\UI\\Watchlists_Modules\\article_list.py",
+        "ContentPane": "<audit-checkout>\\tldw_chatbook\\UI\\Watchlists_Modules\\content_pane.py"
+      },
+      "page_ids": [
+        "local:watchlist_item:1",
+        "local:watchlist_item:2",
+        "local:watchlist_item:3"
+      ],
+      "initial_body": "Article A\nAudit feed · Yesterday 03:00 · 2 words\n\nBody A",
+      "held_reader_title": "Article A",
+      "held_pane_title": "Article B",
+      "requested_title": "Article C",
+      "held_window_seconds": 0.6089999999967404,
+      "app_callback_ran": true,
+      "screen_callback_ran": false,
+      "before_release_title": "Article A",
+      "before_release_section": "items",
+      "before_release_calls": [
+        1,
+        2
+      ],
+      "hold_released": false,
+      "final_body": "Article C\nAudit feed · Oct 22 03:00 · 2 words\n\nBody C",
+      "after_release_section": "items",
+      "after_release_title": "Article C",
+      "screen_callback_after_release": true
+    },
+    "held_section.json": {
+      "scenario": "held_section",
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "calls": [
+        {
+          "item_id": 1,
+          "thread": 85620,
+          "at": 340224.062
+        },
+        {
+          "item_id": 2,
+          "thread": 80860,
+          "at": 340225.0
+        }
+      ],
+      "main_thread": 57848,
+      "production_modules": {
+        "WatchlistsCollectionsScreen": "<audit-checkout>\\tldw_chatbook\\UI\\Screens\\watchlists_collections_screen.py",
+        "LocalWatchlistsService": "<audit-checkout>\\tldw_chatbook\\Subscriptions\\local_watchlists_service.py",
+        "SubscriptionsDB": "<audit-checkout>\\tldw_chatbook\\DB\\Subscriptions_DB.py",
+        "ArticleListPane": "<audit-checkout>\\tldw_chatbook\\UI\\Watchlists_Modules\\article_list.py",
+        "ContentPane": "<audit-checkout>\\tldw_chatbook\\UI\\Watchlists_Modules\\content_pane.py"
+      },
+      "page_ids": [
+        "local:watchlist_item:1",
+        "local:watchlist_item:2",
+        "local:watchlist_item:3"
+      ],
+      "initial_body": "Article A\nAudit feed · Yesterday 03:00 · 2 words\n\nBody A",
+      "held_reader_title": "Article A",
+      "held_pane_title": "Article B",
+      "button_enabled": true,
+      "held_window_seconds": 0.6099999999860302,
+      "app_callback_ran": true,
+      "screen_callback_ran": false,
+      "before_release_title": "Article A",
+      "before_release_section": "items",
+      "before_release_calls": [
+        1,
+        2
+      ],
+      "hold_released": false,
+      "after_release_section": "sources",
+      "after_release_title": "Article B",
+      "screen_callback_after_release": true
+    }
+  },
+  "sources": {
+    "observation-busy-name.json": {
+      "field": "name",
+      "trigger": "busy",
+      "before_selection": [
+        2,
+        4
+      ],
+      "after_selection": [
+        2,
+        4
+      ],
+      "value_before_key": "AlphaFeed",
+      "after_key": "AlXaFeed",
+      "same_widget": true,
+      "has_focus": true,
+      "expected_after_key": "AlXaFeed"
+    },
+    "observation-busy-url.json": {
+      "field": "url",
+      "trigger": "busy",
+      "before_selection": [
+        2,
+        4
+      ],
+      "after_selection": [
+        2,
+        4
+      ],
+      "value_before_key": "AlphaFeed",
+      "after_key": "AlXaFeed",
+      "same_widget": true,
+      "has_focus": true,
+      "expected_after_key": "AlXaFeed"
+    },
+    "observation-sources-name.json": {
+      "field": "name",
+      "trigger": "sources",
+      "before_selection": [
+        2,
+        4
+      ],
+      "after_selection": [
+        0,
+        9
+      ],
+      "value_before_key": "AlphaFeed",
+      "after_key": "X",
+      "same_widget": false,
+      "has_focus": true,
+      "expected_after_key": "AlXaFeed"
+    },
+    "observation-sources-url.json": {
+      "field": "url",
+      "trigger": "sources",
+      "before_selection": [
+        2,
+        4
+      ],
+      "after_selection": [
+        0,
+        9
+      ],
+      "value_before_key": "AlphaFeed",
+      "after_key": "X",
+      "same_widget": false,
+      "has_focus": true,
+      "expected_after_key": "AlXaFeed"
+    }
+  }
+}

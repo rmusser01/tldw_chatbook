@@ -23,7 +23,7 @@ Study. This page is the orientation tour; the details live on these pages:
 
 - Press **Ctrl+3** from anywhere, or click **⌃3 Library** in the nav bar.
 - **Ctrl+P** → "Tab Navigation: Switch to Library" in the command palette.
-- **Ctrl+6** opens **All artifacts**. The Artifacts rail also has Chatbooks and Reports; Reports defaults to All reports with an explicit Kept filter.
+- **Ctrl+6** opens **All artifacts**. The Artifacts rail also has Chatbooks and Reports; Reports defaults to All reports with an explicit Kept filter. An empty Reports view offers **Set up a daily brief…**, which discloses the recurring watchlist, feeds, cadence and billed provider · model and asks you to confirm before creating anything.
 - Old destination names still find it: the six retired screens —
   **notes**, **prompts**, **skills**, **ingest**, **research**, and
   **media** — now live inside Library, and typing any of them into the
@@ -163,7 +163,10 @@ At compact widths the landing canvas **stays** beside the rail — both panes
 are kept, the rail narrows, and whatever you had focused (Continue, a recovery
 action, a cached summary, a quick action) keeps focus straight through the
 resize. Only Notes' own workflow routes fold to a single pane at those widths;
-the landing does not.
+the landing does not. Switching rail rows or resizing never leaves the keyboard
+dead: focus is moved only onto controls that are on screen, and if a control
+under focus disappears, the next key you press goes to the Library screen (Tab
+moves on, F1 opens help).
 
 ## Layout tour
 
@@ -299,8 +302,11 @@ readable measure rather than stretched across the whole canvas.
   names the Escape chip for that surface (`esc leave field` where nothing
   else owns the key — a list canvas keeps its own `esc focus rail`), and
   carries the canvas verbs after `after esc:` — they are not live until you
-  leave the field. Under 64 columns there is room for a single chip, so the
-  footer names only what Escape does there and the verbs are not listed.
+  leave the field. A list canvas's own filter lists none: its Escape moves the
+  caret into the rail's "Search Library…" box, another text field, so one
+  Escape would not make them live. Under 64 columns there is room for a
+  single chip, so the footer names only what Escape does there and the verbs
+  are not listed.
 
 One special case: selecting **Notes** adds a
 **Library notes | Folder files** strip above the workbench. **Folder files**
@@ -508,12 +514,17 @@ lines:
 - **Quizzes** — "Generate or resume quizzes from Library sources."
 
 Each canvas shows the same five elements: the purpose line, a "Carries
-forward: …" line naming up to three source titles (then "and N more."),
-the ownership note "Generation and review run in Study.", a readiness
-line ("Source snapshot is ready.", or a prompt to import sources or
-create notes first), and a **Continue in Study** button ("Open \<X\> with
-the current Library source snapshot, or globally when none is
-available.").
+forward: …" line naming up to three source titles (then "and N more.",
+where N counts the rest of the titles Study keeps — the Study screen's
+own scope banner names and counts the same ones), the ownership note
+"Generation and review run in Study.", a readiness line, and a **Continue
+in Study** button ("Open \<X\> with the current Library source snapshot,
+or globally when none is available."). The readiness line depends on your
+runtime: in server mode it reads "Source snapshot is ready."; in local
+mode it reads "Generating a pack from sources needs a tldw server; you can
+still make cards by hand in Study.", because only a tldw server can build
+a study pack from the snapshot (Study's dashboard says the same). With no
+sources at all it prompts you to import sources or create notes first.
 
 Once you're on the Study screen, its header reads "Library ▸ Study" with
 an "Esc: back to Library" hint — the nav bar shows no highlighted tab
@@ -609,13 +620,17 @@ you're on:
   promising a return to the list — "esc save or discard first" while the
   edit is unsaved, "esc busy, try again" while one of its writes is still
   running — see [Prompts](library/prompts.md).
-- **Editing, deleting, or re-analyzing inside the media viewer** — the
-  media viewer's Edit / Delete / Edit analysis forms have no dirty-edit
-  guard, so a first Escape only discards that one form and returns to the
-  plain read-only viewer (matching that form's own **Cancel** button); a
-  *second* Escape from there returns to the list. The footer's hint
-  changes to "back a step" while one of these forms is open, so it never
-  claims "back to list" a step early.
+- **Editing, deleting, or re-analyzing inside the media viewer** — a first
+  Escape only closes that one form and returns to the plain read-only
+  viewer (matching that form's own **Cancel** button); a *second* Escape
+  from there returns to the list. The footer's hint changes to "esc close"
+  while one of these forms is open, so it never claims "back to list" a
+  step early. The Edit metadata and Edit analysis forms keep unsaved text:
+  while what you typed differs from the saved value, Escape (and Back,
+  another row, a rail row, the nav bar, Ctrl+Q) refuses with "Save or
+  Discard changes first", the chip reads "esc save or discard first", and
+  Cancel reads **Discard changes** — the one way to drop the text (see
+  [Media and conversations](library/media-and-conversations.md)).
 
 Escape and Ctrl+S are also bound inside the skill editor specifically
 (back to list / save) — see [Skills](library/skills.md). Escape also

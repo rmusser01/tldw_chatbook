@@ -5,7 +5,6 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from tldw_profile_core import (
     ActorType,
     AgentVisibility,
@@ -28,9 +27,11 @@ from tldw_chatbook.Personal_Context.runtime_policy import (
     AgentAuthority,
     PersonalContextAuthorityError,
 )
-from tldw_chatbook.Personal_Context.service import PersonalContextService
-from tldw_chatbook.Personal_Context.service import ProfileConflictError, RecordMutation
-
+from tldw_chatbook.Personal_Context.service import (
+    PersonalContextService,
+    ProfileConflictError,
+    RecordMutation,
+)
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
 
@@ -209,7 +210,7 @@ def test_accept_create_atomically_commits_record_manifest_outbox_and_receipt(
 def test_user_can_edit_proposed_content_before_atomic_acceptance(
     tmp_path, memory_protector
 ) -> None:
-    repository, service, proposals, manifest, scope = _harness(
+    repository, _service, proposals, manifest, scope = _harness(
         tmp_path, memory_protector
     )
     proposal = proposals.create(
@@ -277,7 +278,7 @@ def test_update_proposal_inherits_controls_and_semantic_identity(
         ),
         semantic_key={"namespace": "preference", "subject": "stable-key"},
         controls=ProfileControls(
-            sync_mode=SyncMode.DEVICE_ONLY,
+            sync_mode=SyncMode.SYNCABLE,
             agent_visibility=AgentVisibility.AGENT_VISIBLE,
         ),
     )

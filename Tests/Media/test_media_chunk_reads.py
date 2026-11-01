@@ -168,7 +168,9 @@ def test_exact_index_fetch_returns_requested_chunk_and_item_signals(
     assert chunk["chunk_type"] == "primary"
     assert chunk["start_char"] == len("alpha chunk zero") + len("beta chunk one")
     assert chunk["end_char"] == (
-        len("alpha chunk zero") + len("beta chunk one") + len("gamma chunk two words here")
+        len("alpha chunk zero")
+        + len("beta chunk one")
+        + len("gamma chunk two words here")
     )
     assert chunk["word_count"] == len(["gamma", "chunk", "two", "words", "here"])
     assert chunk["metadata"] == {}
@@ -177,7 +179,9 @@ def test_exact_index_fetch_returns_requested_chunk_and_item_signals(
     assert result["media_version"] == _media_version(media_db, media_id)
 
 
-def test_media_id_coerced_from_string_like(service: LocalMediaReadingService, media_db: MediaDatabase):
+def test_media_id_coerced_from_string_like(
+    service: LocalMediaReadingService, media_db: MediaDatabase
+):
     media_id = _seed_media(media_db)
     _seed_flat_chunks(media_db, media_id, ["only chunk"])
 
@@ -230,7 +234,9 @@ def test_primary_string_alias_selects_null_family(
     via_alias = service.get_library_media_chunks(
         media_id, chunk_index=0, chunk_type="primary", budget=10_000
     )
-    via_default = service.get_library_media_chunks(media_id, chunk_index=0, budget=10_000)
+    via_default = service.get_library_media_chunks(
+        media_id, chunk_index=0, budget=10_000
+    )
 
     assert via_alias is not None and via_default is not None
     assert via_alias["chunks"] == via_default["chunks"]
@@ -398,7 +404,11 @@ def test_neighbors_filter_to_requested_family(
     )
 
     assert result is not None
-    assert [chunk["text"] for chunk in result["chunks"]] == ["sec n0", "sec n1", "sec n2"]
+    assert [chunk["text"] for chunk in result["chunks"]] == [
+        "sec n0",
+        "sec n1",
+        "sec n2",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -434,9 +444,7 @@ def test_pre_v6_unstamped_rows_readable_and_reported_legacy(
     )
     assert legacy_id is not None
 
-    result = service.get_library_media_chunks(
-        int(legacy_id), chunk_index=1, budget=100
-    )
+    result = service.get_library_media_chunks(int(legacy_id), chunk_index=1, budget=100)
 
     assert result is not None
     assert [chunk["chunk_index"] for chunk in result["chunks"]] == [1]

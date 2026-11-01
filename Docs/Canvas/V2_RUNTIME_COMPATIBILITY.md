@@ -126,12 +126,23 @@ Original label code points are retained; Unicode normalization and `Intl` are no
 used. Escaped Mermaid entity spellings in plain labels remain literal text.
 
 The required derived-artifacts job runs `scripts/check_canvas_mermaid_assets.py`
-under the manifest-pinned Python 3.12.11, obtains only those declared inputs in
-temporary space, runs the same offline build, and compares all six generated
-outputs byte-for-byte with the packaged closure. Local preflight downloads the
-pinned inputs by default; set `TLDW_CANVAS_MERMAID_INPUT_DIR` to reuse an existing
-offline cache. Missing or mismatched cached inputs fail the check rather than
-skipping reproduction.
+under the manifest-pinned Python 3.12.11. It authenticates the original inputs
+in repository-level `vendor/canvas-mermaid-inputs/`, copies only declared bytes
+to temporary space, runs the same offline build, and compares all six outputs
+byte-for-byte with the packaged closure. Local preflight uses this same offline
+default. Set `TLDW_CANVAS_MERMAID_INPUT_DIR` or `--input-dir` to select another
+cache; missing or mismatched inputs fail rather than fetching or skipping.
+
+The existing independent vendored pins authenticate the V2 worker/renderer and
+the trusted shell's JS, CSS and HTML. Intentional changes must update the
+reviewed digests in the checker; rebuilding cannot update them. Runtime profile
+bytes and admission policy are unchanged by these build guards.
+
+Input refresh is an explicit maintainer action using `--fetch-inputs NEW_DIRECTORY`.
+It verifies the exact existing download declarations and refuses an existing
+destination. It does not rebuild or repin assets. The [input README](../../vendor/canvas-mermaid-inputs/README.md)
+documents the commands and licenses; [ADR-238](../../backlog/decisions/238-offline-authenticated-canvas-build-inputs.md)
+records the repository-only build input boundary.
 
 The manifest's Mermaid provenance records source/input hashes, not qualification
 status. Catalog execution/default/refusal policy is separate from immutable

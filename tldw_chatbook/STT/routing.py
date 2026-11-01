@@ -61,8 +61,30 @@ _FASTER_WHISPER_BASE_EXPLICIT_LANGUAGES = frozenset(
 #: module for the explicit, commented union).
 VALIDATED_V3_LANGUAGES: frozenset[str] = frozenset(
     {
-        "bg", "hr", "cs", "da", "nl", "et", "fi", "fr", "de", "el", "hu", "it",
-        "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
+        "bg",
+        "hr",
+        "cs",
+        "da",
+        "nl",
+        "et",
+        "fi",
+        "fr",
+        "de",
+        "el",
+        "hu",
+        "it",
+        "lv",
+        "lt",
+        "mt",
+        "pl",
+        "pt",
+        "ro",
+        "sk",
+        "sl",
+        "es",
+        "sv",
+        "ru",
+        "uk",
     }
 )
 

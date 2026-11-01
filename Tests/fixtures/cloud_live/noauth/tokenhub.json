@@ -1,0 +1,45 @@
+{
+  "server": "tokenhub",
+  "base_url": "https://tokenhub-intl.tencentcloudmaas.com/v1",
+  "probe_model": "probe-model",
+  "listing": {
+    "status": 401,
+    "body": {
+      "error": {
+        "type": "authentication_error",
+        "code": "401001",
+        "message": "Authentication information is missing or the authentication method is not recognized. Please check whether the API Key is correct.",
+        "message_zh": "请求未携带认证信息，或认证方式无法识别，请检查 API Key 是否正确。",
+        "source": "gateway",
+        "request_id": "50216af6-85f3-46ab-8399-c5c6883e56a4"
+      }
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "type": "authentication_error",
+        "code": "401002",
+        "message": "The API Key does not exist or signature verification failed. Please check whether the API Key is correct. See: https://console.cloud.tencent.com/tokenhub/apikey",
+        "message_zh": "API Key 不存在或签名校验失败，请检查 API Key 是否正确，查看链接：https://console.cloud.tencent.com/tokenhub/apikey",
+        "source": "gateway",
+        "request_id": "96dec2b6-952a-4161-ac6c-b8775f518d56"
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "type": "authentication_error",
+        "code": "401002",
+        "message": "The API Key does not exist or signature verification failed. Please check whether the API Key is correct. See: https://console.cloud.tencent.com/tokenhub/apikey",
+        "message_zh": "API Key 不存在或签名校验失败，请检查 API Key 是否正确，查看链接：https://console.cloud.tencent.com/tokenhub/apikey",
+        "source": "gateway",
+        "request_id": "d04f5e6c-18d1-4095-a2d2-a1dc13acc45e"
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:19:47+00:00"
+}

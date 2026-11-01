@@ -36,6 +36,7 @@ def stub_characters(monkeypatch):
     )
     patch_character_paging(monkeypatch)
 
+
 _TOOLBAR_BUTTON_IDS = (
     "#personas-library-new",
     "#personas-library-import",
@@ -77,9 +78,7 @@ async def _mounted_screen(pilot):
     return pilot.app.screen
 
 
-async def test_toolbar_actions_reachable_at_100x30(
-    mock_app_instance, stub_characters
-):
+async def test_toolbar_actions_reachable_at_100x30(mock_app_instance, stub_characters):
     """F-030 evidence size: Import/Duplicate/Tag used to clip here."""
     app = StyledPersonasTestApp(mock_app_instance)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -90,9 +89,7 @@ async def test_toolbar_actions_reachable_at_100x30(
         _assert_toolbar_buttons_inside_pane(screen)
 
 
-async def test_toolbar_actions_reachable_at_80x24(
-    mock_app_instance, stub_characters
-):
+async def test_toolbar_actions_reachable_at_80x24(mock_app_instance, stub_characters):
     """Smallest supported size: all actions still reachable."""
     app = StyledPersonasTestApp(mock_app_instance)
     async with app.run_test(size=(80, 24)) as pilot:
@@ -102,9 +99,7 @@ async def test_toolbar_actions_reachable_at_80x24(
         _assert_toolbar_buttons_inside_pane(screen)
 
 
-async def test_toolbar_single_row_at_wide_terminal(
-    mock_app_instance, stub_characters
-):
+async def test_toolbar_single_row_at_wide_terminal(mock_app_instance, stub_characters):
     """Counter-case: wide terminals keep the one-row toolbar (no stacking)."""
     app = StyledPersonasTestApp(mock_app_instance)
     async with app.run_test(size=(170, 50)) as pilot:

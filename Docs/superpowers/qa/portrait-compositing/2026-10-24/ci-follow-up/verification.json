@@ -1,0 +1,250 @@
+{
+  "source_head_before_fixes": "d909ce4bc3ddcaf3dbced880dfa49fdf93085d82",
+  "dev_base": "2f0b142d42cfff88ad4cd44aa04cd9afe068fdf4",
+  "full_suite_run": false,
+  "notes": [
+    "Counts overlap; do not sum these rows.",
+    "Initial authoring layout shift and installed Console visibility timeout remain recorded; original isolated tests passed with unchanged timeouts. Cause unconfirmed.",
+    "Shared RAG schema-zero and template/settings failed/error nodes reproduce on unchanged dev.",
+    "The final restore file includes owner/phase/source negative controls inside the existing pinned CI selector."
+  ],
+  "runs": {
+    "boot_final": {
+      "log_sha256": "b285d4a55b787858aae6da01f6baea15ccc49fd0c14f257ae20c9dc7f8c6ca46",
+      "summary": "29 passed, 4 warnings in 56.78s",
+      "failed_or_error_nodes": []
+    },
+    "console_p0": {
+      "log_sha256": "4ac8205b24fbf7384380b20c3c6859b63427977517a00beb3143beabeffbb60a",
+      "summary": "164 passed in 129.95s (0:02:09)",
+      "failed_or_error_nodes": []
+    },
+    "historical_restore": {
+      "log_sha256": "8411d4c283e557059e98a4f300ba03c6a02978ba88850e093bbeebcf0055864b",
+      "summary": "65 passed in 38.04s",
+      "failed_or_error_nodes": []
+    },
+    "speech_full": {
+      "log_sha256": "b0d0a94672412f6ede98bd5519df58fdb08772be4fe728b87000bb799e921095",
+      "summary": "308 passed in 22.67s",
+      "failed_or_error_nodes": []
+    },
+    "speech_import_cleanup_and_probe": {
+      "log_sha256": "ad6fe49265e90a7f0fa0b5af252ebbdc11e2a74a78911b9d087d4eceee577480",
+      "summary": "83 passed in 2.44s",
+      "failed_or_error_nodes": []
+    },
+    "authoring_initial": {
+      "log_sha256": "f4f80fc6613877efd8e2382f0616cb1d286291c603f480d099e5a7ae8f32da9c",
+      "summary": "1 failed, 93 passed in 201.03s (0:03:21)",
+      "failed_or_error_nodes": [
+        "Tests/UI/test_console_radio_portrait.py::test_status_meter_and_portrait_bounds_stay_stable_during_timing_loss"
+      ]
+    },
+    "radio_css_final": {
+      "log_sha256": "95aba1d5d3ef6d7af468422f1b20a26ddb52b18cc3fa06daaaa1b0d008fb46a2",
+      "summary": "27 passed in 62.46s (0:01:02)",
+      "failed_or_error_nodes": []
+    },
+    "template_catalog": {
+      "log_sha256": "02501caad6005ed0515157da4f30d5ab5934405cae7fbcc139de967860535a65",
+      "summary": "28 passed in 0.81s",
+      "failed_or_error_nodes": []
+    },
+    "schema_settings": {
+      "log_sha256": "2b06065731b31ccea5dcffbe6045c63aac2c155bd01432d2d261803e2ac44b9b",
+      "summary": "20 passed in 7.68s",
+      "failed_or_error_nodes": []
+    },
+    "shared_validation": {
+      "log_sha256": "9ca0c3cd2415098a3f06d112d8991be39015796465fd652d1111e759e55bd2ac",
+      "summary": "2 failed, 86 passed in 30.06s",
+      "failed_or_error_nodes": [
+        "Tests/Backup_Recovery/test_sqlite_validation.py::test_native_rag_indexing_schema_zero_survives_restricted_validation[False]",
+        "Tests/Backup_Recovery/test_sqlite_validation.py::test_native_rag_indexing_schema_zero_survives_restricted_validation[True]"
+      ]
+    },
+    "template_settings_branch": {
+      "log_sha256": "1a8f816e84309243a7c7ce444ef13a284a89f202c68c42d79277e523a3705daa",
+      "summary": "27 failed, 148 passed, 32 errors in 82.94s (0:01:22)",
+      "failed_or_error_nodes": [
+        "Tests/Chat/test_console_style_picker.py::test_search_style_templates_empty_query_returns_all_thirteen",
+        "Tests/Chat/test_console_style_picker.py::test_search_style_templates_filters_by_id_prefix",
+        "Tests/Chat/test_console_style_picker.py::test_search_style_templates_filters_by_name_substring",
+        "Tests/Chat/test_console_style_picker.py::test_search_style_templates_filters_by_category_case_insensitive",
+        "Tests/Chat/test_console_style_picker.py::test_search_style_templates_unknown_query_returns_empty",
+        "Tests/Chat/test_console_style_picker.py::test_modal_renders_all_thirteen_templates_unfiltered",
+        "Tests/Chat/test_console_style_picker.py::test_modal_row_shows_name_category_and_id",
+        "Tests/Chat/test_console_style_picker.py::test_modal_typing_filters_rows_by_id_prefix",
+        "Tests/Chat/test_console_style_picker.py::test_modal_unmatched_filter_shows_empty_copy",
+        "Tests/Chat/test_console_style_picker.py::test_modal_detail_shows_preview_of_first_row_on_open",
+        "Tests/Chat/test_console_style_picker.py::test_modal_detail_updates_when_highlight_moves",
+        "Tests/Chat/test_console_style_picker.py::test_modal_detail_shows_placeholder_when_no_matches",
+        "Tests/Chat/test_console_style_picker.py::test_modal_lists_user_defined_template_after_merge",
+        "Tests/Chat/test_console_style_picker.py::test_modal_row_click_dismisses_with_id_and_name",
+        "Tests/Chat/test_console_style_picker.py::test_modal_enter_on_highlighted_row_dismisses_with_that_record",
+        "Tests/Chat/test_console_style_picker.py::test_modal_escape_dismisses_none",
+        "Tests/Chat/test_console_style_picker.py::test_modal_filter_has_focus_on_open",
+        "Tests/Chat/test_console_style_picker.py::test_modal_css_blocks_pinned_in_source_and_bundle",
+        "Tests/Chat/test_console_style_picker.py::test_console_command_provider_lists_insert_image_style",
+        "Tests/Chat/test_console_style_picker.py::test_action_open_console_style_insert_opens_picker",
+        "Tests/Chat/test_console_style_picker.py::test_action_open_console_style_insert_is_unavailable_when_ephemeral",
+        "Tests/Chat/test_console_style_picker.py::test_style_picker_selection_inserts_style_token_into_draft",
+        "Tests/Chat/test_console_style_picker.py::test_style_picker_insert_composes_valid_command_after_command_word",
+        "Tests/Chat/test_console_style_picker.py::test_style_picker_insert_replaces_existing_leading_style_token",
+        "Tests/Chat/test_console_style_picker.py::test_style_picker_insert_result_parses_as_generate_image_command",
+        "Tests/Chat/test_console_style_picker.py::test_style_picker_escape_leaves_draft_untouched",
+        "Tests/UI/test_settings_image_gen_defaults.py::test_adapter_delete_values",
+        "Tests/UI/test_settings_image_gen_panel.py::test_image_gen_category_in_rail_and_search",
+        "Tests/UI/test_settings_image_gen_panel.py::test_panel_populates_from_scratch_config",
+        "Tests/UI/test_settings_image_gen_panel.py::test_fresh_config_shows_placeholder_not_merged_default_value",
+        "Tests/UI/test_settings_image_gen_panel.py::test_secret_input_never_echoes_saved_key",
+        "Tests/UI/test_settings_image_gen_panel.py::test_env_key_shows_env_source_line",
+        "Tests/UI/test_settings_image_gen_panel.py::test_save_revert_disabled_test_buttons_enabled",
+        "Tests/UI/test_settings_image_gen_panel.py::test_edit_marks_dirty_and_save_writes_nested_toml",
+        "Tests/UI/test_settings_image_gen_panel.py::test_save_blocked_when_default_disabled",
+        "Tests/UI/test_settings_image_gen_panel.py::test_revert_discards_draft",
+        "Tests/UI/test_settings_image_gen_panel.py::test_clear_key_deletes_not_blanks",
+        "Tests/UI/test_settings_image_gen_panel.py::test_clear_swarmui_token_also_deletes_legacy_api_key",
+        "Tests/UI/test_settings_image_gen_panel.py::test_pasted_key_saves_and_input_resets",
+        "Tests/UI/test_settings_image_gen_panel.py::test_unedited_baked_field_produces_empty_diff_on_save",
+        "Tests/UI/test_settings_image_gen_panel.py::test_revert_action_shortcut_recomposes_panel",
+        "Tests/UI/test_settings_image_gen_panel.py::test_default_backend_select_mount_refire_is_suppressed",
+        "Tests/UI/test_settings_image_gen_panel.py::test_invalid_global_int_field_blocks_save_with_inline_error",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_uses_current_form_values",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_secret_uses_pasted_unsaved_key",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_secret_falls_back_to_effective_when_nothing_pasted",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_renders_badge_and_reenables_buttons",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_escaped_exception_renders_probe_error_badge",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_badge_resets_on_category_reopen",
+        "Tests/UI/test_settings_image_gen_panel.py::test_emptying_a_saved_field_deletes_not_blanks",
+        "Tests/UI/test_settings_image_gen_panel.py::test_swarmui_token_saves_and_resolves_end_to_end",
+        "Tests/UI/test_settings_image_gen_panel.py::test_clearing_default_backend_select_clears_all_row_markers",
+        "Tests/UI/test_settings_image_gen_panel.py::test_raw_section_cache_reused_and_invalidated_at_exactly_three_points",
+        "Tests/UI/test_settings_image_gen_panel.py::test_comfyui_panel_fields_disclosure_and_narrow_geometry",
+        "Tests/UI/test_settings_image_gen_panel.py::test_comfyui_optional_fields_render_packaged_placeholder_and_clear_on_save",
+        "Tests/UI/test_settings_image_gen_panel.py::test_failed_image_gen_persistence_does_not_reset_runtime",
+        "Tests/UI/test_settings_image_gen_panel.py::test_mixed_image_gen_write_delete_failure_is_atomic_and_does_not_reset",
+        "Tests/UI/test_settings_image_gen_panel.py::test_post_replace_cache_failure_refreshes_image_runtime_and_reports_failure",
+        "Tests/UI/test_settings_image_gen_panel.py::test_successful_image_gen_persistence_resets_runtime_exactly_once"
+      ]
+    },
+    "template_settings_dev": {
+      "log_sha256": "c07ebd9f8c4649a29c96797cfe029bcdab0f5e83c11463927a8d0f7d16ee9571",
+      "summary": "27 failed, 119 passed, 32 errors in 65.05s (0:01:05)",
+      "failed_or_error_nodes": [
+        "Tests/Chat/test_console_style_picker.py::test_search_style_templates_empty_query_returns_all_thirteen",
+        "Tests/Chat/test_console_style_picker.py::test_search_style_templates_filters_by_id_prefix",
+        "Tests/Chat/test_console_style_picker.py::test_search_style_templates_filters_by_name_substring",
+        "Tests/Chat/test_console_style_picker.py::test_search_style_templates_filters_by_category_case_insensitive",
+        "Tests/Chat/test_console_style_picker.py::test_search_style_templates_unknown_query_returns_empty",
+        "Tests/Chat/test_console_style_picker.py::test_modal_renders_all_thirteen_templates_unfiltered",
+        "Tests/Chat/test_console_style_picker.py::test_modal_row_shows_name_category_and_id",
+        "Tests/Chat/test_console_style_picker.py::test_modal_typing_filters_rows_by_id_prefix",
+        "Tests/Chat/test_console_style_picker.py::test_modal_unmatched_filter_shows_empty_copy",
+        "Tests/Chat/test_console_style_picker.py::test_modal_detail_shows_preview_of_first_row_on_open",
+        "Tests/Chat/test_console_style_picker.py::test_modal_detail_updates_when_highlight_moves",
+        "Tests/Chat/test_console_style_picker.py::test_modal_detail_shows_placeholder_when_no_matches",
+        "Tests/Chat/test_console_style_picker.py::test_modal_lists_user_defined_template_after_merge",
+        "Tests/Chat/test_console_style_picker.py::test_modal_row_click_dismisses_with_id_and_name",
+        "Tests/Chat/test_console_style_picker.py::test_modal_enter_on_highlighted_row_dismisses_with_that_record",
+        "Tests/Chat/test_console_style_picker.py::test_modal_escape_dismisses_none",
+        "Tests/Chat/test_console_style_picker.py::test_modal_filter_has_focus_on_open",
+        "Tests/Chat/test_console_style_picker.py::test_modal_css_blocks_pinned_in_source_and_bundle",
+        "Tests/Chat/test_console_style_picker.py::test_console_command_provider_lists_insert_image_style",
+        "Tests/Chat/test_console_style_picker.py::test_action_open_console_style_insert_opens_picker",
+        "Tests/Chat/test_console_style_picker.py::test_action_open_console_style_insert_is_unavailable_when_ephemeral",
+        "Tests/Chat/test_console_style_picker.py::test_style_picker_selection_inserts_style_token_into_draft",
+        "Tests/Chat/test_console_style_picker.py::test_style_picker_insert_composes_valid_command_after_command_word",
+        "Tests/Chat/test_console_style_picker.py::test_style_picker_insert_replaces_existing_leading_style_token",
+        "Tests/Chat/test_console_style_picker.py::test_style_picker_insert_result_parses_as_generate_image_command",
+        "Tests/Chat/test_console_style_picker.py::test_style_picker_escape_leaves_draft_untouched",
+        "Tests/UI/test_settings_image_gen_defaults.py::test_adapter_delete_values",
+        "Tests/UI/test_settings_image_gen_panel.py::test_image_gen_category_in_rail_and_search",
+        "Tests/UI/test_settings_image_gen_panel.py::test_panel_populates_from_scratch_config",
+        "Tests/UI/test_settings_image_gen_panel.py::test_fresh_config_shows_placeholder_not_merged_default_value",
+        "Tests/UI/test_settings_image_gen_panel.py::test_secret_input_never_echoes_saved_key",
+        "Tests/UI/test_settings_image_gen_panel.py::test_env_key_shows_env_source_line",
+        "Tests/UI/test_settings_image_gen_panel.py::test_save_revert_disabled_test_buttons_enabled",
+        "Tests/UI/test_settings_image_gen_panel.py::test_edit_marks_dirty_and_save_writes_nested_toml",
+        "Tests/UI/test_settings_image_gen_panel.py::test_save_blocked_when_default_disabled",
+        "Tests/UI/test_settings_image_gen_panel.py::test_revert_discards_draft",
+        "Tests/UI/test_settings_image_gen_panel.py::test_clear_key_deletes_not_blanks",
+        "Tests/UI/test_settings_image_gen_panel.py::test_clear_swarmui_token_also_deletes_legacy_api_key",
+        "Tests/UI/test_settings_image_gen_panel.py::test_pasted_key_saves_and_input_resets",
+        "Tests/UI/test_settings_image_gen_panel.py::test_unedited_baked_field_produces_empty_diff_on_save",
+        "Tests/UI/test_settings_image_gen_panel.py::test_revert_action_shortcut_recomposes_panel",
+        "Tests/UI/test_settings_image_gen_panel.py::test_default_backend_select_mount_refire_is_suppressed",
+        "Tests/UI/test_settings_image_gen_panel.py::test_invalid_global_int_field_blocks_save_with_inline_error",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_uses_current_form_values",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_secret_uses_pasted_unsaved_key",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_secret_falls_back_to_effective_when_nothing_pasted",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_renders_badge_and_reenables_buttons",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_escaped_exception_renders_probe_error_badge",
+        "Tests/UI/test_settings_image_gen_panel.py::test_probe_badge_resets_on_category_reopen",
+        "Tests/UI/test_settings_image_gen_panel.py::test_emptying_a_saved_field_deletes_not_blanks",
+        "Tests/UI/test_settings_image_gen_panel.py::test_swarmui_token_saves_and_resolves_end_to_end",
+        "Tests/UI/test_settings_image_gen_panel.py::test_clearing_default_backend_select_clears_all_row_markers",
+        "Tests/UI/test_settings_image_gen_panel.py::test_raw_section_cache_reused_and_invalidated_at_exactly_three_points",
+        "Tests/UI/test_settings_image_gen_panel.py::test_comfyui_panel_fields_disclosure_and_narrow_geometry",
+        "Tests/UI/test_settings_image_gen_panel.py::test_comfyui_optional_fields_render_packaged_placeholder_and_clear_on_save",
+        "Tests/UI/test_settings_image_gen_panel.py::test_failed_image_gen_persistence_does_not_reset_runtime",
+        "Tests/UI/test_settings_image_gen_panel.py::test_mixed_image_gen_write_delete_failure_is_atomic_and_does_not_reset",
+        "Tests/UI/test_settings_image_gen_panel.py::test_post_replace_cache_failure_refreshes_image_runtime_and_reports_failure",
+        "Tests/UI/test_settings_image_gen_panel.py::test_successful_image_gen_persistence_resets_runtime_exactly_once"
+      ]
+    },
+    "rag_validation_dev": {
+      "log_sha256": "f8bc792bc6d972688beb4d660e63d66ea91a889ea9067bfacc62dbf4c1a3b3de",
+      "summary": "2 failed in 1.15s",
+      "failed_or_error_nodes": [
+        "Tests/Backup_Recovery/test_sqlite_validation.py::test_native_rag_indexing_schema_zero_survives_restricted_validation[False]",
+        "Tests/Backup_Recovery/test_sqlite_validation.py::test_native_rag_indexing_schema_zero_survives_restricted_validation[True]"
+      ]
+    },
+    "installed_initial": {
+      "log_sha256": "ba2779c687d18d6c8d325e0901f21ae1a63a5b6ad55799bc8497488809d9f2be",
+      "summary": "1 failed, 1 passed in 115.57s (0:01:55)",
+      "failed_or_error_nodes": [
+        "Tests/ProductionApp/test_console_radio_portraits.py::test_installed_authoring_console_reopen_remove_and_reapply"
+      ]
+    },
+    "installed_final": {
+      "log_sha256": "1759074bbc19dfa006129aa3f1fffbcfb6c8dc83e9e589647e6e0c9cbf660838",
+      "summary": "1 passed in 41.16s",
+      "failed_or_error_nodes": []
+    },
+    "native_final": {
+      "log_sha256": "94af6827ecf90eb351fdbde27ad8f2b8cb9bb18e5bdc8219322eadaa35e764d4",
+      "summary": "1 passed in 50.41s",
+      "failed_or_error_nodes": []
+    },
+    "original_three_ratchets_red": {
+      "log_sha256": "a80958910e3bbba93372bd97bb9a5735ccacab64b4052441d3b8812ac6630d00",
+      "summary": "3 failed in 19.73s",
+      "failed_or_error_nodes": [
+        "Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size",
+        "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+        "Tests/Performance/test_screen_preimport_payload_budget.py::test_preimport_pass_payload_stays_within_budget"
+      ]
+    },
+    "historical_restore_red": {
+      "log_sha256": "411e66f317d48a3aedbc4681cf5c4fe9a13941b982b24646e0f2340f7d290d12",
+      "summary": "4 failed, 17 deselected in 2.79s",
+      "failed_or_error_nodes": [
+        "Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[0]",
+        "Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[1]",
+        "Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[2]",
+        "Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant[3]"
+      ]
+    },
+    "lazy_exports_red": {
+      "log_sha256": "48afcd4429e7b224e70f83f877db3e9fd147395d4ae9663f2abfd5a909ad7ca1",
+      "summary": "1 failed in 0.87s",
+      "failed_or_error_nodes": [
+        "Tests/Media_Creation/test_package_imports.py::test_template_catalog_defers_provider_exports"
+      ]
+    }
+  },
+  "console_p0_command": ".venv/bin/python -m pytest \\\n  Tests/Console/test_console_markdown_export.py \\\n  Tests/Chat/test_console_trace_row_sources.py \\\n  Tests/Architecture/test_wizard_lifecycle_guards.py \\\n  Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py \\\n  Tests/UI/test_console_composer_run_controls.py::test_disabled_reason_names_the_queue_state_not_send_or_setup \\\n  Tests/UI/test_console_composer_run_controls.py::test_queue_state_labels_match_the_prompt_queue_presentation \\\n  Tests/UI/test_console_composer_run_controls.py::test_palette_lists_stop_and_the_composer_menu_actions_class_safe \\\n  Tests/UI/test_app_keep_alive_dead_screen.py::test_a_dead_content_screen_over_only_the_placeholder_takes_the_loud_exit \\\n  Tests/UI/test_app_keep_alive_dead_screen.py::test_a_recovery_that_raises_is_logged_before_the_loud_exit \\\n  Tests/UI/test_app_keep_alive_dead_screen.py::test_retiring_a_dead_screen_resumes_a_worker_awaiting_a_screen_above_it \\\n  Tests/UI/test_app_keep_alive_dead_screen.py::test_pump_loop_ended_matches_what_textual_does_to_the_pump \\\n  Tests/UI/test_app_keep_alive_dead_screen.py::test_a_retired_screen_is_torn_down_however_its_loop_ended \\\n  Tests/UI/test_app_keep_alive_dead_screen.py::test_a_dead_screen_whose_unmount_raises_is_still_dropped \\\n  Tests/UI/test_app_keep_alive_dead_screen.py::test_a_screen_handler_error_leaves_only_live_screens_on_the_stack \\\n  \"Tests/UI/test_console_project_instruction_choose_folder.py::test_choose_folder_opens_picker_and_applies_the_chosen_binding[enable]\" \\\n  Tests/UI/test_console_conversation_action_menu.py::test_unwritable_save_path_shows_an_error_and_keeps_the_app_running \\\n  \"Tests/UI/test_console_conversation_action_menu.py::test_save_prompt_closes_without_writing_and_restores_focus[cancel]\" \\\n  Tests/Chat/test_response_rules_preparation_custody.py \\\n  \"Tests/DB/test_response_rules_migration.py::test_historical_migrates_using_installed_sql_without_losing_history[80]\" \\\n  Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics \\\n  Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_current_variant \\\n  Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload \\\n  Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation \\\n  Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated \\\n  --timeout=180 \\\n  --tb=short -q -o addopts='' -p no:cacheprovider --show-capture=no --basetemp=/private/tmp/portrait-ci-p0\n"
+}

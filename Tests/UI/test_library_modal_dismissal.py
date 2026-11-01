@@ -37,6 +37,7 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushCandidateProjection,
     PushDestinationProjection,
 )
+from tldw_chatbook.Notes.note_folder_models import NoteFolderChildPage
 from tldw_chatbook.Prompt_Management.prompt_variables import (
     PromptVariableApplication,
 )
@@ -54,7 +55,7 @@ from tldw_chatbook.UI.Library_Modules.prompt_collections import (
 from tldw_chatbook.UI.Library_Modules.skill_import_choice_modal import (
     SkillImportChoiceModal,
 )
-from tldw_chatbook.UI.Screens.skills_screen import (
+from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
     SkillTrustBootstrapModal,
     SkillTrustPassphraseModal,
 )
@@ -187,6 +188,17 @@ def _model_install_modal() -> ModelInstallModal:
         gating_errors=(),
     )
     return ModelInstallModal(report, model_label="Library contract")
+
+
+async def _no_note_folders(_query: str, _offset: int) -> NoteFolderChildPage:
+    """The folder picker's loader over a profile with no folders yet."""
+    return NoteFolderChildPage(
+        folders=(),
+        total_folders=0,
+        start_offset=0,
+        previous_offset=None,
+        next_offset=None,
+    )
 
 
 def _contract_prompt_collection_modal() -> PromptCollectionManagerModal:
@@ -391,7 +403,7 @@ LIBRARY_MODAL_CONTRACTS = (
     LibraryModalContract(
         LibraryNoteFolderTargetDialog,
         lambda: LibraryNoteFolderTargetDialog(
-            title="Move note", folders=(), include_root=True
+            title="Move note", loader=_no_note_folders, include_root=True
         ),
         "#library-note-folder-target-dialog",
         "#library-note-folder-target-cancel",

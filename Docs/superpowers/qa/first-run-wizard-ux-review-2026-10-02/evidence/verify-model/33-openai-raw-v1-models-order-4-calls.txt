@@ -1,0 +1,5 @@
+# raw GET https://api.openai.com/v1/models, 4 consecutive calls, first 6 ids each (2026-10-02)
+call 1 count 137 ['tts-1-hd-1106', 'gpt-realtime-mini', 'gpt-5.4', 'gpt-4o-transcribe-diarize', 'gpt-5-codex', 'gpt-image-1-mini'] created-sorted? [1699053533, 1759517133, 1772691852, 1750798887, 1757527818, 1758845821]
+call 2 count 137 ['omni-moderation-latest', 'gpt-5.4-mini', 'o4-mini-2025-04-16', 'gpt-4o-2024-11-20', 'tts-1-hd', 'gpt-realtime-1.5'] created-sorted? [1731689265, 1773451123, 1744133506, 1739331543, 1699046015, 1771461469]
+call 3 count 137 ['tts-1-hd-1106', 'gpt-realtime-mini', 'gpt-5.4', 'gpt-4o-transcribe-diarize', 'gpt-5-codex', 'gpt-image-1-mini'] created-sorted? [1699053533, 1759517133, 1772691852, 1750798887, 1757527818, 1758845821]
+call 4 count 137 ['omni-moderation-latest', 'gpt-5.4-mini', 'o4-mini-2025-04-16', 'gpt-4o-2024-11-20', 'tts-1-hd', 'gpt-realtime-1.5'] created-sorted? [1731689265, 1773451123, 1744133506, 1739331543, 1699046015, 1771461469]

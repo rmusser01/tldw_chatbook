@@ -19,6 +19,7 @@ import inspect
 import json
 import math
 import re
+import threading
 import time
 import traceback
 from abc import ABC, abstractmethod
@@ -82,8 +83,10 @@ def _finite_number(name: str, value: object, *, positive: bool) -> float:
             numeric_value = float(value)
         except (OverflowError, ValueError):
             pass
-    if numeric_value is None or not math.isfinite(numeric_value) or (
-        numeric_value <= 0 if positive else numeric_value < 0
+    if (
+        numeric_value is None
+        or not math.isfinite(numeric_value)
+        or (numeric_value <= 0 if positive else numeric_value < 0)
     ):
         qualifier = "positive" if positive else "non-negative"
         raise ValueError(f"{name} must be a {qualifier} finite number")
@@ -546,6 +549,47 @@ class DatasetLoader:
             return str(item)
 
 
+# Process-level singleton for the semantic-similarity embedding model.
+# Constructing SentenceTransformer("all-MiniLM-L6-v2") per scored sample
+# dominated eval runs (one model load per non-exact-match sample), so the
+# model is built lazily once per process and reused. The lazy import stays
+# so sentence-transformers remains an optional dependency.
+_SEMANTIC_MODEL = None
+_SEMANTIC_MODEL_LOCK = threading.Lock()
+
+
+def get_semantic_embedding_model() -> "SentenceTransformer":  # type: ignore[name-defined] # noqa: F821
+    """Return the shared sentence-transformers model, constructing it once.
+
+    Returns:
+        The process-wide ``SentenceTransformer`` instance used by
+        ``calculate_semantic_similarity`` when no explicit model is passed.
+
+    Raises:
+        ImportError: If sentence-transformers is not installed (same
+            behavior as the previous in-function construction).
+    """
+    global _SEMANTIC_MODEL
+    if _SEMANTIC_MODEL is None:
+        with _SEMANTIC_MODEL_LOCK:
+            if _SEMANTIC_MODEL is None:
+                from sentence_transformers import SentenceTransformer
+
+                # Use local cache only so offline test runs do not attempt
+                # network downloads.
+                _SEMANTIC_MODEL = SentenceTransformer(
+                    "all-MiniLM-L6-v2", local_files_only=True
+                )
+    return _SEMANTIC_MODEL
+
+
+def _reset_semantic_model_for_tests() -> None:
+    """Clear the shared semantic model singleton (test isolation only)."""
+    global _SEMANTIC_MODEL
+    with _SEMANTIC_MODEL_LOCK:
+        _SEMANTIC_MODEL = None
+
+
 class MetricsCalculator:
     """Calculates evaluation metrics."""
 
@@ -817,12 +861,7 @@ class MetricsCalculator:
         # Try to use sentence transformers if available
         try:
             if embedding_model is None:
-                from sentence_transformers import SentenceTransformer
-
-                # Use local cache only so offline test runs do not attempt network downloads.
-                embedding_model = SentenceTransformer(
-                    "all-MiniLM-L6-v2", local_files_only=True
-                )
+                embedding_model = get_semantic_embedding_model()
 
             # Get embeddings
             embeddings = embedding_model.encode([predicted, expected])
@@ -2692,10 +2731,7 @@ class EvalRunner:
                 "dialogue_generation",
             ]:
                 self.runner = CreativeEvaluationRunner(task_config, effective_config)
-            elif (
-                category == "research"
-                or task_config.task_type == "research_report"
-            ):
+            elif category == "research" or task_config.task_type == "research_report":
                 # task-16327: deterministic scoring of stored verification
                 # payloads; see Evals/research_report_scorer.py.
                 self.runner = ResearchReportRunner(task_config, effective_config)
@@ -2752,9 +2788,7 @@ class EvalRunner:
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:
-                    logger.error(
-                        f"Fatal error processing sample {sample.id}: {error}"
-                    )
+                    logger.error(f"Fatal error processing sample {sample.id}: {error}")
                     result = EvalSampleResult(
                         sample_id=sample.id,
                         input_text=sample.input_text,
@@ -2798,9 +2832,7 @@ class EvalRunner:
                 )
 
                 if completed % 10 == 0:
-                    success_rate = (
-                        (completed - error_count) / completed
-                    ) * 100
+                    success_rate = ((completed - error_count) / completed) * 100
                     logger.info(
                         f"Processed {completed}/{len(samples)} samples | "
                         f"Success rate: {success_rate:.1f}% | "

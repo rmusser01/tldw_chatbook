@@ -1,0 +1,39 @@
+[
+  {
+    "name": "source-stage",
+    "argv": [
+      "git",
+      "add",
+      "--",
+      "tldw_chatbook/Chat/console_chat_controller.py",
+      "Docs/User_Guide/console/agent-runs-and-tools.md"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "staged-paths",
+    "argv": [
+      "git",
+      "diff",
+      "--cached",
+      "--name-only"
+    ],
+    "exit": 0,
+    "stdout": "Docs/User_Guide/console/agent-runs-and-tools.md\ntldw_chatbook/Chat/console_chat_controller.py\n",
+    "stderr": ""
+  },
+  {
+    "name": "source-commit",
+    "argv": [
+      "git",
+      "commit",
+      "-m",
+      "fix(console): preserve grants when close tickets are refused"
+    ],
+    "exit": 0,
+    "stdout": "[codex/console-chat-starts-dev 0d2e581ba9] fix(console): preserve grants when close tickets are refused\n 2 files changed, 5 insertions(+), 6 deletions(-)\n",
+    "stderr": "Auto packing the repository in background for optimum performance.\nSee \"git help gc\" for manual housekeeping.\nwarning: The last gc run reported the following. Please correct the root cause\nand remove /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.git/worktrees/tldw_chatbook1/gc.log\nAutomatic cleanup will not be performed until the file is removed.\n\nwarning: There are too many unreachable loose objects; run 'git prune' to remove them.\n\n"
+  }
+]

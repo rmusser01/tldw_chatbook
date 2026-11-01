@@ -164,6 +164,27 @@
     opacity: 0.5;
 }
 
+/* TASK-34100.1 (cross-cutting-14): a disabled first-run nav button changed
+   colour only (#a2a5a6 against #e0e0e0 for Back and Exit), and reviewers read
+   it as enabled while Next was fenced. The dim attribute is a terminal-level
+   cue that survives any palette, including monochrome. */
+.setup-navigation Button#wizard-back:disabled,
+.setup-navigation Button#wizard-next:disabled,
+.setup-navigation Button#wizard-cancel:disabled {
+    text-style: dim;
+}
+
+/* TASK-34100.1 (cross-cutting-14): the line that names a slow Next's work
+   ("Saving voice settings… 3 s"), just above the nav bar. Shown only past
+   ~400 ms, so a quick Next never flickers. */
+.setup-busy-status {
+    height: auto;
+    color: $text-muted;
+    text-style: italic;
+    padding: $ds-space-0 $ds-space-2;
+}
+.setup-busy-status.hidden { display: none; }
+
 /* Content Type Selection */
 
 
@@ -376,13 +397,6 @@
     color: $primary;
 }
 
-.current-item {
-    text-align: center;
-    color: $text-muted;
-    margin-bottom: $ds-space-2;
-    text-style: italic;
-}
-
 .progress-stats {
     layout: horizontal;
     align: center middle;
@@ -486,10 +500,6 @@ ExportOptionsStep .option-group {
 ExportOptionsStep .option-title {
     text-style: bold;
     margin-bottom: $ds-space-1;
-}
-
-ExportOptionsStep .radio-option {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 ExportOptionsStep .checkbox-option {
@@ -781,10 +791,6 @@ ConflictResolutionStep .strategy-title {
     color: $primary;
 }
 
-ConflictResolutionStep .radio-option {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
-}
-
 ConflictResolutionStep .strategy-description {
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-3;
     color: $text-muted;
@@ -805,6 +811,11 @@ ConflictResolutionStep .conflict-title {
 ConflictResolutionStep .conflict-list {
     margin-left: $ds-space-2;
     color: $text-muted;
+}
+
+ConflictResolutionStep .conflict-item {
+    margin-bottom: $ds-space-1;
+    color: $warning;
 }
 
 ConflictResolutionStep .no-conflicts {
@@ -914,6 +925,13 @@ ImportProgressStep .completion-message.outcome-excluded {
 ImportProgressStep .completion-message.outcome-failed {
     background: $error 20%;
     border: round $error;
+}
+
+/* A completed run whose counts nobody reported is neither a success nor an
+ * empty chatbook (task-19869). */
+ImportProgressStep .completion-message.outcome-unknown {
+    background: $warning 20%;
+    border: round $warning;
 }
 
 ImportProgressStep .completion-stats {
@@ -1029,20 +1047,24 @@ SmartContentTree Tree > .selected-node {
 .setup-subtitle { color: $text-muted; margin-bottom: $ds-space-1; }
 .setup-provider .setup-title,
 .setup-provider .setup-subtitle { margin-bottom: $ds-space-0; }
+/* TASK-34100.6: >= 4.5:1 (test_theme_contrast.py) */
 .setup-step-error {
-    color: $error;
-    background: $error 15%;
+    color: $text;
+    background: $error 25%;
     text-style: bold;
     margin-top: $ds-space-1;
+    /* TASK-33008 (capture 06b): keep the text off the wizard's frame, inset
+       like the busy line above the nav bar (TASK-34100.6: the content column). */
+    padding: $ds-space-0 $ds-space-2;
 }
 /* TASK-21140 (UAT G-3): calm informational lines that previously borrowed
    the error class and rendered reassurance as a failure. */
 .setup-step-note { color: $text-muted; margin-top: $ds-space-1; }
 .setup-field-label { margin-top: $ds-space-1; }
 .setup-probe-status { color: $text-muted; margin-top: $ds-space-1; }
-.setup-summary-row { height: $ds-size-1; }
-.setup-summary-ok { color: $success; }
-.setup-summary-missing { color: $error; }
+.setup-probe-status.-ok { color: $text-success; }
+.setup-probe-status.-error { color: $text-error; }
+.setup-probe-status.-warn { color: $text-warning; }
 
 /* TASK-1495: the step region clips without scrolling; primary inputs/CTAs
  * can render below a hard fold with no scrollbar (Provider's API-key field
@@ -1097,6 +1119,20 @@ SmartContentTree Tree > .selected-node {
     height: auto;
 }
 
+/* TASK-34100.8: the try-it body ("No voice for now" hides it) and the inline
+ * OpenAI key row are Verticals too; 1fr here made the step under-report its
+ * height, so Advanced fields scrolled out of reach. */
+#setup-voice-body,
+#setup-voice-key-row {
+    height: auto;
+}
+
+/* The line under the Service radio: will this service work? */
+#setup-voice-service-status {
+    height: auto;
+    min-height: $ds-size-1;
+}
+
 .setup-voice-segmented {
     layout: horizontal;
     height: $ds-size-3;
@@ -1111,19 +1147,60 @@ SmartContentTree Tree > .selected-node {
     height: $ds-size-3;
 }
 
+/* TASK-34100.8 review round 1 (F8): five equal segments clipped the lead
+ * "No voice for now" to "No voice for no…" at 120 columns once the step
+ * scrolled. Share the row in proportion to each label's own width (label +
+ * radio glyph), so every label fits whenever the row has room for all five
+ * and they shrink together when it has not. */
+#setup-voice-preset-none {
+    width: $ds-wizards-voice-long-share;
+}
+
+#setup-voice-preset-pocket,
+#setup-voice-preset-omnivoice {
+    width: $ds-wizards-voice-mid-share;
+}
+
+#setup-voice-preset-official,
+#setup-voice-preset-custom {
+    width: $ds-wizards-voice-short-share;
+}
+
+/* TASK-34100.8 review round 2 (R2-F3 / G8-R2-F4): the five labels need 71
+ * cells, so below about 87 columns one row clipped every one of them (80x24:
+ * "No voice for …", "PocketTT…"). VoiceServiceRadioSet adds -stacked exactly
+ * then, and the radio wraps to two rows of three columns, each as wide as
+ * its widest label needs (No voice for now / Custom, PocketTTS / OmniVoice,
+ * OpenAI). */
+#setup-voice-preset.-stacked {
+    layout: grid;
+    grid-size: 3 2;
+    grid-columns: $ds-setup-voice-wide-share $ds-setup-voice-medium-share $ds-setup-voice-narrow-share;
+    grid-rows: $ds-size-1;
+    height: $ds-size-4;
+    min-height: $ds-size-4;
+}
+
+#setup-voice-preset.-stacked SetupRadioButton {
+    width: $ds-width-fill;
+    height: $ds-size-1;
+}
+
 .setup-voice-segmented SetupRadioButton.-on {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
 }
 
+/* TASK-34100.8: Format is a picker whose "Other…" reveals a text field, so
+ * the row grows with it instead of clipping at a fixed height. */
 .setup-voice-output-row {
-    height: $ds-size-5;
+    height: auto;
 }
 
 .setup-voice-output-row > Vertical {
     width: $ds-width-fill;
-    height: $ds-size-5;
+    height: auto;
 }
 
 #setup-voice-sample-count {
@@ -1151,11 +1228,23 @@ SmartContentTree Tree > .selected-node {
     border: solid $primary;
 }
 
+/* TASK-33008 (capture 06a): the Model step's list holding one status line
+ * (loading, a failure, nothing found) hugs it; the five-row floor drew two
+ * empty rows under the text. */
+#setup-model-choice.-status {
+    min-height: $ds-size-0;
+}
+
 .setup-choice-list:focus {
     border: solid $ds-focus-accent;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
 }
+
+#setup-provider-choice { max-height: 40vh; }
+.setup-provider-filter { width: $ds-width-fill; }
+.setup-provider-count { width: auto; margin-left: $ds-space-2; }
+.setup-no-server { height: auto; }
 
 /* TASK-1495 AC #3: the Summary's exit actions are docked to the step
  * viewport's bottom edge (the row is a direct child of the .setup-step
@@ -1231,11 +1320,6 @@ SmartContentTree Tree > .selected-node {
 
 /* TASK-1498: section headers inside the provider list, and the pinned
  * found-a-server banner above it. */
-.setup-choice-header {
-    color: $text-muted;
-    text-style: bold;
-    padding: $ds-space-0 $ds-space-1;
-}
 .setup-detected-banner {
     margin-bottom: $ds-space-1;
 }
@@ -1258,8 +1342,7 @@ SmartContentTree Tree > .selected-node {
 }
 
 .setup-provider-connection-actions {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
+    height: auto;
     margin-top: $ds-space-1;
 }
 
@@ -1360,27 +1443,35 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
     text-style: bold;
 }
 
-.setup-progress-item.-upcoming .step-number {
+/* TASK-34100.6: a skipped step looks upcoming, marked "–" (never "!") */
+.setup-progress-item.-upcoming .step-number,
+.setup-progress-item.-skipped .step-number {
     background: $panel;
     color: $text-muted;
     border: solid $primary;
 }
 
-.setup-progress-item.-upcoming .step-title {
+.setup-progress-item.-upcoming .step-title,
+.setup-progress-item.-skipped .step-title {
     color: $text-muted;
 }
 
-/* TASK-1506: key input and its Test button share one row. */
+/* TASK-1506 / TASK-34100.6: the key input and its buttons share one row. */
 .setup-key-row {
-    height: $ds-size-3;
+    height: auto;
 }
-.setup-key-row Input {
+.setup-key-row #setup-provider-api-key {
     width: $ds-width-fill;
 }
 .setup-key-row Button {
     margin-left: $ds-space-1;
     min-width: $ds-size-8;
 }
+.setup-key-hint, #setup-provider-key-source { height: auto; }
+/* TASK-34100.6 pass 2: at 80x24 the env option wraps (KeySourceRadioButton
+ * measures it), never cutting '(found; not stored)' short. */
+#setup-provider-key-source SetupRadioButton { text-wrap: wrap; }
+.setup-key-hint Static { width: $ds-width-fill; }
 
 /* TASK-1505: with the key-hints line docked at the screen's bottom, the
  * wizard container must yield that row — height:100% (the shared framework

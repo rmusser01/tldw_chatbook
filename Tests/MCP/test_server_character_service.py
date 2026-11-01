@@ -67,12 +67,8 @@ def test_no_character_interop_service_reference_remains():
     assert "CharacterInteropService" not in imported_names
 
     referenced_names = {
-        node.attr
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute)
-    } | {
-        node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
-    }
+        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+    } | {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     assert "character_service" not in referenced_names
     assert "CharacterInteropService" not in referenced_names
 

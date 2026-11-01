@@ -1,0 +1,160 @@
+{
+  "date": "2026-10-23",
+  "mode": "ChatGPT built-in image generation; reference edits",
+  "source": "tldw_chatbook/assets/characters/samira/expressions/neutral.webp",
+  "frames": [
+    {
+      "role": "rest",
+      "prompt": "Use case: identity-preserve. Asset type: one full-canvas frame for a six-pose living portrait in a terminal sidebar. Image 1 is the edit target: the existing 1024x1024 Samira portrait. Produce ONE square 1024x1024 PNG, NOT a contact sheet, collage or UI mockup. Role: rest. Eyes naturally OPEN, lips fully CLOSED at rest, same calm neutral mood. This is an extremely conservative edit: preserve the original face identity, freckles, eye gaze, head angle, hair outline, earrings, clothing, body pose, camera, canvas size, precise face position and scale, dark backdrop and every gold circular diagram/mark. Do not recrop, translate, zoom, retouch skin, relight, recolor, enhance, sharpen, add marks, add text or add decoration. Preserve all pixels outside the eyelids/lips wherever possible. No new radio framing: the application supplies that separately. Return only the single aligned portrait image.",
+      "file": "raw/rest.png",
+      "width": 1254,
+      "height": 1254,
+      "format": "PNG",
+      "bytes": 1798674,
+      "sha256": "4b1d78830b82a22fa049f00ef1021e1143760e8ddedfbcbd0dccbe79e3339bf0",
+      "prepared": {
+        "file": "ready/rest.png",
+        "width": 1024,
+        "height": 1024,
+        "bytes": 1188169,
+        "sha256": "9c205df5f69cf786d53dd2fe6b6a96184e5c1cb9f22c8e2e846abac5bab135e0"
+      }
+    },
+    {
+      "role": "small",
+      "prompt": "Use case: identity-preserve. Asset type: one full-canvas frame for a six-pose living portrait in a terminal sidebar. Image 1 is the edit target: the existing 1024x1024 Samira portrait. Produce ONE square 1024x1024 PNG, NOT a contact sheet, collage or UI mockup. Role: small. Eyes naturally OPEN with exactly the original gaze. Change ONLY the mouth to a restrained speaking pose: lips parted just a little, a small dark gap between the lips, a relaxed neutral expression. No smile, no grin, no tongue, no prominent teeth; keep jaw and chin displacement minimal. Everything except the tiny lip opening must match the reference. This is an extremely conservative edit: preserve the original face identity, freckles, eye gaze, head angle, hair outline, earrings, clothing, body pose, camera, canvas size, precise face position and scale, dark backdrop and every gold circular diagram/mark. Do not recrop, translate, zoom, retouch skin, relight, recolor, enhance, sharpen, add marks, add text or add decoration. Preserve all pixels outside the eyelids/lips wherever possible. No new radio framing: the application supplies that separately. Return only the single aligned portrait image.",
+      "file": "raw/small.png",
+      "width": 1254,
+      "height": 1254,
+      "format": "PNG",
+      "bytes": 1722437,
+      "sha256": "0a1262f07031878e4fdbe75fee697063246329169d8bd2ef4a8c88a698b1f91c",
+      "prepared": {
+        "file": "ready/small.png",
+        "width": 1024,
+        "height": 1024,
+        "bytes": 1139610,
+        "sha256": "f9908a694dcbc3deb200b676a90058c4b2e0a5244d3ef957e1eebd7137a349a3"
+      }
+    },
+    {
+      "role": "open",
+      "prompt": "Use case: identity-preserve. Asset type: one full-canvas frame for a six-pose living portrait in a terminal sidebar. Image 1 is the edit target: the existing 1024x1024 Samira portrait. Produce ONE square 1024x1024 PNG, NOT a contact sheet, collage or UI mockup. Role: open. Eyes naturally OPEN with exactly the original gaze. Change ONLY the mouth to a clearly readable medium-open speaking vowel: a relaxed oval opening about 22 pixels tall relative to the 1024px canvas, natural interior shadow, subtle teeth only if anatomically necessary. Neutral speech, no smile or shout, no exaggerated jaw drop or tongue. Keep chin, jaw outline and all facial landmarks stationary apart from the lip opening. This is an extremely conservative edit: preserve the original face identity, freckles, eye gaze, head angle, hair outline, earrings, clothing, body pose, camera, canvas size, precise face position and scale, dark backdrop and every gold circular diagram/mark. Do not recrop, translate, zoom, retouch skin, relight, recolor, enhance, sharpen, add marks, add text or add decoration. Preserve all pixels outside the eyelids/lips wherever possible. No new radio framing: the application supplies that separately. Return only the single aligned portrait image.",
+      "file": "raw/open.png",
+      "width": 1254,
+      "height": 1254,
+      "format": "PNG",
+      "bytes": 1728324,
+      "sha256": "ff6f7d956b8494211415be2af1291d6a96261ac1bc9f687db729040987f45669",
+      "prepared": {
+        "file": "ready/open.png",
+        "width": 1024,
+        "height": 1024,
+        "bytes": 1139804,
+        "sha256": "994003d6d7f01650adcca9aef36f1f7633f9d1ca2f89951a20db5da360943f29"
+      }
+    },
+    {
+      "role": "blink_rest",
+      "prompt": "Use case: identity-preserve. Asset type: one full-canvas frame for a six-pose living portrait in a terminal sidebar. Image 1 is the edit target: the existing 1024x1024 Samira portrait. Produce ONE square 1024x1024 PNG, NOT a contact sheet, collage or UI mockup. Role: blink_rest. Change ONLY both eyelids to a fully CLOSED natural blink, with relaxed lids and the same eyebrow positions. Lips remain fully CLOSED at rest exactly like the reference. Keep the same calm neutral mood. This is a momentary blink, not sleeping, winking, squeezing the eyes or changing expression. This is an extremely conservative edit: preserve the original face identity, freckles, eye gaze, head angle, hair outline, earrings, clothing, body pose, camera, canvas size, precise face position and scale, dark backdrop and every gold circular diagram/mark. Do not recrop, translate, zoom, retouch skin, relight, recolor, enhance, sharpen, add marks, add text or add decoration. Preserve all pixels outside the eyelids/lips wherever possible. No new radio framing: the application supplies that separately. Return only the single aligned portrait image.",
+      "file": "raw/blink_rest.png",
+      "width": 1254,
+      "height": 1254,
+      "format": "PNG",
+      "bytes": 1728491,
+      "sha256": "b8520c4456222f8b6d47865a712692489ab62c7802ea14373b051f580c8caced",
+      "prepared": {
+        "file": "ready/blink_rest.png",
+        "width": 1024,
+        "height": 1024,
+        "bytes": 1142341,
+        "sha256": "8e5f5932db3b720dcf8cab06397404765a77fd152953829732671d6e45dea4f3"
+      }
+    },
+    {
+      "role": "blink_small",
+      "prompt": "Use case: identity-preserve. Asset type: one full-canvas frame for a six-pose living portrait in a terminal sidebar. Image 1 is the edit target: the existing 1024x1024 Samira portrait. Produce ONE square 1024x1024 PNG, NOT a contact sheet, collage or UI mockup. Role: blink_small. Change ONLY both eyelids to a fully CLOSED natural blink and the mouth to a restrained speaking pose: lips parted just a little with a small dark gap. Relaxed lids, original eyebrow positions, calm neutral mood, no smile, no squeezing the eyes, no tongue or prominent teeth. Keep chin, jaw, face position and all other image features stationary. This is an extremely conservative edit: preserve the original face identity, freckles, eye gaze, head angle, hair outline, earrings, clothing, body pose, camera, canvas size, precise face position and scale, dark backdrop and every gold circular diagram/mark. Do not recrop, translate, zoom, retouch skin, relight, recolor, enhance, sharpen, add marks, add text or add decoration. Preserve all pixels outside the eyelids/lips wherever possible. No new radio framing: the application supplies that separately. Return only the single aligned portrait image.",
+      "file": "raw/blink_small.png",
+      "width": 1254,
+      "height": 1254,
+      "format": "PNG",
+      "bytes": 1762265,
+      "sha256": "2058e5e27cf37bcaeb1f8ab359213e9d0921d1033043dbb11325ef599a3667f2",
+      "prepared": {
+        "file": "ready/blink_small.png",
+        "width": 1024,
+        "height": 1024,
+        "bytes": 1157859,
+        "sha256": "6d2856bbbab21099eeb1e15531eea6c466baa798cf86d503e68fbb50416856ff"
+      }
+    },
+    {
+      "role": "blink_open",
+      "prompt": "Use case: identity-preserve. Asset type: one full-canvas frame for a six-pose living portrait in a terminal sidebar. Image 1 is the edit target: the existing 1024x1024 Samira portrait. Produce ONE square 1024x1024 PNG, NOT a contact sheet, collage or UI mockup. Role: blink_open. Change ONLY both eyelids to a fully CLOSED natural blink and the mouth to a clearly readable medium-open speaking vowel: a relaxed oval opening about 22 pixels tall relative to the 1024px canvas, with natural interior shadow and subtle teeth only if anatomically necessary. Keep relaxed lids, original eyebrow positions and the same neutral mood. No smile, shout, winking or exaggerated jaw drop. Keep chin, jaw outline and all face landmarks stationary apart from the eyelids and lip opening. This is an extremely conservative edit: preserve the original face identity, freckles, eye gaze, head angle, hair outline, earrings, clothing, body pose, camera, canvas size, precise face position and scale, dark backdrop and every gold circular diagram/mark. Do not recrop, translate, zoom, retouch skin, relight, recolor, enhance, sharpen, add marks, add text or add decoration. Preserve all pixels outside the eyelids/lips wherever possible. No new radio framing: the application supplies that separately. Return only the single aligned portrait image.",
+      "file": "raw/blink_open.png",
+      "width": 1254,
+      "height": 1254,
+      "format": "PNG",
+      "bytes": 1734783,
+      "sha256": "43259a9169406f4331a6a3b0354e6a26dd28dd972e1688cd89cabceedf819137",
+      "prepared": {
+        "file": "ready/blink_open.png",
+        "width": 1024,
+        "height": 1024,
+        "bytes": 1147614,
+        "sha256": "857a7f04fceb4351d40b26a564e64d5cc1cdb41553ae621629546c604413e353"
+      }
+    },
+    {
+      "role": "blink_small_v2",
+      "prompt": "Use case: identity-preserve. Asset type: one full-canvas frame for a six-pose living portrait in a terminal sidebar. Image 1 is the edit target: the existing 1024x1024 Samira portrait. Produce ONE square 1024x1024 PNG, NOT a contact sheet, collage or UI mockup. Role: blink_small. Change ONLY both eyelids to a fully CLOSED natural blink and the mouth to a restrained speaking pose: lips parted just a little with a small dark gap. Relaxed lids, original eyebrow positions, calm neutral mood, no smile, no squeezing the eyes, no tongue or prominent teeth. Keep chin, jaw, face position and all other image features stationary. This is an extremely conservative edit: preserve the original face identity, freckles, eye gaze, head angle, hair outline, earrings, clothing, body pose, camera, canvas size, precise face position and scale, dark backdrop and every gold circular diagram/mark. Do not recrop, translate, zoom, retouch skin, relight, recolor, enhance, sharpen, add marks, add text or add decoration. Preserve all pixels outside the eyelids/lips wherever possible. No new radio framing: the application supplies that separately. Return only the single aligned portrait image. Selected-slot regeneration, blink_small only: make the lip separation particularly subtle, approximately a 4\u20136 pixel dark gap on a 1024px canvas, clearly smaller than a medium-open speaking mouth. The upper and lower lips must keep their original position and fullness. Both eyes are naturally fully closed for the blink; do not lower the eyebrows, nod the head, or change the face angle. Keep every other pixel as close to the original reference as possible.",
+      "file": "raw/blink_small_v2.png",
+      "width": 1254,
+      "height": 1254,
+      "format": "PNG",
+      "bytes": 1729824,
+      "sha256": "b7068d783cd531fe29779fa3f93fa2bbf2cfe2a06211c0fb7570c675e88dd789",
+      "prepared": {
+        "file": "ready/blink_small_v2.png",
+        "width": 1024,
+        "height": 1024,
+        "bytes": 1143813,
+        "sha256": "3e7bd66aad26e58cb8ae61e4e3a459f0ad1379b48d43e1aeec62e560521b41dd"
+      }
+    }
+  ],
+  "selected_replacement": {
+    "slot": "blink_small",
+    "original": "blink_small",
+    "replacement": "blink_small_v2"
+  },
+  "preparation": "User explicitly authorized local resizing of copies on 2026-10-23. Pillow LANCZOS 1254x1254 to 1024x1024, no crop, original files preserved byte-for-byte.",
+  "workspace_assets": "output/imagegen/console-radio-samira-2026-10-23/",
+  "source_sha256": "6d8ba7ecf1f19dd5e7c2a5a11e9337dd2ce26897140aff6fe4e77b91bfdf1463",
+  "selected_files": {
+    "rest": {
+      "file": "selected/rest.png",
+      "sha256": "9c205df5f69cf786d53dd2fe6b6a96184e5c1cb9f22c8e2e846abac5bab135e0"
+    },
+    "small": {
+      "file": "selected/small.png",
+      "sha256": "f9908a694dcbc3deb200b676a90058c4b2e0a5244d3ef957e1eebd7137a349a3"
+    },
+    "open": {
+      "file": "selected/open.png",
+      "sha256": "994003d6d7f01650adcca9aef36f1f7633f9d1ca2f89951a20db5da360943f29"
+    },
+    "blink_rest": {
+      "file": "selected/blink_rest.png",
+      "sha256": "8e5f5932db3b720dcf8cab06397404765a77fd152953829732671d6e45dea4f3"
+    },
+    "blink_small": {
+      "file": "selected/blink_small.png",
+      "sha256": "3e7bd66aad26e58cb8ae61e4e3a459f0ad1379b48d43e1aeec62e560521b41dd"
+    },
+    "blink_open": {
+      "file": "selected/blink_open.png",
+      "sha256": "857a7f04fceb4351d40b26a564e64d5cc1cdb41553ae621629546c604413e353"
+    }
+  }
+}

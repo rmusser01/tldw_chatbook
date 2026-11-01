@@ -1,7 +1,9 @@
 from hashlib import sha256
 
 from tldw_chatbook.Prompt_Management.prompt_block_compiler import compile_block_artifact
-from tldw_chatbook.Prompt_Management.prompt_legacy_decomposer import decompose_legacy_lanes
+from tldw_chatbook.Prompt_Management.prompt_legacy_decomposer import (
+    decompose_legacy_lanes,
+)
 
 
 def test_decomposer_recognizes_top_level_markdown_and_nested_xml_only() -> None:
@@ -71,7 +73,9 @@ def test_decomposer_does_not_treat_mixed_fence_markers_as_a_fence() -> None:
 
     result = decompose_legacy_lanes(system, "")
 
-    assert [(block.syntax, block.content) for block in result.definition.lanes[0].blocks] == [
+    assert [
+        (block.syntax, block.content) for block in result.definition.lanes[0].blocks
+    ] == [
         ("freeform", "`~`~\n"),
         ("markdown", "Shown"),
     ]

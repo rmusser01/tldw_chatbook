@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 from datetime import datetime, timezone
 
 import pytest
+import yaml
 from rich.cells import cell_len
 
 from tldw_chatbook.Library.library_notes_state import (
@@ -73,7 +74,10 @@ def test_list_state_filtered_empty_does_not_claim_the_source_is_empty():
 
     assert state.header_copy == "Notes (2)"
     assert state.status_copy == "filter: [draft] <plan> · 0 results"
-    assert state.empty_copy == "No notes match “[draft] <plan>”. Clear the filter."
+    assert state.empty_copy == (
+        "No notes match “[draft] <plan>” in titles, bodies or keywords. "
+        "Try fewer words, or clear the filter."
+    )
     assert state.empty_kind == "filter-empty"
     assert state.total_count == 2
     assert state.result_count == 0
@@ -91,6 +95,21 @@ def test_list_state_filter_status_is_one_row_cell_bounded_and_plain():
         total_count=2,
         now=NOW,
     )
+
+    assert "\n" not in state.status_copy
+    assert cell_len(state.status_copy) <= 52
+    assert state.status_copy.endswith("…")
+
+
+def test_an_operation_status_line_stays_one_52_cell_row():
+    """TASK-34000.28 fix round 1 (M1): an operation's own status line keeps
+    its one 52-cell row. Only the folder notice is kept whole, and the screen
+    decides that (``LibraryScreen._build_library_notes_state``), because only
+    the screen knows which line it is."""
+    line = "Exporting 12 notes to a folder with a very long name\nnext"
+    assert cell_len(line) > 52
+
+    state = build_library_notes_list_state([NOTE_A], operation_status=line, now=NOW)
 
     assert "\n" not in state.status_copy
     assert cell_len(state.status_copy) <= 52
@@ -271,14 +290,21 @@ EXPORT_NOW = datetime(2026, 7, 7, 9, 30, 15)
 
 
 def test_export_content_markdown_has_frontmatter_and_heading():
+    """TASK-34000.31: the block is real YAML -- ``tags`` is a list (the key the
+    importer reads; ``keywords: retro, q3`` was a comma line it dropped), a
+    plain title stays an unquoted line, and the stamp reads back as a string."""
     text = build_note_export_content(
         "Q3 retro", "alpha body", "retro, q3", "n-1", "markdown", now=EXPORT_NOW
     )
     assert text.startswith("---\n")
     assert "title: Q3 retro\n" in text
-    assert "date: 2026-07-07 09:30:15\n" in text
-    assert "keywords: retro, q3\n" in text
-    assert "note_id: n-1\n" in text
+    block = yaml.safe_load(text.split("---\n", 2)[1])
+    assert block == {
+        "title": "Q3 retro",
+        "date": "2026-07-07 09:30:15",
+        "tags": ["retro", "q3"],
+        "note_id": "n-1",
+    }
     assert "---\n\n# Q3 retro\n\nalpha body" in text
 
 
@@ -647,3 +673,40 @@ def test_focus_identity_is_portable_immutable_value_state():
     )
     with pytest.raises(FrozenInstanceError):
         identity.semantic_role = "title"
+
+
+def test_a_presentation_state_with_a_link_origin_carries_the_back_controls_data():
+    """TASK-34000.28 (N-21): ``link_origin`` is the ``‹ <title>`` control's data.
+
+    The label escapes markup, keeps a short title whole and fits a long one
+    to the editor width (a third; a quarter when compact); no origin, no
+    label. Pure: the label method reads only these three canvas facts.
+    """
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+        LibraryNotePresentationState,
+        LibraryNotesCanvas,
+    )
+
+    def label(origin, *, width=90, compact=False) -> str:
+        state = LibraryNotePresentationState(
+            snapshot=None, metadata_line="", status_line="", link_origin=origin
+        )
+        canvas = SimpleNamespace(
+            presentation_state=state,
+            compact=compact,
+            _effective_work_width=lambda: width,
+        )
+        return LibraryNotesCanvas._link_back_label(canvas)
+
+    assert LibraryNotePresentationState(
+        snapshot=None, metadata_line="", status_line=""
+    ).link_origin is None
+    assert label(("n-1", "Recipes index")) == "‹ Recipes index"
+    assert label(("n-1", "[draft] Q3 plan")) == "‹ \\[draft] Q3 plan"
+    long_title = "Advisor meeting 2026-09-24 with the whole committee"
+    # 90 columns // 3 = a 30-cell title
+    assert label(("n-1", long_title)) == "‹ Advisor meeting 2026-09-24 wi…"
+    assert cell_len(label(("n-1", long_title), width=60, compact=True)) == 2 + 15
+    assert label(None) == ""

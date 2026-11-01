@@ -1,0 +1,2454 @@
+"""MobileChatService — parent-process Console engine binding (ADR-234).
+
+Task 3 of the served-mobile Phase 1b plan. Real engine over tmp_path SQLite
+DBs; the provider is the Task-2 ``AgentModeGateway`` double (agent-capable:
+emits one native ``fs_list`` tool call when tools are advertised, then the
+final answer once the tool result returns). The service test IS the spike,
+productized: the four tests below restate the Binding-1 probe's assertions
+against the ``MobileChatService`` surface the HTTP/WS layer will consume.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import time
+import types
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from Tests.console_provider_doubles import AgentModeGateway
+
+from tldw_chatbook.Canvas.control_protocol import (
+    CONTROL_PROTOCOL_VERSION,
+    CanvasControlBroker,
+    CanvasControlClient,
+    ControlMessage,
+    ControlProtocolError,
+)
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+from tldw_chatbook.Chat.console_chat_store import (
+    GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER,
+)
+from tldw_chatbook.Web_Server.mobile_service import MobileChatService, MobileSendRefused
+
+# The real engine's submit path reads the guarded config loader (turn
+# configuration, [tools] gates, hooks admission). Under pytest's per-test
+# config redirect those reads fail closed with RecoveryRequired — the same
+# admission signature Tests/conftest.py documents for the console suites
+# (TASK-19425/22302) — so this module keeps the bootstrap config profile,
+# like the real-engine Tests/Chat suites (e.g. test_automatic_wake_
+# recovery.py). All databases stay tmp_path-owned.
+pytestmark = pytest.mark.bootstrap_profile
+
+FINAL_ANSWER = "MOBILE_AGENT_ROUND_TRIP_COMPLETE"
+WORKSPACE_ID = "ws-mobile-1b"
+
+
+async def _subscribe(service: MobileChatService, sink: list[Any]) -> None:
+    """Background subscriber: append every fanned-out event to ``sink``."""
+    async for event in service.events():
+        sink.append(event)
+
+
+async def _wait_for(predicate, timeout: float, what: str) -> None:
+    """Poll ``predicate`` at 0.1 s until true; fail with ``what`` on timeout."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"timed out after {timeout}s waiting for {what}")
+
+
+def _bound_workspace(service: MobileChatService, tmp_path: Path) -> str:
+    """One workspace + one folder binding through the service's registry.
+
+    Mirrors the spike probe's ``ws-mobile-spike`` fixture: a workspace-bound
+    chat is the realistic mobile case (default-workspace sessions get no
+    ``fs_*``/``git_*`` tools at all).
+    """
+    folder = tmp_path / "code"
+    (folder / "src").mkdir(parents=True, exist_ok=True)
+    (folder / "README.md").write_text("# mobile\n", encoding="utf-8")
+    registry = service.workspace_registry
+    registry.create_workspace(workspace_id=WORKSPACE_ID, name="Mobile 1b")
+    registry.add_folder_binding(WORKSPACE_ID, folder, allow_write=True)
+    return WORKSPACE_ID
+
+
+async def _shutdown(service: MobileChatService, subscriber: asyncio.Task) -> None:
+    subscriber.cancel()
+    try:
+        await subscriber
+    except asyncio.CancelledError:
+        pass
+    await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+class _LoopSafeGate:
+    """An ``asyncio.Event`` whose release works from any thread (TASK-35133).
+
+    The engine consumes provider streams on its private model-call
+    lifeline loop (``run_coroutine_threadsafe``, Chat/console_agent_bridge);
+    the lifeline's only doors are threadsafe submissions. A plain
+    cross-loop ``Event.set()`` resolves the parked waiter without waking
+    that loop, so the call resumes only when the loop's next timer fires
+    -- the stall watchdog's deadline (measured: exactly 90 s at the default
+    window). Gated gateway doubles park via ``wait()`` and are opened via
+    ``release()``.
+    """
+
+    def __init__(self) -> None:
+        self.event = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    async def wait(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        await self.event.wait()
+
+    def release(self) -> None:
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self.event.set)
+        else:
+            self.event.set()
+
+
+async def test_agent_round_trip_with_approval(tmp_path: Path) -> None:
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    # Two subscribers: the first holds its own queue (fan-out sanity), the
+    # second collects the events the asserts read.
+    subscriber = asyncio.create_task(_subscribe(service, []))
+    got: list[Any] = []
+    collector = asyncio.create_task(_subscribe(service, got))
+    try:
+        workspace_id = _bound_workspace(service, tmp_path)
+        session = await service.create_session(
+            title="phone chat", workspace_id=workspace_id
+        )
+        assert session["workspace_id"] == workspace_id
+        assert session["has_folder_tools"] is True
+
+        send_task = asyncio.create_task(
+            service.send(session["id"], "list the folder")
+        )
+        await _wait_for(
+            lambda: any(e.type == "approval_requested" for e in got),
+            timeout=30,
+            what="approval_requested event",
+        )
+        # Non-blocking send (live-check round 1): the send call must have
+        # returned already — the turn is parked on this approval, which
+        # only this test can resolve, so a blocking send would still hang.
+        assert send_task.done() and not send_task.exception()
+        approvals = [e for e in got if e.type == "approval_requested"]
+        payload = approvals[0].payload
+        assert payload["calls"][0]["llm_name"] == "fs_list"
+        assert payload["round_id"]
+
+        # The pending round is also visible on the polling surface.
+        listed = service.list_approvals()
+        assert any(a["round_id"] == payload["round_id"] for a in listed)
+
+        call = payload["calls"][0]
+        assert (
+            await service.decide_approval(
+                payload["round_id"], {call["call_id"]: "approve_once"}
+            )
+            is True
+        )
+        # Deciding an unknown round is reported, not raised.
+        assert await service.decide_approval("no-such-round", {"x": "deny"}) is False
+
+        await asyncio.wait_for(send_task, timeout=60)
+        await _wait_for(
+            lambda: any(
+                e.type == "run_completed" and e.session_id == session["id"]
+                for e in got
+            ),
+            timeout=15,
+            what="run_completed event",
+        )
+
+        messages = await service.session_messages(session["id"])
+        assert any(
+            m["role"] == "assistant" and FINAL_ANSWER in m["content"]
+            for m in messages["messages"]
+        )
+        # The tool really ran: the provider saw the fs_list result.
+        assert gateway.tool_result_messages, "fs_list result never reached provider"
+
+        deltas = [e for e in got if e.type == "delta" and e.session_id == session["id"]]
+        assert deltas, "no streaming deltas observed during the run"
+
+        # Wire shape: monotonic per-service seq, JSON-serializable payloads.
+        seqs = [e.seq for e in got]
+        assert seqs == sorted(seqs)
+        for event in got:
+            json.dumps(event.to_wire())
+    finally:
+        await _shutdown(service, collector)
+        await _shutdown(service, subscriber)
+
+
+async def test_send_is_serialized_per_session(tmp_path: Path) -> None:
+    """Turns serialize per session; a concurrent send is refused (round 1).
+
+    The non-blocking contract: ``send`` schedules the turn and returns, so
+    a second send while the first turn is pending raises ``MobileSendRefused``
+    (the engine's own one-run-per-session admission rule, applied at the
+    service boundary instead of queueing on the lock). Once the first turn
+    completes, the next send is accepted and the transcript order is
+    preserved: each user row lands only after the previous turn's
+    assistant row.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="serial")
+        await service.send(session["id"], "first question")
+        with pytest.raises(MobileSendRefused):
+            await service.send(session["id"], "second question too early")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="first run_completed event",
+        )
+
+        await service.send(session["id"], "second question")
+        await _wait_for(
+            lambda: len([e for e in got if e.type == "run_completed"]) == 2,
+            timeout=15,
+            what="two run_completed events",
+        )
+
+        messages = (await service.session_messages(session["id"]))["messages"]
+        user_texts = [m["content"] for m in messages if m["role"] == "user"]
+        assert user_texts == ["first question", "second question"]
+        # The second user row landed only after the first turn's assistant
+        # row — the turns really did serialize.
+        roles = [m["role"] for m in messages]
+        assert roles.count("user") == 2
+        second_user_at = roles.index("user", 1)
+        assert any(r == "assistant" for r in roles[:second_user_at])
+        # Two full provider round-trips (one per turn; each turn's first
+        # call attempts the gateway's fs_list call and fails fast because
+        # the default workspace never advertises it, then the follow-up
+        # call answers).
+        assert len(gateway.stream_calls) >= 2
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_send_returns_while_the_turn_is_pending(tmp_path: Path) -> None:
+    """The 202-shape contract: send schedules and returns (finding 1).
+
+    The gateway's first provider call parks on a gate only this test opens,
+    so a send that blocked on ``submit_draft`` (the old shape — the one the
+    live check caught) would hang until the timeout. Also proves the
+    unknown-session pre-validation still raises before anything is
+    scheduled, and that deltas + terminal events flow once the gate opens.
+    """
+
+    class _GatedAgentGateway(AgentModeGateway):
+        """AgentModeGateway whose provider calls park on ``gate``.
+
+        The gate is ``_LoopSafeGate`` (TASK-35133): releasing it from this
+        test's loop must wake the engine's private model-call lifeline
+        loop where the parked call actually runs.
+        """
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = _LoopSafeGate()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            await self.gate.wait()
+            async for chunk in super().stream_chat(resolution, messages, **kwargs):
+                yield chunk
+
+    gateway = _GatedAgentGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="pending turn")
+        with pytest.raises(KeyError):
+            await service.send("no-such-session", "gone")
+
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        await asyncio.wait_for(
+            service.send(session["id"], "held turn"), timeout=5
+        )
+        assert loop.time() - started < 2.0, "send blocked on the turn"
+
+        with pytest.raises(MobileSendRefused):
+            await service.send(session["id"], "too soon")
+
+        gateway.gate.release()
+        await _wait_for(
+            lambda: any(
+                e.type == "run_completed" and e.session_id == session["id"]
+                for e in got
+            ),
+            timeout=30,
+            what="run_completed after gate release",
+        )
+        deltas = [
+            e for e in got if e.type == "delta" and e.session_id == session["id"]
+        ]
+        assert deltas, "no streaming deltas observed during the run"
+        messages = (await service.session_messages(session["id"]))["messages"]
+        assert any(
+            m["role"] == "user" and m["content"] == "held turn" for m in messages
+        )
+        assert any(
+            m["role"] == "assistant" and FINAL_ANSWER in m["content"]
+            for m in messages
+        )
+    finally:
+        gateway.gate.release()  # never leave the parked turn holding shutdown
+        await _shutdown(service, subscriber)
+
+
+def _dump_asyncio_stacks() -> str:
+    """Every task's await stack + every thread's stack (TASK-35133's instrument).
+
+    On the parked-call stall this dump is the evidence: it names the exact
+    await chain the engine's second agent step is suspended in, and any
+    worker thread the contended resource is parked inside.
+    """
+    import io
+    import sys
+    import threading
+    import traceback
+
+    current = asyncio.current_task()
+    parts: list[str] = []
+    for task in sorted(asyncio.all_tasks(), key=lambda t: t.get_name()):
+        if task is current:
+            continue
+        sink = io.StringIO()
+        try:
+            task.print_stack(file=sink)
+        except Exception as exc:  # noqa: BLE001 - the dump must never mask
+            sink.write(f"    <stack unavailable: {type(exc).__name__}: {exc}>\n")
+        parts.append(
+            f"===== task {task.get_name()} "
+            f"({'done' if task.done() else 'pending'}) =====\n"
+            f"{sink.getvalue().rstrip()}"
+        )
+    frames = sys._current_frames()
+    for thread in sorted(threading.enumerate(), key=lambda t: t.name):
+        if thread is threading.current_thread():
+            continue
+        frame = frames.get(thread.ident)
+        if frame is None:
+            continue
+        parts.append(
+            f"===== thread {thread.name} =====\n"
+            + "".join(traceback.format_stack(frame)).rstrip()
+        )
+    return "\n".join(parts)
+
+
+async def test_second_agent_step_not_stalled_by_parked_provider_call(
+    tmp_path: Path,
+) -> None:
+    """TASK-35133 regression: a provider call parked mid-run must not stall
+    the engine's second agent step.
+
+    The first provider call parks on a gate only this test opens (the run
+    sits in status STREAMING under the stall watchdog). Once released, the
+    first call emits the tool call, the tool runs after its approval is
+    decided, and the SECOND provider call (the post-tool agent step) must
+    arrive within a 10 s bound.
+
+    Root cause (TASK-35133, evidenced by the timeout dump below): the engine
+    consumes provider streams on its private model-call lifeline loop
+    (``run_coroutine_threadsafe``, Chat/console_agent_bridge.py), so a
+    parked stream can only be released through that loop's threadsafe
+    door. A plain cross-loop ``asyncio.Event.set()`` resolves the waiter
+    without waking the lifeline loop, and the parked call then resumes
+    only when the loop's next timer fires -- the stall watchdog's deadline
+    (measured: exactly 90 s at the default window, the T2 report's "30s+"
+    under a 30 s window). The release must take the loop's own door
+    (``call_soon_threadsafe``); with that, the engine's second step
+    arrives in well under a second. On timeout the failure message
+    carries every asyncio task's and thread's stack.
+    """
+
+    class _ParkedFirstCallGateway(AgentModeGateway):
+        """AgentModeGateway whose FIRST provider call parks on ``gate``.
+
+        The gate is ``_LoopSafeGate`` (TASK-35133): it must be released
+        through the loop the parked call runs on, never by a plain
+        cross-loop ``Event.set()`` -- that is the stall this test guards.
+        """
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = _LoopSafeGate()
+            self.call_count = 0
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.call_count += 1
+            if self.call_count == 1:
+                await self.gate.wait()
+            async for chunk in super().stream_chat(resolution, messages, **kwargs):
+                yield chunk
+
+    gateway = _ParkedFirstCallGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        workspace_id = _bound_workspace(service, tmp_path)
+        session = await service.create_session(
+            title="parked provider call", workspace_id=workspace_id
+        )
+
+        await asyncio.wait_for(
+            service.send(session["id"], "list the folder"), timeout=5
+        )
+        # The first provider call has arrived and is parked (STREAMING).
+        await _wait_for(
+            lambda: gateway.call_count >= 1,
+            timeout=10,
+            what="first provider call to arrive",
+        )
+
+        loop = asyncio.get_running_loop()
+        released_at = loop.time()
+        gateway.gate.release()
+        # Release the tool's approval round as soon as it is raised so the
+        # measured window covers only the engine's own work, then wait for
+        # the second (post-tool) provider call. One bound over both
+        # stages; whichever stage stalls names itself in the failure.
+        deadline = released_at + 10.0
+        decided = False
+        second_call_seen = False
+        while loop.time() < deadline:
+            if not decided:
+                approvals = [
+                    e
+                    for e in got
+                    if e.type == "approval_requested"
+                    and e.session_id == session["id"]
+                ]
+                if approvals:
+                    payload = approvals[0].payload
+                    call = payload["calls"][0]
+                    assert (
+                        await service.decide_approval(
+                            payload["round_id"], {call["call_id"]: "approve_once"}
+                        )
+                        is True
+                    )
+                    decided = True
+            if gateway.call_count >= 2:
+                second_call_seen = True
+                break
+            await asyncio.sleep(0.1)
+        else:
+            stage = (
+                "approval_requested"
+                if not decided
+                else "second (post-tool) provider call"
+            )
+            raise AssertionError(
+                f"the {stage} did not arrive within 10s of releasing the "
+                "parked first provider call; asyncio task stacks follow:\n"
+                + _dump_asyncio_stacks()
+            )
+        assert second_call_seen
+        assert gateway.tool_result_messages, "fs_list result never reached provider"
+    finally:
+        gateway.gate.release()  # never leave the parked turn holding shutdown
+        await _shutdown(service, subscriber)
+
+
+async def test_default_workspace_session_has_no_folder_tools(tmp_path: Path) -> None:
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="no folder")
+        listing = service.sessions
+        assert listing[0]["workspace_id"] == "global"
+        assert listing[0]["has_folder_tools"] is False
+
+        await service.send(session["id"], "hello without tools")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="run_completed event",
+        )
+        # Real evidence: builtin tools may still be advertised, but the
+        # bound-folder path-tool family (fs_list) never is in the default
+        # workspace.
+        assert gateway.stream_calls, "provider was never called"
+        assert all(not c["tool_advertised"] for c in gateway.stream_calls)
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_messages_cursor(tmp_path: Path) -> None:
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="cursor")
+
+        await service.send(session["id"], "turn one")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="first run_completed event",
+        )
+        first = await service.session_messages(session["id"])
+        first_ids = [m["id"] for m in first["messages"]]
+        assert first["cursor"] == first_ids[-1]
+
+        got.clear()
+        await service.send(session["id"], "turn two")
+        await _wait_for(
+            lambda: len([e for e in got if e.type == "run_completed"]) == 1,
+            timeout=15,
+            what="second run_completed event",
+        )
+
+        after = await service.session_messages(
+            session["id"], after_message_id=first["cursor"]
+        )
+        after_ids = [m["id"] for m in after["messages"]]
+        assert after_ids, "cursor returned no later messages"
+        assert not (set(after_ids) & set(first_ids))
+        assert after["cursor"] == after_ids[-1]
+        # The second turn's user row is the first row past the cursor.
+        assert after["messages"][0]["role"] == "user"
+        assert after["messages"][0]["content"] == "turn two"
+        assert any(
+            m["role"] == "assistant" and FINAL_ANSWER in m["content"]
+            for m in after["messages"]
+        )
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_send_after_run_completed_is_accepted_immediately(
+    tmp_path: Path,
+) -> None:
+    """A send reacting to ``run_completed`` in its first slice is admitted.
+
+    Deterministic pin for the admission half of the turn-slot race
+    (re-review round 1). Mechanism, by construction: the event fan-out is
+    synchronous (``put_nowait``), so the instant ``run_completed`` is
+    emitted, this subscriber's ``Queue.get`` wakeup is queued on the loop's
+    ready list. Pre-fix, the emit happened inside ``_run_turn`` while the
+    session lock was held and the session was still in ``turns_in_flight``
+    (cleanup lived only in the task-done callback) — and a finishing task's
+    done-callback is queued strictly AFTER anything queued during the
+    task's body. The subscriber therefore always ran first and its send
+    deterministically raised ``MobileSendRefused``. The fix releases the
+    admission slot BEFORE announcing terminal (no ``await`` between), so
+    this send is always admitted.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    outcome: list[str] = []
+    session_id_holder: list[str] = []
+
+    async def _reactive_subscriber() -> None:
+        """On the first ``run_completed`` for the target session, send again
+        immediately — in this wakeup slice, before anything else runs."""
+        async for event in service.events():
+            if (
+                event.type == "run_completed"
+                and event.session_id in session_id_holder
+            ):
+                assert outcome == [], "second run_completed before send settled"
+                try:
+                    await service.send(event.session_id, "immediate follow-up")
+                except MobileSendRefused:
+                    outcome.append("refused")
+                else:
+                    outcome.append("accepted")
+                return
+
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    reactive = asyncio.create_task(_reactive_subscriber())
+    try:
+        session = await service.create_session(title="reactive send")
+        session_id_holder.append(session["id"])
+        await service.send(session["id"], "first turn")
+        await _wait_for(
+            lambda: len(outcome) == 1,
+            timeout=15,
+            what="reactive send outcome after first run_completed",
+        )
+        # The pin: the immediate send was admitted, never refused.
+        assert outcome == ["accepted"], outcome
+        # And its turn really completed (second terminal event observed).
+        await _wait_for(
+            lambda: len([e for e in got if e.type == "run_completed"]) == 2,
+            timeout=15,
+            what="second run_completed event",
+        )
+        messages = (await service.session_messages(session["id"]))["messages"]
+        assert [m["content"] for m in messages if m["role"] == "user"] == [
+            "first turn",
+            "immediate follow-up",
+        ]
+    finally:
+        await _shutdown(service, reactive)
+        await _shutdown(service, subscriber)
+
+
+async def test_pump_tick_in_the_return_window_delivers_fast_run_content(
+    tmp_path: Path,
+) -> None:
+    """A pump tick inside the return window delivers the content; it must
+    not baseline it away.
+
+    Deterministic pin for the streaming half of the turn-slot race
+    (re-review round 1). Mechanism: in agent mode the assistant row only
+    becomes scannable with content at finalize, so the first pump tick
+    that can ever see the message sees it already terminal, while the
+    owning turn still holds its admission slot inside ``submit_draft``'s
+    finalize-to-flush window. Two facts make a naive timing pin useless
+    (both observed live): idle, that window is sub-millisecond — a tick
+    only lands in it under load, which is how the original flake surfaced
+    at the production 0.5 s cadence; and a tick that lands MID-run
+    instead creates a pending track, which lets even pre-fix code deliver
+    via the tracked path. So this test removes both timing inputs: the
+    real pump is cancelled (the tick below is the only scan) and the
+    service's own flush seam is wrapped so that when the turn performs
+    its send-time flush, a real ``_poll_once`` tick runs FIRST — flush
+    time is inside the window by construction, with ``track`` guaranteed
+    None. Pre-fix, that tick scanned the session as inactive, took the
+    silent first-observation baseline, and the flush then had zero
+    remaining content: no ``delta`` and no ``message_done`` ever fired
+    (and the tick announced ``run_completed`` before any content). The
+    fix treats the slot-owned session as live: full delta +
+    ``message_done`` first, terminal announcement after.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    # Build the engine, then kill the real pump: the wrapper's tick below
+    # becomes the only scan, so the pre-flush track state is deterministic.
+    await service._ensure_started()
+    assert service._pump_task is not None
+    service._pump_task.cancel()
+    try:
+        await service._pump_task
+    except asyncio.CancelledError:
+        pass
+    original_scan = service._scan_stream
+
+    def _tick_then_scan(engine, session_id, *, active, flush=False):
+        if flush:
+            # A pump tick lands in the return window just before the turn's
+            # own flush would deliver — the exact interleaving the race
+            # window produces when a tick gets scheduled inside it.
+            service._poll_once(engine)
+        return original_scan(engine, session_id, active=active, flush=flush)
+
+    service._scan_stream = _tick_then_scan
+
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="fast run")
+        await service.send(session["id"], "answer fast")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="run_completed event",
+        )
+
+        deltas = [
+            e
+            for e in got
+            if e.type == "delta" and e.session_id == session["id"]
+        ]
+        dones = [
+            e
+            for e in got
+            if e.type == "message_done" and e.session_id == session["id"]
+        ]
+        assert deltas, "pump tick in the return window baselined the content"
+        assert dones, "terminal message_done never fired for the fast run"
+        delivered = "".join(e.payload["text"] for e in deltas)
+        assert delivered == FINAL_ANSWER, delivered
+        # The deltas and the terminal message_done reference one message.
+        assert {e.payload["message_id"] for e in deltas} == {
+            e.payload["message_id"] for e in dones
+        }
+        # Content precedes the terminal announcement — the tick cannot
+        # announce run_completed for content the subscriber never got.
+        types = [e.type for e in got]
+        assert types.index("delta") < types.index("run_completed"), types
+    finally:
+        await _shutdown(service, subscriber)
+
+
+# ========================================================================= #
+# Efficiency (#3128 minors 3/7: fingerprint-gated polling, scoped pump,     #
+# paginated conversations listing)                                          #
+# ========================================================================= #
+
+
+async def _freeze_pump(service: MobileChatService) -> None:
+    """Cancel the real pump so manual ``_poll_once`` ticks are the only scan.
+
+    Same discipline as the return-window test above: deterministic track
+    state for the asserts that follow.
+    """
+    await service._ensure_started()
+    assert service._pump_task is not None
+    service._pump_task.cancel()
+    try:
+        await service._pump_task
+    except asyncio.CancelledError:
+        pass
+
+
+def _counting_materializations(engine) -> tuple[dict[str, int], Any]:
+    """Wrap the store's transcript materialization with a call counter."""
+    counter = {"calls": 0}
+    original = engine.store.messages_for_session
+
+    def counting(session_id: str):
+        counter["calls"] += 1
+        return original(session_id)
+
+    engine.store.messages_for_session = counting
+    return counter, original
+
+
+async def test_pump_ticks_do_not_rematerialize_unchanged_sessions(
+    tmp_path: Path,
+) -> None:
+    """Fingerprint-gated scanning (#3128 minor 3): a settled session's
+    transcript is NOT rebuilt on pump ticks.
+
+    The store's O(1) ``session_fingerprint`` seam gates the heavy
+    ``messages_for_session`` snapshot build: once a session's stream track
+    is terminal and the fingerprint matches the last materializing scan,
+    ticks (and direct scans) skip the materialization. A real change (a new
+    turn appending messages) re-opens the gate — behavior stays identical,
+    only the unchanged-session cost collapses.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="gated scan")
+        await service.send(session["id"], "one turn")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="first run_completed event",
+        )
+        await _freeze_pump(service)
+        engine = service._require_engine()
+        counter, _original = _counting_materializations(engine)
+
+        # Pump ticks over the settled session: no re-materialization.
+        for _ in range(3):
+            service._poll_once(engine)
+        assert counter["calls"] == 0, "pump re-materialized an unchanged session"
+
+        # A DIRECT scan of the unchanged session skips too — this pins the
+        # fingerprint gate itself, independent of the pump's scoping (a
+        # scoped-only fix would still materialize here).
+        service._scan_stream(engine, session["id"], active=False)
+        assert counter["calls"] == 0, "unchanged scan re-materialized the transcript"
+
+        # A real change re-opens the gate: the second turn's content moves
+        # the fingerprint and the scans materialize again.
+        got.clear()
+        await service.send(session["id"], "second turn")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="second run_completed event",
+        )
+        assert counter["calls"] > 0, "a changed session was never re-materialized"
+        messages = await service.session_messages(session["id"])
+        assert any(
+            m["role"] == "user" and m["content"] == "second turn"
+            for m in messages["messages"]
+        )
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_session_messages_reuses_cached_wire_until_fingerprint_changes(
+    tmp_path: Path,
+) -> None:
+    """Fingerprint-gated history reads (#3128 minor 3): the phone's 12 s
+    resync no longer rebuilds an unchanged transcript.
+
+    ``session_messages`` keeps its last wire projection per session keyed
+    by the store's O(1) fingerprint; an unchanged session answers from the
+    cache (identical body, cursor validation included) and a new turn —
+    which moves the fingerprint — rebuilds it.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="cached history")
+        await service.send(session["id"], "turn one")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="first run_completed event",
+        )
+        await _freeze_pump(service)
+        engine = service._require_engine()
+        counter, _original = _counting_materializations(engine)
+
+        first = await service.session_messages(session["id"])
+        after_first = counter["calls"]
+        assert after_first >= 1
+
+        # Identical repeat (the 12 s poll over a settled session): cached.
+        second = await service.session_messages(session["id"])
+        assert second == first
+        assert counter["calls"] == after_first
+
+        # The cursor variant rides the same cache.
+        tail = await service.session_messages(
+            session["id"], after_message_id=first["cursor"]
+        )
+        assert tail["messages"] == []
+        assert tail["cursor"] == first["cursor"]
+        assert counter["calls"] == after_first
+
+        # A new turn moves the fingerprint → the wire is rebuilt.
+        got.clear()
+        await service.send(session["id"], "turn two")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="second run_completed event",
+        )
+        third = await service.session_messages(session["id"])
+        assert counter["calls"] > after_first
+        assert any(
+            m["role"] == "user" and m["content"] == "turn two"
+            for m in third["messages"]
+        )
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_session_messages_rebuilds_when_cached_wire_disagrees_with_the_seam(
+    tmp_path: Path,
+) -> None:
+    """Projection-equality second line (PR-#3142 minor — the store seam's
+    documented caveat): the fingerprint cache never serves a wire whose
+    shape disagrees with the seam's values.
+
+    ``ConsoleChatStore.session_fingerprint`` records the invisible class —
+    mutations preserving BOTH the transcript count and the last message's
+    visible length — and directs callers to keep an equality gate on the
+    rendered projection as the second line of defense. Constructed here
+    directly against the store, bypassing ``append_stream_chunk``: a
+    same-length content edit on the settled last message, then a
+    quarantine flag flip (both fingerprint-invisible — pinned below),
+    leave the fingerprint unchanged while the wire projection replaces
+    the last body with the fixed quarantine placeholder. The cached
+    wire's last length then permanently disagrees with the seam's raw
+    length; a key-only gate would serve that wire forever, the projection
+    gate rebuilds on every read while the disagreement stands.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="projection gate")
+        await service.send(session["id"], "one turn")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=15,
+            what="run_completed event",
+        )
+        await _freeze_pump(service)
+        engine = service._require_engine()
+        store = engine.store
+        sid = session["id"]
+        live_last = store._messages_by_session[sid][-1]
+        # Keep the raw length off the placeholder's: the gate needs a
+        # real disagreement between the two shapes to observe.
+        if len(live_last.content or "") == len(
+            GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER
+        ):
+            live_last.content = (live_last.content or "") + "  "
+        before = store.session_fingerprint(sid)
+
+        # The fingerprint-invisible caveat path, constructed directly
+        # against the store (never through append_stream_chunk): a
+        # same-length edit of the settled last message's content…
+        live_last.content = "x" * len(live_last.content or "")
+        # …and the quarantine flag flip, whose snapshot projection
+        # answers with a fixed placeholder while the raw content — what
+        # the seam measures — stays as edited.
+        live_last.generation_projection_quarantined = True
+        assert store.session_fingerprint(sid) == before
+
+        counter, _original = _counting_materializations(engine)
+        first = await service.session_messages(sid)
+        assert counter["calls"] >= 1
+        assert first["messages"][-1]["content"] == (
+            GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER
+        )
+        after_first = counter["calls"]
+
+        # Same fingerprint → a key-only gate serves the cache here; the
+        # wire's placeholder length disagrees with the seam's raw-length
+        # value, so the projection gate rebuilds instead.
+        second = await service.session_messages(sid)
+        assert counter["calls"] > after_first
+        assert second == first
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def test_pump_scans_only_live_sessions(tmp_path: Path) -> None:
+    """Scoped pump (#3128 minor 4): idle and settled sessions are not
+    scanned; a session with a scheduled turn stays in scope.
+
+    The old pump iterated every session forever. The scoped pump scans
+    only sessions with an active run, a turn admission slot, or a pending
+    (non-terminal) stream track — here: a settled session (run completed,
+    terminal track) and a never-sent idle session drop out, while a turn
+    parked on a tool approval is the only scanned session, and it drops
+    out again once its run completes. (The turn is parked on an approval —
+    not on a gated provider call: delaying provider composition mid-run
+    stalls the engine's second-step MCP catalog compose, a pre-existing
+    behavior verified against the base commit and out of this task's
+    scope.)
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        workspace_id = _bound_workspace(service, tmp_path)
+        settled = await service.create_session(title="settled")
+        await service.send(settled["id"], "one turn")
+        await _wait_for(
+            lambda: any(
+                e.type == "run_completed" and e.session_id == settled["id"]
+                for e in got
+            ),
+            timeout=30,
+            what="settled run_completed event",
+        )
+        idle = await service.create_session(title="idle, never sent")
+        await _freeze_pump(service)
+        engine = service._require_engine()
+
+        scanned: list[str] = []
+        original_scan = service._scan_stream
+
+        def _spy_scan(engine_arg, session_id, *, active, flush=False):
+            scanned.append(session_id)
+            return original_scan(
+                engine_arg, session_id, active=active, flush=flush
+            )
+
+        service._scan_stream = _spy_scan
+
+        # Settled + idle: out of scope — nothing is scanned.
+        service._poll_once(engine)
+        assert scanned == []
+
+        # A turn parked on its tool approval keeps its session (and only
+        # it) in scope.
+        parked = await service.create_session(
+            title="parked turn", workspace_id=workspace_id
+        )
+        await service.send(parked["id"], "list the folder")
+        approvals = await _wait_for_approvals(got, parked["id"])
+        scanned.clear()
+        service._poll_once(engine)
+        assert scanned == [parked["id"]]
+
+        # Once the run completes and the slot releases, it drops out again.
+        call = approvals[0]["calls"][0]
+        assert (
+            await service.decide_approval(
+                approvals[0]["round_id"], {call["call_id"]: "approve_once"}
+            )
+            is True
+        )
+        await _wait_for(
+            lambda: any(
+                e.type == "run_completed" and e.session_id == parked["id"]
+                for e in got
+            ),
+            timeout=30,
+            what="parked run_completed event",
+        )
+        scanned.clear()
+        service._poll_once(engine)
+        assert scanned == []
+    finally:
+        await _shutdown(service, subscriber)
+
+
+async def _wait_for_approvals(
+    got: list[Any], session_id: str
+) -> list[dict[str, Any]]:
+    """Wait until the session's approval round is mounted; return payloads."""
+    await _wait_for(
+        lambda: any(
+            e.type == "approval_requested" and e.session_id == session_id
+            for e in got
+        ),
+        timeout=30,
+        what="approval_requested event",
+    )
+    return [
+        e.payload
+        for e in got
+        if e.type == "approval_requested" and e.session_id == session_id
+    ]
+
+
+async def test_sessions_page_windows_the_merged_listing(tmp_path: Path) -> None:
+    """Paginated conversations listing (#3128 minor 7): the reading routes'
+    ``{"items", "page", "has_more"}`` envelope over the newest-first merged
+    sessions listing.
+    """
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=gateway)
+    try:
+        alpha = await service.create_session(title="alpha")
+        beta = await service.create_session(title="beta")
+        gamma = await service.create_session(title="gamma")
+
+        page_one = service.sessions_page(per_page=2)
+        assert set(page_one) == {"items", "page", "has_more"}
+        assert [s["id"] for s in page_one["items"]] == [gamma["id"], beta["id"]]
+        assert page_one["page"] == 1
+        assert page_one["has_more"] is True
+
+        page_two = service.sessions_page(page=2, per_page=2)
+        assert [s["id"] for s in page_two["items"]] == [alpha["id"]]
+        assert page_two["page"] == 2
+        assert page_two["has_more"] is False
+
+        page_three = service.sessions_page(page=3, per_page=2)
+        assert page_three["items"] == []
+        assert page_three["page"] == 3
+        assert page_three["has_more"] is False
+
+        default = service.sessions_page()
+        assert default["page"] == 1
+        assert [s["id"] for s in default["items"]] == [
+            gamma["id"],
+            beta["id"],
+            alpha["id"],
+        ]
+        assert default["has_more"] is False
+    finally:
+        await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+# ========================================================================= #
+# Restart rehydration (ADR-234 recorded follow-up, #3128 Important 2)       #
+# ========================================================================= #
+
+
+async def test_conversations_survive_restart_via_lazy_restore(
+    tmp_path: Path,
+) -> None:
+    """A new service over the same data_dir lists earlier mobile
+    conversations (persisted identity, no eager hydration), reads their
+    history through a lazy restore, and a send into a restored session
+    completes a full engine round-trip."""
+    data_dir = tmp_path / "mobile"
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=data_dir, provider_gateway=gateway)
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        session = await service.create_session(title="before restart")
+        await service.send(session["id"], "turn before restart")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got),
+            timeout=30,
+            what="pre-restart run_completed event",
+        )
+    finally:
+        await _shutdown(service, subscriber)
+
+    # A fresh service (the served-process-restart shape) over the SAME dir.
+    gateway2 = AgentModeGateway()
+    service2 = MobileChatService(data_dir=data_dir, provider_gateway=gateway2)
+    got2: list[Any] = []
+    subscriber2 = asyncio.create_task(_subscribe(service2, got2))
+    try:
+        listing = service2.sessions
+        assert len(listing) == 1, listing
+        restored = listing[0]
+        restored_id = restored["id"]
+        assert restored["title"] == "before restart"
+        assert restored["workspace_id"] == "global"
+        assert restored["has_folder_tools"] is False
+        # No eager tree hydration: the listing alone built no in-memory
+        # session for the persisted conversation.
+        engine2 = service2._engine
+        assert engine2 is not None
+        assert engine2.store.sessions() == []
+
+        # Reading an unknown id lazily restores the persisted conversation
+        # and returns its history.
+        history = await service2.session_messages(restored_id)
+        contents = [(m["role"], m["content"]) for m in history["messages"]]
+        assert ("user", "turn before restart") in contents
+        assert any(
+            role == "assistant" and FINAL_ANSWER in content
+            for role, content in contents
+        )
+        # The restored session lives in-memory under the persisted identity.
+        assert [s.id for s in engine2.store.sessions()] == [restored_id]
+
+        # One send into the restored session completes a full round-trip.
+        await service2.send(restored_id, "turn after restart")
+        await _wait_for(
+            lambda: any(e.type == "run_completed" for e in got2),
+            timeout=30,
+            what="post-restore run_completed event",
+        )
+        after = await service2.session_messages(restored_id)
+        user_texts = [m["content"] for m in after["messages"] if m["role"] == "user"]
+        assert user_texts == ["turn before restart", "turn after restart"]
+        assert any(
+            m["role"] == "assistant" and FINAL_ANSWER in m["content"]
+            for m in after["messages"]
+        )
+        assert gateway2.stream_calls, "the restored session never reached a provider"
+    finally:
+        await _shutdown(service2, subscriber2)
+
+
+async def test_unknown_session_attempts_restore_then_raises(
+    tmp_path: Path,
+) -> None:
+    """Unknown ids on the read and send surfaces attempt the lazy restore
+    and still raise ``KeyError`` (the REST layer's 404) when the persisted
+    store has no such conversation."""
+    service = MobileChatService(data_dir=tmp_path, provider_gateway=AgentModeGateway())
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        with pytest.raises(KeyError):
+            await service.session_messages("no-such-conversation")
+        with pytest.raises(KeyError):
+            await service.send("no-such-conversation", "anyone out there")
+    finally:
+        await _shutdown(service, subscriber)
+
+
+# ========================================================================= #
+# Reading surface (Phase 2b): notes + library reads over tmp_path DBs       #
+# ========================================================================= #
+#
+# The four tests below seed real ``CharactersRAGDB`` / ``MediaDatabase``
+# files under tmp_path and hand their paths to the service through the
+# ``notes_db_path`` / ``media_db_path`` injection seams — the service's
+# default resolution is the app's own config helpers, which these tests
+# deliberately never touch (plan constraint: tests avoid config-loading
+# paths). No engine is built: the reading methods stand alone.
+
+_NOTES_DB_NAME = "reading-notes.sqlite"
+_MEDIA_DB_NAME = "reading-media.sqlite"
+_TRANSCRIPT_TEXT = "MOBILE_READING_TRANSCRIPT_BODY"
+
+
+def _note_body(index: int) -> str:
+    """One distinct note body comfortably past the 200-char preview cut."""
+    return f"Reading note {index} body. " + (
+        f"filler sentence {index} about the mobile reading surface. " * 8
+    )
+
+
+def _seed_reading_dbs(
+    tmp_path: Path,
+) -> tuple[
+    CharactersRAGDB,
+    list[str],
+    dict[str, str],
+    MediaDatabase,
+    list[int],
+]:
+    """Seed the reading DBs at the exact paths the service will be given.
+
+    3 notes with distinct bodies (stamped 10 ms apart so the
+    ``last_modified DESC`` page order is deterministic at the DBs'
+    millisecond timestamp precision) and 2 media rows, the first with one
+    transcript. Notes go through ``add_note``; media through
+    ``add_media_with_keywords``. The transcript lands via a direct INSERT —
+    ``MediaDatabase`` has no public add-transcript API (ingestion owns that
+    table); this is the established seeding idiom
+    (``Tests/MCP/test_tools_resources_prompts_real_methods.py``).
+    """
+    notes_db = CharactersRAGDB(
+        str(tmp_path / _NOTES_DB_NAME), "mobile-reading-fixture"
+    )
+    note_ids: list[str] = []
+    bodies: dict[str, str] = {}
+    for index in range(3):
+        note_id = notes_db.add_note(
+            title=f"Reading note {index}", content=_note_body(index)
+        )
+        assert note_id is not None
+        note_ids.append(note_id)
+        bodies[note_id] = _note_body(index)
+        time.sleep(0.01)
+
+    media_db = MediaDatabase(
+        str(tmp_path / _MEDIA_DB_NAME), "mobile-reading-fixture"
+    )
+    media_ids: list[int] = []
+    for index in range(2):
+        media_id, _uuid, _message = media_db.add_media_with_keywords(
+            title=f"Reading media {index}",
+            content=f"reading media body {index}",
+            media_type="article",
+            keywords=[],
+        )
+        assert media_id is not None
+        media_ids.append(int(media_id))
+        time.sleep(0.01)
+    media_db.execute_query(
+        """
+        INSERT INTO Transcripts
+            (media_id, whisper_model, transcription, created_at, uuid,
+             last_modified, version, client_id, deleted)
+        VALUES (?, 'test-model', ?, datetime('now'), ?, datetime('now'), 1,
+                'mobile-reading-fixture', 0)
+        """,
+        (media_ids[0], _TRANSCRIPT_TEXT, f"transcript-uuid-{media_ids[0]}"),
+        commit=True,
+    )
+    return notes_db, note_ids, bodies, media_db, media_ids
+
+
+def _reading_service(tmp_path: Path) -> MobileChatService:
+    """A service whose reading DBs are the seeded tmp_path files."""
+    return MobileChatService(
+        data_dir=tmp_path / "engine",
+        provider_gateway=AgentModeGateway(),
+        notes_db_path=tmp_path / _NOTES_DB_NAME,
+        media_db_path=tmp_path / _MEDIA_DB_NAME,
+    )
+
+
+async def test_notes_page_paginates_with_truncated_previews(
+    tmp_path: Path,
+) -> None:
+    """notes_page pages newest-first with 200-char previews + has_more."""
+    notes_db, note_ids, bodies, media_db, _ = _seed_reading_dbs(tmp_path)
+    service = _reading_service(tmp_path)
+    try:
+        page1 = service.notes_page(page=1, per_page=2)
+        assert page1["page"] == 1
+        assert len(page1["items"]) == 2
+        assert page1["has_more"] is True
+        # Newest (last-added) note leads page 1: list_notes orders by
+        # last_modified DESC and the seed spaces the stamps apart.
+        assert page1["items"][0]["id"] == note_ids[-1]
+
+        page2 = service.notes_page(page=2, per_page=2)
+        assert page2["page"] == 2
+        assert len(page2["items"]) == 1
+        assert page2["has_more"] is False
+
+        # Every note appears exactly once across the two pages.
+        items = page1["items"] + page2["items"]
+        assert sorted(item["id"] for item in items) == sorted(note_ids)
+        for item in items:
+            body = bodies[item["id"]]
+            assert item["title"]
+            assert item["preview"] != body, "preview must not be the full body"
+            assert body.startswith(item["preview"])
+            assert len(item["preview"]) <= 200
+            # Timestamps pass through as-is.
+            assert item["last_modified"]
+            assert item["created_at"]
+        json.dumps(page1)  # the whole page is JSON-safe
+    finally:
+        await service.shutdown()
+        notes_db.close_connection()
+        media_db.close_connection()
+
+
+async def test_note_detail_returns_full_body_and_none_for_unknown(
+    tmp_path: Path,
+) -> None:
+    """note_detail hands back the full row; unknown ids return None."""
+    notes_db, note_ids, bodies, media_db, _ = _seed_reading_dbs(tmp_path)
+    service = _reading_service(tmp_path)
+    try:
+        detail = service.note_detail(note_ids[1])
+        assert detail is not None
+        assert detail["id"] == note_ids[1]
+        assert detail["title"] == "Reading note 1"
+        assert detail["content"] == bodies[note_ids[1]]
+        assert detail["last_modified"]
+        json.dumps(detail)
+        assert service.note_detail("no-such-note-id") is None
+    finally:
+        await service.shutdown()
+        notes_db.close_connection()
+        media_db.close_connection()
+
+
+async def test_library_page_lists_media_with_pagination(
+    tmp_path: Path,
+) -> None:
+    """library_page lists active media newest-first with total-based has_more."""
+    notes_db, _, _, media_db, media_ids = _seed_reading_dbs(tmp_path)
+    service = _reading_service(tmp_path)
+    try:
+        page1 = service.library_page(page=1, per_page=1)
+        assert page1["page"] == 1
+        assert [item["media_id"] for item in page1["items"]] == [media_ids[1]]
+        assert page1["items"][0]["title"] == "Reading media 1"
+        assert page1["items"][0]["media_type"] == "article"
+        assert page1["items"][0]["last_modified"]
+        assert page1["has_more"] is True  # total is 2
+
+        page2 = service.library_page(page=2, per_page=1)
+        assert [item["media_id"] for item in page2["items"]] == [media_ids[0]]
+        assert page2["has_more"] is False
+        json.dumps(page1)
+    finally:
+        await service.shutdown()
+        notes_db.close_connection()
+        media_db.close_connection()
+
+
+async def test_library_detail_returns_row_with_transcript_and_none_for_unknown(
+    tmp_path: Path,
+) -> None:
+    """library_detail joins the media row with its transcripts; None when absent."""
+    notes_db, _, _, media_db, media_ids = _seed_reading_dbs(tmp_path)
+    service = _reading_service(tmp_path)
+    try:
+        detail = service.library_detail(media_ids[0])
+        assert detail is not None
+        assert detail["media_id"] == media_ids[0]
+        assert detail["title"] == "Reading media 0"
+        assert detail["media_type"] == "article"
+        assert any(
+            _TRANSCRIPT_TEXT in t["transcription"] for t in detail["transcripts"]
+        )
+        json.dumps(detail)
+        assert service.library_detail(987654321) is None
+    finally:
+        await service.shutdown()
+        notes_db.close_connection()
+        media_db.close_connection()
+
+
+# ========================================================================= #
+# Desktop approval relay (Phase 2c, ADR-236): parent-side subscription      #
+# ========================================================================= #
+#
+# Real ``CanvasControlBroker`` on an ephemeral loopback port + real
+# ``CanvasControlClient`` scripted children, the same harness shape
+# ``Tests/Canvas/test_control_protocol.py`` uses (these tests carry
+# ``@pytest.mark.loopback_network`` for the owned listener). The service
+# side is the real ``MobileChatService``; the engine is only built where
+# an event subscriber is needed — the relay surface itself must stand
+# alone (a phone that only polls ``list_approvals`` never builds one).
+
+_RELAY_SNAPSHOT = "a" * 64
+
+
+def _relay_frame(message_type: str, payload: dict, request_id: str) -> ControlMessage:
+    return ControlMessage(
+        CONTROL_PROTOCOL_VERSION, message_type, request_id, None, payload
+    )
+
+
+def _relay_raised_payload(round_id: str = "round-desktop-1") -> dict[str, Any]:
+    """One desktop approval round, shaped exactly like the child publisher's."""
+    return {
+        "round_id": round_id,
+        "session_id": "desktop-session-1",
+        "calls": [
+            {
+                "llm_name": "fs_write",
+                "call_id": "call-1",
+                "options": ["approve_once", "approve_session", "deny"],
+                "arguments": {"path": "notes/scratch.md"},
+            }
+        ],
+        "timeout_seconds": 300,
+    }
+
+
+class _ScriptedChild:
+    """One authenticated child connection with a recording handler.
+
+    ``decide`` answers ``relay.decide.response`` (``delivered`` from the
+    constructor); ``park_decide`` instead parks the handler past any
+    parent deadline (the timeout path). ``canvas_events`` answers the
+    pull-based ``canvas.events.request`` the served canvas gateway uses.
+    """
+
+    def __init__(
+        self,
+        broker: CanvasControlBroker,
+        child_id: str,
+        *,
+        delivered: bool = True,
+        park_decide: bool = False,
+        canvas_events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.seen: list[ControlMessage] = []
+        self._delivered = delivered
+        self._park_decide = park_decide
+        self._canvas_events = canvas_events or []
+        self._launch = broker.issue_child(child_id)
+        self.client = CanvasControlClient(
+            self._launch.environment,
+            runtime_snapshot_id=_RELAY_SNAPSHOT,
+            handler=self._handler,
+        )
+
+    async def _handler(self, message: ControlMessage) -> ControlMessage:
+        self.seen.append(message)
+        if message.message_type == "relay.decide.request":
+            if self._park_decide:
+                # Swallow the broker's control.cancel like a slow child;
+                # the parent deadline has already expired by then.
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    pass
+            return _relay_frame(
+                "relay.decide.response",
+                {
+                    "round_id": message.payload["round_id"],
+                    "delivered": self._delivered,
+                },
+                message.request_id,
+            )
+        if message.message_type == "canvas.events.request":
+            return _relay_frame(
+                "canvas.events.response",
+                {"events": self._canvas_events},
+                message.request_id,
+            )
+        raise ControlProtocolError("authority_unavailable")
+
+    async def start(self) -> None:
+        await self.client.start()
+
+    async def aclose(self) -> None:
+        await self.client.aclose()
+
+
+async def _wait_child_disconnected(
+    broker: CanvasControlBroker, child_id: str, timeout: float = 5.0
+) -> None:
+    """Wait until the broker observes the child's transport as gone."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        try:
+            await asyncio.wait_for(
+                broker.wait_connected(child_id, timeout=0.05), 0.2
+            )
+        except (ControlProtocolError, TimeoutError):
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"child {child_id} never disconnected")
+
+
+def _relay_test_service(tmp_path: Path) -> MobileChatService:
+    return MobileChatService(
+        data_dir=tmp_path / "engine", provider_gateway=AgentModeGateway()
+    )
+
+
+async def _relay_teardown(
+    service: MobileChatService,
+    broker: CanvasControlBroker,
+    child: _ScriptedChild | None,
+    *subscribers: asyncio.Task,
+) -> None:
+    for subscriber in subscribers:
+        subscriber.cancel()
+    if child is not None:
+        await child.aclose()
+    await broker.aclose()
+    await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+@pytest.mark.loopback_network
+async def test_relay_raised_round_lists_with_surface_and_fires_event(
+    tmp_path: Path,
+) -> None:
+    """A raised desktop round joins list_approvals (surface desktop) and
+    fires approval_requested; a mounted mobile round stays surface mobile."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    children: list[str] = ["child-a"]
+    service.attach_relay(broker, child_ids=lambda: list(children))
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: any(
+                a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+            ),
+            timeout=5,
+            what="desktop round in list_approvals",
+        )
+        desktop = next(
+            a
+            for a in service.list_approvals()
+            if a["round_id"] == "round-desktop-1"
+        )
+        assert desktop["surface"] == "desktop"
+        assert desktop["child_id"] == "child-a"
+        assert desktop["calls"][0]["llm_name"] == "fs_write"
+        assert desktop["timeout_seconds"] == 300
+
+        await _wait_for(
+            lambda: any(
+                e.type == "approval_requested"
+                and e.payload.get("round_id") == "round-desktop-1"
+                for e in got
+            ),
+            timeout=5,
+            what="approval_requested event for the desktop round",
+        )
+        event = next(
+            e
+            for e in got
+            if e.type == "approval_requested"
+            and e.payload.get("round_id") == "round-desktop-1"
+        )
+        assert event.session_id == "desktop-session-1"
+        assert event.payload["surface"] == "desktop"
+        assert event.payload["child_id"] == "child-a"
+        json.dumps(event.to_wire())
+
+        # A mobile round mounts beside it: both surfaces list, correctly
+        # labelled, and the mobile entry carries no child binding.
+        service._mount_approval(
+            {
+                "round_id": "round-mobile-1",
+                "session_id": "mobile-session-1",
+                "calls": [],
+                "timeout_seconds": 300,
+            }
+        )
+        listed = service.list_approvals()
+        by_id = {a["round_id"]: a for a in listed}
+        assert set(by_id) == {"round-desktop-1", "round-mobile-1"}
+        assert by_id["round-mobile-1"]["surface"] == "mobile"
+        assert "child_id" not in by_id["round-mobile-1"]
+        assert by_id["round-desktop-1"]["surface"] == "desktop"
+    finally:
+        await _relay_teardown(service, broker, child, subscriber)
+
+
+@pytest.mark.loopback_network
+async def test_relay_decision_routes_to_child_and_clears_round(
+    tmp_path: Path,
+) -> None:
+    """A phone decision on a desktop round rides relay.decide.request to
+    the owning child; delivered True clears the round and answers True."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    try:
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: any(
+                a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+            ),
+            timeout=5,
+            what="desktop round in list_approvals",
+        )
+        delivered = await service.decide_approval(
+            "round-desktop-1", {"call-1": "approve_once"}
+        )
+        assert delivered is True
+        decide_requests = [
+            m for m in child.seen if m.message_type == "relay.decide.request"
+        ]
+        assert len(decide_requests) == 1
+        assert decide_requests[0].payload == {
+            "round_id": "round-desktop-1",
+            "decisions": {"call-1": "approve_once"},
+        }
+        assert not [
+            a for a in service.list_approvals() if a["round_id"] == "round-desktop-1"
+        ]
+        # The relay-only path never needed the engine.
+        assert service._engine is None
+        # A repeated decide on the cleared round is unknown, not an error.
+        assert (
+            await service.decide_approval("round-desktop-1", {"call-1": "deny"})
+            is False
+        )
+    finally:
+        await _relay_teardown(service, broker, child)
+
+
+@pytest.mark.loopback_network
+async def test_relay_end_to_end_real_child_handler_resolves_round(
+    tmp_path: Path,
+) -> None:
+    """Phase 2c headline proof (ADR-236): the full desktop→phone loop.
+
+    A real broker + a child running the REAL ``ServedCanvasControlHandler``
+    (its ``relay_decide`` wired to a stub Console controller, mirroring
+    app.py's ``_served_relay_decide`` binding) + the parent's
+    ``MobileChatService.attach_relay``. A raised desktop round publishes to
+    the phone surface, ``decide_approval`` routes the phone's decision back
+    over ``relay.decide.request``, the child's controller records it, and
+    the round clears on the parent.
+    """
+    from tldw_chatbook.Canvas.gateway import ServedCanvasControlHandler
+
+    class _StubConsoleController:
+        """Armed-round recording controller (the resolve contract the app
+        wiring forwards to: unknown/stale round ids are safe no-ops)."""
+
+        def __init__(self) -> None:
+            self.resolved: list[tuple[str, dict[str, str]]] = []
+            self.armed: set[str] = set()
+
+        def resolve_pending_approval(
+            self, decisions: dict[str, str], *, round_id: str | None = None
+        ) -> bool:
+            if round_id not in self.armed:
+                return False
+            self.resolved.append((str(round_id), dict(decisions)))
+            return True
+
+    async def scenario() -> None:
+        stub = _StubConsoleController()
+        service = _relay_test_service(tmp_path)
+        broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+        await broker.start()
+        launch = broker.issue_child("child-a")
+        child = CanvasControlClient(
+            launch.environment,
+            runtime_snapshot_id=_RELAY_SNAPSHOT,
+            handler=ServedCanvasControlHandler(
+                relay_decide=lambda round_id, decisions: (
+                    stub.resolve_pending_approval(decisions, round_id=round_id)
+                )
+            ).handle,
+        )
+        await child.start()
+        await broker.wait_connected("child-a", timeout=5)
+        service.attach_relay(broker, child_ids=lambda: ["child-a"])
+        got: list[Any] = []
+        subscriber = asyncio.create_task(_subscribe(service, got))
+        try:
+            # Desktop side: the round arms on the child and is published.
+            stub.armed.add("round-desktop-1")
+            await child.send_relay_event(
+                "relay.approval.raised", _relay_raised_payload()
+            )
+            await _wait_for(
+                lambda: any(
+                    a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+                ),
+                timeout=5,
+                what="desktop round in list_approvals",
+            )
+            desktop = next(
+                a
+                for a in service.list_approvals()
+                if a["round_id"] == "round-desktop-1"
+            )
+            assert desktop["surface"] == "desktop"
+
+            # Phone side: the decision routes back and is applied there.
+            delivered = await service.decide_approval(
+                "round-desktop-1", {"call-1": "approve_once"}
+            )
+            assert delivered is True
+            assert stub.resolved == [
+                ("round-desktop-1", {"call-1": "approve_once"})
+            ]
+            # The applied decision clears the round on the parent surface.
+            await _wait_for(
+                lambda: not [
+                    a
+                    for a in service.list_approvals()
+                    if a["round_id"] == "round-desktop-1"
+                ],
+                timeout=5,
+                what="desktop round cleared after decide",
+            )
+            assert any(
+                e.type == "approval_requested"
+                and e.payload.get("round_id") == "round-desktop-1"
+                and e.payload.get("surface") == "desktop"
+                for e in got
+            )
+        finally:
+            # Client close first is the conservative order (and no longer
+            # load-bearing: broker.aclose() revokes children — closing
+            # their server-side writers — before awaiting the server, so
+            # the parked accept-task read loops unblock either way; see
+            # test_broker_aclose_completes_while_the_client_is_still_connected).
+            subscriber.cancel()
+            await child.aclose()
+            await broker.aclose()
+            await asyncio.wait_for(service.shutdown(), timeout=15)
+
+    await scenario()
+
+
+# The resolver-mirror probe runs in a child interpreter: importing
+# ``tldw_chatbook.app`` inside the pytest process would leave the module
+# cached and accidentally satisfy the dependency-gate suite's import-time
+# admission (its four recorded environmental failures flip green in
+# full-suite order once any bootstrap-profile test has imported the app),
+# so the REAL method is exercised out-of-process under the same env the
+# conftest publishes for subprocess children.
+_RESOLVER_MIRROR_PROBE = r'''
+import asyncio
+import sys
+import types
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[2])
+
+FINAL_ANSWER = "MOBILE_AGENT_ROUND_TRIP_COMPLETE"
+
+
+async def main() -> None:
+    from Tests.console_provider_doubles import AgentModeGateway
+    from tldw_chatbook import app as app_module
+    from tldw_chatbook.Web_Server.mobile_service import MobileChatService
+
+    data_dir = Path(sys.argv[1])
+    gateway = AgentModeGateway()
+    service = MobileChatService(data_dir=data_dir, provider_gateway=gateway)
+    got: list = []
+
+    async def subscribe() -> None:
+        async for event in service.events():
+            got.append(event)
+
+    subscriber = asyncio.create_task(subscribe())
+    try:
+        engine = service._require_engine()
+        # The shape ``_served_relay_decide`` reads off the App: the same
+        # lazy ``chat_controller`` handle ``ConsoleRuntime`` exposes.
+        app = types.SimpleNamespace(
+            console_runtime=types.SimpleNamespace(
+                chat_controller=engine.controller
+            )
+        )
+        decide = app_module.TldwCli._served_relay_decide
+        # No controller -> reported undelivered, never raised.
+        assert decide(types.SimpleNamespace(console_runtime=None), "x", {}) is False
+        print("probe:undelivered-without-controller")
+
+        folder = data_dir.parent / "code"
+        (folder / "src").mkdir(parents=True, exist_ok=True)
+        (folder / "README.md").write_text("# probe\n", encoding="utf-8")
+        registry = service.workspace_registry
+        registry.create_workspace(workspace_id="ws-mirror", name="Mirror")
+        registry.add_folder_binding("ws-mirror", folder, allow_write=True)
+        session = await service.create_session(
+            title="resolver mirror", workspace_id="ws-mirror"
+        )
+        send_task = asyncio.create_task(
+            service.send(session["id"], "list the folder")
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 30
+        payload = None
+        while loop.time() < deadline:
+            approvals = [e for e in got if e.type == "approval_requested"]
+            if approvals:
+                payload = approvals[0].payload
+                break
+            await asyncio.sleep(0.1)
+        assert payload is not None, "no approval_requested event"
+        round_id = payload["round_id"]
+        call = payload["calls"][0]
+
+        # An unknown round id fails closed through the real registry.
+        assert decide(app, "no-such-round", {"x": "deny"}) is False
+        print("probe:unknown-round-false")
+
+        assert decide(app, round_id, {call["call_id"]: "approve_once"}) is True
+        print("probe:delivered-true")
+
+        await asyncio.wait_for(send_task, timeout=60)
+        deadline = loop.time() + 15
+        while loop.time() < deadline:
+            if any(
+                e.type == "run_completed" and e.session_id == session["id"]
+                for e in got
+            ):
+                break
+            await asyncio.sleep(0.1)
+        assert any(
+            e.type == "run_completed" and e.session_id == session["id"]
+            for e in got
+        ), "no run_completed event"
+        print("probe:run-completed")
+
+        messages = (await service.session_messages(session["id"]))["messages"]
+        assert any(
+            m["role"] == "assistant" and FINAL_ANSWER in m["content"]
+            for m in messages
+        ), "final answer missing"
+        print("probe:final-answer-present")
+        # The resolved decision really released the tool run.
+        assert gateway.tool_result_messages, "approval never released the tool"
+        print("probe:tool-released")
+        # The resolved-and-popped round no longer matches a later decide.
+        assert decide(app, round_id, {"x": "deny"}) is False
+        print("probe:resolved-round-false")
+    finally:
+        subscriber.cancel()
+        try:
+            await subscriber
+        except asyncio.CancelledError:
+            pass
+        await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+asyncio.run(main())
+'''
+
+
+def test_served_relay_decide_resolves_a_real_controller_armed_round(
+    tmp_path: Path,
+) -> None:
+    """Direct resolver-mirror proof (2c review gap): app.py's REAL
+    ``_served_relay_decide`` — the exact callable a served child binds
+    into ``ServedCanvasControlHandler`` — resolves a round armed by a REAL
+    ``ConsoleChatController`` through the real approval-round registry.
+
+    The E2E test above mirrors that binding with a stub controller: if
+    the production resolve seam drifted (a ``resolve_pending_approval``
+    signature change, a renamed ``_pending_approval_rounds`` registry),
+    the stub would keep passing while production degraded silently. Here
+    the round is armed by the real engine (the mobile service's
+    construction idiom), the app double exposes it exactly as
+    ``ConsoleRuntime`` does (``console_runtime.chat_controller``), and the
+    decision must release the parked agent run to completion (probe
+    verified sensitive: a renamed resolve kwarg fails the probe loudly
+    while the stub-mirror E2E stays green).
+    """
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script = tmp_path / "resolver_mirror_probe.py"
+    script.write_text(_RESOLVER_MIRROR_PROBE, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(script), str(tmp_path), str(repo_root)],
+        capture_output=True,
+        text=True,
+        timeout=240,
+        cwd=str(repo_root),
+    )
+    assert result.returncode == 0, (
+        f"resolver-mirror probe failed:\n{result.stdout}\n{result.stderr}"
+    )
+    for marker in (
+        "probe:undelivered-without-controller",
+        "probe:unknown-round-false",
+        "probe:delivered-true",
+        "probe:run-completed",
+        "probe:final-answer-present",
+        "probe:tool-released",
+        "probe:resolved-round-false",
+    ):
+        assert marker in result.stdout, (
+            f"missing {marker}:\n{result.stdout}\n{result.stderr}"
+        )
+
+
+@pytest.mark.loopback_network
+async def test_relay_decide_dead_child_returns_false_and_drops_round(
+    tmp_path: Path,
+) -> None:
+    """Deciding a round whose child died returns False and drops the round
+    (fail-closed: the child's own timeout/deny semantics govern)."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    try:
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: any(
+                a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+            ),
+            timeout=5,
+            what="desktop round in list_approvals",
+        )
+        await child.aclose()
+        await _wait_child_disconnected(broker, "child-a")
+        assert (
+            await service.decide_approval("round-desktop-1", {"call-1": "deny"})
+            is False
+        )
+        assert not [
+            a for a in service.list_approvals() if a["round_id"] == "round-desktop-1"
+        ]
+    finally:
+        await _relay_teardown(service, broker, None)
+
+
+@pytest.mark.loopback_network
+async def test_relay_decide_timeout_returns_false_and_drops_round(
+    tmp_path: Path,
+) -> None:
+    """A child that never acknowledges within the 2 s routing budget fails
+    the round closed on the parent."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a", park_decide=True)
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    try:
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: any(
+                a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+            ),
+            timeout=5,
+            what="desktop round in list_approvals",
+        )
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        assert (
+            await service.decide_approval("round-desktop-1", {"call-1": "deny"})
+            is False
+        )
+        elapsed = loop.time() - started
+        assert 1.5 <= elapsed < 10, f"decide did not bound itself: {elapsed}s"
+        assert not [
+            a for a in service.list_approvals() if a["round_id"] == "round-desktop-1"
+        ]
+    finally:
+        await _relay_teardown(service, broker, child)
+
+
+@pytest.mark.loopback_network
+async def test_relay_run_status_emits_desktop_event(tmp_path: Path) -> None:
+    """relay.run.status from a child surfaces as a run_status event marked
+    surface desktop."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        await child.client.send_relay_event(
+            "relay.run.status",
+            {"session_id": "desktop-session-1", "status": "completed"},
+        )
+        await _wait_for(
+            lambda: any(e.type == "run_status" for e in got),
+            timeout=5,
+            what="run_status event",
+        )
+        event = next(e for e in got if e.type == "run_status")
+        assert event.session_id == "desktop-session-1"
+        assert event.payload == {"status": "completed", "surface": "desktop"}
+        json.dumps(event.to_wire())
+    finally:
+        await _relay_teardown(service, broker, child, subscriber)
+
+
+@pytest.mark.loopback_network
+async def test_relay_child_disconnect_clears_rounds_but_not_mobile(
+    tmp_path: Path,
+) -> None:
+    """A child transport loss clears that child's rounds on its own (the
+    child-id source may not shrink until the browser session unwinds);
+    mobile rounds are untouched."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    children: list[str] = ["child-a"]
+    service.attach_relay(broker, child_ids=lambda: list(children))
+    try:
+        service._mount_approval(
+            {
+                "round_id": "round-mobile-1",
+                "session_id": "mobile-session-1",
+                "calls": [],
+                "timeout_seconds": 300,
+            }
+        )
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: {a["round_id"] for a in service.list_approvals()}
+            == {"round-desktop-1", "round-mobile-1"},
+            timeout=5,
+            what="both rounds listed",
+        )
+        await child.aclose()
+        await _wait_child_disconnected(broker, "child-a")
+        await _wait_for(
+            lambda: {a["round_id"] for a in service.list_approvals()}
+            == {"round-mobile-1"},
+            timeout=5,
+            what="desktop round failed closed after disconnect",
+        )
+        listed = service.list_approvals()
+        assert listed[0]["surface"] == "mobile"
+    finally:
+        await _relay_teardown(service, broker, None)
+
+
+@pytest.mark.loopback_network
+async def test_relay_cleared_event_removes_round(tmp_path: Path) -> None:
+    """relay.approval.cleared from the child removes exactly that round."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(broker, "child-a")
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    try:
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload("round-keep")
+        )
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload("round-gone")
+        )
+        await _wait_for(
+            lambda: {a["round_id"] for a in service.list_approvals()}
+            == {"round-keep", "round-gone"},
+            timeout=5,
+            what="both desktop rounds listed",
+        )
+        await child.client.send_relay_event(
+            "relay.approval.cleared",
+            {"round_id": "round-gone", "resolution": "approved"},
+        )
+        await _wait_for(
+            lambda: {a["round_id"] for a in service.list_approvals()}
+            == {"round-keep"},
+            timeout=5,
+            what="cleared round removed",
+        )
+    finally:
+        await _relay_teardown(service, broker, child)
+
+
+@pytest.mark.loopback_network
+async def test_relay_same_round_id_across_children_never_shadows(
+    tmp_path: Path,
+) -> None:
+    """Two children arming the SAME child-local round_id both list — each
+    entry tagged with its own ``child_id`` — and a decision addressed to
+    one child routes exactly there (2c final-review hardening: the
+    ``(child_id, round_id)`` keying keeps cross-child collisions from
+    shadowing or stealing each other's rounds)."""
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child_a = _ScriptedChild(broker, "child-a")
+    child_b = _ScriptedChild(broker, "child-b")
+    await child_a.start()
+    await child_b.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a", "child-b"])
+    shared = "round-shared"
+    try:
+        await child_a.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload(shared)
+        )
+        await child_b.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload(shared)
+        )
+        # No shadowing: BOTH colliding rounds list, each under its own
+        # child_id (pre-fix the second raise overwrote the first).
+        await _wait_for(
+            lambda: sorted(
+                a["child_id"]
+                for a in service.list_approvals()
+                if a["round_id"] == shared
+            )
+            == ["child-a", "child-b"],
+            timeout=5,
+            what="both children's colliding rounds listed",
+        )
+
+        # A decide addressed to child-b routes exactly there; child-a's
+        # round is untouched (pre-fix a cleared/decide by round_id alone
+        # popped whichever single entry survived).
+        assert (
+            await service.decide_approval(
+                shared, {"call-1": "approve_once"}, child_id="child-b"
+            )
+            is True
+        )
+        assert [
+            m for m in child_a.seen if m.message_type == "relay.decide.request"
+        ] == []
+        decide_b = [
+            m for m in child_b.seen if m.message_type == "relay.decide.request"
+        ]
+        assert len(decide_b) == 1
+        assert decide_b[0].payload["round_id"] == shared
+        await _wait_for(
+            lambda: [
+                a["child_id"]
+                for a in service.list_approvals()
+                if a["round_id"] == shared
+            ]
+            == ["child-a"],
+            timeout=5,
+            what="only child-b's colliding round cleared by its decide",
+        )
+
+        # A cleared event from child-a removes exactly child-a's round.
+        await child_a.client.send_relay_event(
+            "relay.approval.cleared",
+            {"round_id": shared, "resolution": "approved"},
+        )
+        await _wait_for(
+            lambda: not [
+                a for a in service.list_approvals() if a["round_id"] == shared
+            ],
+            timeout=5,
+            what="child-a's colliding round cleared by its own event",
+        )
+    finally:
+        await child_a.aclose()
+        await child_b.aclose()
+        await broker.aclose()
+        await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+def _mobile_api_module():
+    """Import the mobile route module under the web-server optional-dep guard."""
+    if not _serve_module().check_web_server_available():
+        pytest.skip("web server optional dependencies are unavailable")
+    from tldw_chatbook.Web_Server import mobile_api
+
+    return mobile_api
+
+
+class _DecideRequest:
+    """The request surface ``handle_decide`` reads: match_info + one JSON body."""
+
+    def __init__(self, round_id: str, body: dict[str, Any]) -> None:
+        self.match_info = {"round_id": round_id}
+        self.content_length = None
+        self._body = body
+
+    async def json(self) -> dict[str, Any]:
+        return self._body
+
+
+@pytest.mark.loopback_network
+async def test_decide_route_child_id_addresses_the_exact_colliding_child(
+    tmp_path: Path,
+) -> None:
+    """PR-#3142 minor: the decide ROUTE forwards the body's ``child_id``
+    and, under a cross-child round_id collision, the phone's card
+    addresses exactly its child.
+
+    One layer above the service-seam collision test above: the full wire
+    path — JSON body → route validation → ``decide_approval`` →
+    ``relay.decide.request`` — over the real relay. Child-b owns the
+    decided round; child-a's colliding round is untouched.
+    """
+    mobile_api = _mobile_api_module()
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child_a = _ScriptedChild(broker, "child-a")
+    child_b = _ScriptedChild(broker, "child-b")
+    await child_a.start()
+    await child_b.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a", "child-b"])
+    shared = "round-shared"
+    host = types.SimpleNamespace(_get_mobile_service=lambda: service)
+    try:
+        await child_a.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload(shared)
+        )
+        await child_b.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload(shared)
+        )
+        await _wait_for(
+            lambda: sorted(
+                a["child_id"]
+                for a in service.list_approvals()
+                if a["round_id"] == shared
+            )
+            == ["child-a", "child-b"],
+            timeout=5,
+            what="both children's colliding rounds listed",
+        )
+
+        response = await mobile_api.handle_decide(
+            host,
+            _DecideRequest(
+                shared,
+                {
+                    "decisions": {"call-1": "approve_once"},
+                    "child_id": "child-b",
+                },
+            ),
+        )
+        assert response.status == 200
+        assert json.loads(response.text) == {"ok": True}
+        assert [
+            m for m in child_a.seen if m.message_type == "relay.decide.request"
+        ] == []
+        decide_b = [
+            m for m in child_b.seen if m.message_type == "relay.decide.request"
+        ]
+        assert len(decide_b) == 1
+        assert decide_b[0].payload["round_id"] == shared
+        await _wait_for(
+            lambda: [
+                a["child_id"]
+                for a in service.list_approvals()
+                if a["round_id"] == shared
+            ]
+            == ["child-a"],
+            timeout=5,
+            what="only child-b's colliding round cleared by the routed decide",
+        )
+    finally:
+        await child_a.aclose()
+        await child_b.aclose()
+        await broker.aclose()
+        await asyncio.wait_for(service.shutdown(), timeout=15)
+
+
+@pytest.mark.loopback_network
+async def test_relay_drainer_coexists_with_canvas_event_flow(
+    tmp_path: Path,
+) -> None:
+    """Regression guard: the drainer reading each child's broker event
+    queue cannot disturb the canvas event flow.
+
+    Production canvas delivery is PULL-based — the served canvas gateway
+    sends ``canvas.events.request`` over ``broker.request`` and the child
+    answers from its own store; it never reads the per-child push queue
+    the drainer consumes. Proven live here: with the drainer attached and
+    a desktop round flowing, the pull request/reply still answers, and a
+    PUSHED ``canvas.events`` frame sharing the drainer's queue is drained
+    and dropped without stalling later relay events (it also protects the
+    queue from its 64-frame backpressure disconnect).
+    """
+    service = _relay_test_service(tmp_path)
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    child = _ScriptedChild(
+        broker,
+        "child-a",
+        canvas_events=[
+            {
+                "event_id": "event-a",
+                "kind": "updated",
+                "canvas_id": "canvas-a",
+                "revision_id": "revision-a",
+                "metadata": {},
+            }
+        ],
+    )
+    await child.start()
+    service.attach_relay(broker, child_ids=lambda: ["child-a"])
+    got: list[Any] = []
+    subscriber = asyncio.create_task(_subscribe(service, got))
+    try:
+        # Desktop round flows through the drainer's queue.
+        await child.client.send_relay_event(
+            "relay.approval.raised", _relay_raised_payload()
+        )
+        await _wait_for(
+            lambda: any(
+                a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+            ),
+            timeout=5,
+            what="desktop round in list_approvals",
+        )
+
+        # The gateway's pull path (canvas.events.request → response over
+        # broker.request) is unaffected by the running drainer.
+        response = await broker.request(
+            "child-a", "canvas.events.request", {"after_event_id": None}, timeout=2
+        )
+        assert response.message_type == "canvas.events.response"
+        assert response.payload["events"][0]["event_id"] == "event-a"
+
+        # A pushed canvas.events frame lands in the same per-child queue
+        # the drainer reads; it must be drained and dropped, not stall it.
+        await child.client.send_event(
+            {
+                "event_id": "event-pushed",
+                "kind": "updated",
+                "canvas_id": "canvas-a",
+                "revision_id": "revision-a",
+                "metadata": {},
+            }
+        )
+        await child.client.send_relay_event(
+            "relay.run.status",
+            {"session_id": "desktop-session-1", "status": "completed"},
+        )
+        await _wait_for(
+            lambda: any(
+                e.type == "run_status"
+                and e.payload.get("surface") == "desktop"
+                and e.payload.get("status") == "completed"
+                for e in got
+            ),
+            timeout=5,
+            what="run_status after a pushed canvas frame shared the queue",
+        )
+        # The desktop round survived the interleaving too.
+        assert any(
+            a["round_id"] == "round-desktop-1" for a in service.list_approvals()
+        )
+    finally:
+        await _relay_teardown(service, broker, child, subscriber)
+
+
+def _serve_module():
+    """Import serve.py under its optional-dependency guard."""
+    from tldw_chatbook.Web_Server import serve as serve_module
+
+    if not serve_module.check_web_server_available():
+        pytest.skip("web server optional dependencies are unavailable")
+    return serve_module
+
+
+class _RelayWiringHost:
+    """The smallest host over the real wiring methods.
+
+    Only the attributes ``_get_mobile_service`` /
+    ``_attach_mobile_relay`` / ``bind_served_browser`` read; the mixin's
+    methods themselves are the code under test, unmodified.
+    """
+
+    def __init__(self, serve_module) -> None:
+        self._mobile_service = None
+        self._mobile_provider_gateway = object()  # seam: no production gateway
+        self._canvas_control_broker = None
+        self._served_browser_children: dict[str, str] = {}
+        self._served_canvas_launches: dict[str, Any] = {}
+        self._served_canvas_gateway = types.SimpleNamespace(
+            mark_browser_session_unavailable=lambda _session_id: None
+        )
+        _get_mobile_service = serve_module.ChatbookWebServerMixin._get_mobile_service
+        _attach_mobile_relay = (
+            serve_module.ChatbookWebServerMixin._attach_mobile_relay
+        )
+        _bind = serve_module.ChatbookWebServerMixin.bind_served_browser
+        _unbind = serve_module.ChatbookWebServerMixin.unbind_served_browser
+        self._get_mobile_service = _get_mobile_service.__get__(self)
+        self._attach_mobile_relay = _attach_mobile_relay.__get__(self)
+        self.bind_served_browser = _bind.__get__(self)
+        self.unbind_served_browser = _unbind.__get__(self)
+
+
+@pytest.mark.loopback_network
+async def test_serve_wiring_attaches_relay_only_when_broker_exists(
+    tmp_path: Path,
+) -> None:
+    """The lazy serve wiring: broker present → relay attached with the live
+    browser-binding child source; broker absent (canvas disabled) → the
+    relay stays inert (documented ADR-236 limitation)."""
+    serve_module = _serve_module()
+
+    # Inert case first: canvas disabled → no broker → no drainer, and the
+    # service is still fully usable for the mobile-only surface.
+    inert_host = _RelayWiringHost(serve_module)
+    inert_service = inert_host._get_mobile_service()
+    assert inert_service._relay_task is None
+    assert inert_service._relay_broker is None
+    assert inert_service.list_approvals() == []
+    await inert_service.shutdown()
+
+    # Attached case: a real broker + one bound browser terminal session.
+    broker = CanvasControlBroker(runtime_snapshot_id=_RELAY_SNAPSHOT)
+    await broker.start()
+    host = _RelayWiringHost(serve_module)
+    host._canvas_control_broker = broker
+    host.bind_served_browser("browser-1", "child-a")
+    service = host._get_mobile_service()
+    try:
+        assert service._relay_broker is broker
+        assert service._relay_task is not None
+        source = service._relay_child_ids
+        assert source is not None
+        assert list(source()) == ["child-a"]  # live registry read
+        host.unbind_served_browser("browser-1", "child-a")
+        assert list(source()) == []
+        host.bind_served_browser("browser-2", "child-b")
+        assert list(source()) == ["child-b"]
+    finally:
+        await service.shutdown()
+        await broker.aclose()

@@ -2,6 +2,7 @@
 
 Status: Accepted (amended 2026-07-24 for top-level Logs; previously amended 2026-07-17 on rebase onto origin/dev)
 Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
+Amended by: [ADR-240](240-mcp-destination-retirement-tools-hub-in-settings.md) (accepted 2026-10-16; destination set 14 -> 13, `mcp`/`tools_settings` fold to Settings)
 Date: 2026-07-17
 Related Task: N/A (UX remediation plan, step 2 — see Links)
 Amendment Task: [TASK-537](../tasks/task-537%20-%20Restore-visual-audit-body-contracts-for-Schedules-and-Logs.md)

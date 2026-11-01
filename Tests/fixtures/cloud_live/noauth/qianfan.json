@@ -1,0 +1,36 @@
+{
+  "server": "qianfan",
+  "base_url": "https://qianfan.baidubce.com/v2",
+  "probe_model": "ernie-5.1",
+  "listing": {
+    "status": 403,
+    "body": {
+      "requestId": "5f265dbc-26c8-4716-8cdc-26cca1b5368e",
+      "code": "AccessDenied",
+      "message": "Access denied."
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "invalid_iam_token",
+        "message": "invalid_iam_token",
+        "type": "invalid_request_error"
+      },
+      "id": "as-i1hj1sfby8"
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "invalid_iam_token",
+        "message": "invalid_iam_token",
+        "type": "invalid_request_error"
+      },
+      "id": "as-7xnac6i1e7"
+    }
+  },
+  "probed_at": "2026-09-30T04:20:00+00:00"
+}

@@ -147,9 +147,9 @@ def test_cursor_write_is_local_only(tmp_path: Path) -> None:
                 "SELECT version, last_modified FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
-            sync_count_before = conn.execute("SELECT COUNT(*) FROM sync_log").fetchone()[
-                0
-            ]
+            sync_count_before = conn.execute(
+                "SELECT COUNT(*) FROM sync_log"
+            ).fetchone()[0]
 
         assert (
             db.set_conversation_active_cursor(

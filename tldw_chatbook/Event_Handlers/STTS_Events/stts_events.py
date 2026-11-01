@@ -445,6 +445,7 @@ class STTSSettingsSaveEvent(Message):
         commit_defaults_after_handoff: bool = False,
         publication_lease: TTSSettingsPublicationLease | None = None,
         notify_outcome: bool = True,
+        persist_default_preferences: bool = True,
     ) -> None:
         super().__init__()
         if request_id is not None:
@@ -458,6 +459,10 @@ class STTSSettingsSaveEvent(Message):
             raise TypeError("TTS settings outcome announcement must be boolean")
         if commit_defaults_after_handoff and preferences is None:
             raise ValueError("TTS default activation requires preferences")
+        if type(persist_default_preferences) is not bool:
+            raise TypeError("TTS default persistence intent must be boolean")
+        if commit_defaults_after_handoff and not persist_default_preferences:
+            raise ValueError("TTS default activation persists preferences")
         copied_deletes = tuple(delete_setting_keys)
         if not all(isinstance(key, str) and key for key in copied_deletes):
             raise ValueError("TTS setting delete keys must be non-empty strings")
@@ -477,6 +482,12 @@ class STTSSettingsSaveEvent(Message):
         # whatever the wizard has advanced to -- including the Summary's
         # docked exit actions.
         self.notify_outcome = notify_outcome
+        # TASK-34100.8 (voice-speech-01): a requester that saves provider
+        # settings WITHOUT choosing a default voice (the first-run Voice step
+        # with "Use as default" unticked) opts out. Otherwise the current
+        # effective settings are materialized as saved defaults below --
+        # writing default_provider = "openai" nobody chose.
+        self.persist_default_preferences = persist_default_preferences
 
     def _publication_started(self) -> None:
         """Drop event ownership after the service returns a retained ticket."""
@@ -2033,7 +2044,10 @@ class STTSEventHandler:
             )
             if not isinstance(preferences, TTSPreferencesSnapshot):
                 raise TypeError("Invalid TTS preferences proposal")
-            if not event.commit_defaults_after_handoff:
+            if (
+                not event.commit_defaults_after_handoff
+                and event.persist_default_preferences
+            ):
                 preference_mutation = preferences.config_mutation()
                 _merge_section_mutations(section_values, preference_mutation.sets)
                 for section, keys in preference_mutation.deletes.items():

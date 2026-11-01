@@ -195,30 +195,40 @@ def test_exact_agent_lessons_root_history_survives_later_tombstone(
     object_id = _id(12)
     applier = _applier(organization_db)
 
-    assert applier.apply(
-        _envelope(
-            "notes.folder",
-            object_id,
-            {"name": "Agent_Lessons", "parent_sync_id": None},
-            cursor=1,
-        )
-    )["status"] == "applied"
-    assert applier.apply(
-        _envelope(
-            "notes.folder",
-            object_id,
-            {},
-            operation="tombstone",
-            revision=2,
-            cursor=2,
-        )
-    )["status"] == "applied"
+    assert (
+        applier.apply(
+            _envelope(
+                "notes.folder",
+                object_id,
+                {"name": "Agent_Lessons", "parent_sync_id": None},
+                cursor=1,
+            )
+        )["status"]
+        == "applied"
+    )
+    assert (
+        applier.apply(
+            _envelope(
+                "notes.folder",
+                object_id,
+                {},
+                operation="tombstone",
+                revision=2,
+                cursor=2,
+            )
+        )["status"]
+        == "applied"
+    )
 
-    state = organization_db.get_connection().execute(
-        "SELECT state, folder_sync_id FROM agent_lessons_seed_state WHERE "
-        "profile_id = 'server-a' AND dataset_id = ?",
-        (DATASET,),
-    ).fetchone()
+    state = (
+        organization_db.get_connection()
+        .execute(
+            "SELECT state, folder_sync_id FROM agent_lessons_seed_state WHERE "
+            "profile_id = 'server-a' AND dataset_id = ?",
+            (DATASET,),
+        )
+        .fetchone()
+    )
     assert tuple(state) == ("seeded", object_id)
 
 

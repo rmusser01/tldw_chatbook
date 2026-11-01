@@ -417,11 +417,11 @@ def build_library_media_viewer_state(
         is_markdown=is_markdown,
         backend=backend,
         canonical_id=canonical_id
-        or (
-            f"{backend}:media:{media_id.removeprefix('media-')}" if media_id else ""
-        ),
+        or (f"{backend}:media:{media_id.removeprefix('media-')}" if media_id else ""),
         original_source=url,
-        stored_representation=("Complete stored text" if content else "No stored content"),
+        stored_representation=(
+            "Complete stored text" if content else "No stored content"
+        ),
     )
 
 
@@ -511,6 +511,63 @@ def build_library_media_highlight_rows(
             )
         )
     return tuple(rows)
+
+
+#: The Edit metadata form's four fields, in form order -- the keys of
+#: ``LibraryMediaViewerState.edit_fields`` and of the screen's draft.
+MEDIA_EDIT_FORM_FIELDS: tuple[str, ...] = ("title", "author", "url", "keywords")
+
+
+def media_edit_form_dirty(
+    draft: Mapping[str, str] | None, baseline: Mapping[str, str]
+) -> bool:
+    """Whether the Edit metadata form's typed values differ from the saved ones.
+
+    TASK-34000.22 (ADR-055 Pattern D): the ONE predicate every exit from the
+    form reads -- Escape, Back, another row, a rail row, the nav bar and
+    Ctrl+Q -- so the footer chip, the veto toast, the "Discard changes"
+    label and the refusal itself can never disagree. Raw string compare, no
+    stripping (ADR-027: persistence never strips, so a trailing space the
+    user typed is a change the exit must not drop).
+
+    Args:
+        draft: The typed values keyed by ``MEDIA_EDIT_FORM_FIELDS``, or
+            None while no draft stands (the form is closed, or was reset
+            for another item).
+        baseline: The saved values (``LibraryMediaViewerState.edit_fields``).
+
+    Returns:
+        True when any of the four fields differs. None is clean, and so is
+        a draft equal to the baseline (opened and untouched, or typed and
+        then put back).
+    """
+    if draft is None:
+        return False
+    return any(
+        str(draft.get(key, "") or "") != str(baseline.get(key, "") or "")
+        for key in MEDIA_EDIT_FORM_FIELDS
+    )
+
+
+def media_analysis_dirty(draft: str | None, baseline: str) -> bool:
+    """Whether the analysis form's typed text differs from the saved analysis.
+
+    The analysis twin of ``media_edit_form_dirty`` (TASK-34000.22): raw
+    compare, None is clean, a draft typed back to the baseline is clean
+    again.
+
+    Args:
+        draft: The TextArea's text as last reported, or None while no draft
+            stands.
+        baseline: The analysis the Reader displays
+            (``LibraryMediaViewerState.analysis``; "" when there is none).
+
+    Returns:
+        True when the two differ.
+    """
+    if draft is None:
+        return False
+    return draft != baseline
 
 
 def detail_analysis_text(detail: Mapping[str, Any]) -> str:

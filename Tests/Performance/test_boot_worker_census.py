@@ -91,7 +91,40 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         ("restore_ingest_jobs", "ingest_restore"),
         ("resume_startup", "research_source_association_startup"),
         ("run", "scheduling"),
+        # Dreams (review of #2921, item 3c): brings Dream-owned watches in
+        # line with the persisted master switch, post-`_ui_ready`. Started
+        # on every boot -- "off" (including a deleted `[dreams]` section)
+        # is a state it must reconcile. A coroutine worker with one thread
+        # hop, and what that hop costs (round 3, T20, stated in full):
+        #   * Dreams off, no dreams.sqlite: one stat.
+        #   * Dreams off, dreams.sqlite present: an ordinary open -- schema
+        #     init in a write transaction, a migration for a file from an
+        #     older build -- then two small reads, then the connections
+        #     are closed. (No read-only look: the `db.base` owner policy
+        #     in DB/private_sqlite.py admits no read-only target.)
+        #   * Dreams on: the app's own DreamsDB handle (opened, or created
+        #     on first use, exactly as the boot catch-up does) and the
+        #     same two reads.
+        # The Dreams service chain is imported only when there is work.
+        # The scheduler's first tick waits for this hop (T14a), bounded.
+        ("reconcile_at_boot", "dreams"),
         # -- ChatScreen / Console (initial-screen mount) --
+        # TASK-34406: initial checked readiness/context copies now read off-loop;
+        # their publication workers complete that same first visible projection.
+        ("_refresh", "console-readiness-config"),
+        ("_sync_native_console_chat_ui", "console-readiness-publication"),
+        ("_refresh", "console-context-presentation"),
+        ("_sync_native_console_chat_ui", "console-context-publication"),
+        # Initial agent history/child counts use finite view-owned reads instead
+        # of synchronous rail/fleet reads on the initial presentation.
+        ("_load_historical_presentation", "console-agent-history"),
+        ("_load_subagent_counts", "console-subagent-counts"),
+        # The initial controller publication and post-reconciliation mount/resume
+        # discovery retain their existing named groups and conditional starts.
+        ("_sync_native_console_chat_ui", "console-sync"),
+        ("_refresh_console_skill_candidates", "console-skill-discovery"),
+        # The Character view owns its initial/resume context refresh.
+        ("refresh_if_scope_changed", "console-character-context-refresh"),
         ("_refresh_console_persisted_rows_cache", "console-persisted-browser-cache"),
         # TASK-32826: batch-read durable manual reminders off-loop so restored
         # conversation rows display their saved unread state on first use.
@@ -111,8 +144,9 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         ),
         ("build_worker", "console-changed-files"),
         ("load", "console-prompt-history"),
-        # Rail-preference persistence: observed on the FIRST boot of a fresh
-        # profile (initial state write); allowlisted, not asserted present.
+        # Rail-preference persistence: a one-time seed copied from an older
+        # record (a fresh profile's defaults are not written, TASK-36385);
+        # allowlisted, not asserted present.
         ("_save_console_rail_preferences", "default"),
         ("_prune_console_rail_preferences", "default"),
         ("_persist_sidebar_state_off_loop", "sidebar-state-persist"),
@@ -126,19 +160,42 @@ ALLOWED_BOOT_THREADS: frozenset[tuple[str, str, str]] = frozenset(
     {
         # ADR-126: hold native ordinary admission before any application storage
         # opens, so a requested restore cannot replace live application data.
-        ("chatbook-storage-admission", "tldw_chatbook.Backup_Recovery.storage_admission", "_Hold._run"),
+        (
+            "chatbook-storage-admission",
+            "tldw_chatbook.Backup_Recovery.storage_admission",
+            "_Hold._run",
+        ),
+        # TASK-32708: the post-reconciliation credential poll may start its
+        # existing single-flight readiness reader on a cold or expired cache.
+        (
+            "claude-credential-readiness",
+            "tldw_chatbook.LLM_Calls.anthropic_subscription",
+            "_SubscriptionReadinessCache._refresh",
+        ),
         # The parallel service-init pool (app startup).
         ("ThreadPoolExecutor-#_#", "concurrent.futures.thread", "_worker"),
         # asyncio's default executor: Textual thread workers land here.
         ("asyncio_#", "concurrent.futures.thread", "_worker"),
         # Whole-registry screen pre-importer (daemon; finding 22214's list).
-        ("tldw-screen-preimport", "tldw_chatbook.app", "TldwCli._preimport_heavy_screens"),
+        (
+            "tldw-screen-preimport",
+            "tldw_chatbook.app",
+            "TldwCli._preimport_heavy_screens",
+        ),
         # Stall persistence: starts only when the responsiveness monitor
         # observes a UI stall during boot -- allowlisted, never asserted.
-        ("ui-stall-persist", "tldw_chatbook.Utils.ui_responsiveness", "UIResponsivenessMonitor._drain_stalls"),
+        (
+            "ui-stall-persist",
+            "tldw_chatbook.Utils.ui_responsiveness",
+            "UIResponsivenessMonitor._drain_stalls",
+        ),
         # TASK-32920: stall attribution -- one daemon thread, started by the
         # first heartbeat, that samples the loop's stack only while it stalls.
-        ("ui-stall-watchdog", "tldw_chatbook.Utils.ui_responsiveness", "UIResponsivenessMonitor._watch_loop"),
+        (
+            "ui-stall-watchdog",
+            "tldw_chatbook.Utils.ui_responsiveness",
+            "UIResponsivenessMonitor._watch_loop",
+        ),
     }
 )
 
@@ -237,13 +294,17 @@ asyncio.run(main())
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("arrives", [True, False])
-async def test_census_waits_for_the_serially_delayed_required_worker(monkeypatch, arrives):
+async def test_census_waits_for_the_serially_delayed_required_worker(
+    monkeypatch, arrives
+):
     """Run the actual probe main with a clock and a 1.5-second queued starter."""
     now = 0.0
     required = sorted(EXPECTED_BOOT_WORKERS)
     # Delay a required sentinel; staggered FTS is only allowlisted on current dev.
     delayed = required[0]
-    records = {"workers": [dict(name=n, group=g) for n, g in required if (n, g) != delayed]}
+    records = {
+        "workers": [dict(name=n, group=g) for n, g in required if (n, g) != delayed]
+    }
 
     async def sleep(seconds):
         nonlocal now
@@ -272,15 +333,24 @@ async def test_census_waits_for_the_serially_delayed_required_worker(monkeypatch
     monkeypatch.setitem(sys.modules, "tldw_chatbook.app", app_module)
     monkeypatch.setattr(tldw_chatbook, "app", app_module, raising=False)
     probe = ast.parse(_CENSUS_SCRIPT)
-    main = next(node for node in probe.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "main")
+    main = next(
+        node
+        for node in probe.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "main"
+    )
     namespace = {
-        "asyncio": SimpleNamespace(sleep=sleep, get_running_loop=lambda: SimpleNamespace(time=lambda: now)),
+        "asyncio": SimpleNamespace(
+            sleep=sleep, get_running_loop=lambda: SimpleNamespace(time=lambda: now)
+        ),
         "json": json,
         "records": records,
         "EXPECTED_BOOT_WORKERS": EXPECTED_BOOT_WORKERS,
         "print": lambda *args, **kwargs: None,
     }
-    exec(compile(ast.Module(body=[main], type_ignores=[]), "<census-main>", "exec"), namespace)
+    exec(
+        compile(ast.Module(body=[main], type_ignores=[]), "<census-main>", "exec"),
+        namespace,
+    )
     await namespace["main"]()
     observed = {(w["name"], w["group"]) for w in records["workers"]}
     if arrives:
@@ -288,7 +358,9 @@ async def test_census_waits_for_the_serially_delayed_required_worker(monkeypatch
         assert 1.5 <= now < 2.0, "return once the required delayed starter arrives"
     else:
         assert delayed not in observed
-        assert 1.5 < now <= 10.1, "missing required work must stop at a bounded deadline"
+        assert 1.5 < now <= 10.1, (
+            "missing required work must stop at a bounded deadline"
+        )
 
 
 def _normalize_thread_name(name: str) -> str:

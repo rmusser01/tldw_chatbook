@@ -9,6 +9,7 @@ of being read.
 
 Pure helpers only -- no index, no `RAG_EVAL` gate.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -32,7 +33,7 @@ def _load():
 
 @pytest.fixture(scope="module")
 def census():
-    if not _CENSUS.exists():                      # pragma: no cover
+    if not _CENSUS.exists():  # pragma: no cover
         pytest.skip(f"census script absent: {_CENSUS}")
     return _load()
 
@@ -95,7 +96,9 @@ class TestParityText:
         """The point of the parity fix: the indexed text is strictly longer,
         which is what can move a document across a chunk boundary."""
         raw = "word " * 10
-        assert len(census.parity_text("conversation", raw).split()) == len(raw.split()) + 1
+        assert (
+            len(census.parity_text("conversation", raw).split()) == len(raw.split()) + 1
+        )
 
 
 class TestRegisteredConstants:
