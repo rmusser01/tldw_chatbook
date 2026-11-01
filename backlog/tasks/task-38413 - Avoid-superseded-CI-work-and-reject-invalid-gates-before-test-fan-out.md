@@ -1,5 +1,5 @@
 ---
-id: TASK-37800
+id: TASK-38413
 title: Avoid superseded CI work and reject invalid gates before test fan-out
 status: In Progress
 created_date: 2026-10-30 05:40
@@ -60,3 +60,7 @@ Final integration base is confirmed PR3315 merge de5dec02b104a061793504c12426987
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-37800 during PR3319 integration on 2026-11-01. The Console token-Enter task created 2026-10-29 17:13 keeps the older claim; this CI task was created 2026-10-30 05:40. TASK-38413 was unused across historical task paths, all local worktrees, and 318 remote refs. Status, acceptance criteria, and implementation evidence are preserved; only this CI slice's inbound references change.

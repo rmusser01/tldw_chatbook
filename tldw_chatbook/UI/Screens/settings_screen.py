@@ -85,6 +85,10 @@ from ...Chat.console_roleplay_identity import (
     normalize_chat_display_name,
 )
 from ...Chat.console_rail_state import normalize_console_rail_layout_scope
+from ...Chat.console_raw_cli import (
+    RAW_CLI_ARM_DISCLOSURE_LINES,
+    RAW_CLI_DISCLOSURE_LINES,
+)
 from ...Chat.local_reasoning import (
     REASONING_HISTORY_OPTIONS,
     reasoning_mode_setting,
@@ -1343,19 +1347,6 @@ RAW_CLI_PERMITTED_DRAFT_KEY = "console.raw_cli_permitted"
 CANVAS_ENABLED_DRAFT_KEY = "canvas.enabled"
 CANVAS_AUTO_OPEN_DRAFT_KEY = "canvas.auto_open_on_create"
 RAW_CLI_CONFIG_RECONCILE_ATTEMPTS = 3
-RAW_CLI_DISCLOSURE_LINES = (
-    "Commands run with the same OS permissions as Chatbook.",
-    "Commands can read, modify, or delete any accessible file, including Chatbook's "
-    "config and permission store.",
-    "Commands can access the network, invoke credentialed clients, launch background "
-    "processes, and exhaust machine resources.",
-    "The environment is scrubbed, but commands can still read credential files and "
-    "other user data.",
-    "Cancellation attempts to terminate the owned process group/job; deliberately "
-    "detached descendants may survive.",
-    "Command text and bounded output may persist in local run logs.",
-    "This is not a sandbox and is not limited to your workspace.",
-)
 HOST_ACCESS_UNLOCK_DISCLOSURE_LINES = (
     "This saved setting only makes one-shot raw CLI and Persistent Terminal "
     "eligible on this device.",
@@ -32456,7 +32447,7 @@ class SettingsScreen(BaseAppScreen):
             self.app.push_screen(
                 ConfirmationDialog(
                     title="Arm raw CLI for this launch",
-                    message="\n\n".join(RAW_CLI_DISCLOSURE_LINES),
+                    message="\n\n".join(RAW_CLI_ARM_DISCLOSURE_LINES),
                     confirm_label="Arm host access",
                     cancel_label="Cancel",
                     confirm_callback=_confirmed_arm,

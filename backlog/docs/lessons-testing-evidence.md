@@ -1,5 +1,16 @@
 # Lessons: what counts as evidence a change works
 
+## Visible send completion precedes durable acceptance (PR3319, 2026-11-01)
+
+The deferred-Enter preservation check observed the second in-memory user row,
+waited for the visible send task plus one second, then asserted that its prefix
+had left the composer. It failed with `yz` instead of `z`; the receipt showed
+that the second durable commit began only during teardown. Current ownership
+removes the prefix at durable acceptance. Waiting for that exact outcome and
+turn retirement kept both payload/draft assertions intact and passed. A visible
+handoff or provisional row is not a completion barrier for accepted custody.
+
+
 ## A suggested HTTP status is not proof that a request was refused (PR3312, 2026-11-01)
 
 The real vLLM adapter turned an HTTP-edge ReadTimeout into a synthetic 503.
@@ -74,6 +85,42 @@ with `build_inspector_capture_policy_wiring(controller).bindings`, which are the
 bindings the Inspector passes. Closing the dialog resumes the Console the same
 way. Wait for the dialog's Apply button to take focus before choosing radios:
 `on_mount` re-syncs them to the stored choice and overwrites an earlier pick.
+
+## "Same red as dev" by test id can hide two different reds (TASK-37870 review, 2026-10-30)
+
+**Incident.** The branch's gate compared the composer keymap file with origin/dev by
+test id and reported "15/16, same red as dev". The review reran it six times: the
+printable-key case went red 4 of 6 on the branch and 0 of 6 on dev, and the edit-key
+case was red on both every run. All of those reds were the precondition `host.focused
+is None`: the Console's activation focuses the composer more than once in its first
+~0.3 s after mount, and the tests cleared focus once, inside that window. With the
+precondition made deterministic (clear focus again until it stays cleared), the
+printable case passed every run on both trees, and the edit-key case went red on its
+real assertion, `'abc' == 'ac'`, on dev too: a routing defect (TASK-38412) that the
+racing precondition had been hiding. Neither the "same red" comparison nor the
+earlier precondition red could have shown it.
+
+**What to do.** When a red appears on both trees, compare the failing line and message,
+not only the test id. A red at a precondition is a setup fact, not the test's verdict;
+make the precondition deterministic before calling the red "inherited".
+
+## A new-copy precondition in a behaviour test hides whether the behaviour is red (TASK-37870, 2026-10-30)
+
+**Incident.** The owner decision "Enter always sends; Ctrl+E expands a token" changed
+the chip copy ("| Expand" became "| Ctrl+E expand") and the Enter behaviour in one
+change. The rewritten Enter tests asserted the new chip copy as a precondition before
+pressing Enter. Their first run on the pre-change code went 12 red, every one on
+`'| Ctrl+E expand' in 'Q: Pasted text | 199 characters | Expand'`, so not one of them
+showed whether Enter sent. With the preconditions made copy-agnostic (the body's text
+is hidden; the copy is pinned in the expand-key file instead), the same run went 3 red,
+each "one Enter did not send; the draft shows 'Q: Expand pasted text (199
+characters)? Enter: yes · Esc: no'" -- the actual defect -- and the other 11 flows
+were already green there.
+
+**What to do.** When a change moves copy and behaviour together, pin the copy in its
+own test and keep a behaviour test's preconditions free of the new copy. Read each
+pre-fix red's message, not the count: a red on a precondition is no evidence the
+assertion after it would have caught anything.
 
 ## A child kept across its parent's rebuild defeats an "every child is unlaid" guard (TASK-33622.6, 2026-10-29)
 
@@ -482,6 +529,25 @@ in some CI lane before treating dev's green -- or its silence -- as evidence. Fo
 coverage of anything read from the turn configuration (Library ceiling, scope,
 provider selection), drive the stock received path (`_received_console_case` with
 `durable=True`) in a file the UI PR gate runs.
+
+## A Tests/UI file that dies locally on RecoveryRequired can still run (TASK-33622.1, 2026-10-29)
+
+**Incident.** The composer files this task changed failed at setup on this machine
+with `RecoveryRequired: raw_source_selection_changed`: keymap 15 of 16, caret_nav 14
+of 18, undo 19 of 62, internals_decomposition 130 of 142. Only files marked
+`bootstrap_profile` ran, so the edited Enter/token assertions in the rest could not be
+checked at all. A six-line collection hook under `Tests/` that adds the
+`bootstrap_profile` marker to every item, loaded with `-p`, made them run: caret_nav
+18/18, undo 62/62, keymap 15/16, with the same reds as a detached origin/dev worktree
+by test id. It also caught real breakage the copy edits had missed: a click test whose
+caret now lands on the token, and confirm assertions that broke only because the new
+copy soft-wraps.
+
+**What to do.** When a file you touched dies at setup locally, force the marker with a
+throwaway hook (delete it before committing) and compare reds with origin/dev run the
+same way. Expect the setup-modal and caret-blink cases to flip from run to run under the
+shared profile, on dev as well; rerun a suspect alone on both trees before you call it a
+regression.
 
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
@@ -23756,7 +23822,7 @@ The older TASK-33620.15.26 measurements above used a stock route that bypassed a
 
 The persisted emergency-stop test saw the correct Held header and chip but immediately read the old Ready empty-body text. `ConsoleTranscript.sync_empty_state` schedules `refresh_messages` with `call_later`; header readiness did not certify the row's reconciliation. Waiting for the actual empty-body projection made the unchanged content assertions pass. Separately, the post-Clear send took 8.844 seconds to complete in its successful focused run; its former short projection poll expired during native preparation. The completion test retains exactly-one-provider-call and expected-reply assertions with a bounded completion wait. This proves functional completion, not a latency target, and does not explain an earlier durable-commit RuntimeError.
 
-## Obsolete CI can still own the queue's replacement approval (TASK-37800, 2026-10-29)
+## Obsolete CI can still own the queue's replacement approval (TASK-38413, 2026-10-29)
 
 Independent review of superseded-run cleanup found that an old Derived Artifacts
 run can still execute `queue-tick`, rebasing a PR and approving its replacement

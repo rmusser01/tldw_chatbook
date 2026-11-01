@@ -125,7 +125,7 @@ def test_middle_collapsed_paste_uses_the_actual_predecessor_and_maps_caret():
     composer = ConsoleComposerBar(paste_collapse_threshold=50)
     composer.insert_pasted_text(first)
     composer.insert_text("tail")
-    first_token_end = len(f"Pasted text | {len(first)} characters | Expand")
+    first_token_end = len(f"Pasted text | {len(first)} characters | Ctrl+E expand")
     composer.position_cursor_from_display_index(first_token_end)
 
     composer.insert_pasted_text(second)
@@ -134,7 +134,7 @@ def test_middle_collapsed_paste_uses_the_actual_predecessor_and_maps_caret():
     assert composer.cursor_index == len(first) + 1 + len(second)
     assert composer._canonical_index_at_display(first_token_end) == len(first)
     assert composer._cursor_display_index() == (
-        first_token_end + 1 + len(f"Pasted text | {len(second)} characters | Expand")
+        first_token_end + 1 + len(f"Pasted text | {len(second)} characters | Ctrl+E expand")
     )
 
 

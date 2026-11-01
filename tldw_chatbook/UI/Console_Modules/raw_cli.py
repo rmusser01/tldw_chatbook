@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -29,9 +29,11 @@ from ...Chat.console_raw_cli import (
     LOCAL_COMMAND_RUN_LOG_DIR,
     LOCAL_COMMAND_TASK,
     LOCAL_COMMAND_TOOL_NAME,
+    RAW_CLI_ARM_DISCLOSURE_LINES,
     format_raw_cli_content,
     local_command_run_status,
     raw_cli_activity_presentation,
+    raw_cli_authority,
     raw_cli_terminal_lifecycle,
 )
 from ...Tools.raw_cli_executor import (
@@ -54,9 +56,17 @@ _LOCKED_REFUSAL = (
     "for this launch. The exact draft was restored."
 )
 _UNARMED_REFUSAL = (
-    "Raw CLI is Unlocked but not armed for this launch. Arm it in Settings > "
-    "Privacy & Security. The exact draft was restored."
+    "Raw CLI is Unlocked but not armed for this launch. Choose Arm… in the "
+    "composer, or arm it in Settings > Privacy & Security. The exact draft was "
+    "restored."
 )
+#: TASK-33622.9: the composer's in-place arm, worded as Settings' own Arm.
+_ARM_TITLE = "Arm raw CLI for this launch"
+_ARMED_NOTICE = "Raw CLI armed for this launch. Press Enter or Run to run the command."
+_ARM_LOCKED_NOTICE = (
+    "Raw CLI is Locked. Unlock it in Settings > Privacy & Security, then arm it."
+)
+_ARM_FAILED_NOTICE = "Raw CLI could not be armed; it stays unarmed."
 _AUTHORITY_CHANGED_REFUSAL = (
     "Raw CLI authority changed before launch. The exact draft was restored."
 )
@@ -223,6 +233,9 @@ class ConsoleRawCliController:
         start_worker: Callable[..., Any],
         marshal_to_ui: Callable[..., Any],
         schedule_projection: Callable[[str], None] = lambda _session_id: None,
+        confirm_arm: Callable[[str, str], Awaitable[bool]] | None = None,
+        notify: Callable[[str, str], Any] = lambda _text, _severity: None,
+        authority_changed: Callable[[], Any] = lambda: None,
     ) -> None:
         self._raw_cli_runtime = raw_cli_runtime
         self._active_session_id = active_session_id
@@ -244,6 +257,66 @@ class ConsoleRawCliController:
         self._start_worker = start_worker
         self._marshal_to_ui = marshal_to_ui
         self._schedule_projection = schedule_projection
+        self._confirm_arm = confirm_arm
+        self._notify = notify
+        self._authority_changed = authority_changed
+        self._arm_in_flight = False
+
+    def request_arm(self) -> bool:
+        """Open the in-place arm confirmation for an unarmed raw draft.
+
+        TASK-33622.9 (owner decision 2026-10-27): the composer's "Arm…" --
+        Enter, Send or the Workbench's send on an unarmed ``! `` draft --
+        arms behind the same disclosure as Settings > Privacy & Security.
+        One confirmation at a time; the draft is never touched.
+
+        Returns:
+            True when a confirmation flow was started.
+        """
+        if self._arm_in_flight:
+            self._notify("Raw CLI arm confirmation is already open.", "information")
+            return False
+        if self._confirm_arm is None:
+            self._notify(_ARM_FAILED_NOTICE, "error")
+            return False
+        self._arm_in_flight = True
+        try:
+            self._start_worker(
+                self._arm_in_place,
+                exclusive=False,
+                exit_on_error=False,
+                name="console-raw-cli-arm",
+            )
+        except Exception:  # noqa: BLE001 -- no worker, no pending confirmation
+            self._arm_in_flight = False
+            self._notify(_ARM_FAILED_NOTICE, "error")
+            return False
+        return True
+
+    async def _arm_in_place(self) -> bool:
+        try:
+            runtime = self._raw_cli_runtime()
+            authority = raw_cli_authority(runtime)
+            if authority == "locked":
+                self._notify(_ARM_LOCKED_NOTICE, "warning")
+                return False
+            if authority == "unarmed":
+                confirmed = await self._confirm_arm(  # type: ignore[misc]
+                    _ARM_TITLE, "\n\n".join(RAW_CLI_ARM_DISCLOSURE_LINES)
+                )
+                if not confirmed:
+                    return False
+                if not getattr(runtime.arm(), "armed", False):
+                    self._notify(_ARM_FAILED_NOTICE, "error")
+                    return False
+                self._notify(_ARMED_NOTICE, "warning")
+            return True
+        except Exception:  # noqa: BLE001 -- a failed arm leaves it unarmed
+            self._notify(_ARM_FAILED_NOTICE, "error")
+            return False
+        finally:
+            self._arm_in_flight = False
+            self._authority_changed()
 
     def start_user_command(self, stash: ConsoleDraftStash) -> bool:
         """Start one trusted raw stash in its own non-exclusive thread worker."""

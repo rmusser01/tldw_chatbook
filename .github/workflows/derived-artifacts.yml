@@ -10,7 +10,7 @@ name: Derived Artifacts
 # the profile-owned-path census -- have therefore never blocked anything, and
 # the same drift has been rediscovered by hand in four separate tasks.
 #
-# TASK-37800: artifact guards and static selector checks now run before the
+# TASK-38413: artifact guards and static selector checks now run before the
 # application lanes. The required job only aggregates their verdicts.
 # Each artifact checker itself remains stdlib-only.
 # Measured on an M-series laptop: bundle-sync 0.86 s, profile-owned-path 10.98 s,
@@ -73,7 +73,7 @@ on:
 # 45 cancelled / 14 success / 1 failure - a 23% success rate for a REQUIRED
 # check, i.e. merges to `dev` were blocked at random for everyone.
 #
-# Same-head runs are still preserved. TASK-37800 adds a separate cleanup job
+# Same-head runs are still preserved. TASK-38413 adds a separate cleanup job
 # in merge-queue.yml that cancels only verified obsolete PR-head runs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}

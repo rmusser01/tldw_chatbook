@@ -1179,6 +1179,14 @@ def _marshal_terminal_to_ui(screen: Any, callback: Callable[[], None]) -> None:
     screen.app.call_from_thread(callback)
 
 
+def _raw_cli_authority_changed(screen: Any) -> None:
+    """Repaint the composer's raw-CLI state and give it focus back."""
+    composer = screen._console_composer_or_none()
+    if composer is not None:
+        composer.refresh_raw_cli_authority()
+        screen._focus_console_composer_if_needed(force=True)
+
+
 async def _wait_for_terminal_screen_result(screen: Any, modal: Any) -> Any:
     """Wait for a Terminal modal on the Textual app mounting this screen."""
     worker = screen.run_worker(
@@ -2987,6 +2995,18 @@ def build_console_controllers(
         schedule_projection=(
             lambda session_id: _schedule_raw_cli_projection(screen, session_id)
         ),
+        # TASK-33622.9: the composer's in-place Arm…, behind Settings' own
+        # confirmation (Cancel focused) and disclosure.
+        confirm_arm=lambda title, message: _wait_for_terminal_screen_result(
+            screen,
+            ConfirmationDialog(
+                title=title, message=message, confirm_label="Arm host access"
+            ),
+        ),
+        notify=lambda text, severity: screen.app_instance.notify(
+            text, severity=severity, markup=False
+        ),
+        authority_changed=lambda: _raw_cli_authority_changed(screen),
     )
     screen._prompt_queue = ConsolePromptQueueUIController(
         chat_controller_accessor=(lambda: screen._ensure_console_chat_controller()),
