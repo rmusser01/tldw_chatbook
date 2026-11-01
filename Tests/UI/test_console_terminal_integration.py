@@ -699,13 +699,12 @@ async def test_creating_another_terminal_session_selects_and_focuses_it(
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(160, 45)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-terminal-open")
-        composer = console.query_one("#console-native-composer")
-        # Let the Console's activation focus restore (refresh + 0.2 s timer)
-        # land first, so this test measures the create path, not that race.
-        await _wait_until(pilot, lambda: pilot.app.focused is composer)
-        await pilot.pause(0.3)
+        # Current dev attaches/resumes in a worker before scheduling its focus
+        # restores. Reuse the qualified real-attach fixture; the create/selection
+        # checks below retain their original four-second bounds.
+        from Tests.UI.test_console_key_ownership import _mounted
+
+        console, _composer, _transcript = await _mounted(host, pilot, messages=False)
         assert await pilot.click("#console-terminal-open")
         await _wait_for_selector(console, pilot, "#console-terminal-viewport")
         viewport = console.query_one("#console-terminal-viewport", TerminalViewport)

@@ -968,7 +968,8 @@ async def test_terminal_escape_ownership_keeps_the_composer_cue_truthful(
             await pilot.pause()
             assert console.focused is viewport
             assert viewport.input_focused
-            assert not composer.collapsed
+            assert not composer.collapsed  # Preserve the user collapse preference.
+            assert not composer.display and not composer.can_focus
             assert composer.draft_text() == ""
 
             terminal_input = []
@@ -980,8 +981,8 @@ async def test_terminal_escape_ownership_keeps_the_composer_cue_truthful(
                 return post_message(message)
 
             monkeypatch.setattr(viewport, "post_message", record_input)
-            # Record the actual viewport message; the backend worker drains
-            # the manager queue concurrently, so take_input is not an oracle.
+            # Observe the actual viewport route; the inert recording backend
+            # has no runtime bridge. This does not claim real PTY delivery.
             await pilot.press("escape")
             await pilot.pause()
             assert console.focused is viewport, (console.focused, composer.draft_text())
@@ -996,68 +997,62 @@ async def test_terminal_escape_ownership_keeps_the_composer_cue_truthful(
             assert composer.draft_text() == ""
             assert _COMPOSER_CUE not in _draft_render(composer)
 
-            # Neither transition blurs the already-unfocused composer.
+            # TASK-33622.5 AC4: Terminal owns the whole center. Its composer
+            # stays hidden/unfocusable even when focus or capture mode changes.
             help_button = console.query_one("#console-control-help", Button)
+            help_button.focus()
+            await _wait_for(
+                pilot, lambda: console.focused is help_button, "no Help focus"
+            )
+            assert not composer.display and not composer.can_focus
+            assert not composer.draft_has_focus
+            viewport.focus_input()
+            await _wait_for(
+                pilot, lambda: console.focused is viewport, "no Terminal focus"
+            )
+            await pilot.press("ctrl+right_square_bracket")
+            assert console.focused is viewport and not viewport.input_focused
+            assert not composer.display and not composer.can_focus
+            await pilot.press("enter")
+            assert viewport.input_focused
+            assert not composer.display and not composer.can_focus
+            await pilot.press("ctrl+right_square_bracket", "escape", "y")
+            assert console.focused is viewport and viewport.input_focused
+            assert not composer.display and not composer.can_focus
+            assert not composer.draft_has_focus
+            assert composer.draft_text() == ""
+            assert terminal_input == [b"\x1b", b"x", b"y"]
+
+            # Only the explicit Return control restores the composing surface.
+            assert await pilot.click("#console-terminal-return")
+            await _wait_for_selector(console, pilot, "#console-native-transcript")
+            await _wait_for(
+                pilot,
+                lambda: composer.display
+                and composer.can_focus
+                and composer.draft_has_focus,
+                "Return did not restore the composer",
+            )
+            await pilot.press("y")
+            assert composer.draft_text() == "y"
+            assert terminal_input == [b"\x1b", b"x", b"y"]
+            assert _COMPOSER_CUE not in _draft_render(composer)
+
+            # A full-width draft still paints the cue inside measured geometry
+            # when the restored composer loses focus to an ordinary control.
+            visible = composer.query_one("#console-command-visible-text", Static)
+            composer.load_draft("a" * composer._draft_render_width())
+            await pilot.pause()
             help_button.focus()
             await _wait_for(
                 pilot,
                 lambda: _COMPOSER_CUE in _draft_render(composer),
-                "cue did not return outside Terminal capture",
+                "cue did not return",
             )
-            viewport.focus()
-            await _wait_for(
-                pilot,
-                lambda: _COMPOSER_CUE not in _draft_render(composer),
-                "stale cue after returning to Terminal capture",
+            painted = "\n".join(
+                visible.render_line(row).text
+                for row in range(visible.content_size.height)
             )
-
-            # Mode changes also happen without any focus transition.
-            await pilot.press("ctrl+right_square_bracket")
-            assert console.focused is viewport
-            assert not viewport.input_focused
-            await _wait_for(
-                pilot,
-                lambda: _COMPOSER_CUE in _draft_render(composer),
-                "released Terminal did not restore the Escape cue",
-            )
-            await pilot.press("enter")
-            assert viewport.input_focused
-            await _wait_for(
-                pilot,
-                lambda: _COMPOSER_CUE not in _draft_render(composer),
-                "reacquiring Terminal input left a false Escape cue",
-            )
-            await pilot.press("ctrl+right_square_bracket", "escape", "y")
-            assert composer.draft_has_focus
-            assert composer.draft_text() == "y"
-            assert terminal_input == [b"\x1b", b"x"]
-
-            # A full row reserves a second caret row while focused. Capture
-            # removes the cue and may shrink it; release/outside focus must
-            # paint any returning cue inside the measured widget, not crop it.
-            visible = composer.query_one("#console-command-visible-text", Static)
-            for transition in ("release", "outside"):
-                composer.focus()
-                composer.load_draft("a" * composer._draft_render_width())
-                await pilot.pause()
-                viewport.focus_input()
-                await pilot.pause()
-                assert _COMPOSER_CUE not in _draft_render(composer)
-                if transition == "release":
-                    await pilot.press("ctrl+right_square_bracket")
-                else:
-                    help_button.focus()
-                await pilot.pause()
-                assert _COMPOSER_CUE in _draft_render(composer)
-                painted = "\n".join(
-                    visible.render_line(row).text
-                    for row in range(visible.content_size.height)
-                )
-                assert _COMPOSER_CUE in painted, (
-                    transition,
-                    visible.content_size,
-                    _draft_render(composer),
-                    painted,
-                )
+            assert _COMPOSER_CUE in painted, (visible.content_size, painted)
     finally:
         manager.finalize_shutdown()

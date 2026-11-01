@@ -25,34 +25,10 @@ pytestmark = pytest.mark.bootstrap_profile
 
 
 async def _settled_console(host, pilot):
-    screen = host.screen_stack[-1]
-    await _wait_for_selector(screen, pilot, "#console-native-composer", timeout=10)
+    """Use the current Console fixture's real attach and focus readiness."""
+    from Tests.UI.test_console_key_ownership import _mounted
 
-    def attach_details():
-        names = (
-            "_console_attach_reconciled",
-            "_console_attach_sync_complete",
-            "_console_attach_runtime_reconciled",
-            "_console_attach_view_started",
-            "_console_attach_reconcile_running",
-            "_console_attach_reconcile_retry_count",
-            "_console_attach_reconcile_retry_exhausted",
-            "_console_sync_in_progress",
-            "_console_sync_requested",
-            "_console_sync_maintenance_paused",
-            "_console_control_bar_replay_whole_sync",
-            "_resume_navigation_startup_in_progress",
-        )
-        details = [f"{name}={getattr(screen, name, None)!r}" for name in names]
-        return "\n".join(details)
-
-    await _wait_until(
-        pilot,
-        lambda: screen._console_attach_reconciled
-        and not screen._console_attach_resume_in_progress,
-        timeout=20,
-        detail=attach_details,
-    )
+    screen, _, _ = await _mounted(host, pilot, messages=False)
     return screen
 
 
