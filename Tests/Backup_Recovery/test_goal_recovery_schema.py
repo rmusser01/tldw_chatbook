@@ -47,7 +47,7 @@ def test_hybrid_goal_catalog_refuses_without_rewrite(tmp_path, case):
         if case == "missing_goal_table":
             conn.execute("DROP TABLE goal_waits")
         elif case == "old_stamp":
-            conn.execute("DELETE FROM schema_version WHERE version=24")
+            conn.execute("DELETE FROM schema_version WHERE version>=24")
         else:
             conn.execute("ALTER TABLE goal_runs ADD COLUMN unqualified TEXT")
         conn.commit()

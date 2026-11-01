@@ -64,10 +64,16 @@ The single write seam is `add_media_with_keywords`: URL/content-hash dedup with 
 - `Prompts_DB` — prompts + keywords, own migrations to v6, Python-side FTS, soft deletes, expected-version conflicts, and Prompt/Recipe/Mix-in discriminator. The v5-to-v6 file-backed rebuild preserves IDs, sequence, references, indexes, FTS and retained sync history; recovery accepts exact v4/v5 catalogs and migrates staged copies under its restricted authorizer.
 - `Evals_DB` — eval tasks/models/runs/results + FTS; version tracked via `PRAGMA user_version` (no version table).
 - `Subscriptions_DB` — watchlist/subscription state + briefing provenance; FTS-with-LIKE-fallback at the search boundary ("the search box must never raise into the reader").
-- `AgentRuns_DB` — agent run/step records (run trees; outliving sub-agent rows).
+- `AgentRuns_DB` — agent run/step records, automatic-work accounting, private Goal history, and passive native workflow history (schema v25).
 - `Library_Collections_DB` / `Library_Ingest_Jobs_DB` — collections and the durable ingest job queue.
 - `RAG_Indexing_DB` — incremental indexing state (see [rag.md](./rag.md)).
 - `Workspace_DB`, `VisualIdentity_DB`, `Chunking_Lab_DB` — workspace bindings, visual identity, chunking experiments.
+
+`Agents/workflow_models.py` and `DB/workflow_runs.py` implement the passive portion of [ADR-285](../../backlog/decisions/285-native-phased-agent-workflows.md). Workflow launches and their automatic chains are created together through the existing connection-taking FULL transaction. Immutable request/plan records, normalized phases/tasks, native run/attempt links, decisions, active-interval rows and required results stay in AgentRunsDB; separate control revisions and progress cursors prevent result publication from acting as approval. No workflow coordinator, phase dispatch, startup audit, resume capability or UI is created by this slice.
+
+Plans are limited to 128 KiB, six phases, twelve task definitions and 64 footprint entries per task. Required result slots are reserved before effects, capped at 128 KiB per record, 4 MiB per workflow and 128 MiB across workflow payloads (including retained request/plan/decision bytes). Publication checks exact workflow/attempt/native run ownership; missing mandatory results fail explicitly. Settled result removal retains immutable plans, accounting and reservation tombstones; active, paused, uncertain or physically undrained records cannot be removed. The passive retirement field records an existing native owner's observation and never retires an ExecutionOwner itself.
+
+`agent_runs_v24_to_v25_workflow_runs.sql` is the next additive migration. The installed `DB/recovery_operations.py` owner, frozen `DB/recovery_workflow_schema.py` catalog and narrow `Backup_Recovery/sqlite_validation.py` staging allowlist qualify actual constructor and migration SQL without rewriting historical catalogs. Validators check payload hashes, plan structural rows, reservation capacity and cross-owner references without opening captured binding paths. Recovery contract imports remain constructor-free; restored history and saved decisions grant no execution authority and remain subject to existing recovered-content activation.
 
 Database helpers in `config.py` resolve explicit path overrides first, then profile-aware defaults under `get_user_data_dir()`. Eval private configuration follows the separate effective-config-owned selector described in [evals.md](./evals.md).
 

@@ -1,0 +1,561 @@
+"""Passive private workflow history in the existing AgentRunsDB transaction owner."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+from dataclasses import asdict
+from typing import TYPE_CHECKING, get_args
+from uuid import uuid4
+
+from pydantic import TypeAdapter
+
+from tldw_chatbook.Agents.workflow_models import (
+    RECORD_BYTES,
+    TOTAL_BYTES,
+    WORKFLOW_BYTES,
+    Identity,
+    WorkflowDecision,
+    WorkflowPayloadReservation,
+    WorkflowPlan,
+    WorkflowRequest,
+    WorkflowSnapshot,
+    WorkflowStatus,
+    WorkflowTaskAttempt,
+    WorkflowTaskResult,
+)
+
+_identity = TypeAdapter(Identity).validate_python
+
+if TYPE_CHECKING:
+    from .AgentRuns_DB import AgentRunsDB
+
+
+def _hash(payload: str) -> str:
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+class WorkflowRunsStore:
+    """Storage only: construction and reads never recover, admit or dispatch work."""
+
+    def __init__(self, db: AgentRunsDB) -> None:
+        self.db = db
+
+    @staticmethod
+    def _row(conn, workflow_id):
+        _identity(workflow_id)
+        row = conn.execute(
+            "SELECT * FROM workflow_runs WHERE id=?", (workflow_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("unknown_workflow")
+        return row
+
+    @staticmethod
+    def _capacity(conn, workflow_id, amount):
+        def retained(owner):
+            total = 0
+            for table, column in (
+                ("workflow_runs", "request_json"),
+                ("workflow_plan_revisions", "payload_json"),
+                ("workflow_decisions", "payload_json"),
+            ):
+                key = "id" if table == "workflow_runs" else "workflow_id"
+                query = f"SELECT COALESCE(SUM(length(CAST({column} AS BLOB))),0) FROM {table}"
+                total += conn.execute(
+                    query + (f" WHERE {key}=?" if owner else ""),
+                    (owner,) if owner else (),
+                ).fetchone()[0]
+            total += conn.execute(
+                "SELECT COALESCE(SUM(bytes),0) FROM workflow_payload_reservations WHERE state!='removed'"
+                + (" AND workflow_id=?" if owner else ""),
+                (owner,) if owner else (),
+            ).fetchone()[0]
+            return total
+
+        if (
+            retained(workflow_id) + amount > WORKFLOW_BYTES
+            or retained(None) + amount > TOTAL_BYTES
+        ):
+            raise ValueError("workflow_payload_capacity")
+
+    def create(self, request: WorkflowRequest, *, launch_id: str) -> WorkflowSnapshot:
+        """Create the structural launch and chain in one FULL commit, without admission."""
+        if type(request) is not WorkflowRequest:
+            raise TypeError("request must be WorkflowRequest")
+        request = WorkflowRequest.model_validate_json(request.canonical_json())
+        _identity(launch_id)
+        payload = request.canonical_json()
+        with self.db.automatic_work.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM workflow_runs WHERE launch_id=?", (launch_id,)
+            ).fetchone()
+            if row:
+                if row["request_json"] != payload or row["payload_hash"] != _hash(
+                    payload
+                ):
+                    raise ValueError("launch_payload_conflict")
+                return self._snapshot(conn, row)
+            workflow_id = str(uuid4())
+            self._capacity(conn, workflow_id, len(payload.encode()))
+            chain_id = self.db.automatic_work._create_chain(
+                conn,
+                request.conversation_id,
+                root_submission_id="workflow:" + workflow_id,
+                limits=request.policy,
+            )
+            now = time.time()
+            conn.execute(
+                "INSERT INTO workflow_runs (id,launch_id,payload_hash,request_json,conversation_id,chain_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    workflow_id,
+                    launch_id,
+                    _hash(payload),
+                    payload,
+                    request.conversation_id,
+                    chain_id,
+                    now,
+                    now,
+                ),
+            )
+            return self._snapshot(conn, self._row(conn, workflow_id))
+
+    def _snapshot(self, conn, row):
+        request = WorkflowRequest.model_validate_json(row["request_json"])
+        chain = conn.execute(
+            "SELECT conversation_id,allowance_root_chain_id,root_submission_id,limits_json FROM automatic_work_chains WHERE id=?",
+            (row["chain_id"],),
+        ).fetchone()
+        if (
+            _hash(row["request_json"]) != row["payload_hash"]
+            or request.conversation_id != row["conversation_id"]
+            or not chain
+            or chain["conversation_id"] != request.conversation_id
+            or chain["allowance_root_chain_id"] is not None
+            or chain["root_submission_id"] != "workflow:" + row["id"]
+            or json.loads(chain["limits_json"]) != asdict(request.policy)
+        ):
+            raise ValueError("invalid_workflow_ownership")
+        plans = []
+        for revision, saved in enumerate(
+            conn.execute(
+                "SELECT * FROM workflow_plan_revisions WHERE workflow_id=? ORDER BY revision",
+                (row["id"],),
+            ),
+            1,
+        ):
+            plan = WorkflowPlan.model_validate_json(saved["payload_json"])
+            if (
+                saved["revision"] != revision
+                or plan.request != request
+                or _hash(saved["payload_json"]) != saved["payload_hash"]
+            ):
+                raise ValueError("invalid_workflow_plan")
+            self._plan_rows(conn, row["id"], revision, plan)
+            plans.append(plan)
+        if conn.execute(
+            "SELECT 1 FROM workflow_payload_reservations p LEFT JOIN workflow_results r ON r.attempt_id=p.attempt_id WHERE p.workflow_id=? AND p.state='published' AND r.attempt_id IS NULL LIMIT 1",
+            (row["id"],),
+        ).fetchone():
+            raise ValueError("workflow_required_result_missing")
+        results = tuple(
+            self._read_result(conn, row["id"], r[0])
+            for r in conn.execute(
+                "SELECT attempt_id FROM workflow_results WHERE workflow_id=? ORDER BY rowid",
+                (row["id"],),
+            )
+        )
+        return WorkflowSnapshot(
+            id=row["id"],
+            launch_id=row["launch_id"],
+            chain_id=row["chain_id"],
+            request=request,
+            control_revision=row["control_revision"],
+            progress_cursor=row["progress_cursor"],
+            status=row["status"],
+            plans=tuple(plans),
+            results=results,
+            accounting=self.db.automatic_work._snapshot(conn, row["chain_id"]),
+        )
+
+    @staticmethod
+    def _plan_rows(conn, workflow_id, revision, plan):
+        phases = {(phase.id, ordinal) for ordinal, phase in enumerate(plan.phases, 1)}
+        actual_phases = {
+            tuple(row)
+            for row in conn.execute(
+                "SELECT phase_id,ordinal FROM workflow_phases WHERE workflow_id=? AND plan_revision=?",
+                (workflow_id, revision),
+            )
+        }
+        tasks = {
+            (phase.id, task.id, ordinal)
+            for phase in plan.phases
+            for ordinal, task in enumerate(phase.tasks, 1)
+        }
+        actual_tasks = {
+            tuple(row)
+            for row in conn.execute(
+                "SELECT phase_id,task_id,ordinal FROM workflow_tasks WHERE workflow_id=? AND plan_revision=?",
+                (workflow_id, revision),
+            )
+        }
+        if actual_phases != phases or actual_tasks != tasks:
+            raise ValueError("invalid_workflow_plan_ownership")
+
+    def get(self, workflow_id: str) -> WorkflowSnapshot:
+        """Read a consistent private history snapshot; no recovery sweep."""
+        with self.db.connection() as conn:
+            if conn.in_transaction:
+                return self._snapshot(conn, self._row(conn, workflow_id))
+            conn.execute("BEGIN")
+            try:
+                return self._snapshot(conn, self._row(conn, workflow_id))
+            finally:
+                conn.rollback()
+
+    def list_for_conversation(
+        self, conversation_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[dict, ...]:
+        """Return a body-free bounded history page."""
+        _identity(conversation_id)
+        if (
+            type(limit) is not int
+            or not 1 <= limit <= 50
+            or type(offset) is not int
+            or not 0 <= offset < 2**63
+        ):
+            raise ValueError("invalid_workflow_page")
+        with self.db.connection() as conn:
+            return tuple(
+                dict(row)
+                for row in conn.execute(
+                    "SELECT id,conversation_id,control_revision,progress_cursor,status,updated_at FROM workflow_runs WHERE conversation_id=? ORDER BY created_at DESC,id LIMIT ? OFFSET ?",
+                    (conversation_id, limit, offset),
+                )
+            )
+
+    @staticmethod
+    def _cas(conn, workflow_id, expected_control_revision, status):
+        if type(expected_control_revision) is not int or expected_control_revision < 1:
+            raise ValueError("invalid_revision")
+        if (
+            conn.execute(
+                "UPDATE workflow_runs SET control_revision=control_revision+1,status=?,updated_at=? WHERE id=? AND control_revision=? AND status!='removed'",
+                (status, time.time(), workflow_id, expected_control_revision),
+            ).rowcount
+            != 1
+        ):
+            raise ValueError("revision_conflict")
+
+    def save_plan(
+        self, workflow_id: str, plan: WorkflowPlan, *, expected_control_revision: int
+    ) -> WorkflowSnapshot:
+        """Append immutable structural rows; a saved plan grants no phase approval."""
+        if type(plan) is not WorkflowPlan:
+            raise TypeError("plan must be WorkflowPlan")
+        plan = WorkflowPlan.model_validate_json(plan.canonical_json())
+        payload = plan.canonical_json()
+        with self.db.automatic_work.transaction() as conn:
+            row = self._row(conn, workflow_id)
+            if plan.request != WorkflowRequest.model_validate_json(row["request_json"]):
+                raise ValueError("plan_request_conflict")
+            if self._active(conn, workflow_id):
+                raise ValueError("workflow_has_active_evidence")
+            self._cas(conn, workflow_id, expected_control_revision, "awaiting_approval")
+            revision = conn.execute(
+                "SELECT COALESCE(MAX(revision),0)+1 FROM workflow_plan_revisions WHERE workflow_id=?",
+                (workflow_id,),
+            ).fetchone()[0]
+            self._capacity(conn, workflow_id, len(payload.encode()))
+            conn.execute(
+                "INSERT INTO workflow_plan_revisions VALUES (?,?,?,?)",
+                (workflow_id, revision, _hash(payload), payload),
+            )
+            for ordinal, phase in enumerate(plan.phases, 1):
+                conn.execute(
+                    "INSERT INTO workflow_phases VALUES (?,?,?,?)",
+                    (workflow_id, revision, phase.id, ordinal),
+                )
+                for task_ordinal, task in enumerate(phase.tasks, 1):
+                    conn.execute(
+                        "INSERT INTO workflow_tasks VALUES (?,?,?,?,?)",
+                        (workflow_id, revision, phase.id, task.id, task_ordinal),
+                    )
+            conn.execute(
+                "UPDATE workflow_runs SET progress_cursor=progress_cursor+1 WHERE id=?",
+                (workflow_id,),
+            )
+            return self._snapshot(conn, self._row(conn, workflow_id))
+
+    def set_status(
+        self,
+        workflow_id: str,
+        *,
+        status: WorkflowStatus,
+        expected_control_revision: int,
+    ) -> WorkflowSnapshot:
+        """CAS passive control state; this allocates no runtime capability."""
+        if status not in get_args(WorkflowStatus) or status == "removed":
+            raise ValueError("invalid_workflow_status")
+        with self.db.automatic_work.transaction() as conn:
+            self._row(conn, workflow_id)
+            if status in {"completed", "stopped", "closed"} and self._active(
+                conn, workflow_id
+            ):
+                raise ValueError("workflow_has_active_evidence")
+            self._cas(conn, workflow_id, expected_control_revision, status)
+            return self._snapshot(conn, self._row(conn, workflow_id))
+
+    @staticmethod
+    def _ownership(conn, attempt, *, allow_removed=False):
+        row = conn.execute(
+            "SELECT conversation_id,chain_id,status FROM workflow_runs WHERE id=?",
+            (attempt.workflow_id,),
+        ).fetchone()
+        if not row or (row["status"] == "removed" and not allow_removed):
+            raise ValueError("invalid_workflow_ownership")
+        if attempt.run_id:
+            run = conn.execute(
+                "SELECT conversation_id,work_chain_id FROM agent_runs WHERE id=?",
+                (attempt.run_id,),
+            ).fetchone()
+            if not run or tuple(run) != (row["conversation_id"], row["chain_id"]):
+                raise ValueError("invalid_workflow_run_ownership")
+        if attempt.native_attempt_id:
+            native = conn.execute(
+                "SELECT conversation_id,chain_id FROM automatic_wake_attempts WHERE id=?",
+                (attempt.native_attempt_id,),
+            ).fetchone()
+            if not native or tuple(native) != (row["conversation_id"], row["chain_id"]):
+                raise ValueError("invalid_workflow_attempt_ownership")
+
+    def record_attempt(self, attempt: WorkflowTaskAttempt) -> WorkflowTaskAttempt:
+        """Persist a structural link to existing identities; never launch or charge it."""
+        attempt = WorkflowTaskAttempt.model_validate_json(attempt.canonical_json())
+        with self.db.automatic_work.transaction() as conn:
+            self._ownership(conn, attempt)
+            prior = conn.execute(
+                "SELECT * FROM workflow_task_attempts WHERE id=?", (attempt.id,)
+            ).fetchone()
+            if prior:
+                if WorkflowTaskAttempt(**dict(prior)) != attempt:
+                    raise ValueError("attempt_identity_conflict")
+                return attempt
+            conn.execute(
+                "INSERT INTO workflow_task_attempts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    attempt.id,
+                    attempt.workflow_id,
+                    attempt.plan_revision,
+                    attempt.phase_id,
+                    attempt.task_id,
+                    attempt.ordinal,
+                    attempt.run_id,
+                    attempt.native_attempt_id,
+                    attempt.status,
+                    attempt.retirement,
+                ),
+            )
+            conn.execute(
+                "UPDATE workflow_runs SET progress_cursor=progress_cursor+1 WHERE id=?",
+                (attempt.workflow_id,),
+            )
+        return attempt
+
+    def record_retirement(
+        self, workflow_id: str, attempt_id: str, *, run_id: str, drained: bool
+    ) -> None:
+        """Record the native owner's explicit drain observation, never infer it from result/status."""
+        if type(drained) is not bool:
+            raise ValueError("invalid_retirement_observation")
+        with self.db.automatic_work.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM workflow_task_attempts WHERE id=? AND workflow_id=? AND run_id=?",
+                (attempt_id, workflow_id, run_id),
+            ).fetchone()
+            if not row:
+                raise ValueError("invalid_workflow_retirement_ownership")
+            self._ownership(conn, WorkflowTaskAttempt(**dict(row)))
+            if row["retirement"] == "drained" and not drained:
+                raise ValueError("retirement_conflict")
+            conn.execute(
+                "UPDATE workflow_task_attempts SET retirement=? WHERE id=?",
+                ("drained" if drained else "unknown", attempt_id),
+            )
+
+    def reserve_result(
+        self, workflow_id: str, attempt_id: str, *, bytes: int = RECORD_BYTES
+    ) -> WorkflowPayloadReservation:
+        """Reserve the full mandatory record capacity before dispatch is possible."""
+        if type(bytes) is not int or not 0 < bytes <= RECORD_BYTES:
+            raise ValueError("workflow_result_record_capacity")
+        with self.db.automatic_work.transaction() as conn:
+            attempt = conn.execute(
+                "SELECT * FROM workflow_task_attempts WHERE id=? AND workflow_id=?",
+                (attempt_id, workflow_id),
+            ).fetchone()
+            if not attempt:
+                raise ValueError("invalid_workflow_attempt_ownership")
+            self._ownership(conn, WorkflowTaskAttempt(**dict(attempt)))
+            prior = conn.execute(
+                "SELECT * FROM workflow_payload_reservations WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if prior:
+                if (
+                    prior["workflow_id"] != workflow_id
+                    or prior["bytes"] != bytes
+                    or prior["state"] == "removed"
+                ):
+                    raise ValueError("reservation_conflict")
+                return WorkflowPayloadReservation(**dict(prior))
+            self._capacity(conn, workflow_id, bytes)
+            conn.execute(
+                "INSERT INTO workflow_payload_reservations VALUES (?,?,?,'reserved')",
+                (attempt_id, workflow_id, bytes),
+            )
+            return WorkflowPayloadReservation(
+                attempt_id=attempt_id,
+                workflow_id=workflow_id,
+                bytes=bytes,
+                state="reserved",
+            )
+
+    def publish_result(self, result: WorkflowTaskResult) -> WorkflowSnapshot:
+        """Publish an exact-owned mandatory result without truncation or control approval."""
+        result = WorkflowTaskResult.model_validate_json(result.canonical_json())
+        payload = result.canonical_json()
+        with self.db.automatic_work.transaction() as conn:
+            row = conn.execute(
+                "SELECT * FROM workflow_task_attempts WHERE id=? AND workflow_id=?",
+                (result.attempt_id, result.workflow_id),
+            ).fetchone()
+            if not row or row["run_id"] != result.run_id:
+                raise ValueError("invalid_workflow_result_ownership")
+            self._ownership(conn, WorkflowTaskAttempt(**dict(row)))
+            res = conn.execute(
+                "SELECT * FROM workflow_payload_reservations WHERE attempt_id=? AND workflow_id=?",
+                (result.attempt_id, result.workflow_id),
+            ).fetchone()
+            if not res or res["state"] == "removed":
+                raise ValueError("workflow_result_unreserved")
+            if len(payload.encode()) > res["bytes"]:
+                raise ValueError("workflow_result_record_capacity")
+            prior = conn.execute(
+                "SELECT payload_json FROM workflow_results WHERE attempt_id=?",
+                (result.attempt_id,),
+            ).fetchone()
+            if prior:
+                if prior[0] != payload:
+                    raise ValueError("result_identity_conflict")
+                return self._snapshot(conn, self._row(conn, result.workflow_id))
+            conn.execute(
+                "INSERT INTO workflow_results VALUES (?,?,?,?)",
+                (result.attempt_id, result.workflow_id, _hash(payload), payload),
+            )
+            conn.execute(
+                "UPDATE workflow_payload_reservations SET state='published' WHERE attempt_id=?",
+                (result.attempt_id,),
+            )
+            conn.execute(
+                "UPDATE workflow_task_attempts SET status=? WHERE id=?",
+                (result.status, result.attempt_id),
+            )
+            conn.execute(
+                "UPDATE workflow_runs SET progress_cursor=progress_cursor+1,updated_at=? WHERE id=?",
+                (time.time(), result.workflow_id),
+            )
+            return self._snapshot(conn, self._row(conn, result.workflow_id))
+
+    def _read_result(self, conn, workflow_id, attempt_id):
+        row = conn.execute(
+            "SELECT r.*,a.run_id,p.bytes,p.state FROM workflow_results r JOIN workflow_task_attempts a ON a.id=r.attempt_id AND a.workflow_id=r.workflow_id JOIN workflow_payload_reservations p ON p.attempt_id=r.attempt_id AND p.workflow_id=r.workflow_id WHERE r.workflow_id=? AND r.attempt_id=?",
+            (workflow_id, attempt_id),
+        ).fetchone()
+        if not row:
+            raise ValueError("workflow_required_result_missing")
+        result = WorkflowTaskResult.model_validate_json(row["payload_json"])
+        if (
+            (result.workflow_id, result.attempt_id, result.run_id)
+            != (workflow_id, attempt_id, row["run_id"])
+            or _hash(row["payload_json"]) != row["payload_hash"]
+            or row["state"] != "published"
+            or len(row["payload_json"].encode()) > row["bytes"]
+        ):
+            raise ValueError("invalid_workflow_result_ownership")
+        attempt = conn.execute(
+            "SELECT * FROM workflow_task_attempts WHERE id=?", (attempt_id,)
+        ).fetchone()
+        self._ownership(conn, WorkflowTaskAttempt(**dict(attempt)))
+        return result
+
+    def read_result(self, workflow_id: str, attempt_id: str) -> WorkflowTaskResult:
+        """Missing or foreign mandatory evidence is an explicit failure."""
+        with self.db.connection() as conn:
+            return self._read_result(conn, workflow_id, attempt_id)
+
+    @staticmethod
+    def _active(conn, workflow_id):
+        return (
+            conn.execute(
+                "SELECT 1 FROM workflow_task_attempts WHERE workflow_id=? AND (status IN ('prepared','accepted','uncertain') OR retirement!='drained') UNION ALL SELECT 1 FROM workflow_phase_attempts WHERE workflow_id=? AND (status IN ('prepared','accepted','uncertain') OR retirement!='drained') UNION ALL SELECT 1 FROM workflow_active_intervals WHERE workflow_id=? AND ended_at IS NULL LIMIT 1",
+                (workflow_id, workflow_id, workflow_id),
+            ).fetchone()
+            is not None
+        )
+
+    def remove_payloads(
+        self, workflow_id: str, *, expected_control_revision: int
+    ) -> WorkflowSnapshot:
+        """Remove settled required results, retaining immutable plans and accounting tombstones."""
+        with self.db.automatic_work.transaction() as conn:
+            row = self._row(conn, workflow_id)
+            if row["status"] not in {"completed", "stopped", "closed"} or self._active(
+                conn, workflow_id
+            ):
+                raise ValueError("workflow_has_active_evidence")
+            if self.db.automatic_work._snapshot(conn, row["chain_id"]).uncertain:
+                raise ValueError("workflow_has_active_evidence")
+            self._cas(conn, workflow_id, expected_control_revision, "removed")
+            conn.execute(
+                "DELETE FROM workflow_results WHERE workflow_id=?", (workflow_id,)
+            )
+            conn.execute(
+                "UPDATE workflow_payload_reservations SET state='removed' WHERE workflow_id=?",
+                (workflow_id,),
+            )
+            return self._snapshot(conn, self._row(conn, workflow_id))
+
+    def save_decision(self, decision: WorkflowDecision) -> WorkflowSnapshot:
+        """Append an inert decision record with CAS; it is not phase authorization."""
+        decision = WorkflowDecision.model_validate_json(decision.canonical_json())
+        payload = decision.canonical_json()
+        with self.db.automatic_work.transaction() as conn:
+            row = self._row(conn, decision.workflow_id)
+            prior = conn.execute(
+                "SELECT payload_json FROM workflow_decisions WHERE id=?", (decision.id,)
+            ).fetchone()
+            if prior:
+                if prior[0] != payload:
+                    raise ValueError("decision_identity_conflict")
+                return self._snapshot(conn, row)
+            for ref in decision.result_refs:
+                self._read_result(conn, decision.workflow_id, ref)
+            self._capacity(conn, decision.workflow_id, len(payload.encode()))
+            self._cas(
+                conn, decision.workflow_id, decision.control_revision, row["status"]
+            )
+            conn.execute(
+                "INSERT INTO workflow_decisions VALUES (?,?,?,?,?,?)",
+                (
+                    decision.id,
+                    decision.workflow_id,
+                    decision.plan_revision,
+                    decision.phase_id,
+                    decision.control_revision,
+                    payload,
+                ),
+            )
+            return self._snapshot(conn, self._row(conn, decision.workflow_id))

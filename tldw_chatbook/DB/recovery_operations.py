@@ -21,6 +21,10 @@ from tldw_chatbook.Backup_Recovery.models import (
 )
 from tldw_chatbook.Backup_Recovery.profile_paths import database_path, user_data_dir
 from tldw_chatbook.DB.recovery_sqlite import _checked_capture, _validate_sqlite
+from tldw_chatbook.DB.recovery_workflow_schema import (
+    WORKFLOW_MIGRATION,
+    workflow_catalog,
+)
 
 
 def _sqlite_inventory_status(
@@ -325,7 +329,9 @@ _AGENT_RUNS_MIGRATION_18_21 = (
 class _AgentRunsAdapter(_SQLiteDeclaration):
     def _validate_connection(self, connection):
         from .recovery_goal_schema import validate_goal_rows
-        return validate_goal_rows(connection)
+        from .recovery_workflow_schema import validate_workflow_rows
+
+        return validate_goal_rows(connection) + validate_workflow_rows(connection)
 
     def schema_policy(self) -> SchemaPolicy:
         return SchemaPolicy(
@@ -338,6 +344,7 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                 (22, 23, _AGENT_RUNS_MIGRATION_22_23),
                 (23, 24, GOAL_MIGRATION),
                 (24, 25, REVIEW_BOUNDARY_MIGRATION),
+                (24, 25, WORKFLOW_MIGRATION),
             ),
         )
 
@@ -1753,3 +1760,11 @@ _AGENT_RUNS_SCHEMA += tuple(
 # Keep every previously qualified physical lineage at both supported versions.
 _SUBSCRIPTIONS_SCHEMA = tuple((3, schema) for version, schema in _SUBSCRIPTIONS_SCHEMA
                               if version == 2) + _SUBSCRIPTIONS_SCHEMA
+
+
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (25, workflow_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 24
+)

@@ -751,6 +751,17 @@ class _Restrictions:
                 from tldw_chatbook.DB.recovery_review_boundary_schema import (
                     REVIEW_BOUNDARY_AUTO_INDEXES,
                 )
+                from tldw_chatbook.DB.recovery_workflow_schema import (
+                    WORKFLOW_INDEXES, WORKFLOW_TABLES, WORKFLOW_TRIGGERS,
+                )
+
+                if database == "main" and source is None and (
+                    action == sqlite3.SQLITE_CREATE_TABLE and first in WORKFLOW_TABLES
+                    or action == sqlite3.SQLITE_CREATE_INDEX and (first, second) in WORKFLOW_INDEXES
+                    or action == sqlite3.SQLITE_CREATE_TRIGGER and (first, second) in WORKFLOW_TRIGGERS
+                    or action == sqlite3.SQLITE_REINDEX and first in {name for name, _ in WORKFLOW_INDEXES}
+                ):
+                    return sqlite3.SQLITE_OK
 
                 if database == "main" and source is None and (
                     action == sqlite3.SQLITE_CREATE_TABLE and first in GOAL_TABLES
