@@ -223,7 +223,7 @@ class KanbanBoardScreen(BaseAppScreen):
             snapshot = await loader()
             await self._apply_snapshot(snapshot)
         except Exception as exc:  # noqa: BLE001 — a failed load toasts, never crashes
-            self.notify(f"Kanban board load failed: {exc}", severity="error")
+            self.notify(f"Kanban board load failed: {exc}", severity="error", markup=False)
 
     async def _apply_snapshot(self, snapshot: BoardSnapshot) -> None:
         previous = self.visible_snapshot or snapshot
@@ -554,7 +554,7 @@ class KanbanBoardScreen(BaseAppScreen):
         try:
             await operation
         except Exception as exc:  # noqa: BLE001 — mutations toast, never crash
-            self.notify(f"Kanban change failed: {exc}", severity="error")
+            self.notify(f"Kanban change failed: {exc}", severity="error", markup=False)
             # A failed mutation triggers no refresh, so any in-flight
             # bootstrap guard would otherwise stick forever.
             self._bootstrap_in_flight = False

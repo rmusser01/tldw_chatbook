@@ -21,6 +21,34 @@ GitHub's native merge queue needs an organization-owned repository, and this one
 
 ## Consequences
 
+### Amendment 2026-10-29: cancel only obsolete PR-head CI (TASK-37800)
+
+The owner approved a separate synchronize-triggered cleanup job in the existing
+queue workflow. It is independent of queue mode and outside Derived Artifacts'
+concurrency group, so an obsolete run cannot hold its cleanup behind itself.
+The queue-advance job continues to run only on its original events.
+
+Use checkout-free github-script with job-local actions-write/PR-read permissions.
+For an open, same-repository, human-authored dev PR, require its live head to match
+the event head, and match each candidate's workflow, branch, repository, PR number,
+event and active status. Only a distinct nonempty head SHA is obsolete. Re-read
+the live PR before each cancellation; stop on changed identity/head or API error.
+Require a nonempty branch filter. Preserve runs once their required verdict or
+queue-tick job appears: the old run's controller may still be approving replacement
+CI, including this cleanup job, after a queue rebase. Job-inventory errors stop
+cleanup rather than risking cancellation of that controller.
+Concurrent completion (HTTP 409) is tolerated. Preserve same-head runs regardless
+of base movement, all manual/fork/unrelated/completed runs, and existing approvals,
+retry, arming and protection rules. No force cancellation or new credentials.
+
+GitHub provides no atomic PR-head-conditioned cancellation, so an immediate live
+read narrows rather than eliminates that race. A blanket cancel-in-progress rule
+cannot express these constraints and remains rejected. This cleanup adds no
+main-dependent trigger or repository-wide admission controller.
+
+Spec: `Docs/superpowers/specs/2026-10-29-ci-preflight-and-superseded-runs.md`.
+Plan: `Docs/superpowers/plans/2026-10-29-ci-preflight-and-superseded-runs.md`.
+
 - One CI cycle per merge, without the churn. The ceiling of one merge per cycle is unchanged.
 - Nothing depends on `main`. A stall with no activity waits for the next event, or a manual
   `gh workflow run derived-artifacts.yml --ref dev`.
