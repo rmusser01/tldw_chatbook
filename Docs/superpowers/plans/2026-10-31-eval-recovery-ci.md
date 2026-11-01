@@ -46,3 +46,15 @@ The full native test discovered that HOME redirection leaves ConfigFileStorage's
 The owner requested rebasing PR #3342 onto dev and resolving outstanding CI before leaving draft. Rebased both commits without conflicts onto dev 77718ebebc; git range-diff reports both original patches unchanged. Focused native environment tests: 7 passed. The earlier three-platform results above remain historical evidence for the pre-rebase source; current-head CI must qualify the integrated tree.
 
 Keep the PR in draft while reviewing the normal pull_request CI runs and available review threads. Retire only superseded runs for this PR if their always-run final gate holds its concurrency slot; never dispatch the required check by hand. No merge or auto-merge is authorized. Live final CI results will be recorded in the PR description so recording them does not create another source head.
+
+## Owner-approved explicit runner trial
+
+ADR required: yes (existing ADR-103 amendment).
+ADR path: backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md
+Reason: owner approved testing the already-executing Ubuntu 24.04 image for the required workflow's queued Linux jobs. Keep all gate/capacity contracts intact.
+
+- [x] Change the five existing Derived Artifacts runner assertions and observe RED against ubuntu-latest (7 intended failures, 82 passed).
+- [x] Pin the workflow's nine runs-on values to ubuntu-24.04 and verify the existing contract suite (150 passed, 186.59s); parsed workflow otherwise identical, independent review clean.
+- [ ] Confirm current-head hosted allocation, all required checks and available review feedback before leaving draft.
+
+The runner trial passed the existing workflow-contract suite, 1,242-entry UI census and both Backlog guards. Scoped Ruff lint passes; the five assertion literals introduce no formatting drift relative to the already-unformatted baseline. Dev advanced to 2561efd658 during verification; rebase the qualified patch onto that base before publication and use current-head hosted CI for the integrated result.
