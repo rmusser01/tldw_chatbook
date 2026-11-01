@@ -410,7 +410,7 @@ async def _verify_internal_close_error_names_the_tab_but_never_the_error_text(
             await _click(pilot, f"#console-close-session-tab-{saved.id}")
             assert await _settle(pilot, lambda: bool(notes)), "refused close was silent"
             assert notes[-1] == (
-                f'Couldn\'t close tab "{_SAVED_TITLE}": '
+                'Couldn\'t close tab "Tab 2": '
                 "An unexpected error occurred (RuntimeError).",
                 "error",
             )
@@ -492,7 +492,8 @@ async def _verify_close_that_does_not_finish_is_reported_and_keeps_tab_state(
             finally:
                 runtime._voice_promotion_owner = previous_owner
             message, severity = notes[-1]
-            assert f'"{_SAVED_TITLE}"' in message
+            assert '"Tab 2"' in message
+            assert _SAVED_TITLE not in message
             assert "The close did not finish. Try again in a moment." in message
             assert severity == "error"
             assert owner.aborted == 1
@@ -516,7 +517,7 @@ async def _verify_close_flow_that_cannot_start_tells_the_user(request, monkeypat
         blank = store.create_session()
         store.switch_session(keeper)
         await _show_tabs(console, pilot, {keeper, blank.id})
-        blank_title = next(s.title for s in store.sessions() if s.id == blank.id)
+        blank_title = "Tab 2"
 
         original_run_worker = console.run_worker
 
@@ -628,7 +629,7 @@ async def _verify_a_refusal_the_user_can_act_on_shows_its_own_reason(request):
         await _click(pilot, "#confirm-button")
         assert await _settle(pilot, lambda: bool(notes)), "refused close was silent"
         assert notes[-1] == (
-            'Couldn\'t close tab "Temporary": '
+            'Couldn\'t close tab "Tab 2": '
             "Finish or discard the pending turn before closing this chat.",
             "error",
         )
@@ -665,7 +666,7 @@ async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
         stale = store.create_session()
         store.switch_session(keeper)
         await _show_tabs(console, pilot, {keeper, healed.id, stale.id})
-        titles = {session.id: session.title for session in store.sessions()}
+        titles = {session.id: f"Tab {index}" for index, session in enumerate(store.sessions(), start=1)}
 
         controller = console._session
         real_sync = controller._sync_native_console_chat_ui_fn
@@ -695,6 +696,7 @@ async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
             await _await_tabs(console, pilot, {keeper, stale.id})
 
             failures_left[0] = 2
+            titles[stale.id] = "Tab 2"  # The prior close removed the second tab.
             await _click(pilot, f"#console-close-session-tab-{stale.id}")
             assert await _settle(pilot, lambda: len(notes) == 2)
             assert notes[-1][0].startswith(f'Closed tab "{titles[stale.id]}", but')
@@ -984,7 +986,8 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                     )
                     await _click(pilot, f"#console-close-session-tab-{doomed.id}")
                     dialog = await _wait_for_confirmation(host)
-                    assert "Pending [notes]" in dialog.title
+                    assert '"Tab 2"' in dialog.title
+                    assert "Pending [notes]" not in dialog.title
                     assert consequence in dialog.message
                     assert "private close" not in dialog.message
                     for zero_row in (
@@ -1231,12 +1234,13 @@ async def _verify_failed_confirmed_close_reoffers_confirmation_without_retrying(
             await _click(pilot, "#confirm-button")
             second = await _wait_for_confirmation(host, previous=first)
             assert notes[-1] == (
-                'Couldn\'t close tab "Retry notes": The close did not finish. Try again in a moment.',
+                'Couldn\'t close tab "Tab 2": The close did not finish. Try again in a moment.',
                 "error",
             )
             assert owner.aborted == 1, "failure must not retry the close automatically"
             assert store.session_draft(doomed.id) == "private draft"
-            assert "Retry notes" in second.title
+            assert '"Tab 2"' in second.title
+            assert "Retry notes" not in second.title
             assert await _settle(
                 pilot, lambda: second.query_one("#cancel-button").has_focus
             )
@@ -1323,7 +1327,8 @@ async def _verify_all_close_consequences_keep_named_title_and_actions_painted_at
                         ]
                     )
                     assert text in painted, (selector, painted)
-                assert title in dialog.title
+                assert '"Tab 2"' in dialog.title
+                assert title not in dialog.title
                 assert (
                     "Worktree decisions: cancelled; no merge or discard."
                     in dialog.message

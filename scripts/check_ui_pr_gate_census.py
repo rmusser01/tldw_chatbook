@@ -670,7 +670,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.2 review (2026-10-29) appends 1 more node entry at the tail:
 # with no model chosen the vision row stays hidden under the setup strip.
 # Dev's 1141 + 3 = 1144.
-MINIMUM_FILES = 1249
+# PR3303 retains all 1249 dev entries and appends four loss-guard entries.
+MINIMUM_FILES = 1253
 
 
 def read_census(path: Path) -> list[str]:

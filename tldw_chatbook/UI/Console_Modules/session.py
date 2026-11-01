@@ -129,12 +129,6 @@ from textual.widgets import Select
 from ...Agents.session_todo_store import SessionTodoStore, TodoStoreError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_chat_models import (
-    CONSOLE_PENDING_APPROVAL_KIND,
-    CONSOLE_PENDING_CHAT_CREATE_KIND,
-    CONSOLE_PENDING_QUESTION_KIND,
-    CONSOLE_PENDING_SKILL_INSTALL_KIND,
-    CONSOLE_PENDING_SKILL_SCRIPT_KIND,
-    CONSOLE_PENDING_WORKTREE_MERGE_KIND,
     CONSOLE_GLOBAL_WORKSPACE_ID,
     CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     DEFAULT_CONSOLE_SESSION_TITLE,
@@ -300,9 +294,6 @@ logger = logger.bind(module="ChatScreen")
 _DEFAULT_PROJECT_INSTRUCTION_NOTICE_TIMEOUT_SECONDS = 120.0
 _PROJECT_INSTRUCTION_NOTICE_POLL_SECONDS = 0.1
 _PROJECT_INSTRUCTION_AUTHORITY_REFRESH_SECONDS = 2.0
-#: A close-failure toast names the tab; the full 500-character tab title
-#: would drown the reason.
-_SESSION_CLOSE_TITLE_MAX_CHARACTERS = 60
 #: Close refusals whose own text is copy the user can act on, raised by
 #: `ConsoleChatController.begin_session_close` and the store's close. Every
 #: other exception is shown only by its type: `RuntimeError` is also the
@@ -345,6 +336,8 @@ class ConsoleSessionCloseImpact:
     has_draft: bool = False
     pending_attachment_count: int = 0
     pending_round_kinds: frozenset[str] = frozenset()
+    #: Parked "Unsent turn needs attention" recoveries (TASK-33628.1).
+    unsent_turn_count: int = 0
 
     @property
     def has_loss_risk(self) -> bool:
@@ -354,6 +347,7 @@ class ConsoleSessionCloseImpact:
             or self.has_draft
             or self.pending_attachment_count
             or self.pending_round_kinds
+            or self.unsent_turn_count
         )
 
 
@@ -3488,22 +3482,21 @@ class ConsoleSessionController:
             )
 
     def _session_close_display_title(self, session_id: str) -> str:
-        """The tab's title as a close-failure toast names it."""
+        """The tab's label as the close dialog, its toasts and quit name it."""
+        from .loss_inventory import tab_display_title
 
         try:
             store = self._ensure_console_chat_store()
-            title = next(
-                (item.title for item in store.sessions() if item.id == session_id),
-                "",
+            tab_number = next(
+                (
+                    index for index, item in enumerate(store.sessions(), start=1)
+                    if item.id == session_id
+                ),
+                None,
             )
         except Exception:  # noqa: BLE001 -- a label must never block a close
-            title = ""
-        return (
-            sanitize_character_display_label(
-                title, max_characters=_SESSION_CLOSE_TITLE_MAX_CHARACTERS
-            )
-            or "Untitled"
-        )
+            tab_number = None
+        return tab_display_title(tab_number)
 
     async def _report_session_close_failure(
         self, session_id: str, title: str, exc: Exception
@@ -3551,7 +3544,7 @@ class ConsoleSessionController:
             return False
 
     def _notify_session_close_failure(self, title: str, reason: str) -> None:
-        # markup=False: the title is user text and must render literally.
+        # Keep the positional label and refusal reason literal.
         self.app_instance.notify(
             f'Couldn\'t close tab "{title}": {reason}',
             severity="error",
@@ -3561,31 +3554,15 @@ class ConsoleSessionController:
     def _session_close_impact(
         self, session_id: str
     ) -> ConsoleSessionCloseImpact | None:
-        """Capture tree-wide transcript and controller loss for one session."""
+        """Capture one tab's loss; quit sums this same projection (TASK-33628.1)."""
+        from .loss_inventory import session_close_impact, visible_composer_draft
 
-        store = self._ensure_console_chat_store()
-        try:
-            messages = store.all_messages_for_session(session_id)
-        except KeyError:
-            return None
-        controller = self._ensure_console_chat_controller()
-        session = next(item for item in store.sessions() if item.id == session_id)
-        draft = store.session_draft(session_id)
-        composer = self._console_composer_or_none()
-        if (
-            composer is not None
-            and self._console_visible_draft_session_id == session_id
-        ):
-            draft = composer.draft_text()
-        return ConsoleSessionCloseImpact(
-            session_id=session_id,
-            transcript_message_count=sum(
-                message.persisted_message_id is None for message in messages
-            ),
-            lifecycle=controller.lifecycle_impact(session_id=session_id),
-            has_draft=bool(draft),
-            pending_attachment_count=len(session.pending_attachments),
-            pending_round_kinds=controller.pending_round_kinds(session_id),
+        return session_close_impact(
+            self._ensure_console_chat_store(),
+            self._ensure_console_chat_controller(),
+            self._console_runtime_accessor(),
+            session_id,
+            live_draft=visible_composer_draft(self),
         )
 
     async def _await_confirmation(self, dialog: Any) -> bool:
@@ -3600,71 +3577,11 @@ class ConsoleSessionController:
 
     async def _confirm_session_close(self, impact: ConsoleSessionCloseImpact) -> bool:
         from ...Widgets.confirmation_dialog import ConfirmationDialog
+        from .loss_inventory import close_dialog_message
 
-        lifecycle = impact.lifecycle
-        consequences = [
-            text
-            for present, text in (
-                (
-                    impact.transcript_message_count,
-                    f"Temporary or unsaved messages: {impact.transcript_message_count}",
-                ),
-                (impact.has_draft, "Unsent draft: yes"),
-                (
-                    impact.pending_attachment_count,
-                    f"Pending attachments: {impact.pending_attachment_count}",
-                ),
-                (
-                    lifecycle.live_run_count,
-                    f"Live agent turns: {lifecycle.live_run_count}",
-                ),
-                (
-                    lifecycle.delegated_child_count,
-                    f"Delegated agents: {lifecycle.delegated_child_count}",
-                ),
-                (
-                    lifecycle.unsent_prompt_count,
-                    f"Unsent queued prompts: {lifecycle.unsent_prompt_count}",
-                ),
-            )
-            if present
-        ]
-        consequences.extend(
-            text
-            for kind, text in (
-                (
-                    CONSOLE_PENDING_APPROVAL_KIND,
-                    "Tool approvals: denied; runs cancelled.",
-                ),
-                (
-                    CONSOLE_PENDING_QUESTION_KIND,
-                    "Questions: cancelled without an answer.",
-                ),
-                (
-                    CONSOLE_PENDING_SKILL_INSTALL_KIND,
-                    "Skill installs: declined; runs cancelled.",
-                ),
-                (
-                    CONSOLE_PENDING_SKILL_SCRIPT_KIND,
-                    "Skill scripts: declined; runs cancelled.",
-                ),
-                (
-                    CONSOLE_PENDING_CHAT_CREATE_KIND,
-                    "Chat creation: declined; no chat created.",
-                ),
-                (
-                    CONSOLE_PENDING_WORKTREE_MERGE_KIND,
-                    "Worktree decisions: cancelled; no merge or discard.",
-                ),
-            )
-            if kind in impact.pending_round_kinds
-        )
-        message = "Saved history stays in Library."
-        if consequences:
-            message += "\nClosing will discard or cancel:\n" + "\n".join(consequences)
         dialog = ConfirmationDialog(
             title=f'Close tab "{self._session_close_display_title(impact.session_id)}"?',
-            message=message,
+            message=close_dialog_message(impact),
             confirm_label="Close",
             cancel_label="Stay",
         )
