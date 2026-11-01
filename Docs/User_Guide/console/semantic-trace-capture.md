@@ -185,7 +185,7 @@ transcript:
 - One replacement covers at most 256 recorded trace rows. If the history being
   replaced is longer, for example Compact now in a chat of more than about 128
   exchanges, or Edit & resend on an early message of such a chat, later
-  captured sends still stop at **Trace capture blocked** (TASK-37600).
+  captured sends still stop at **Trace capture blocked** (TASK-38298).
 - A fork shares the immutable trace prefix visible at its boundary and adds only
   its own suffix. The complete inherited history remains coherent in the fork
   without copying the prefix.

@@ -2990,6 +2990,9 @@ class ConsoleTraceService:
                 completed_tool_turn is not None
                 and active_changed > 0
                 and incoming_changed == completed_tool_turn.descriptor_count
+                and completed_tool_turn.matches_descriptors(
+                    descriptors[prefix : prefix + incoming_changed]
+                )
                 and route_identity in {"agent_first", "fresh"}
                 and domains[prefix : prefix + incoming_changed]
                 == (
@@ -3002,6 +3005,34 @@ class ConsoleTraceService:
                     )
                 )
             )
+            if compound:
+                # Count equality is not evidence for this branch or range.
+                # Select an applicable proof, then keep its full validation below.
+                assert completed_tool_turn is not None
+                origin = self.repository.get_call(
+                    cursor, completed_tool_turn.origin_call_id
+                )
+                origin_head = None
+                if origin is not None:
+                    origin_head = (
+                        self._call_message_tail(cursor, origin)
+                        if completed_tool_turn.source_revision_id is not None
+                        else self.repository.get_surface_node(
+                            cursor, origin.surface_node_id
+                        )
+                        if origin.surface_node_id is not None
+                        else None
+                    )
+                compound = (
+                    origin_head is not None
+                    and completed_tool_turn.matches_start_sequence(
+                        min(
+                            sequence
+                            for _, sequence, _ in active[prefix : len(active) - suffix]
+                        ),
+                        origin_head.sequence,
+                    )
+                )
             rewritten = (
                 _rewritten_tails().build_rewritten_tail_witness(
                     cursor,

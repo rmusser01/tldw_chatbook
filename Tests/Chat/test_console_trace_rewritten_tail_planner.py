@@ -254,6 +254,30 @@ def test_planner_gates_keep_the_rewritten_tail_narrow(chat_factory):
     }
 
 
+def test_equal_count_unrelated_completed_witness_does_not_hide_rewritten_tail(
+    chat_factory,
+):
+    """A witness for another source/response cannot select this branch's proof."""
+    chat = chat_factory()
+    incoming, current = _edited_chat(chat)
+    witness = CompletedToolTurnWitness(
+        str(uuid4()),
+        str(uuid4()),
+        str(uuid4()),
+        current.descriptor.revision_id,
+        source_revision_id=str(uuid4()),
+    )
+    changed = tuple(row.descriptor for row in incoming[2:])
+    assert witness.descriptor_count == len(changed)
+    assert not witness.matches_descriptors(changed)
+
+    admission = chat.prepare(incoming, current, completed_tool_turn=witness)
+
+    assert admission.completed_tool_turn is None
+    assert admission.rewritten_tail is not None
+    assert admission.descriptors == changed
+
+
 def test_a_compacted_history_is_bounded_by_the_replacement_range(chat_factory):
     """ADR-097 keeps the 256-node range: a longer history stays refused.
 

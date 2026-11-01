@@ -2148,10 +2148,13 @@ async def test_normal_console_multiple_native_rounds(
 
         monkeypatch.setattr(ConsoleTraceService, "persist_request", observe_persist)
 
+    from Tests import network_guard
+
+    # Keep the repository's socket guard: unlike a blanket replacement it
+    # permits Windows asyncio's socketpair bootstrap, while denying egress.
+    assert not network_guard.is_allowed() and not network_guard.is_loopback_only()
     try:
         with (
-            patch.object(socket.socket, "connect", denied),
-            patch.object(socket.socket, "connect_ex", denied),
             patch.object(socket, "getaddrinfo", denied),
             patch.object(
                 urllib3.connectionpool.HTTPConnectionPool, "_make_request", fake_native
@@ -2166,7 +2169,13 @@ async def test_normal_console_multiple_native_rounds(
             "readback",
             "retry",
         }:
-            assert len(wire) == (4 if retry_mode else 2)
+            assert len(wire) == (4 if retry_mode else 2), (
+                trace_errors,
+                [
+                    (m.role, m.content[:500])
+                    for m in store.messages_for_session(session.id)
+                ],
+            )
             if retry_mode:
                 assert retry_refusals == ["live_native_retry_surface"]
                 assert executed == ["call_1_0"]
@@ -2180,7 +2189,11 @@ async def test_normal_console_multiple_native_rounds(
                     == 2
                 )
             return
-        assert len(wire) == round_count + 1 + (3 if retry_mode else 0), frames
+        assert len(wire) == round_count + 1 + (3 if retry_mode else 0), (
+            frames,
+            trace_errors,
+            [(m.role, m.content[:500]) for m in store.messages_for_session(session.id)],
+        )
         if retry_mode:
             assert executed == ["call_1_0", "call_2_0"]
             assert all(request == wire[1] for request in wire[2:5])
@@ -2299,8 +2312,6 @@ async def test_normal_console_multiple_native_rounds(
         if subsequent_turn:
             later_turn = True
             with (
-                patch.object(socket.socket, "connect", denied),
-                patch.object(socket.socket, "connect_ex", denied),
                 patch.object(socket, "getaddrinfo", denied),
                 patch.object(
                     urllib3.connectionpool.HTTPConnectionPool,

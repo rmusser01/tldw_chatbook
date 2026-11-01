@@ -119,11 +119,14 @@ def _restart_trace_runtime(harness) -> None:
     harness.factory = ConsoleTraceBoundaryFactory(harness.db)
 
 
-async def _four_long_turns(harness) -> list:
+async def _four_long_turns(harness, *, transformed_last=False) -> list:
     results = []
     for index in range(4):
-        result, sent, reserved = await _send(harness, f"q{index}: {_LONG}")
+        prefix = "alias " if transformed_last and index == 3 else ""
+        result, sent, reserved = await _send(harness, f"{prefix}q{index}: {_LONG}")
         _assert_captured(harness, result, sent, reserved)
+        if prefix:
+            assert sent[0][-1]["content"].startswith("expanded q3:")
         results.append(result)
     return results
 
@@ -132,8 +135,14 @@ async def _four_long_turns(harness) -> list:
 # The plain Capture-On path dispatches the request frozen at admission, so the
 # memory never reaches it and nothing is rewritten there (TASK-37417).
 @pytest.mark.parametrize("harness", ["agent"], indirect=True)
-@pytest.mark.parametrize("restart", [False, True], ids=["warm", "restarted"])
-async def test_captured_sends_after_compact_now_keep_trace_capture(harness, restart):
+@pytest.mark.parametrize(
+    ("restart", "transformed_last"),
+    [(False, False), (True, False), (False, True)],
+    ids=["warm", "restarted", "transformed"],
+)
+async def test_captured_sends_after_compact_now_keep_trace_capture(
+    harness, restart, transformed_last
+):
     """AC#1/#2 of TASK-33621.29 through the real store and trace planner."""
     harness.store.set_session_context_policy_overrides(
         SESSION,
@@ -144,7 +153,7 @@ async def test_captured_sends_after_compact_now_keep_trace_capture(harness, rest
             summary_max_tokens=100,
         ),
     )
-    await _four_long_turns(harness)
+    await _four_long_turns(harness, transformed_last=transformed_last)
 
     succeeded, copy = await harness.controller.compact_context_now(SESSION)
     assert succeeded is True, copy
@@ -168,6 +177,28 @@ async def test_captured_sends_after_compact_now_keep_trace_capture(harness, rest
     _assert_captured(harness, following, sent, reserved)
     assert [row["content"] for row in sent[0]][-1] == "and again"
     assert len(harness.rechecks) == 1, "a plain append needs no rewrite proof"
+
+
+@pytest.mark.asyncio
+async def test_transformed_last_turn_then_edit_and_resend_keeps_capture(harness):
+    """An old source pin must not shadow the independently proven edited branch."""
+    first, sent, reserved = await _send(harness, "alias first")
+    _assert_captured(harness, first, sent, reserved)
+    assert sent[0][-1] == {"role": "user", "content": "expanded first"}
+
+    resent = await harness.controller.edit_and_resend_message(
+        first.user_message_id, "edited question"
+    )
+    assert resent.accepted is True
+
+    result, sent, reserved = await _send(harness, "after the edit")
+    _assert_captured(harness, result, sent, reserved)
+    assert [witness.memory_anchor for witness in harness.rechecks] == [False]
+    assert sent[0][-3:] == [
+        {"role": "user", "content": "edited question"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "after the edit"},
+    ]
 
 
 @pytest.mark.asyncio

@@ -783,13 +783,7 @@ def validate_completed_tool_turn(
     if (
         origin_head is None
         or origin_surface_head is None
-        or (
-            plan.start_sequence != origin_head.sequence
-            if restoring_source
-            else plan.start_sequence > origin_head.sequence + 1
-            if project_transition
-            else plan.start_sequence != origin_head.sequence + 1
-        )
+        or not witness.matches_start_sequence(plan.start_sequence, origin_head.sequence)
         or plan.end_sequence > tail.sequence
         or not 1
         <= plan.end_sequence - plan.start_sequence + 1

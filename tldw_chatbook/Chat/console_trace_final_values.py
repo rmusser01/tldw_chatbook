@@ -349,6 +349,14 @@ class CompletedToolTurnWitness:
             + (self.project_context_count or 0)
         )
 
+    def matches_start_sequence(self, start_sequence: int, origin_sequence: int) -> bool:
+        """Match the replacement start; durable ownership still needs validation."""
+        if self.source_revision_id is not None:
+            return start_sequence == origin_sequence
+        if self.project_context_count is not None:
+            return start_sequence <= origin_sequence + 1
+        return start_sequence == origin_sequence + 1
+
     def matches_descriptors(self, descriptors: tuple[TraceProvenance, ...]) -> bool:
         """Match exact saved owners followed only by declared project context."""
         if self.replay_row_count:

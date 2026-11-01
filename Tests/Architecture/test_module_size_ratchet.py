@@ -670,7 +670,9 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29 (same owner decision; TASK-33621.29 review fix): +4 so the
     # planner bounds a rewritten tail by its stored sequence span, not by its
     # live row count (dead sequences inside the range count too).
-    "tldw_chatbook/Chat/console_trace_service.py": 6734,
+    # 2026-10-31, PR3298 user size waiver: +31 to select the completed proof
+    # by exact descriptors and its permitted start before full validation.
+    "tldw_chatbook/Chat/console_trace_service.py": 6765,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,

@@ -1,5 +1,5 @@
 ---
-id: TASK-37600
+id: TASK-38298
 title: >-
   Console: trace capture still blocks after Compact now or Edit & resend when
   the replaced history exceeds 256 recorded rows
@@ -31,3 +31,7 @@ Lifting the bound is a durable-format decision: SurfaceReplacement rejects a spa
 - [ ] #3 Edit & resend on an early message of such a chat behaves the same way
 - [ ] #4 A test drives a compacted history wider than 256 recorded rows through the real planner and trace ledger and fails on the commit that closed TASK-33621.29
 <!-- AC:END -->
+
+## Identity correction
+
+Renumbered from TASK-37600 during PR3298 integration on 2026-10-31; dev already owns that ID for the local SSE UTF-8 fix. The 300 distinct existing remote/HEAD snapshots had a maximum integer claim of 38268; TASK-38298 adds the prescribed 30-ID buffer. Scope and To Do status are unchanged.
