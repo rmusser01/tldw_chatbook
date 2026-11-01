@@ -63,6 +63,11 @@ class _FileNotesAdapter(_SQLiteDeclaration):
                     core.backup_owner_id, source.path, read_only=True
                 )
             ) as connection:
+                from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+                    scalar_cost,
+                )
+
+                scalar_cost(connection)
                 if connection.execute(
                     "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1"
                 ).fetchone():
@@ -112,7 +117,7 @@ class _DeviceStateExclusion:
         from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
 
         database = user_data_dir(config) / "tldw_chatbook_notes_sync_state.db"
-        return tuple(
+        database_items = tuple(
             _excluded_root(
                 config,
                 self.owner_id,
@@ -121,6 +126,18 @@ class _DeviceStateExclusion:
                 local_id=suffix or "",
             )
             for suffix in ("", "-wal", "-shm", "-journal")
+        )
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+            path_cost,
+            reserve,
+        )
+
+        reserve(512 + path_cost(database, copies=2))
+        return (
+            *database_items,
+            _device_lock_exclusion(
+                config, self.owner_id, database.parent / "notes_sync_locks"
+            ),
         )
 
     def schema_policy(self):
@@ -134,6 +151,116 @@ class _DeviceStateExclusion:
 
     def relocate(self, candidate, mapping):
         raise ValueError("notes_device_state_excluded")
+
+
+def _device_lock_exclusion(config, owner, root):
+    """Exclude only the complete native empty-lock representation, never authority."""
+    import stat
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.config_adapter import _excluded_root
+    from tldw_chatbook.Backup_Recovery.file_inventory import inventory_tree
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+        current,
+        path_cost,
+        reserve,
+    )
+    from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
+    from tldw_chatbook.Utils.platform_files import os
+
+    reserve(2048 + path_cost(root, copies=4))
+    item = _excluded_root(config, owner, root, kind="directory", local_id="locks")
+    if item.status != "intentionally_excluded" or item.metadata is None:
+        return item
+    scope = current()
+    custody = scope.custody if scope is not None else None
+
+    def facts(info):
+        reserve(512)
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_uid,
+            info.st_nlink,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+            getattr(info, "st_flags", 0),
+        )
+
+    try:
+        with (
+            pinned_directory(root.parent, _custody=custody) as parent,
+            pinned_directory(root, _custody=custody) as held,
+        ):
+            reserve(2048)
+            before = os.fstat(held)
+            before_facts = facts(before)
+            if before.st_uid != os.geteuid() or stat.S_IMODE(before.st_mode) != 0o700:
+                return replace(item, status="unsupported")
+            # The installed bounded metadata walker owns its descriptors/iterators
+            # and refuses links, unsupported metadata and incomplete enumeration.
+            entries = inventory_tree(root, owner=owner, external=False)
+            reserve(256 + 32 * len(entries))
+            observed = []
+            for entry in entries:
+                reserve(2048 + path_cost(root) + path_cost(entry.path))
+                if entry.path == root:
+                    if (
+                        entry.status != "included_directory"
+                        or entry.metadata
+                        != replace(
+                            item.metadata,
+                            root_id=entry.metadata.root_id,
+                            parent_id=None,
+                        )
+                    ):
+                        return replace(item, status="unavailable")
+                    continue
+                name = entry.path.name
+                if (
+                    entry.path.parent != root
+                    or len(name) != 69
+                    or not name.endswith(".lock")
+                    or any(c not in "0123456789abcdef" for c in name[:64])
+                    or entry.status != "included"
+                    or entry.metadata is None
+                    or entry.metadata.kind != "file"
+                    or entry.metadata.mode != 0o600
+                ):
+                    return replace(item, status="unsupported")
+                info = os.stat(name, dir_fd=held, follow_symlinks=False)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600
+                    or info.st_nlink != 1
+                    or info.st_size != 0
+                    or info.st_mtime_ns != entry.metadata.mtime_ns
+                ):
+                    return replace(item, status="unsupported")
+                observed.append((name, facts(info)))
+            # Directory replacement/name changes and in-place leaf changes are
+            # checked again while the original directory descriptor remains held.
+            for name, info in observed:
+                reserve(1024)
+                if facts(os.stat(name, dir_fd=held, follow_symlinks=False)) != info:
+                    return replace(item, status="unavailable")
+            reserve(2048)
+            if (
+                facts(os.fstat(held)) != before_facts
+                or facts(os.stat(root.name, dir_fd=parent, follow_symlinks=False))
+                != before_facts
+            ):
+                return replace(item, status="unavailable")
+            reserve(2048 + path_cost(root, copies=len(root.parts) + 2))
+            with pinned_directory(root, _custody=custody) as current_root:
+                if facts(os.fstat(current_root)) != before_facts:
+                    return replace(item, status="unavailable")
+        return item
+    except OSError:
+        return replace(item, status="unavailable")
 
 
 def recovery_adapters() -> tuple[OwnerAdapter, ...]:

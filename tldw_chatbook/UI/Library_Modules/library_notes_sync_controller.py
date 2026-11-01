@@ -779,6 +779,7 @@ class LibraryNotesSyncController:
         self._state = replace(
             self._state,
             lasting_available=available,
+            import_review_required=runtime.import_review_required,
             roots=self._all_roots[start : start + _ROOT_PAGE_SIZE],
             root_page=page,
             root_page_count=page_count,

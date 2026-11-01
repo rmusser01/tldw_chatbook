@@ -32,27 +32,127 @@ from .restore_plan import (
 from .service_storage import ensure_storage
 
 
-def verify_snapshot_source(plan, archive=None):
+def verify_snapshot_source(plan, archive=None, *, cancel=None, _read_budget=None):
     """Match local terminal evidence, never a caller's archive-policy assertion."""
     return _verify_snapshot_source(
-        plan.local_snapshot, plan.mode, plan.archive_digest, archive
+        plan.local_snapshot,
+        plan.mode,
+        plan.archive_digest,
+        archive,
+        cancel=cancel,
+        _read_budget=_read_budget,
     )
 
 
-def _verify_snapshot_source(source, mode, archive_digest, archive=None):
+def _accounted_snapshot_evidence(journal, budget, *, _custody=None):
+    """Own the complete native read; return evidence, never admission authority."""
+    from .journal import Journal
+    from .mobile_builtin_preservation import _preservation_budget
+    from .mobile_canonical_copy import _canonical_evidence
+    from .storage_admission import _CaptureFileDescriptors
+
+    if type(journal) is not Journal:
+        raise TypeError("invalid_snapshot_journal")
+    if _custody is not None:
+        if type(_custody) is not _CaptureFileDescriptors or _custody.close_failed:
+            raise ValueError("invalid_mobile_preservation_custody")
+        from .mobile_preview_budget import current
+
+        current_scope = current()
+        if current_scope is not None and _custody is not current_scope.custody:
+            raise ValueError("mobile_canonical_custody_changed")
+    if budget is None:
+        raise TypeError("existing_snapshot_budget_required")
+    budget = _preservation_budget(budget)
+    budget.reserve(512)
+    budget.container(3)
+    custody = _CaptureFileDescriptors(None) if _custody is None else _custody
+    try:
+        with journal._locked(exclusive=False, _custody=custody) as parent:
+            rows = journal._records(parent, _budget=budget, _custody=custody)
+            if rows and rows[0].event == "mobile_prepared":
+                proof = _canonical_evidence(journal, rows, budget, custody)
+                digest = proof.evidence_digest if proof is not None else None
+            else:
+                if rows[-1].event not in {"committed", "rolled_back"}:
+                    raise ValueError("recovery_copy_pending")
+                record = next(row for row in rows if row.event == "rollback_verified")
+                proof = _Rollback.model_validate(record.evidence)
+                digest = _evidence_digest(record.evidence)
+            return proof, digest, rows[-1].event
+    finally:
+        if _custody is None:
+            custody.retire()
+
+
+def _verify_snapshot_source(
+    source, mode, archive_digest, archive=None, *, cancel=None, _read_budget=None
+):
     if type(source) is not LocalSnapshotSource or mode != "replace":
         raise ValueError("local_snapshot_source_required")
+    from .mobile_preview_budget import current
+
+    scope = current()
+    if _read_budget is None and scope is not None:
+        _read_budget = scope.read_budget
+    if _read_budget is not None:
+        from .mobile_builtin_preservation import _preservation_budget
+
+        _preservation_budget(_read_budget)
+        from .mobile_preview_budget import path_cost
+
+        _read_budget.reserve(
+            2048
+            + path_cost(source.control_root, copies=2)
+            + 16 * len(source.operation_id)
+        )
     journal = _journal(source.control_root, source.operation_id)
-    with journal._locked(exclusive=False) as parent:
-        rows = journal._records(parent)
-    if rows[-1].event not in {"committed", "rolled_back"}:
+    from .mobile_canonical_copy import (
+        _canonical_copy,
+        _CanonicalCopy,
+        _verify_canonical_archive,
+    )
+
+    if _read_budget is not None:
+        proof, digest, terminal = _accounted_snapshot_evidence(journal, _read_budget)
+    else:
+        # Preserve the original no-current/None dispatch read and the mobile
+        # reader's separately issued ordinary allowance and lock lifetime.
+        with journal._locked(exclusive=False) as parent:
+            rows = journal._records(parent)
+        terminal = rows[-1].event
+        if rows and rows[0].event == "mobile_prepared":
+            proof = _canonical_copy(journal, _read_budget=None)
+            digest = proof.evidence_digest if proof is not None else None
+        else:
+            if terminal not in {"committed", "rolled_back"}:
+                raise ValueError("recovery_copy_pending")
+            record = next(row for row in rows if row.event == "rollback_verified")
+            proof = _Rollback.model_validate(record.evidence)
+            digest = _evidence_digest(record.evidence)
+    if proof is None or type(proof) is _CanonicalCopy:
+        from .journal import _matches
+
+        # Source completion is independent of the new replacement's pending.
+        # Public listing/new-operation admission still refuses all overlap.
+        if proof is None or terminal != "mobile_committed":
+            raise ValueError("recovery_copy_pending")
+        if digest != source.rollback_digest or not _matches(
+            proof.ciphertext,
+            proof.ciphertext.path,
+            cancel=cancel,
+            _read_budget=_read_budget,
+        ):
+            raise ValueError("local_snapshot_source_changed")
+        if archive is not None:
+            _verify_canonical_archive(
+                proof, archive, archive_digest, _read_budget=_read_budget, cancel=cancel
+            )
+        # Source evidence only: no assertion of an unrecorded plaintext digest.
+        return journal, proof
+    if terminal not in {"committed", "rolled_back"}:
         raise ValueError("recovery_copy_pending")
-    record = next(row for row in rows if row.event == "rollback_verified")
-    proof = _Rollback.model_validate(record.evidence)
-    if (
-        _evidence_digest(record.evidence) != source.rollback_digest
-        or proof.sealed_digest != archive_digest
-    ):
+    if digest != source.rollback_digest or proof.sealed_digest != archive_digest:
         raise ValueError("local_snapshot_source_changed")
     if archive is not None:
         doc = archive_reader.verify_sealed(archive)
@@ -541,11 +641,53 @@ def _builtin_snapshot_target(original, proof, document, target, *, session=None)
     )
 
 
-def _preserved_snapshot_members(source, archive, target):
+def _plan_snapshot_members(
+    source, mode, archive, target, *, _read_budget=None, cancel=None
+):
+    """Combine only the adjacent fixed-mobile planner source checks."""
+    _, proof = _verify_snapshot_source(
+        source, mode, archive.digest, archive, _read_budget=_read_budget, cancel=cancel
+    )
+    from .mobile_canonical_copy import _CanonicalCopy, _mobile_preserved_members
+
+    if type(proof) is _CanonicalCopy:
+        return _mobile_preserved_members(
+            proof,
+            archive_reader.verify_sealed(archive),
+            target,
+            _read_budget=_read_budget,
+            cancel=cancel,
+        )
+    # Generic replacement retains its original second full verification.
+    return _preserved_snapshot_members(
+        source, archive, target, _read_budget=_read_budget, cancel=cancel
+    )
+
+
+def _preserved_snapshot_members(
+    source, archive, target, *, _read_budget=None, cancel=None
+):
     """Match authenticated original safety sources to observed current owners."""
     from .restore_plan import _ancestor
 
-    journal, proof = _verify_snapshot_source(source, "replace", archive.digest, archive)
+    journal, proof = _verify_snapshot_source(
+        source,
+        "replace",
+        archive.digest,
+        archive,
+        _read_budget=_read_budget,
+        cancel=cancel,
+    )
+    from .mobile_canonical_copy import _CanonicalCopy, _mobile_preserved_members
+
+    if type(proof) is _CanonicalCopy:
+        return _mobile_preserved_members(
+            proof,
+            archive_reader.verify_sealed(archive),
+            target,
+            _read_budget=_read_budget,
+            cancel=cancel,
+        )
     original = load_plan(journal)
     with journal._locked(exclusive=False) as parent:
         rows = journal._records(parent)
@@ -758,6 +900,14 @@ def _preserved_builtin_validation(
     if plan.local_snapshot is None or not _builtin_sources(plan):
         return {}, {}
     journal, proof = verify_snapshot_source(plan)
+    from .mobile_canonical_copy import _CanonicalCopy
+
+    if type(proof) is _CanonicalCopy:
+        from .mobile_builtin_preservation import _mobile_builtin_candidates
+
+        return _mobile_builtin_candidates(
+            plan, proof, document, manifest_digest, work, session, cancel
+        )
     original = load_plan(journal)
     if manifest_digest != proof.manifest_digest:
         raise ValueError("local_snapshot_source_changed")
@@ -859,6 +1009,11 @@ def _acquire(entry, proof, work, password, cancel):
         entry.path, work / "acquired", ArchiveLimits(), password, cancel
     )
     document = archive_reader.verify_sealed(archive, cancel)
+    from .mobile_canonical_copy import _CanonicalCopy, _verify_canonical_archive
+
+    if type(proof) is _CanonicalCopy:
+        _verify_canonical_archive(proof, archive, archive.digest)
+        return archive
     if (
         archive.digest != proof.sealed_digest
         or hashlib.sha256(archive.manifest_bytes).hexdigest() != proof.manifest_digest
@@ -1073,6 +1228,10 @@ def _config_file_retirement_scopes(plan):
     ):
         return ()
     journal, proof = verify_snapshot_source(plan)
+    from .mobile_canonical_copy import _CanonicalCopy
+
+    if type(proof) is _CanonicalCopy:
+        raise ValueError("mobile_canonical_historical_shape_unsupported")
     original = load_plan(journal)
     if not _snapshot_target_available(original, plan.target):
         raise ValueError("local_snapshot_created_scope_unverified")
@@ -1644,7 +1803,11 @@ def _created_builtin_members(plan, root, *, seen=()):
     from .recovery_files import _tree_member_id
     from .staging import _items
 
-    journal, _ = verify_snapshot_source(plan)
+    journal, proof = verify_snapshot_source(plan)
+    from .mobile_canonical_copy import _CanonicalCopy
+
+    if type(proof) is _CanonicalCopy:
+        raise ValueError("mobile_canonical_historical_shape_unsupported")
     identity = (str(journal.root), root.logical_id)
     if identity in seen or len(seen) >= 8:
         raise ValueError("local_snapshot_created_history_unverified")
@@ -1745,6 +1908,10 @@ def _created_builtin_members(plan, root, *, seen=()):
 def _snapshot_builtin_members(plan, manifest_digest, root, *, seen=()):
     """Verify encrypted-copy coverage and its original created-tree provenance."""
     journal, proof = verify_snapshot_source(plan)
+    from .mobile_canonical_copy import _CanonicalCopy
+
+    if type(proof) is _CanonicalCopy:
+        raise ValueError("mobile_canonical_historical_shape_unsupported")
     if proof.manifest_digest != manifest_digest:
         raise ValueError("local_snapshot_source_changed")
     original = load_plan(journal)
@@ -1980,7 +2147,29 @@ def _known_absences(plan, original, prepared, created=None, *, active_ancestors=
     return replace(plan, target_fingerprint=_fingerprint(_paths(plan), plan.target))
 
 
-def _preview(journal, proof, archive, target, acknowledged, *, session=None):
+def _preview(
+    journal,
+    proof,
+    archive,
+    target,
+    acknowledged,
+    *,
+    session=None,
+    _read_budget=None,
+    cancel=None,
+):
+    from .mobile_canonical_copy import _CanonicalCopy, _preview_canonical
+
+    if type(proof) is _CanonicalCopy:
+        return _preview_canonical(
+            journal,
+            proof,
+            archive,
+            target,
+            acknowledged,
+            _read_budget=_read_budget,
+            cancel=cancel,
+        )
     original = load_plan(journal)
     document = archive_reader.verify_sealed(archive)
     with journal._locked(exclusive=False) as parent:
@@ -2197,12 +2386,20 @@ def execute_rollback(
             # Keep registry geometry and every retained dependency's full native
             # profile scope held while validating private payloads and copies.
             authority = admission_authority(bootstrap.default_bootstrap_root())
+            from .mobile_canonical_copy import _CanonicalCopy
+
+            if type(proof) is _CanonicalCopy:
+                from .mobile_builtin_preservation import _mobile_stage_names
+
+                builtin_names = _mobile_stage_names(current, archive, authority, cancel)
+            else:
+                builtin_names = _builtin_stage_names(current)
             names = {
                 UNBOUND_NAMESPACE,
-                *_builtin_stage_names(current),
+                *builtin_names,
                 *retained_config_names(current),
             }
-            if current.effective_groups:
+            if current.effective_groups and type(proof) is not _CanonicalCopy:
                 from .capture_service import _capture_names
 
                 names.update(
@@ -2217,17 +2414,47 @@ def execute_rollback(
                 30,
                 cancel=cancel,
             ) as session:
-                sources = tuple(
-                    item.path
-                    for item in _stage_read_sources(current)
-                    if item.status == "included"
-                )
-                if sources or current.effective_groups:
-                    with (
+                held_budget = None
+                if type(proof) is _CanonicalCopy:
+                    from .mobile_builtin_preservation import (
+                        _mobile_bound_sources,
+                        _preservation_budget,
+                    )
+                    from .mobile_canonical_copy import _verify_canonical_archive
+
+                    held_budget = _preservation_budget()
+                    document = _verify_canonical_archive(
+                        proof,
+                        archive,
+                        current.archive_digest,
+                        _read_budget=held_budget,
+                        cancel=cancel,
+                    )
+                    source_context = _mobile_bound_sources(
+                        current,
+                        proof,
+                        document,
+                        proof.manifest_digest,
+                        work,
+                        session,
+                        cancel,
+                        _read_budget=held_budget,
+                    )
+                    needs_preview = True
+                else:
+                    sources = tuple(
+                        item.path
+                        for item in _stage_read_sources(current)
+                        if item.status == "included"
+                    )
+                    source_context = (
                         session.capture_scope(sources, work, limits=ArchiveLimits())
                         if sources
                         else nullcontext()
-                    ):
+                    )
+                    needs_preview = bool(sources or current.effective_groups)
+                if needs_preview:
+                    with source_context:
                         held = _preview(
                             journal,
                             proof,
@@ -2235,18 +2462,33 @@ def execute_rollback(
                             current.target,
                             current.acknowledged_credential_issues,
                             session=session,
+                            _read_budget=held_budget,
+                            cancel=cancel,
                         )
                     if held != current:
                         raise ValueError("target_changed")
                 candidate = stage_restore(
                     archive, current, work / "candidate", cancel, session=session
                 )
+            source_options = {}
+            if type(proof) is _CanonicalCopy:
+                from tldw_chatbook.Chat.console_trace_read_budget import (
+                    _TraceReadBudget,
+                )
+
+                safety_budget = _TraceReadBudget()
+                safety_budget.reserve(512)
+                source_options = {
+                    "_source_read_budget": safety_budget,
+                    "_source_journal": journal,
+                }
             result = replace_current(
                 current,
                 candidate,
                 control_root=control_root,
                 rollback_password=new_password,
                 cancel=cancel,
+                **source_options,
             )
             completed = True
             return result

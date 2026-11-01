@@ -7,6 +7,7 @@ This document describes what files a Console agent run may touch: the private pe
 | File | Role |
 | --- | --- |
 | `Chat/console_scratch_space.py` | `ConsoleScratchSpaceManager`, immutable `ConsoleScratchSnapshot` (root + token + `(dev, inode)` identity), `lease()`, tombstone/dispose |
+| `Agents/scratch_admission.py` | Native scratch/writer association, selected-profile admission, independent worker handoff and fixed run-log storage composition |
 | `Chat/console_chat_controller.py` | `capture_run_admitted_workspace_roots()` — builds the immutable `RunAdmittedWorkspaceRoot` tuple for a run |
 | `Workspaces/registry_service.py` | `LocalWorkspaceRegistryService` — workspace CRUD, folder bindings, assistant defaults provisioning |
 | `Workspaces/models.py` | `WorkspaceRecord`, `WorkspaceRuntimeBinding`, `WorkspaceAssistantDefaults` |
@@ -26,7 +27,34 @@ Every live Console Chat gets **private temporary scratch** (ADR-082). Named Work
 
 ### Scratch space
 
-Per-**tab**, not per-conversation: each open Console tab gets its own opaque root with a `(dev, inode)` identity snapshot. A `lease()` context manager keeps a generation alive across a complete filesystem access; closing the tab cleans up best-effort; hard-crash residue is never re-attached by a later process. Scratch also hosts tool-result spill (see [tool-catalog.md](./tool-catalog.md)).
+Scratch is keyed by the live native Console `session_id`: the controller passes
+`_scratch_spaces.snapshot(session_id)` into the run context
+(`Chat/console_chat_controller.py:21311`). A phone/browser tab or saved-conversation
+identity does not own this temporary root. The manager-issued snapshot binds its
+token and `(dev, inode)` generation; actual `lease()` contexts keep it alive through
+filesystem work. Closing a session tombstones its generation and schedules cleanup
+after leases drain. Hard-crash residue is never attached by another process.
+Scratch also hosts tool-result spill (see [tool-catalog.md](./tool-catalog.md)).
+
+`Agents/scratch_admission.py` authenticates the stock writer's native manager/lease
+association and composes it with current selected-config and history admission.
+Core, Runs, Workspace and MCP sources still use ordinary admission; imported holds
+and tool permissions remain enforced. `capture_worker()`/`worker_entry()` in the
+actual `Agents/activation.py` decorators validate the handoff and acquire fresh
+worker scratch and ordinary leases. Once entered, independent worker leases remain
+live through waiter cancellation; copying a ContextVar alone grants no authority.
+The three `RunLogWriter` storage sites—bind, `_write_bytes`, and append—use
+`writer_storage()` for only the exact issued root/log directory/current segment or
+manifest, with ordinary `acquire_storage` retained for other writers.
+
+The manager checks its creation PID before taking its inherited condition lock at
+public lifecycle entries (`Chat/console_scratch_space.py`). A foreign fork cannot
+lease, close, tombstone or dispose the parent's scratch, deadlock on that lock, or
+schedule its deletion. Temporary scratch is not enrolled as a persistent registry
+root, so cleanup leaves no registry entry pointing at a deleted directory. These
+boundaries follow [ADR-082](../../backlog/decisions/082-console-per-chat-private-scratch-space.md),
+[ADR-126](../../backlog/decisions/126-complete-local-backup-and-recovery.md) and
+[ADR-244](../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md).
 
 ### Admitted roots
 

@@ -1553,3 +1553,820 @@ refuse before effects. Current Mac/POSIX verification and later phone gates are
 distinct. Source representation accounting and the exact failed-path schedule are
 recorded in the owning implementation allocation ledger; it is not a heap or
 performance claim.
+
+### Public mobile completion and recoverable cutover (R115)
+
+This contract is recorded before Public B behavior tests/code, at approved native
+owner HEAD `417bba869a0337feba56fe8eaea77d9b0ec0d711`. It implements the remaining
+[Task36766](../tasks/task-36766%20-%20Consolidate-legacy-mobile-history-with-recoverable-ownership-and-quarantine.md)
+and [Task8 plan](../../Docs/superpowers/plans/2026-10-25-shared-console-mobile-supervision-implementation.md),
+not a new importer or capture role. The contemporary native Python3.12 SHA/AST/
+status checkpoint is retained as `task-8-public-cutover-start-checkpoint.json` in
+the plan SDD workspace; it includes absent new filenames and the controller-owned
+dirty task. The approved proposal snapshot SHA256 is
+`1989fa4a33efca6debd11fe47ad725b22e25c3db5f6a5349b29fcd1e0722d6e4`;
+R115 source-line SHA256 is
+`92e3f075d84b45b891bb2b0467f7cdc8a5e2626df143bb74d85012991f4c6312`.
+Those are pre-code design evidence, not implementation or runtime qualification.
+
+One actual native coordinator retains the issued maintenance session, source flock,
+capture/selector cohort and original16MiB representation allowance through terminal
+publication and exact pending retirement. New raw JSON, newly read lineage journal
+representations, hashes, SQL bodies, names, witnesses and output copies are admitted
+BEFORE construction/fetch/decoding. No caller record, plan, callback, token, role or
+ready flag grants completion. No per-link/page/move budget renewal, new deadline,
+reader reopening or extra R108 history observation is permitted. Existing native
+capture/parser limits remain distinct. Physical reader/owner/iterator/crypto/file/
+staging retirement and uncertain-close quarantine remain mandatory.
+
+New records are strict version1 with exact fields and duplicate-key rejection.
+Hashes are lowercase64hex SHA256. Ref is `{sequence,sha256}` with sequence0..99999;
+it hashes the actual same-journal `journal._encoded` event envelope, including
+operation, sequence, previous and evidence. Native `_evidence_digest` retains its
+sorted compact ASCII-escaped JSON encoding. Owner master hashes use exact stored
+R108 UTF8 bytes and census hashes retain the existing length-framed child codec;
+these encodings are not interchangeable. Counts use signed SQLite nonnegative
+integers, excluding bool; new physical device/inode observations use unsigned64.
+Paths retain the native absolute/no-parent/no-NUL predicate and representation
+bounds; captured member paths retain1024bytes. Journal100000-event/64MiB-record,
+bootstrap1MiB-record/4096-record and existing archive ceilings grant no additional
+representation allowance.
+
+`mobile_committed` has exactly version, kind(imported|no_data), source_fingerprint,
+destination_identity, prepared Ref, claim Ref, captures(max2 purpose+verified Ref),
+targets(exactly3 TargetFinal), owners(exactly3 OwnerFinal for imported or0 for
+no_data), history Ref|null, pending Object and bootstrap Directory. TargetFinal
+has owner_id, root-to-main witnesses(2..256), sidecars(exactly WAL/SHM/journal),
+schema_version(exact82/9/26). OwnerFinal has owner_id, master_sha256, entry_count,
+entries_sha256, command_history_count(Runs integer, others null). All final main
+witnesses are present and physical. Three missing masters never prove no_data.
+
+Complete native receipts, mapped rows, holds, Sync, allocator and current history
+files are verified inside the real operation before terminal; all owner/reader
+handles then physically retire. Under locked journal, recheck actual claim,
+selectors, profile bindings, pending Object and native bootstrap Directory,
+append+barrier mobile_committed, then descriptor-relative retire ONLY that exact
+pending pointer and barrier while maintenance and bootstrap.unbound remain held.
+The terminal is the rollback cutoff, not execution permission or hold release.
+Service success requires actual scope retirement; failed close remains fenced.
+
+A fixed terminal-only recovery entry reacquires native maintenance and the same
+source flock for present or absent pending AFTER durable terminal. It rechecks
+actual terminal/source/target/profile continuity, complete immutable receipts/maps
+and current retained members. It does not weaken `_mobile_pending`, replay import,
+fabricate replacement activation, recreate a pointer or treat missing pending
+before terminal as success. `require_mobile_cutover` is observational: no import,
+repair/finalizer on HTTP, and no lifetime historical-row equality after lawful native
+edit, Discard or privacy erasure. Native replacement identities require actual
+installed continuity; path equality never accepts an arbitrary new inode.
+
+Verified empty/absent source uses source_empty plus canonical-only capture, zero
+imported effects and no legacy constructors. Absent canonical mains initialize
+BEFORE terminal through actual mobile_consolidation_owner and installed
+mobile_path_intended/staged/observed, owner-open/schema/mode/sidecars/owner-retired
+transitions. The witnessed empty inode is published before constructors; final
+terminal stores real82/9/26 main identities. No future identity wildcard or fake
+import receipt is needed (`storage_admission._mobile_create_path`,
+`_mobile_publish_creation`, `mobile_consolidation_owner`).
+
+Explicit pre-terminal rollback freezes direction at mobile_rollback_started and
+restores EXACT authenticated coherent pre-import SQLite snapshot/state, original
+absence and appropriate native modes/sidecar dispositions. Native adapters use
+copy_private_sqlite: uncaptured main/WAL layout/inode and guessed WAL are never
+claimed. Original source/ciphertexts and displaced current DB/sidecar/history
+objects remain retained; unknown objects never become owned by assertion.
+
+Fixed rollback evidence fields are:
+
+- started: version, prepared Ref, claim Ref, canonical_capture Ref,
+  source_fingerprint, destination_identity.
+- stage_intended: version, started Ref, owner_id, logical_id, member_path,
+  payload_sha256, payload_size, target, temporary, parent Directory, Metadata;
+  stage_observed: version, intended Ref, staged Object.
+- move_intended: version, started Ref, ordinal, Subject, step(retain_current|
+  restore_snapshot|retain_created), source Object, destination,1..2native MoveParents;
+  move_observed: version, intended Ref, destination Object,1..2DirectoryStates.
+- metadata_intended: version, started Ref, Subject, Object, previous/applied Metadata,
+  parent Directory; metadata_observed: version, intended Ref, Object, Metadata.
+- rolled_back: version, started Ref, source_fingerprint, destination_identity,
+  exactly3 native targets, exactly3 RestoreFinals, retained Refs(max781), pending
+  Object, bootstrap Directory. RestoreFinal has owner_id, stage Ref|null, current
+  Witness, snapshot_sha256|null; absent originals have null stage/hash.
+
+Subject is exactly owner_id, component(main|wal|shm|journal|history|created_parent),
+path. Null owner is allowed only for history/created_parent. Paths derive only from
+three mains/nine sidecars, one actual history publication and proved created-chain
+entries(max3*256), at most781 before dedup. At most3 staged snapshot payloads;
+per-parent native census max100000 entries and the same whole rollback-call16MiB
+allowance. Complete coverage/custody/representation preflight precedes staging or
+moves; intended evidence precedes each effect, and recovery accepts only exact
+before/after native no-replace positions. Metadata changes are journaled separately.
+No eager unknown listdir, unpriced recursive helper or untracked raw descriptor is
+implicitly qualified by replacement helper reuse. Actual mobile rollback evidence
+may select a narrow native rename-gap admission counterpart, never caller roots or
+fabricated replacement records. Cancellation keeps recoverable exclusion and never
+selects automatic rollback. Verified rolled_back retires pending through the same
+terminal discipline but is NOT cutover. After committed, old-snapshot rollback
+always refuses, even while pending. Only authenticated completed-mobile canonical
+capture binding is added to existing later-rollback review/current-target safety
+capture/replacement; no stale automatic overwrite.
+
+After verified rolled_back, explicit reviewed successor may use ONLY unchanged
+source and the SAME physically proved restored destination/controlroot, with new
+operation ID and fresh full preview/captures under the original never-unlinked
+source flock. Original fixed claim/lock remain immutable. Successor claim is
+ONLY `new_journal.root/mobile-source-claim.json`, not a source-adjacent new inventory
+row. New prepared predecessor is null or operation_id/control_root/claim_path/
+claim Object/rolled_back Ref; old absent-field records stay byte-valid. Predecessor
+may append one successor_intended with version, rolled_back Ref, new operation_id,
+control_root, claim_path, prepared Ref. Cross-journal references explicitly identify
+their journal and reciprocally match actual immutable records. Fixed journal artifact
+recognition requires a real typed successor, exact local claim-intended/observed and
+derived path; no generic ignored filename or recursive claim resolver.
+
+Source lock acquisition moves ahead of preparation in one native lexical lifetime.
+Prepared/pending/parent-child claim gaps recover the SAME new ID, never a second
+reservation; no nested journal locks. Follow authenticated links, not glob, at most
+4096 and one shared16MiB allowance with raw bytes admitted before parse/copy.
+Reject cycles, branching, duplicate IDs, foreign source/control/destination and
+unknown files. No pruning, original claim rewrite/deletion or scope normalization.
+Changed live source remains reviewed-new-operation-required; changed-history merge
+and post-committed successor are outside this contract.
+
+Public service/CLI binds actual immutable preview and typed selected destination,
+native password handling and explicit same-operation review/finish/rollback/status;
+a bool alone is never physical consent authority. Qualify canonical Personas rename
+BEFORE preview, cold default selection and real retirement with source81 untouched.
+Qualify Notes paused candidate visibility with absent/present marker and repeated
+startup; any reproduced missing candidate boundary needs a concrete contract before
+policy changes. Final evidence must use the SAME legitimately completed produced
+target through ordinary cold enrollment/RunLog/command/trace/Discard/Goal/privacy/
+manual-turn consumers, keeping old automatic/binding authority held and zero old
+provider/tool dispatch. Exact visual/trace/Git/worktree and platform limits remain.
+Full original Task8 review precedes Task9; no hardware/TaskDone claim follows from
+this decision. Incorrect completion risks premature writes/stranded fences;
+incorrect rollback/lineage risks lost pre-import state or duplicate history.
+
+### R116: explicit canonical initialization before the no-data review
+
+The installed full capture rejects missing required Chat/Workspace stores before
+partition projection (`Backup_Recovery/capture.py:348–392`). It cannot authenticate
+an original absent target by capturing a database initialized during consolidation.
+R116 therefore narrows R115's all-absent canonical preference: an operator starts
+the selected canonical app with its supported `--config PATH`, closes it and waits
+for physical retirement, then obtains a **fresh** preview and complete inventory.
+The ordinary app's Notes/Workspace wiring initializes those required native owners;
+legacy storage stays absent or untouched. Consolidation does not initialize them
+silently, relabel inventory failures, allow a partial capture, or add a capture role.
+
+Public start applies the same complete-inventory refusal before preparation, pending
+publication and source claim. Its guidance must preserve every actual inventory
+issue and explain initialization/closure/fresh review where required target owners
+are absent. Optional absent stores already supported by a complete capture, such
+as AgentRuns, still use R115's actual journaled native first creation and terminal
+witnesses. No-data has no imported receipts or legacy constructors. Its rollback
+snapshot is the real post-initialization, pre-import state, including supported
+optional absence; it does not cover pre-initialization absence.
+
+The native operator qualification observed actual canonical Chat and Workspace
+constructors, app-owned shutdown and process exit, followed by a separate complete
+capture preview with absent legacy input; Runs remained absent (PID41789, one test
+passed in 4.90 seconds). This establishes the prerequisite only. Full no-data
+cutover, ordinary same-target access and repeated gate verification remain separate
+requirements. R115's terminal, rollback, lineage, custody and budget rules remain.
+The immutable R116 evidence snapshot and the contemporaneous eight-path SHA/AST/
+status checkpoint are retained in the Task8 implementation evidence directory.
+
+### R117: first enrollment at explicitly selected consolidation start
+
+Ordinary canonical startup initializes stores but does not publish a native profile
+binding. The actual R116 follow-through failed before preparation at that missing
+association (PID76126, one failure and two independent early-refusal controls
+passing). A selected consolidation start may now enroll only genuinely missing
+source/target profiles through installed `bind_profile`, after complete inventory
+and exact per-selector configured-root/container proof. Existing bindings remain
+unchanged. Preview remains observational; enrollment is not a generic user mode.
+
+Prove the configured source data container covers the exact fixed claim parent;
+never enroll an arbitrary absent-source ancestor or assign another profile's data
+through a union of inventories. Observe private complete containers, preserving
+native historical-alias, overlap and busy/incompatible-client checks. The default
+config parent is never enrolled over bootstrap/service controls. Only installed
+`_fixed_control_exclusion` and `_service_control_exclusion` authenticate those exact
+excluded subtrees; include actual selector/native leaves and trees. Unknown
+siblings, unsupported shared narrower ownership or uncovered claim parents refuse.
+
+Registration precedes maintenance because native admission forbids nesting it.
+Then hold one real session covering unbound and all relevant overlapping namespaces,
+including candidate writers; recheck physical roots, registry mappings, selectors,
+candidate cohort, complete inventory and containers before profile publication.
+Keep that exclusion through post-binding review, preparation, capture and import.
+Partial enrollment is retained and must validate on a later explicit start.
+
+Binding can reveal config siblings that unbound discovery did not expose. A fresh
+native preview/inventory must preserve the exact reviewed source/destination,
+selectors/candidates and user-data/capture/rollback/credential scope. Account only
+for authenticated excluded control metadata changed by enrollment. Any additional
+user data or unproved equivalence returns `mobile_fresh_review_required` before
+preparation/pending/claim/capture; it requires another explicit review and start.
+No automatic retry, readiness flag or silent expansion of consent is permitted.
+
+Issue the same original mobile budget before new observations and carry the actual
+object through maintenance and capture/import. Pre-admit every new raw/decoded/
+census/hash representation, retain the native 1 MiB selector bound and parser
+accounting, and physically retire all resources on every exit. No replacement
+plan, new SQLite role, caller-built authority or budget renewal is introduced.
+The immutable R117 source snapshot and current native Python 3.12 SHA/AST/status
+checkpoint precede this implementation. R115/R116 rollback, terminal and lineage
+requirements remain; full Task8 review still precedes Task9.
+
+### R118: exact native default-service capture output
+
+The actual ordinary-unbound no-data start reached native preparation and the
+canonical capture intention, then refused `output_overlap`: the authenticated
+default recovery service container includes its own installed `control-work`
+directory. Preserve that refusal evidence and the existing failed operation.
+
+Permit only the already native-issued, live, non-review mobile capture partition
+to exempt the exact independently authenticated `recovery.control:service` item
+from this one output-overlap check. Require its actual maintenance/session scopes,
+claim, pending pointer and journal; literal legacy/canonical purpose; current
+intended destination; default service control; exact installed work parent; and
+the existing SHA256(operation_id)-purpose encrypted-backup filename. Reuse the
+installed private service validator with bounded custody and the same original
+mobile allowance. Prove admitted effective profile roots do not cover the service
+container/output. Preserve physical parent/item continuity across every check.
+
+Capture preflight and both archive-writer checks receive the actual partition.
+All other source paths, including omitted producers, fixed bootstrap, capture
+staging, unknown controls and normal external-output rules remain protected.
+Forged, retired, review-only or custom-control partitions gain no exception;
+credential review keeps its disposable temporary output. Native publication,
+private modes and durable intended/staged/observed evidence remain unchanged.
+
+This bounded exception introduces no replacement authority, caller boolean,
+new role, output format, broad ancestor exclusion or unbounded validation pass.
+The immutable R118 source snapshot and native Python 3.12 SHA/AST/full-status
+checkpoint precede dependent code. Qualify the default no-data terminal and
+ordinary same-target use, plus the exact refusal controls. R115–R117 and the
+stopped rollback optimization remain unchanged; no integrity waiver is granted.
+
+### Task 8 execution clarification: ordinary native config publication (R119)
+
+The completed no-data target passed the ordinary gate, but an actual installed
+theme save advanced its persisted profile fingerprint and made both same-process
+and restarted gates reject the old selector proof. R119 permits this advancement
+only in the ordinary observational gate after immutable committed-terminal and
+pending-absence proof. Pending import, finish-pointer recovery, rollback and
+successor preparation retain their original selector evidence.
+
+Keep the exact reviewed selector cohort and strict unchanged-selector checks.
+Changed config leaf bytes/inode require the actual current positive native
+`bootstrap._binding`, equal current observed fingerprint, exact registry and
+effective-root association, unchanged activation where applicable, and namespaces
+within the operation's admitted set. Ancestor identities/modes remain exact; the
+leaf must remain owned, private, regular and nonaliased. Parse bounded current
+config through installed resolvers: preserve the claimed source, all three target
+stores, and every selector's candidate membership and reviewed destination. A
+previously unrelated selector joining the source group still refuses. Chosen
+targets use authenticated terminal transitions; other candidates retain their
+original physical witnesses.
+
+After journal and owner reads, recheck the same current selector observations,
+bindings and registry before returning. All new representations use the same
+gate allowance and physical custody, including the native 1 MiB selector bound.
+The gate writes no record, refreshes no binding and grants no execution authority.
+External edits, redirects, cohort changes, unbound changed leaves, ancestor or
+target replacement, concurrent publication and pending operations still refuse.
+
+The immutable R119 snapshot and native Python 3.12 SHA/AST/full-status checkpoint
+precede policy code. Earlier retained scripts had private HOME/network isolation
+but omitted explicit profile guards; preserve that narrower evidence. Integrated
+no-data explicit finish, native config save, restart and refusal children must
+install both normal profile and network guards before application imports.
+R115–R118 receipts, source claims, rollback integrity and lineage are unchanged.
+
+### Task 8 execution clarification: fixed rollback source binding (R120)
+
+The retained intended-only Workspace rename exposed a missing rollback restart
+entry. A newly introduced live semantic source preview then refused because the
+bounded RunLog reader requires an actual captured import scope. R120 removes
+only that new preview from pre-cutover rollback continuation: restoration imports
+and rewrites no live legacy source content. The original source fingerprint stays
+an immutable operation reference, never a claim of freshly read semantic content.
+
+Keep the actual claim/flock, original strict selectors and pending association,
+physical source-root/ancestor witnesses, fresh supplied-password authentication
+of the original canonical archive, exact immutable manifest/stage/move/metadata
+receipts, and installed fixed-owner validation on fresh disposable candidates.
+Use actual native discovery scope/custody and retire its resources before moves.
+Do not rediscover a required live Workspace during its authenticated rename gap.
+Every source/current/displaced/capture object remains retained; unknown physical
+state, bad password/cipher/manifest/schema/stage or ambiguous close still refuses.
+
+Import, finish and reviewed successor source checks remain strict, including the
+unchanged-source limit. No unbudgeted preview fallback, fabricated captured reader,
+new role, caller authority, source constructor or repair SQL is introduced.
+One recovery-call allowance, native archive limits, full journal verification and
+known before-effect capacity checks still apply. The earlier restart checkpoint
+preceded archive-reader plumbing; the separate R120 checkpoint precedes this
+rollback-only policy edit. Qualify the same retained operation under both guards
+and report initial refusal separately from explicit recovery completion.
+
+### Task 8 execution clarification: initial and held preview budgeting (R121)
+
+The actual unbound populated public-start test reached legacy Chat inspection in
+the initial genuine `_PreviewScope` without the one already-issued allowance.
+Earlier no-data success did not exercise this path. R121 binds the immutable
+enrollment-reader snapshot and requires budgeting both initial generic discovery
+and the two subsequent native-held re-reviews, before materialization.
+
+Keep the installed order: complete observational preflight and physical retirement,
+namespace registration, all-overlap plus unbound maintenance, strict current
+re-review, first binding, strict post-binding re-review, then preparation. Attach
+the same early-issued allowance and actual custody to the existing `_preview_reads`
+issuer/`_PreviewScope`, then to the actual `_DiscoveryScope` and its owned copy
+scope. Check exact current identity, PID/thread/active state and source safety;
+maintenance additionally enforces its real session roots. A budget grants no new
+source, role, writer, captured-reader or caller-record authority.
+
+Retain the entire installed owner registry, declarations, unknown-child/alias
+census and Complete semantics. Thread optional budgeting through shared inventory,
+file, fixed SQLite and required adapter helpers. No unpriced fallback, omitted
+owner, parallel reduced inventory or incomplete-status relabel is permitted.
+Pre-admit raw/decoded config, path/model/collection/resource/source-state/digest
+representations and SQLite payloads before allocation, decoding or fetching.
+For actual immutable private candidates, use fixed type/length/count projections,
+admitted catalog identifiers, bounded pages and unchanged native restrictions.
+Schema/metadata rereads consume that same allowance; copy-byte/member/catalog/
+step/time limits remain independent. Defaults preserve ordinary existing callers.
+
+RunLogs gains a distinct genuine current preview/discovery branch deriving its
+names from `_run_log_names` and its locators from fixed installed queries on those
+private copies. Its captured branch keeps the exact `_CapturedSQLite` requirement;
+no caller-supplied names are admitted on the new branch. Directory iteration stays
+bounded and custody-owned with unknown-child refusal. Preserve exact source
+fingerprints, selector bytes/physical witnesses and the whole candidate cohort;
+any post-binding scope change still requires fresh review before preparation.
+
+The R121 checkpoint precedes policy changes and covers only its named paths.
+Qualify actual populated unbound start, initial and held prefetch exhaustion before
+effects, selector/candidate changes and physical retirement/source preservation.
+A parameter-presence assertion is only RED evidence, not completed budget proof.
+R115–R120 and the stopped verification-removal restriction remain unchanged.
+
+### R122 — Separate public coordinator accounting from the original native proof bound
+
+The original R93/R95 retained T plus S/native input and proof path still has ONE
+shared nonrenewable 16 MiB `_TraceReadBudget`. Its ordinary constructor and all
+optional/default planner behavior remain unchanged. R115–R121 had extended that
+same allowance to every new public coordinator phase; a real minimal Core81 read
+alone now consumes 14,909,407 representation bytes, and full unbound start refuses
+in initial Complete inventory. Those failures are not success or fresh-review proof.
+
+A genuine local mobile service start or explicit finish/rollback worker now issues
+one fixed private pair: a 512 MiB cumulative public-operation aggregate and its
+ONE original 16 MiB native child. Every child reservation debits both atomically;
+refusal by either leaves both unchanged. No arbitrary constructor capacity/parent,
+configuration/API limit, per-phase renewal, refund, hidden retry or new authority
+is introduced. An accounting link does not grant paths, captured input or writes.
+The fixed aggregate is an engineering envelope, not measured completion or a
+resident-memory/single-object guarantee. All smaller native limits remain.
+
+The actual maintenance admission ledger keeps slot 2 as the original child and
+appends a distinct aggregate slot. Genuine pair association is checked whenever
+that slot is present. Initial PreviewScope and held DiscoveryScope coordinator
+reads use the same aggregate; original CapturedSQLite/T/S/history/planning/row/
+receipt/sync/owner proof consumers retain the same child. New public selector,
+claim, journal-frame, terminal and rollback envelopes explicitly use the aggregate.
+Do not relabel original proof variables or create an unparented replacement child.
+Private native callers without public issuance retain their original 16 MiB path.
+Ordinary cutover observation, status, standalone readers and generic backup/restore
+keep their existing default behavior. Before-effect nonconsuming capacity checks
+must consider both counters whenever the child is involved.
+
+This supersedes only the later global-single-16-MiB accounting extension and its
+coordinator identity plumbing. Every prefetch/advance-allocation check, Complete
+owner inventory, native validation, original full journal verification, custody,
+failed-close fence, selector/source/target check, hold and receipt remains required.
+No further metadata-equivalence machinery is needed merely to fit that old outer
+cap. The stopped rollback integrity-check removal stays stopped.
+
+Qualification must preserve original/default 16 MiB exhaustion, atomic coupled
+refusal, one pair per actual worker, same native child through reconstruction and
+owner proof, same aggregate across public phases, before-effect refusal, and the
+remaining R121 adapter/prefetch coverage. Record actual phase deltas while forwarding
+all charges unchanged on full populated/no-data/recovery paths under both guards;
+512 MiB is not a success claim. Ordinary schema/default regressions and the original
+Task8 gate remain required. The immutable R122 proposal snapshot and precode
+`task-8-public-operation-budget-r122-checkpoint.json` record the exact boundary.
+
+
+### Current Core82 shared Subscription catalog integration
+
+Task8's native Core82 receipt table must remain readable in the installed shared
+Subscription/Core file. The existing Subscription full-catalog declarations stop
+at embedded Core80 although the native Core81 constructor predates this feature;
+the current Core82 addition is a separate Task8 compatibility obligation. Append
+only exact Core82 hybrid successors of the already frozen Core80 lineage, using
+the installed eleven Core81 DDL declarations and the exact Core82 migration DDL.
+Retain both already-qualified historical source-index absence and the current
+native Subscriptions constructor's exact source index; each is a fixed full
+catalog, never a wildcard or optional-object matcher. Their embedded Core stamp
+must be82; Subscription2/3 retain their existing identical-DDL version policy.
+Do not introduce a bare-Core81 accepted hybrid family. Preserve exact unknown
+object/SQL/stamp refusals and all native SQLite/schema validation. No live source
+is upgraded, repaired, or normalized by recovery. The source-origin evidence and
+pre-edit checkpoint remain in the Task8 evidence directory.
+
+
+### R124 — Correct the public cumulative envelope from measured phase costs
+
+The public512MiB envelope exhausted on a small native profile before both required
+captures completed. R124 supersedes ONLY that R122 literal with one fixed2GiB
+aggregate, retaining the512-byte bookkeeping reservation, original16MiB native
+child, ordinary16MiB default, exact no-argument private pair/ledger identities,
+atomic coupled reservations and both-bound nonconsuming pre-effect checks. All
+current journal, owner, schema, credential, scope, physical/custody and independent
+resource limits remain. There is no configurable capacity, per-phase renewal,
+refund, cache, hidden retry, or migration authority added to the served runtime.
+
+Observed separate epochs consumed413.398MiB before first capture on fresh start,
+58.257MiB before first capture on explicit continuation,295.873MiB for one complete
+legacy capture, then157.869MiB of canonical work before refusal. These are
+cumulative reservations, not measured heap usage or one combined successful run.
+The2GiB choice allows engineering margin for the broader canonical phase and
+public completion; it does not promise all profiles fit. Preserve bounded refusal
+and require actual complete-path phase/child/source/guard evidence. The original
+native16MiB proof remains an independent unchanged sub-bound.
+
+Checkpoint and immutable R124 snapshot precede the edit. Five coupling/default/
+refusal controls and a genuinely fresh guarded populated start with readable-empty
+isolated credential storage are required. Previous retained-operation approvals
+are consumed; this accounting decision does not authorize another such action.
+
+
+### R125 — Live ancestor custody and mobile canonical-copy provenance
+
+Controller Ruling125 and the immutable
+`.superpowers/sdd/2026-10-25-shared-console-mobile-supervision-implementation/task-8-public-lineage-copy-r125-snapshot.md`
+(SHA256 `f4427e275d736099e046ead15760350399e12eea9503705a263a9f286affc228`)
+resolve the A6 child-frame composition and retained-copy evidence boundaries.
+
+After the reciprocal parent reservation and new immutable claim are durable,
+the actual SourceClaim authenticates ancestors under separate sequential native
+SH locks before the child EX frame. It retains their actual pinned directory,
+record, lock and claim descriptors under the same original source flock and
+custody. Every ancestor use repeats complete names/physical/raw-hash checks and,
+when records are needed, fresh raw decoding with the original full canonical,
+sequence, hash, grammar and reference validation. There is no decoded-record
+cache, caller-ready token, generic authority, nested ancestor flock, or temporary
+removal of the current frame. All current child verification remains. The closure
+ends with native claim custody; failed retirement keeps quarantine. A fresh call
+reauthenticates every ancestor. Existing4096-link and journal limits remain, with
+all new representations pre-admitted to the same actual public2GiB aggregate;
+native16MiB and ordinary16MiB limits remain unchanged and no third worker budget
+is issued.
+
+Mobile canonical-copy provenance is distinct from replacement rollback proof:
+mobile receipts contain ciphertext/manifest/partition hashes, not a plaintext ZIP
+hash. Mobile no-archive calls authenticate source evidence only and cannot attest
+a supplied plaintext digest. Mandatory actual SealedArchive paths at planning,
+staging and publication bind encrypted_source to retained ciphertext, exact
+manifest/policy, plaintext archive.digest to the reviewed plan and actual native
+stage/publication receipt before effects. Fixed builtin/config/preserved/created
+callers must use real mobile source/manifest/producer/current-target facts or
+refuse unsupported shapes; they cannot invent an original replacement plan or
+_Rollback. Existing replacement-copy checks remain exact. Later restoration still
+requires Complete current-target review, explicit new operation/password and a
+new encrypted safety capture before replacement. Committed mobile operations
+never gain same-operation pre-import rollback.
+
+Qualification remains open:57976 proves the actual first-operation frame identity
+and pair only;63574 exposed a private16MiB fixture capture refusal before ordinary
+consumer assertions. Neither is successor or later-copy success. The controller
+owns the full original Task8 gate before Task9.
+
+### R126 — Existing journal frame during public input planning
+
+The first small-profile successor exhausted the fixed public aggregate during
+input planning, before import. Diagnostic2496 preserved the initial local-claim
+JSON reservation refusal; subsequent staging retirement also lacked capacity.
+No descriptor close failure occurred. All failed bytes/quarantine remain evidence.
+
+For a genuine public worker, derive the existing coupled native slot2/public slot4
+association from the actual maintenance admission, then use `_locked_mobile`
+only around the initial `captured.sqlite_reads` context and fixed planning,
+input/group/hold/receipt preparation, final reader check and physical retirement
+(`mobile_native_operation.py`, initial read block). The frame uses the actual
+journal, session and SourceClaim custody; R125 ancestor custody is issued first.
+It physically closes before history publication, mode, owner or target writes.
+The unchanged private path uses its original unframed16MiB allowance.
+
+All initial canonical/sequence/grammar checks, every nested full frame census,
+raw hash and physical verification, source/ancestor/SQLite/candidate checks and
+physical retirement remain. No new cache, caller record/ready token, cross-call
+state, budget change/refund/reset or stopped rollback optimization is introduced.
+Original native16MiB and public2GiB remain atomically coupled; ordinary defaults
+remain16MiB. Only actual repeated materialization within this existing continuously
+locked read phase is avoided. The immutable R126 snapshot and supplemental
+precode checkpoint preserve exact source and failed-run chronology. Qualification
+must cover private/default/current-frame behavior and the actual successor,
+ordinary gate, counters, source preservation and guards after retirement.
+
+### R127 — Existing journal frames during pure owner verification
+
+After R126, successor33857 reached the Chat transaction but exhausted the public
+aggregate during receipt verification. No successor commit or descriptor-close
+failure was proven; subsequent rollback and retirement checks also refused.
+
+For the genuine current public admission and its original coupled slot2/slot4
+pair, use the existing `_locked_mobile` only inside the three fixed pure bodies
+`verify_receipt`, `verify_rows`, and `verify_recovery_history`. Their installed
+SELECT, census, row, sync, codec and command-history validators remain unchanged.
+Each frame authenticates the actual journal/session/SourceClaim custody under the
+original source flock; R125 ancestor custody already exists. Every initial
+canonical/grammar check and nested full census/raw-hash/physical/ancestor check
+remains. Each frame physically exits before the caller's next write, commit,
+rollback, sidecar observation or owner retirement. No whole transaction, owner
+construction, history publication, mode or target write is wrapped. Private
+callers retain original unframed16MiB behavior; public2GiB/native16MiB and ordinary
+16MiB defaults are unchanged. No cache, callback authority, ready flag, cap
+change, refund, reset or stopped integrity optimization is introduced.
+
+The initial R126 read frame is separate. R127 does not close the outstanding
+before-effect capacity gap: codec capacity alone does not bound new coordinator
+verification, rollback and retirement tails. A source-derived nonconsuming bound
+and actual before-write refusal must still be qualified, forwarding all real
+charges unchanged. A successful framed import alone proves neither that bound
+nor the remaining full Task8 acceptance. The immutable R127 ruling/snapshot and
+current native3.12 SHA/AST/status checkpoint precede this sequencing change.
+
+
+### R128 — Existing native frame for the two fixed owner transactions
+
+Controller Ruling128 permits exactly the stale-owner and normal fixed import
+transaction sites to nest actual owner construction, existing PUBLIC journal
+frame, then native transaction. The frame spans BEGIN, fixed SQL and COMMIT or
+ROLLBACK, and fully verifies/closes before owner retirement or journal publication.
+The native exclusive-in-frame refusal remains unchanged. Three pure verification
+closures require the exact current journal/session/custody/cancel/public-pair frame
+and retain full entry/normal-exit verification; they cannot issue a nested frame.
+Private native callers remain unframed with the original16MiB; public2GiB and
+all atomic reservations/checks remain. This is not an arbitrary callback facility:
+the fixed import paths register no completion callbacks. Core cursor versus
+Workspace/Runs connection Scope counts, getter liveness, holds, savepoints and
+commit/rollback remain native. No decoded cache or caller readiness is introduced.
+
+The before-first-data-write capacity bound remains separately open. Current-read
+integer deltas can be terms only with source proof of an unchanged bounded path;
+they cannot alone cover future sidecar/owner-retirement representations. No larger
+cap, sampled-only estimator, refund/reset or validation removal is approved.
+Evidence: R128 immutable transaction assessment and precode checkpoint in SDD;
+76005 remains a failed successor,95465 remains a restored-target observer refusal.
+
+
+### R129 — Direct native canonical restoration in the ordinary observer
+
+Only ordinary require_mobile_cutover may recognize the direct, explicitly reviewed
+native replacement restoring this exact mobile operation's canonical copy. The
+immutable mobile terminal/claim consumes the source once; restored pre-import rows
+need not retain imported batches. This does not synthesize receipts or reimport.
+Current positive paired activation and native binding must identify the same-control
+committed replacement, whose receipt-bound plan.local_snapshot matches the original
+mobile operation/control/evidence. Native plan/manifest/installed/activation/terminal
+and immutable required-record evidence remain exact; actual current three-store
+paths, installed inodes/private ancestors and bounded nonmigrating native schema
+observations establish the current generation. Existing sourceflock, claim, captures,
+selector cohort/routes, ordinary storage hold and all pending refusals remain.
+Both terminal histories, current binding and physical objects are rechecked.
+
+Original-generation checks remain unchanged. Only the direct-restoration branch
+replaces the now-inapplicable original target inode/imported-live-census assertions.
+Legitimate subsequent native data/config writes must remain usable through same
+physical generation and positive binding, without permanent old payload/profile
+leaf hashes. No owner activation or execution permission is granted. Ordinary16MiB
+and custody/pricing remain; no public pair/new role/service/mutation scope. Other
+SafetyCopies/multiple generations/unsupported config or created-builtin histories
+are not generalized. Evidence: immutable R129 snapshot, precode checkpoint and
+actual95465 restored gate RED versus89275 replacement GREEN, separately retained.
+
+
+### R130 — Exact early terminal pricing and fixed public accounting envelope
+
+Controller Ruling130 corrects R127/R128's over-interpretation: R115 requires fixed
+terminal representations before the first target effect, not a guarantee that all
+future repeated import SQL/control/cleanup work fits before the first INSERT.
+Per-materialization pre-admission and fail-closed pending/quarantine/recovery remain;
+complete rollback representation/custody coverage before staging/moves remains.
+No generalized sampled-delta estimator is introduced. A fixed disposable prospective
+terminal shape prices exact native path/count/hash/scalar/model/encoding dimensions
+after readonly planning/readers retire and before history/owner effects. NoData uses
+its empty-owner form before owner creation. Actual completion derives fresh real
+proof; EVERY late reservation/check remains, with no prepaid credit/refund/token.
+
+The public coordinator envelope becomes fixed4GiB after actual post-R128 successor
+exhaustion8599 at Workspace receipt verification after Chat retirement. This is an
+engineering bound on cumulative representations, not a heap measurement, exact
+remaining-cost prediction or universal completion guarantee. Original coupled
+native16MiB, ordinary16MiB, atomic charging and independent native limits remain.
+The exact precode checkpoint precedes capacity/helper/tests. Qualify early refusal,
+five pair/default controls, private16, one fresh successor, and genuine late refusal
+with durable fences plus explicitly requested fresh-process same-op recovery.
+Retainedb025 authorization remains consumed. R129 observer edit remains separately
+blocked by automatic review pending direct human authorization.
+
+
+### Task8 cold native Subscription owner import correction
+
+The Subscriptions database class/schema import must remain inert with respect to
+application configuration. Retain its patchable module-level `get_cli_setting`
+name as a typed lazy forwarder to the actual configuration getter: preserve all
+positional/keyword arguments, omitted defaults and exceptions without caching or
+fallback. Only the existing subscription threshold read imports configuration;
+its native startup/configuration admission and pre-transaction ordering remain.
+This corrects the standalone recovery fixture's observed eager startup lease,
+without a fixture shutdown bypass, changed catalog or new runtime authority.
+
+### Task 8 pure Media migration import correction
+
+The real-home standalone fixture (64638) exposed a second eager configuration import: Media's v6→v7 migration imports the documented pure `Chunking._template_conversion`, but package initialization eagerly loaded the runtime engine and optional-dependency configuration. Preserve the exact existing 16 package exports with standard lazy resolution to their actual defining objects. Pure conversion imports must remain inert; accessing runtime exports still runs their native configuration and frozen-default behavior. This changes neither migration/schema semantics nor startup admission, and introduces no fixture lease-retirement bypass.
+
+### R131 — unchanged installed builtin members in a mobile canonical copy
+
+A new native replacement may preserve ordinary installed builtin package members from the authenticated mobile canonical capture only when current Complete inventory, unchanged selectors/positive bindings, exact installed root, producer/dependency/topology and each manifest size/hash match. Preview excludes precisely these package roots from destinations; the existing safety_scope/preserve rules and public pending refusals remain. Staging/publication use their actual new plan/session and native private bound-source copy/dependency validation; no fabricated old replacement plan, historical created-source proof or package mutation. Changed package/configuration/history shapes refuse.
+
+Use one genuine current observational allowance, or one ordinary16MiB allowance per lexical validation, throughout new maps/models/paths/hashes/copies. Optional private accounting arguments on existing copy/digest loops charge every read/view/partial-write slice before allocation. Current scope allowance identity and exact native budget type are checked; CaptureScope keeps its original os.read path and gains no field or authority. None callers, native limits/custody/retirement and all existing validation remain unchanged. This avoids a >215MiB worst-case whole-copy slice forecast for the shipped31-asset Samira pack without changing any cap. R129 restored observer and R130 capacity/terminal pricing remain unapplied pending separate human approval.
+
+### R132 — Notes source boundary assumption (withdrawn by R133)
+
+The original design requires refusal for unproved dependencies, not invention of a legacy File Notes owner. R132 withdraws R115's tentative positive imported-file-locator candidate test: legacy notes with non-NULL `file_path_on_disk` or `sync_root_folder` require the exact native legacy dependency. Do not strip these fields, substitute the canonical owner, import partially, or grant file authority. Positive App tests use imported plain notes and genuinely admitted canonical File Notes state, natural absent/present migration markers, actual canonical Personas rename before a new preview, repeated cold startup, and no automatic activation. Imported linked-note candidate visibility remains unqualified.
+
+Execution finding before test refinement: the installed Core semantic validator has this refusal, but mobile capture currently invokes semantic dependency validation only for recovered media; legacy declarations contain no Notes dependency edge. The requested capture-level refusal is therefore not yet established. Record the actual native refusal point before claiming public coverage; no new production dependency dispatch is authorized by this test clarification. The ignored R132 call-boundary artifact preserves exact source anchors and the earlier unexecuted linked-note fixture text.
+
+R131 execution authorization update: after the original automatic-review rejection
+and unchanged production bytes were preserved, the human explicitly approved the
+exact bundled-artwork recovery code and isolated tests (question
+call_cd6c9bc1fbbe471b9457618eab28daa3). Resume only the existing R131 contract through
+normal tool review. Native16MiB, public2GiB, all custody/admission/default behavior
+and package immutability remain. Empty manifest members use a positive native
+probe limit with exact zero-size equality; accounting imports remain conditional
+on an explicitly supplied allowance. Runtime support is not yet qualified.
+R129/R130 remain stopped pending their separate human decisions.
+
+### R133 — Correct the actual Notes capture entry path
+
+R133 supersedes R132's claimed mobile capture refusal and plain-only test narrowing.
+Core's semantic dependency validator is called by generic replacement staging and
+publication, not the actual mobile capture/import path. Function presence did not
+prove an entry-point fence. Preserve the R132 immutable evidence as chronology;
+no linked-note fixture refinement or App run occurred under that assumption.
+
+Restore R115's actual linked-note source/canonical capture, public import and
+App-owned startup qualification, including natural absent/present marker cases.
+First observe what a genuinely captured nonconflicting source accepts; label
+capture separately from import/terminal/startup success. Imported file locators
+remain historical data and grant no authority. Do not insert a generic Core
+capture check, create a new legacy File Notes owner, substitute dependencies or
+strip source fields. If actual accepted imported notes are skipped by a present
+marker, record the proven candidate-enrollment gap before Notes policy changes.
+Concrete guarded App bodies still need controller inspection before runtime.
+
+### R134 — Native source namespaces without profile rebinding
+
+The actual existing-bound public Samira fixture (35527) failed held discovery with `capture_source_outside_scope`. Initial complete discovery includes the installed package, but missing-only enrollment omitted its native capture namespace for existing profiles. Obtain the SAME reviewed inventory's native capture names before maintenance for both existing and missing profiles, retain existing profile records/fingerprints/roots/names unchanged, then hold and recheck all native registry/alias facts and exact fresh review. Native registration remains non-nested and all new helper/record/path representations use the same public allowance and custody; None/default behavior remains unchanged.
+
+Only the authenticated mobile canonical-copy branch may acquire source exclusion for the unchanged global readonly package via this native current capture registry rather than pretending it is a private profile root. Its actual locked copy, acquired verified archive, current Complete plan, positive selector/store bindings, exact members/source bytes and new replacement session/receipts remain mandatory. Generic replacement profile-based builtin admission and non-package constraints remain unchanged. Package files remain read-only; source namespaces grant no agent/tool access. R131 human approval covers this necessary composition through normal review. Actual whole replacement and real stage ordinary16 fit remain unqualified; R129/R130 remain stopped, public2GiB/native16 unchanged.
+
+R134 execution status: automatic review rejected the first production namespace/accounting edit before process creation, judging its namespace-registration boundary outside the existing artwork copy/hash approval. Both affected files remain byte-identical to the precode checkpoint. That admission composition is stopped pending explicit human authorization; R131's separately approved native copy/hash/member controls remain implemented and narrowly qualified. Current public capacity remains2GiB; R129/R130 remain stopped too.
+
+R134 authorization update: the user explicitly approved the exact native backup-source namespace registration/holding code and isolated tests for already-bound profiles. The earlier automatic-review rejection remains recorded. Implementation proceeds through normal review with unchanged profile records, agent permissions, public2GiB/native16MiB limits and existing physical admission checks. R129/R130 remain awaiting separate authorization.
+
+
+### R135 — Native ephemeral scratch and ordinary agent admission
+
+The actual cold mounted Console v7 refuses the stock run writer's real temporary scratch at ordinary persistent admission before provider dispatch. Compose the existing ADR082 manager-issued snapshot/real lease with ADR126 selected-profile and owner admission, without registering temporary roots or weakening generic StorageLease/registry checks. Authenticate the exact stock AgentService/writer callbacks, actual partial(manager.lease, issued snapshot), manager creation PID and current physical generation. Preserve config, Runs, Core, Workspace, default sandbox, MCP, imported holds, cancellation and tool permission observations.
+
+Only the genuine ephemeral writer observation uses that composition: from actual selected-config lease verify unchanged config/agents.history activation and source-scope checks. All other paths retain ordinary admission. Fixed native worker decorators transfer only a private issued association, validate parent at capture/entry and acquire independent actual worker leases/admission. Already running workers retire under their own frame even if their waiter cancels; copied foreign contexts and forked manager use refuse. Cleanup remains native lease-counted and leaves no persistent namespace for deleted scratch.
+
+The stock writer's bind, append and byte-write sites also independently acquire storage; route those exact sites through a fixed private context requiring the current authenticated writer association and exact native root/logdir/generated segment/manifest, otherwise the original persistent acquire_storage. All actual write/close callbacks, path containment/sensitive checks, physical leases and publication remain. No generic temporary exemption or new public capability. Before production save the exact writer/worker caller supplement and current SHA/AST/status checkpoint; qualify negative identity/profile/hold/cancellation controls before a fresh mounted manual flow. Current public2GiB and original native/ordinary16MiB are unchanged; R129/R130 remain separately stopped.
+
+
+### Task8 R136: native device-local Notes lock metadata
+
+The fixed `user_data_dir(config)/notes_sync_locks` directory belongs to the existing excluded Notes device state. Native coordinator construction was observed to make Complete discovery fail before PRESENT-marker import (27084). Exclusion requires complete bounded native no-follow metadata enumeration: exact private0700 root, only direct children with64 lowercase hex plus `.lock`, empty0600 UID-owned single-link regular files, stable pinned root and child identities. Absent/empty/native retained locks are valid; unknown, nested, linked, nonempty, broad-mode, changed or unobservable content stays blocking. No content, portable owner, import destination, active lease, sync grant, marker change or cleanup is introduced. Existing native inventory limits/current allowance/custody apply; no new scanner, allowance or scope. Precode identities are in `task-8-public-r136-precode.json`; actual acquire/release closure and positive/refusal controls precede another PRESENT App flow. R129/R130 remain separately pending.
+
+
+R135 implementation evidence: after explicit human code/test approval, the reviewed native composition passed bound/default admission, stock callback mutation refusal, independent worker cancellation, process identity and default regression controls. Fresh mounted45390 then completed the actual New Chat/Send path, native drains and ordinary persisted reopen on a public-produced target; imported identity-scoped holds/accounting stayed unchanged, with one scripted generation and zero catalog dispatches. This is character-estimate fallback/scripted-provider qualification, not a new authority contract or real-provider/hardware claim. The original rejection and all failed epochs remain recorded.
+
+
+R134 held-preview accounting clarification: the fixed authenticated mobile canonical-copy path carries one original ordinary16MiB allowance explicitly through its new source-prefix, selector/mapping, bootstrap/journal and framed-observation representations, and its already budgeted package read/copy/view/slice work. The actual native `_capture_bound_sources` context remains the sole source-read authority; generic capture admission is unchanged. No PreviewScope may be issued during maintenance, no scope fields or generic role are added, and nested fixed callbacks reuse this exact allowance without reset. Original generic verify_sealed/plaintext and encrypted hash passes, Zip/config/native planner internals retain their existing ArchiveLimits and behavior; this counter is not a whole-engine or RSS bound. Factor the existing authenticated candidate prefix and preserve positive current nonpackage profile bindings, complete target/member/selector/store checks, cancellation and physical retirement. Optional private forwarding defaults preserve existing callers; component identity/refusal/cancel/exhaustion/default checks precede another full replacement. R129/R130 remain blocked separately.
+
+
+### R137 — existing-marker imported Notes candidate review
+
+A completed mobile import may add a canonical linked note after this device already has the current Notes cutover marker. Present-marker startup uses complete current canonical Chat owner receipts only to select imported note IDs, with one original ordinary16MiB allowance for the added projection/materializations. Any existing binding for the same scope/note in any state excludes it before version/file probes. Only genuinely new disjoint paused candidates may be added through native Notes evidence/planning/private persistence; complete current root geometry and binding ownership are rechecked in that transaction. Existing active/paused roots, bindings, operations, leases and watchers remain unchanged. Invalid, overlapping or oversized evidence refuses the new enrollment visibly. No legacy sync-session/config-root replay, note/file mutation, activation, schema or new trigger ledger is introduced.
+
+Both boot construction and captured runtime start-evidence retain existing config/root checks, adding only exact CURRENT-marker evidence from an already existing Notes store and a constant-row receipt probe on the existing selected Core owner. No Notes store is created on the zero-profile/no-receipt path. The added callback runs after present-marker/cutover/sole-process/closing gates; absent-marker migration and marker write ordering remain unchanged. Native Core SELECT transactions are not physical mode=ro/no-checkpoint claims; only newly owned thread handles close, borrowed handles remain. Canonical baseline and private persistence are not cross-database atomicity.
+
+A defaulted exact boolean import_review_required in the runtime and Library snapshots projects a separate markup=False Static using the existing status class. It does not replace action/failure messages or change status/next_action/root controls. Fixed copy: “At startup, some file links could not be added. Notes remain available in Notes; review folder setup before syncing.” No new review/activation action is advertised. R137 source snapshot and precode evidence precede implementation; actual receipt/default/refusal/overlap/start-gate/closure/UI controls must pass before another full PRESENT flow.
+
+
+### R138 — fixed mobile source verification boundaries
+
+When a genuine explicit/current native allowance already exists, derive fixed mobile source evidence and its terminal fact from one actual Journal-owned shared-lock read with the complete native parser, canonical grammar, pending/namespaces, custody and evidence checks. No caller rows, proof cache, new issuer or cross-call reuse. Original no-current/None generic AND mobile dispatch reads and budget behavior remain unchanged; an allowance selects accounting composition, never source authority/family.
+
+The planner's adjacent source and preservation checks use one full verification only for the actual returned mobile canonical-copy proof. Generic rollback proofs retain both original verification calls, mode validation and hash counts. This explicitly removes one redundant fixed-mobile archive verifier invocation at this single boundary; entry/planner/exit still freshly verify all predicates, and the extra original entry manifest verification remains. Original generic hashes/Zip/config/planner ArchiveLimits and the original ordinary16 accounting domain remain unchanged. No predicted fit, cap/reset/frame or source grant. The source snapshot and precode artifact precede implementation; actual parse/count/tamper/terminal/pending/default/custody controls precede a new held-prefix component.
+
+
+### R139 — local allocation reuse for explicit-budget file hashes
+
+The existing native reader may reuse one prepaid local memoryview/bytearray of at most64KiB only for explicit-budget, digest-only, non-collecting reads with no native scope budget. This removes real repeated os.read byte allocations; it does not remove any source/archive/package verification. Charge width+1024 before the buffer, keep every actual loop's768 transient charge and the original requested-size/positive EOF/growth/cancellation checks. Native scoped buffers, defaultNone, collecting/non-digest readers, copy/write paths and missing-readv fallback retain their original behavior. No new buffer API, helper/role, scope field, cache, authority or allowance. Actual lease/identity/custody and physical retirement before lease release remain mandatory.
+
+The source-only56174 arithmetic is not measured heap, a complete bound or predicted fit. Original ordinary/native16 and public2GiB remain; the adjacent verify_sealed-only alternative is not approved. Save precode identities before implementation; finite real native parity/short-read/empty/growth/identity/cancel/exhaustion/fallback/retirement controls and a source/static report precede a new full held-preview attempt. R129/R130 remain independently pending.
+
+
+### R140 — one full archive validation at the canonical entry
+
+Only the fixed mobile canonical preview omits the acquired archive from its first source verifier call. That call still owns the fresh native journal/terminal/evidence read and original-cipher match; the immediately following full archive verifier uses the actual proof just returned and validates the acquired archive before mapping/planning. Planner and exit retain full source plus archive checks. This removes the redundant adjacent entry invocation and its extra temporal sample: canonical archive verifiers4→3 and verify_sealed6→5 per completed fixed mobile preview; source reads/original matches3 and target/package passes2 remain. All predicates stay at entry/planner/exit, without an atomic-observation promise. Stable source failures precede archive checks; actual family change still refuses before mapping, possibly earlier than the old redundant generic archive validation. Cancellation and errors propagate with original native behavior.
+
+This supersedes only the earlier duplicate-entry count promise. The fixed caller always issues or receives its original ordinary allowance, including outer None, and intentionally changes its entry count in both cases. Outside it, generic/no-current/None source dispatch, crypto/Zip/native limits, reads and defaults stay unchanged. No new API, returned-document cache, authority, frame, field, capacity or refund; public2GiB/native16/ordinary16 remain. Source arithmetic is not a fit claim. R129/R130 remain separately unimplemented pending approval.
+
+Saved precode and focused caller-unit RED/GREEN count/order/actual-proof/budget/cancel/failure/default controls precede a new native sentinel. Its bounded test observer records existing phase counters and scope fields in finally at source_context_exit_before_staging; a staging count0 there is not an overall no-staging assertion. No new source read, allowance or cleanup is introduced. Actual integration retirement/staging/SafetyCopy remain unqualified until their own gates.
+
+
+### R141 — capture-scoped digest byte workspace
+
+The existing native CaptureScope may own one private byte workspace, initially None, for the explicit-budget digest-only non-collecting readv branch. Prepay 65,536+1,024 on the same validated allowance before its first bytearray/memoryview allocation. Reuse bytes only: each file/pass still hashes its own actual returned bytes and performs every native admission, identity, bounded read/EOF, cancellation and custody check. No budget/evidence/cache field, API, helper, role or limit changes. Ordinary adaptive buffers, native Preview/Discovery buffers, None/default/collect/non-digest/fallback and copy/write paths remain unchanged.
+
+Clear the byte field in the existing retirement finally immediately after active=False, before unchanged physical cleanup, including verification/resource failures. Dropping bytes is neither FD retirement nor secure erasure; traceback locals can retain views without authority. Different native scopes remain independent. This supersedes only the earlier no-scope-byte-field/cross-call byte workspace restriction. A first tiny/empty eligible captured file now prepays the full66,560 and may refuse earlier near exhaustion; no capacity increase or refund. Public2GiB/native16/ordinary16 and all R140 check counts remain.
+
+Save precode identities and prove actual native two-file/multipass reuse, distinct scopes, tiny-file admission, defaults, failures and physical retirement before any new held-preview sentinel. The failed84580 cleanup evidence and source allocation arithmetic do not establish full preview/staging/SafetyCopy fit. R129/R130 remain separately pending.
+
+
+### R142 — preserved installed sources at native SafetyCopy capture
+
+The actual R141 full replacement reached native stage and then refused SafetyCopy capture because the selected profile correctly does not own bundled artwork. Keep the original profile-containment route first and unchanged. Only an included preserved builtin outside those roots may freshly authenticate the committed mobile source, acquired archive, prepared receipt, unchanged installed member closure and all current witnesses. Its current held native namespace may cover the exact package or a broader directory; pin and reopen that current root, retain all profile checks for other sources, and grant no profile binding or agent permission. All three existing original-source checks remain fresh.
+
+One distinct original ordinary16MiB allowance is issued after actual stage retirement for this SafetyCopy source-validation phase, forwarded unchanged through the fixed callbacks. It covers the new journal, selector, geometry and witness representations; unchanged generic archive/copy/encryption/SQLite work retains its original independent limits and accounting domain. Track one descriptor bucket on the actual maintenance session before new opens, borrow it only under exact current custody, reject failed buckets before opens, and retain native quarantine on ambiguous close. Reject self/physical journal identity before nested source SH; no new lock protocol, cache, role, namespace or allowance reset.
+
+The authoritative R142 snapshot and task-8-public-r142-precode.json precede the reviewed five-source implementation. Finite genuine source/namespace/default/refusal/custody controls and a component report precede any new full integration. Retained98188 is not continued. Public2GiB/native16 remain unchanged; R129/R130 remain separately pending and no restored observer or early-pricing behavior is authorized here.
+
+
+### R143 — lexical member-parent reuse within each fresh SafetyCopy check
+
+R142 native57145 authenticated the first two complete source checks but exhausted its single original16MiB phase allowance during the third overlap loop. Preserve that failed operation and all original checks/cost units. Within each fresh fixed helper only, preprice a local parent-to-existing-member projection; pin each actual parent once, stat every leaf and verify the unchanged manifest/witness frame, then reopen the current parent name while the original FD remains held and compare device/inode. Check cancellation immediately before reopen pricing/IO. Keep the separate package/covering-root reopens, all14overlap observations, all35leaf checks and all3fresh source/archive/nativeSafetySource checks.
+
+This removes real repeated parent-walk allocations, not checks at the three source boundaries. Group order is first parent appearance and member order within each parent; interleaved parents can change first-refusal timing. No global atomicity or rename-and-restore detection is promised. All representations and opens remain prepaid on the same original allowance and registered custody; no FD/proof cache, new helper/API/role, cap/reset, generic-path or permission change. Ambiguous close retains native exclusion/quarantine.
+
+The exact R143 snapshot and precode artifact precede code. Local mechanics tests using explicit mocked upstream evidence qualify only representation/custody, then one fresh exact committed-source three-check component decides real fit. A passing exact component permits one combined genuine broader/unprefixed/multiroot registration variant before root review; full replacement remains gated. R129/R130 remain separately pending; public2GiB/native16 are unchanged.
+
+### R144 — distinct write-path observations within one fresh SafetyCopy check
+
+The fixed mobile SafetyCopy source helper may validate each equal existing write Path once per fresh call, in first-appearance order. All logical owner mappings and effects remain unchanged. Its local set/lookup/growth representations are prepaid with existing units; different lexical paths/aliases retain independent native overlap checks. This supersedes only R143's fourteen repeated overlap observations: the qualified fixture has ten distinct paths, so overlap samples decrease14→10 and resolves28→20 within each pure read boundary. Supported writers remain excluded; opportunistic detection of hostile changes between formerly repeated samples is reduced, and no global filesystem atomicity is promised. All three fresh journal/archive/namespace/member/parent checks, original native16/public2GiB/defaults and custody remain. No set survives the call or becomes authority. See immutable R144 snapshot and exact eight-line proposal; broader geometry qualification remains separate.
+
+
+### R129/R130 explicit human approval and current-source rebase (2026-10-31)
+
+The human explicitly approved code and isolated tests for both existing decisions; the prior missing-authorization block is resolved (SDD `task-8-r129-r130-explicit-human-approval.md`). The old rejected drafts and failing epochs remain historical evidence. Implementation is pending root drift review, not yet applied or qualified. No new ADR/ruling is required.
+
+R129 remains an ordinary16-only direct restore of this mobile operation’s canonical copy: native committed replacement/receipt-bound plan/manifest/activation and current private-copy schema plus main-generation/ancestor continuity; original claim, retained encrypted captures/history, current selectors and pending fences remain checked. Ordinary imported-state census stays unchanged outside that authenticated transition. Ephemeral WAL/content timestamps are not permanent generation identity; every native copy and physical safety check still runs. No fabricated imported receipts, reimport, owner grant or activation bypass.
+
+R130 changes only the public cumulative envelope to4GiB and constructs/discards fixed maximum-width terminal representations before no-data owner creation or populated history/owner effects. Every actual late reservation remains; no escrow, refund, future-SQL estimator or universal-fit/RSS claim. Existing JSON sizing covers non-BMP escaping for every new serialization/hash. Private no-public calls still use their original16 and must be checked proportionally. Ordinary/native16, atomic pair coupling, independent archive/SQL limits and full rollback preflight remain unchanged. Current production stays2GiB until the reviewed delta is applied.
+
+Finite sequence: new local identity/manifest/Unicode/dimension controls plus existing five pair/default controls and affected capture-names debit; early refusal before first owner for populated/no-data; one proportional original private/preterminal native16 control; then one fresh direct-restore positive with native data/theme-save and tamper/refusal checks, and one fresh successor. Existing late-budget real-home two-process evidence is retained; any rerun is a new isolated fixture with unchanged reviewed harness, only if needed to qualify changed prepricing. No old-fixture continuation or accepted App/Notes/CLI repeats.
+
+
+### R130 cold-resume implementation correction — original invocation reuse (2026-11-01)
+
+Existing ADR244/R130; no new ADR or accounting policy. The first changed-code real-home Workspace cold run failed its original16 allowance before stale-owner settlement. Its new early-pricing helper repeated native journal/prepared/pending work. The reviewed v2 correction uses pricing-only local references from the actual PRE-R130 entry preopen for no-data or post-reader preopen for populated, after original validation and retirement. Default callers still return None and retain their original call shape/checks. The new two-reference collector and shallow sizing views are prepaid and discarded before effects; no readiness, cache, native scope or authority is issued. All future original-record Ref encoding costs, fixed maximum terminal representations, actual final checks/hashes/charges and independent native16/public4 bounds remain. No new unbudgeted invocation replaces the deleted duplicate work.
+
+SDD `task-8-r130-cold-pricing-v2-reviewed-release.md` governs the exact two-file correction, affected local/default/codec controls, genuine populated/no-data refusal and private16 preterminal proof, then one fresh observed Workspace73→0. Actual fit remains unqualified until that run; the prior failed fixture and rejected v1 accounting rationale remain preserved. If green, the already released B–E integrations continue serially. No full Task8 completion follows from these components.
+
+### R130 Event tree accounting correction (2026-10-31)
+
+The cold3 native16 resume exhausted at final JSON scanning (requested256, remaining58). Before another runtime, the reviewed helper-only schedule replaces two coarse eight-text-copy Event-stage reservations with separate complete-tree reservations: the native terminal model dump, conservative Event evidence validation, and each of the two Event dumps. Constructor/model/field containers and a shallow six-field sizing view are prepaid separately. The first eight-copy `_MobileCommitted`/Path validation, existing pre-R130 input reuse, future Ref coverage, non-BMP serialization, record bound, JSON roundtrip, all final charges and native16/public4 limits remain unchanged. No authority or readiness value escapes. Pure retained-shape arithmetic is not a fit claim. Source contract and finite verification: `.superpowers/sdd/2026-10-25-shared-console-mobile-supervision-implementation/task-8-r130-event-tree-reviewed-release.md`; prior failed epochs remain preserved.
+
+### R145 - production recovery qualification scope (2026-10-31)
+
+Both production captured-consolidate entry points use a genuine public pair. Keep
+the current early prototype and every late check on all callers; no private
+exception or accounting change is made. The larger private Workspace cold4 fixture
+now legitimately exhausts original16 after early pricing, and remains a recorded
+failure rather than a parity or complete-path claim. R130 promises bounded
+refusal, not universal fit. Replace only the added private-success gate with the
+same committed Workspace/unmatched-owner graph through actual public start and
+fresh-process public finish, each genuine4GiB/16MiB pair. The smaller private
+three-receipt component retains its actual passing scope. Genuine restored-gate
+B and C-E may proceed independently; complete public crash/receipt/no-replay and
+all original Task8 qualification still precede Task9. Source contract: SDD
+`task-8-r145-public-recovery-gate.md`.
+
+
+### R146 — Complete ordinary cutover observation envelope
+
+The B1 direct-restoration integration exposed an actual ordinary16MiB refusal while loading the native receipt-bound plan. Both full journal parses, plan/manifest validation, schema, retained captures/history and current exit rechecks remain required. R146 explicitly supersedes the earlier whole-cutover-call16MiB promise with one fixed nonrenewable64MiB coordinator allowance, issued by a private no-argument function before observation and debited512 for issuance. Both restored and unrestored ordinary cutover calls use it; it is not paired with a new16MiB child and never grants storage or execution authority.
+
+Generic trace/Notes constructors and private migration remain16MiB. Public migration remains4GiB with the original coupled16MiB native child. Every existing validation, lease, source flock, physical/custody/retirement check and independent SQL/archive limit stays unchanged. No later reset, refund, cached proof or caller-selected capacity is introduced.64MiB is the controller's bounded engineering choice within the user's restored-profile implementation approval, not a user-specified number or RSS/universal-fit guarantee. Retained B1/builtin1892 selected-charge floors exclude other work; fresh B/C qualification decides actual fit. Preserve original failures and immutable decisions.
+
+Before code save precode and finite local issuer/default/exhaustion controls, then one fresh B with actual success/failure counter evidence. Conditional C/D/E follow only on green. Public Workspace fresh-process qualification remains separate under R145; no full Task8/Task9 release follows.

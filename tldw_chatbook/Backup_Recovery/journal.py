@@ -247,9 +247,17 @@ class _ArtifactObservationLimits:
     maximum_component_length: int
 
     def __post_init__(self):
-        if (any(type(getattr(self, field.name)) is not int or getattr(self, field.name) < 0 for field in fields(self))
-                or self.entry_count > MAX_EVENTS or self.total_file_bytes > 1024**4
-                or self.maximum_depth > MAX_EVENTS or self.maximum_component_length == 0):
+        if (
+            any(
+                type(getattr(self, field.name)) is not int
+                or getattr(self, field.name) < 0
+                for field in fields(self)
+            )
+            or self.entry_count > MAX_EVENTS
+            or self.total_file_bytes > 1024**4
+            or self.maximum_depth > MAX_EVENTS
+            or self.maximum_component_length == 0
+        ):
             raise ValueError("artifact_limits_invalid")
 
 
@@ -275,12 +283,22 @@ def _qualify_artifact_enumeration(fd, custody):
     custody.directory_iterators.append(iterator)
     custody.close_directory_iterator(iterator)
     info = os.fstat(fd)
-    if any(type(value) is not int or not 0 <= value <= 2**64 - 1 for value in (info.st_dev, info.st_ino)):
+    if any(
+        type(value) is not int or not 0 <= value <= 2**64 - 1
+        for value in (info.st_dev, info.st_ino)
+    ):
         raise ValueError("artifact_physical_scalar_unrepresentable")
     return limit
 
 
-def observe_artifact(path: Path, *, metadata: bool = False, _custody=None, _limits=None) -> dict:
+def observe_artifact(
+    path: Path,
+    *,
+    metadata: bool = False,
+    _custody=None,
+    _limits=None,
+    _read_buffer=None,
+) -> dict:
     """Read bounded no-follow file/tree identity and bytes for local reconciliation.
 
     Modes are deliberately separate from content identity: native publication
@@ -288,13 +306,37 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None, _limi
     Directory evidence includes every child and empty directory, never just names
     from an intended payload list.
     """
-    if _limits is not None and (type(_limits) is not _ArtifactObservationLimits or _custody is None):
+    if _limits is not None and (
+        type(_limits) is not _ArtifactObservationLimits or _custody is None
+    ):
         raise ValueError("artifact_limits_invalid")
+    # A reusable byte workspace changes no identity, custody, limit or hash
+    # proof. Its caller has priced every fixed read count and partial view.
+    if (_read_buffer is not None) and (
+        type(_read_buffer) is not tuple
+        or len(_read_buffer) != 3
+        or type(_read_buffer[0]) is not bytearray
+        or len(_read_buffer[0]) != 65536
+        or type(_read_buffer[1]) is not memoryview
+        or _read_buffer[1].obj is not _read_buffer[0]
+        or len(_read_buffer[1]) != 65536
+        or _read_buffer[1].format != "B"
+        or type(_read_buffer[2]) is not list
+        or len(_read_buffer[2]) != 1
+        or _read_buffer[2][0] is not _read_buffer[1]
+        or _limits is None
+        or not hasattr(os, "readv")
+    ):
+        raise ValueError("artifact_read_buffer_invalid")
     count, total = 0, 0
     observed = {}
     # Each complete name census has its own bounded counters. They describe
     # retained names, not a replenishable materialization allowance.
-    scans = {"read": [1, 0], "immediate": [1, 0], "final": [1, 0]} if _limits is not None else None
+    scans = (
+        {"read": [1, 0], "immediate": [1, 0], "final": [1, 0]}
+        if _limits is not None
+        else None
+    )
 
     def names_at(fd, relative, phase):
         if _limits is None:
@@ -310,11 +352,13 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None, _limi
                 length = len(relative) + 1 + len(name)
                 depth = relative.count("/") + 1
                 census = scans[phase]
-                if (len(name) > _limits.maximum_component_length
-                        or census[0] >= _limits.entry_count
-                        or length > _limits.maximum_relative_length
-                        or depth > _limits.maximum_depth
-                        or census[1] + length > _limits.total_relative_characters):
+                if (
+                    len(name) > _limits.maximum_component_length
+                    or census[0] >= _limits.entry_count
+                    or length > _limits.maximum_relative_length
+                    or depth > _limits.maximum_depth
+                    or census[1] + length > _limits.total_relative_characters
+                ):
                     raise ValueError("artifact_limit")
                 census[0] += 1
                 census[1] += length
@@ -360,7 +404,10 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None, _limi
         if _limits is not None:
             if count > _limits.entry_count:
                 raise ValueError("artifact_limit")
-            if any(type(value) is not int or not 0 <= value <= 2**64 - 1 for value in (before.st_dev, before.st_ino)):
+            if any(
+                type(value) is not int or not 0 <= value <= 2**64 - 1
+                for value in (before.st_dev, before.st_ino)
+            ):
                 raise ValueError("artifact_physical_scalar_unrepresentable")
         if (
             count > MAX_EVENTS
@@ -371,11 +418,26 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None, _limi
         if stat.S_ISREG(before.st_mode):
             if before.st_nlink != 1 or before.st_size > 256 * 1024**3:
                 raise ValueError("artifact_unverified")
-            if _limits is not None and (before.st_size < 0 or before.st_size > _limits.total_file_bytes - total):
+            if _limits is not None and (
+                before.st_size < 0 or before.st_size > _limits.total_file_bytes - total
+            ):
                 raise ValueError("artifact_limit")
             digest = hashlib.sha256()
             size = 0
-            while chunk := os.read(fd, 64 * 1024):
+            while True:
+                if _read_buffer is None:
+                    chunk = os.read(fd, 64 * 1024)
+                else:
+                    chunk_size = os.readv(fd, _read_buffer[2])
+                    if chunk_size < min(65536, before.st_size - size):
+                        raise ValueError("artifact_changed")
+                    chunk = (
+                        _read_buffer[1]
+                        if chunk_size == 65536
+                        else _read_buffer[1][:chunk_size]
+                    )
+                if not chunk:
+                    break
                 size += len(chunk)
                 total += len(chunk)
                 if size > before.st_size or total > 1024**4:
@@ -444,11 +506,44 @@ def observe_artifact(path: Path, *, metadata: bool = False, _custody=None, _limi
     ).model_dump()
 
 
-def _matches(expected: _Object, path: str, *, metadata: bool = False) -> bool:
+def _matches(
+    expected: _Object,
+    path: str,
+    *,
+    metadata: bool = False,
+    cancel=None,
+    _read_budget=None,
+    _custody=None,
+) -> bool:
+    owned_custody = None
     try:
-        actual = observe_artifact(Path(path), metadata=metadata)
+        from .mobile_preview_budget import read_options
+
+        budget, custody = read_options(_read_budget, _custody)
+        if budget is None:
+            actual = observe_artifact(Path(path), metadata=metadata)
+        else:
+            from .mobile_builtin_preservation import _preservation_budget
+            from .mobile_rollback_io import observation
+            from .storage_admission import _CaptureFileDescriptors
+
+            _preservation_budget(budget)
+            if custody is None:
+                budget.reserve(512)
+                custody = owned_custody = _CaptureFileDescriptors(None)
+            elif type(custody) is not _CaptureFileDescriptors:
+                raise TypeError("invalid_mobile_preservation_custody")
+            budget.reserve(2048 + 16 * len(path))
+            if cancel is None:
+                from threading import Event
+
+                cancel = Event()
+            actual = observation(Path(path), budget, custody, cancel, metadata=metadata)
     except (OSError, ValueError, RecursionError):
         return False
+    finally:
+        if owned_custody is not None:
+            owned_custody.retire()
     return {
         key: value for key, value in actual.items() if key != "path"
     } == expected.model_dump(exclude={"path"})
@@ -746,7 +841,40 @@ class _MobileCredentialReview(_Evidence):
         return values
 
 
+class _MobileRef(_Evidence):
+    sequence: int = Field(ge=0, lt=MAX_EVENTS)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class _MobilePredecessor(_Evidence):
+    operation_id: str = Field(min_length=1, max_length=256)
+    control_root: str
+    claim_path: str
+    claim: _Object
+    rolled_back: _MobileRef
+
+    @field_validator("control_root", "claim_path")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
+class _MobileSuccessor(_Evidence):
+    version: Literal[1] = 1
+    rolled_back: _MobileRef
+    operation_id: str = Field(min_length=1, max_length=256)
+    control_root: str
+    claim_path: str
+    prepared: _MobileRef
+
+    @field_validator("control_root", "claim_path")
+    @classmethod
+    def absolute_path(cls, value):
+        return _Object.absolute_path(value)
+
+
 class _MobilePrepared(_Evidence):
+    predecessor: _MobilePredecessor | None = None
     mode: Literal["mobile_consolidation"] = "mobile_consolidation"
     bootstrap_root: str
     namespaces: list[str] = Field(min_length=1, max_length=4096)
@@ -841,6 +969,110 @@ class _MobileEmptySource(_Evidence):
     source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class _MobileCaptureFinal(_Evidence):
+    purpose: Literal["legacy", "canonical"]
+    verified: _MobileRef
+
+
+class _MobileTargetFinal(_MobileTarget):
+    schema_version: Literal[82, 9, 26]
+
+
+class _MobileOwnerFinal(_Evidence):
+    owner_id: Literal["db.chachanotes.primary", "db.workspaces", "db.agent_runs"]
+    master_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    entry_count: int = Field(ge=0, le=2**63 - 1)
+    entries_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    command_history_count: int | None = Field(ge=0, le=2**63 - 1)
+
+
+class _MobileCommitted(_Evidence):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+    version: int = Field(ge=1, le=1)
+    kind: Literal["imported", "no_data"]
+    source_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    destination_identity: str = Field(pattern=r"^[0-9a-f]{64}$")
+    prepared: _MobileRef
+    claim: _MobileRef
+    captures: list[_MobileCaptureFinal] = Field(min_length=1, max_length=2)
+    targets: list[_MobileTargetFinal] = Field(min_length=3, max_length=3)
+    owners: list[_MobileOwnerFinal] = Field(max_length=3)
+    history: _MobileRef | None
+    pending: _Object
+    bootstrap: _Directory
+
+
+def _mobile_ref(record):
+    return {
+        "sequence": record.sequence,
+        "sha256": hashlib.sha256(_encoded(record)).hexdigest(),
+    }
+
+
+def _mobile_referenced(reference, records, event):
+    if reference.sequence >= len(records):
+        raise ValueError("mobile_terminal_reference_invalid")
+    record = records[reference.sequence]
+    if record.event != event or reference.model_dump() != _mobile_ref(record):
+        raise ValueError("mobile_terminal_reference_invalid")
+    return record
+
+
+def _validate_mobile_committed(value, prior, prepared, witnesses):
+    from .bootstrap import _key
+
+    claim = _mobile_referenced(value.claim, prior, "mobile_claim_observed")
+    _mobile_referenced(value.prepared, prior, "mobile_prepared")
+    intended = next(row for row in prior if row.event == "mobile_claim_intended")
+    if (
+        value.prepared.sequence != 0
+        or value.source_fingerprint != prepared.source_fingerprint
+        or value.destination_identity != intended.evidence["destination_identity"]
+        or claim.evidence["path"] != intended.evidence["claim_path"]
+        or value.bootstrap.path != prepared.bootstrap_root
+        or value.pending.path
+        != str(
+            Path(prepared.bootstrap_root)
+            / ("pending-" + _key(prior[0].operation_id) + ".json")
+        )
+        or value.pending.kind != "file"
+        or value.kind == "no_data"
+        and not any(row.event == "mobile_source_empty" for row in prior)
+        or value.kind == "imported"
+        and any(row.event == "mobile_source_empty" for row in prior)
+        or tuple(row.owner_id for row in value.targets) != _MOBILE_OWNERS
+        or tuple(row.schema_version for row in value.targets) != (82, 9, 26)
+        or tuple(row.owner_id for row in value.owners)
+        != (_MOBILE_OWNERS if value.kind == "imported" else ())
+    ):
+        raise ValueError("mobile_terminal_scope_invalid")
+    for target, original in zip(value.targets, prepared.targets, strict=True):
+        if (
+            [row.model_dump() for row in target.witnesses]
+            != [witnesses[row.path] for row in original.witnesses]
+            or target.witnesses[-1].inode is None
+            or [row.model_dump() for row in target.sidecars]
+            != list(_mobile_sidecar_state(prior, target.owner_id).values())
+        ):
+            raise ValueError("mobile_terminal_target_invalid")
+        _validate_mobile_sidecars(target.witnesses[-1].path, target.sidecars)
+    expected = ("legacy", "canonical") if value.kind == "imported" else ("canonical",)
+    if tuple(row.purpose for row in value.captures) != expected:
+        raise ValueError("mobile_terminal_capture_invalid")
+    for capture in value.captures:
+        record = _mobile_referenced(capture.verified, prior, "mobile_capture_verified")
+        if record.evidence["purpose"] != capture.purpose:
+            raise ValueError("mobile_terminal_capture_invalid")
+    history = [row for row in prior if row.event == "mobile_history_verified"]
+    if (value.history is None) != (not history):
+        raise ValueError("mobile_terminal_history_invalid")
+    if value.history is not None:
+        _mobile_referenced(value.history, prior, "mobile_history_verified")
+    for owner in value.owners:
+        if (owner.command_history_count is None) != (owner.owner_id != "db.agent_runs"):
+            raise ValueError("mobile_terminal_owner_invalid")
+
+
 class _MobilePathIntent(_Evidence):
     before: _MobileWitness
     kind: Literal["directory", "database"]
@@ -927,10 +1159,26 @@ def _mobile_state(records):
             row = record.evidence["after"]
             if row["path"] in witnesses:
                 witnesses[row["path"]] = row
+    if any(row.event.startswith("mobile_rollback_") for row in records):
+        from .mobile_rollback_records import replay_witnesses
+
+        replay_witnesses(records, witnesses)
     return prepared, witnesses
 
 
 def _validate_mobile(event, evidence, prior):
+    if event == "mobile_successor_intended":
+        from .mobile_lineage import _validate_successor
+
+        return _validate_successor(evidence, prior)
+    if event.startswith("mobile_rollback_") or event == "mobile_rolled_back":
+        from .mobile_rollback_records import validate_rollback
+
+        return validate_rollback(event, evidence, prior)
+    if any(
+        row.event in {"mobile_rollback_started", "mobile_rolled_back"} for row in prior
+    ):
+        raise ValueError("mobile_rollback_direction_frozen")
     models = {
         "mobile_prepared": _MobilePrepared,
         "mobile_path_intended": _MobilePathIntent,
@@ -951,6 +1199,7 @@ def _validate_mobile(event, evidence, prior):
         "mobile_mode_intended": _MobileWitness,
         "mobile_mode_observed": _MobilePathObserved,
         "mobile_sidecars_observed": _MobileSidecars,
+        "mobile_committed": _MobileCommitted,
     }
     if event not in models:
         raise ValueError("journal_transition_invalid")
@@ -981,6 +1230,8 @@ def _validate_mobile(event, evidence, prior):
         if prior[0].event != "mobile_prepared" or event == "mobile_prepared":
             raise ValueError("journal_transition_invalid")
         prepared, witnesses = _mobile_state(prior)
+        if any(row.event == "mobile_committed" for row in prior):
+            raise ValueError("mobile_operation_terminal")
         last = prior[-1]
         if last.event in {
             "mobile_history_intended",
@@ -1168,6 +1419,10 @@ def _validate_mobile(event, evidence, prior):
                 _validate_mobile_sidecars(owner["path"], value.witnesses)
             elif event != "mobile_owner_retired" or value.model_dump() != owner:
                 raise ValueError("mobile_owner_not_retired")
+        elif event == "mobile_committed":
+            if last.event != "mobile_owner_retired":
+                raise ValueError("mobile_terminal_owners_not_retired")
+            _validate_mobile_committed(value, prior, prepared, witnesses)
         elif event == "mobile_claim_intended":
             if (
                 last.event != "mobile_prepared"
@@ -1253,7 +1508,11 @@ def _validate_mobile(event, evidence, prior):
                 raise ValueError("mobile_owner_scope_invalid")
         else:
             raise ValueError("journal_transition_invalid")
-    return value.model_dump()
+    return value.model_dump(
+        exclude={"predecessor"}
+        if event == "mobile_prepared" and "predecessor" not in evidence
+        else set()
+    )
 
 
 class _Event(_Evidence):
@@ -1281,6 +1540,16 @@ class _Event(_Evidence):
         "mobile_mode_intended",
         "mobile_mode_observed",
         "mobile_sidecars_observed",
+        "mobile_committed",
+        "mobile_successor_intended",
+        "mobile_rollback_started",
+        "mobile_rollback_stage_intended",
+        "mobile_rollback_stage_observed",
+        "mobile_rollback_move_intended",
+        "mobile_rollback_move_observed",
+        "mobile_rollback_metadata_intended",
+        "mobile_rollback_metadata_observed",
+        "mobile_rolled_back",
         "candidate_staged",
         "prepublication_aborted",
         "prepared",
@@ -2188,15 +2457,60 @@ class Journal:
                 raise ValueError("journal_not_private")
             self._identity = info.st_dev, info.st_ino
 
+    @classmethod
+    def _open_existing(cls, root, operation_id, *, _budget, _custody):
+        """Observe existing native history without any creation fallback."""
+        if (
+            cls is not Journal
+            or type(operation_id) is not str
+            or not 0 < len(operation_id) <= 256
+            or "\0" in operation_id
+        ):
+            raise ValueError("operation_id_invalid")
+        if _custody.close_failed:
+            raise OSError("capture_resource_close_failed")
+        allowed, reason = qualified_for("admission", root)
+        if not allowed:
+            raise OSError(reason)
+        _budget.reserve(4096 + 32 * len(str(root)) + 8 * len(operation_id))
+        path = root / ("operation-" + hashlib.sha256(operation_id.encode()).hexdigest())
+        with _custody.pinned_directory(path) as parent:
+            info = os.fstat(parent)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise ValueError("journal_not_private")
+            journal = object.__new__(Journal)
+            journal.operation_id, journal.root = operation_id, path
+            journal._identity = info.st_dev, info.st_ino
+        return journal
+
     @contextmanager
-    def _locked(self, *, exclusive: bool):
-        with pinned_directory(self.root) as parent:
+    def _locked(self, *, exclusive: bool, _custody=None):
+        from .mobile_journal_frame import _current
+        from .mobile_preview_budget import read_options
+
+        _, _custody = read_options(custody=_custody)
+
+        frame = _current(self)
+        if frame is not None:
+            if exclusive:
+                raise ValueError("mobile_nested_journal_write_forbidden")
+            # The lexical native owner still holds the actual exclusive lock.
+            # Installed capture checks may read that same frame without opening
+            # a second flock and blocking their own operation.
+            frame.check()
+            yield frame.parent
+            frame.check()
+            return
+        pin = pinned_directory if _custody is None else _custody.pinned_directory
+        with pin(self.root) as parent:
             info = os.fstat(parent)
             if (info.st_dev, info.st_ino) != self._identity or info.st_mode & 0o077:
                 raise ValueError("journal_identity_changed")
             lock = os.open(
                 "journal.lock", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
             )
+            if _custody is not None:
+                _custody.fds.append(lock)
             try:
                 info = os.fstat(lock)
                 if (
@@ -2212,15 +2526,67 @@ class Journal:
                     raise ValueError("journal_lock_changed")
                 yield parent
             finally:
-                os.close(lock)
+                if _custody is None:
+                    os.close(lock)
+                else:
+                    _custody.close_descriptor(lock)
+                    _custody.fds.remove(lock)
 
-    def _records(self, parent: int) -> list[_Event]:
-        names = sorted(
-            name
-            for name in os.listdir(parent)
-            if name
-            not in {"journal.lock", "verified-manifest.json", "restore-plan.json"}
-        )
+    def _records(self, parent: int, *, _budget=None, _custody=None) -> list[_Event]:
+        from .mobile_journal_frame import _current
+        from .mobile_preview_budget import read_options
+
+        _budget, _custody = read_options(_budget, _custody)
+
+        frame = _current(self, parent)
+        if frame is not None:
+            if _budget is not None and _budget is not frame.budget:
+                raise ValueError("mobile_native_budget_changed")
+            frame.verify()
+            return frame.records
+        return self._parse_records(parent, _budget=_budget, _custody=_custody)
+
+    def _parse_records(self, parent: int, *, _budget=None, _custody=None):
+        """Original full parser; fixed native ancestor custody also supplies its FD."""
+        info = os.fstat(parent)
+        if (info.st_dev, info.st_ino) != self._identity:
+            raise ValueError("journal_directory_changed")
+        claim_present = False
+        if _budget is not None:
+            if _custody is None:
+                raise ValueError("mobile_native_custody_required")
+            names = []
+            iterator = os.scandir(parent)
+            _custody.directory_iterators.append(iterator)
+            try:
+                for entry in iterator:
+                    if entry.name == "mobile-source-claim.json":
+                        claim_present = True
+                        continue
+                    if entry.name in {
+                        "journal.lock",
+                        "verified-manifest.json",
+                        "restore-plan.json",
+                    }:
+                        continue
+                    _budget.value(entry.name)
+                    _budget.container(1)
+                    names.append(entry.name)
+                    if len(names) > MAX_EVENTS:
+                        raise ValueError("journal_limit")
+            finally:
+                _custody.close_directory_iterator(iterator)
+            names.sort()
+        else:
+            names = sorted(
+                name
+                for name in os.listdir(parent)
+                if name
+                not in {"journal.lock", "verified-manifest.json", "restore-plan.json"}
+            )
+        if _budget is None and "mobile-source-claim.json" in names:
+            claim_present = True
+            names.remove("mobile-source-claim.json")
         if len(names) > MAX_EVENTS:
             raise ValueError("journal_limit")
         records = []
@@ -2228,9 +2594,16 @@ class Journal:
         for index, name in enumerate(names):
             if name != f"{index:06d}.json":
                 raise ValueError("journal_sequence_invalid")
-            record = _Event.model_validate(
-                _read(parent, name, max_bytes=RECOVERY_RECORD_BYTES)
+            raw = _read(
+                parent,
+                name,
+                max_bytes=RECOVERY_RECORD_BYTES,
+                _budget=_budget,
+                _custody=_custody,
             )
+            if _budget is not None:
+                _budget.value(raw, text_copies=4)
+            record = _Event.model_validate(raw)
             if (
                 record.operation_id != self.operation_id
                 or record.sequence != index
@@ -2240,6 +2613,9 @@ class Journal:
             _validate(record.event, record.evidence, records)
             records.append(record)
             previous = hashlib.sha256(_encoded(record)).hexdigest()
+        from .mobile_lineage import _validate_local_claim
+
+        _validate_local_claim(self, parent, records, claim_present, _budget, _custody)
         return records
 
     def record(self, event: str, evidence: Mapping[str, object]) -> None:
@@ -2318,9 +2694,19 @@ class Journal:
             )
         flush_directory(parent)
 
-    def _append(self, parent: int, event: str, evidence: Mapping[str, object]) -> None:
+    def _append(
+        self,
+        parent: int,
+        event: str,
+        evidence: Mapping[str, object],
+        *,
+        _budget=None,
+        _custody=None,
+    ) -> None:
         """Append while the caller retains this operation's exclusive lock."""
-        records = self._records(parent)
+        records = self._records(parent, _budget=_budget, _custody=_custody)
+        if _budget is not None:
+            _budget.value(evidence, text_copies=4)
         validated = _validate(event, evidence, records)
         record = _Event(
             operation_id=self.operation_id,

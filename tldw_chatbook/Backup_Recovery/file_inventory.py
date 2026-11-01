@@ -7,6 +7,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
+from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
 from tldw_chatbook.Utils.path_validation import validate_recovery_relative_path
 from tldw_chatbook.Utils.platform_files import os
 
@@ -25,6 +26,9 @@ def _metadata_supported(fd: int, info: os.stat_result) -> bool:
     macOS ACLs have a native interface separate from listxattr. Linux POSIX ACLs
     are extended attributes. Other platforms remain capability-unavailable.
     """
+    from .mobile_preview_budget import reserve
+
+    reserve(2048)
     if sys.platform not in {"darwin", "linux", "win32"}:
         return False
     if (
@@ -48,6 +52,7 @@ def _metadata_supported(fd: int, info: os.stat_result) -> bool:
         if size == -1:
             return False
         if size > 0:
+            reserve(512 + 8 * size)
             names = ctypes.create_string_buffer(size)
             written = libc.flistxattr(fd, names, size, 0)
             if not 0 < written <= size:
@@ -112,6 +117,17 @@ def _inventory_tree(
     selected_paths: frozenset[str] | None = None,
     root_only: bool = False,
 ) -> tuple[StorageItem, ...]:
+    from .mobile_preview_budget import current, path_cost
+    from .native_files import _close_owned
+
+    scope = current()
+    budget = scope.read_budget if scope is not None else None
+    custody = scope.custody if scope is not None else None
+    if budget is not None:
+        budget.reserve(2048 + path_cost(root, copies=3))
+        if selected_paths is not None:
+            for relative in selected_paths:
+                budget.reserve(1024 + 32 * len(relative))
     if type(root_only) is not bool or (root_only and selected_paths is not None):
         raise ValueError("invalid_root_inspection")
     if selected_paths is not None:
@@ -144,6 +160,8 @@ def _inventory_tree(
 
     def walk(parent, leaf, relative, parent_id, depth):
         nonlocal total, root_device
+        if budget is not None:
+            budget.reserve(2048 + path_cost(root) + 32 * len(relative))
         logical_id = (
             root_id
             if not relative
@@ -195,6 +213,8 @@ def _inventory_tree(
         if directory:
             flags |= os.O_DIRECTORY
         metadata_fd = os.open(leaf, flags, dir_fd=parent)
+        if custody is not None:
+            custody.fds.append(metadata_fd)
         try:
             held = os.fstat(metadata_fd)
             if (
@@ -213,7 +233,7 @@ def _inventory_tree(
                 raise ValueError("tree_inventory_changed")
             supported = _metadata_supported(metadata_fd, held)
         finally:
-            os.close(metadata_fd)
+            _close_owned(metadata_fd, custody)
         metadata = FileMetadata(
             1,
             root_id,
@@ -252,17 +272,24 @@ def _inventory_tree(
         if root_only:
             return
         fd = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+        if custody is not None:
+            custody.fds.append(fd)
         try:
             held = os.fstat(fd)
             if (info.st_dev, info.st_ino) != (held.st_dev, held.st_ino):
                 raise ValueError("tree_inventory_changed")
             if selected is None:
-                with os.scandir(fd) as entries:
+                if budget is not None:
+                    children = bootstrap._bounded_names(
+                        fd, MAX_ENTRIES - len(items), budget, custody
+                    )
+                else:
                     children = []
-                    for entry in entries:
-                        if len(children) + len(items) >= MAX_ENTRIES:
-                            raise ValueError("tree_inventory_limit")
-                        children.append(entry.name)
+                    with os.scandir(fd) as entries:
+                        for entry in entries:
+                            if len(children) + len(items) >= MAX_ENTRIES:
+                                raise ValueError("tree_inventory_limit")
+                            children.append(entry.name)
             else:
                 children = [
                     Path(path).name
@@ -277,6 +304,8 @@ def _inventory_tree(
                 ]
             folded = {}
             for child in children:
+                if budget is not None:
+                    budget.reserve(512 + 24 * len(child))
                 key = unicodedata.normalize("NFC", child).casefold()
                 if (
                     key in folded
@@ -302,11 +331,15 @@ def _inventory_tree(
             ):
                 raise ValueError("tree_inventory_changed")
         finally:
-            os.close(fd)
+            _close_owned(fd, custody)
 
     try:
-        with bootstrap.pinned_directory(root.parent) as parent:
+        with bootstrap.pinned_directory(
+            root.parent, _close=custody.close_descriptor if custody else None
+        ) as parent:
             walk(parent, root.name, "", None, 0)
+    except _TraceReadLimit:
+        raise
     except (OSError, ValueError, RuntimeError):
         return (StorageItem(owner, root_id, root, "unavailable", ()),)
     return tuple(items)

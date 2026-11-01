@@ -1,22 +1,29 @@
 """Shared inert raw-file declarations; exact installed owners select all paths."""
 
-from dataclasses import dataclass, replace
 import hashlib
-import json
 import stat
-
-from pydantic import ConfigDict, JsonValue, RootModel
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Event
 from typing import Mapping
 
+from pydantic import ConfigDict, JsonValue, RootModel
+
+from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+    json_loads as _budgeted_json_loads,
+)
+
 from .file_inventory import inventory_tree
-from .models import StorageItem, SchemaPolicy, discovery_context, storage_logical_id
+from .models import SchemaPolicy, StorageItem, discovery_context, storage_logical_id
 
 
 def _tree_member_id(context, owner: str, root: Path, path: Path) -> str:
     """Reproduce installed tree IDs without following historical filesystem text."""
     import os
+
+    from .mobile_preview_budget import path_cost, reserve
+
+    reserve(1024 + path_cost(root, copies=2) + path_cost(path, copies=2))
 
     root_id = owner + ":" + hashlib.sha256(os.fsencode(root)).hexdigest()
     relative = path.relative_to(root).as_posix()
@@ -42,6 +49,9 @@ class _RawDeclaration:
     activation_required: bool = True
 
     def _item(self, config, path, local_id=""):
+        from .mobile_preview_budget import reserve
+
+        reserve(2048)
         context = discovery_context(config)
         entry = inventory_tree(path, owner=self.owner_id, external=False)[0]
         logical_id = storage_logical_id(context, self.owner_id, local_id)
@@ -63,6 +73,14 @@ class _RawDeclaration:
 
         entries = _inventory_tree(
             root, owner=self.owner_id, external=external, selected_paths=selected_paths
+        )
+        from .mobile_preview_budget import reserve
+
+        reserve(
+            1024
+            + sum(
+                1536 + 8 * len(e.logical_id) + 64 * len(e.dependencies) for e in entries
+            )
         )
         keys = {
             e.logical_id: storage_logical_id(
@@ -104,7 +122,7 @@ class _RawDeclaration:
             if self.format == "opaque":
                 _check_recovery_file(self.owner_id, candidate, max_bytes=self.max_bytes)
                 return ()
-            data = json.loads(
+            data = _budgeted_json_loads(
                 _read_recovery_file(self.owner_id, candidate, max_bytes=self.max_bytes)
             )
             _JSONRecord.model_validate(data, strict=True)

@@ -151,7 +151,7 @@ def _require_readers_retired(session, *, _reader=None):
                 raise ValueError("mobile_native_readers_not_retired")
 
 
-def _native_capture_check(captured, cancel):
+def _native_capture_check(captured, cancel, *, _pricing_inputs=None):
     """Recheck the original captured cohort before native owner effects."""
     from .journal import _mobile_state
     from .mobile_consolidation import _path_witnesses
@@ -174,11 +174,20 @@ def _native_capture_check(captured, cancel):
         raise ValueError("mobile_native_source_changed")
     _mobile_check_witnesses(records, witnesses, recovering_mode=True)
     archive_reader._check(cancel)
+    if _pricing_inputs is not None:
+        if type(_pricing_inputs) is not list or _pricing_inputs:
+            raise ValueError("mobile_terminal_pricing_inputs_changed")
+        # Caller-prepaid references only; no copy, readiness or owner authority.
+        _pricing_inputs.append(records)
+        _pricing_inputs.append(prepared)
 
 
-def _native_preopen(captured, cancel):
+def _native_preopen(captured, cancel, *, _pricing_inputs=None):
     """Refuse retained resources before even native path or journal creation."""
-    _native_capture_check(captured, cancel)
+    if _pricing_inputs is None:
+        _native_capture_check(captured, cancel)
+    else:
+        _native_capture_check(captured, cancel, _pricing_inputs=_pricing_inputs)
     _require_readers_retired(captured.session)
 
 
@@ -666,25 +675,221 @@ def _consolidate(captured, *, password, cancel):
         raise ValueError("mobile_native_operation_already_attempted")
     # Denial-only session state survives reminting this operation's lifecycle.
     captured.session._mobile_attempted_journal = captured.journal
-    budget = _TraceReadBudget()
-    from .storage_admission import _mobile_admission
+    from .storage_admission import _mobile_admission, _mobile_coordinator_budget
 
     admission = _mobile_admission(captured.session)
-    if admission[2] is not None:
-        raise ValueError("mobile_native_operation_already_attempted")
-    admission[2] = budget
+    budget = admission[2]
+    if type(budget) is not _TraceReadBudget:
+        raise ValueError("mobile_native_budget_required")
     budget.container(2)
     admission[3] = {}
     budget.container(12)
     budget.value(captured.preview.source_witnesses)
     budget.value(captured.preview.destination_witnesses)
-    _native_preopen(captured, cancel)
+    if captured.preview.has_data:
+        _native_preopen(captured, cancel)
+    else:
+        _mobile_coordinator_budget(captured.session).container(2)
+        terminal_inputs = []
+        _native_preopen(captured, cancel, _pricing_inputs=terminal_inputs)
     budget.container(len(captured.session._scopes))
     issued_scopes = tuple(captured.session._scopes)
     cohort = captured.binding
     source_fingerprint = captured.preview.source_fingerprint
     operation_id = captured.journal.operation_id
-    with captured.sqlite_reads(password=password, cancel=cancel) as reads:
+
+    from .mobile_terminal_pricing import _check_terminal_dimensions, _preprice_terminal
+
+    def commit_terminal():
+        # This closure retains the exact owner receipts verified by this call.
+        # No caller supplies completion evidence, a plan, or a readiness token.
+        import hashlib
+        import json
+        from pathlib import Path
+
+        from tldw_chatbook.Utils.platform_files import os
+
+        from . import bootstrap
+        from .journal import (
+            _mobile_ref,
+            _mobile_sidecar_state,
+            _mobile_state,
+            observe_artifact,
+        )
+        from .mobile_consolidation_apply import _SourceClaim
+        from .mobile_journal_frame import _locked_mobile
+        from .native_files import flush_directory
+        from .storage_admission import (
+            _mobile_check_witnesses,
+            _mobile_coordinator_budget,
+        )
+
+        terminal_budget = _mobile_coordinator_budget(captured.session)
+
+        _native_preopen(captured, cancel)
+        custody = captured.claim.custody
+        terminal_budget.container(3)
+        owners = []
+        if captured.preview.has_data:
+            for family, owner_id in (
+                ("chat", "db.chachanotes.primary"),
+                ("workspaces", "db.workspaces"),
+                ("runs", "db.agent_runs"),
+            ):
+                raw = next(raw for key, raw in receipts[family] if key == family)
+                terminal_budget.json(raw)
+                terminal_budget.value(raw)
+                master = json.loads(raw)
+                terminal_budget.container(6)
+                owners.append(
+                    {
+                        "owner_id": owner_id,
+                        "master_sha256": hashlib.sha256(
+                            raw.encode("utf-8")
+                        ).hexdigest(),
+                        "entry_count": master["entry_count"],
+                        "entries_sha256": master["entries_sha256"],
+                        "command_history_count": master["command_history_count"],
+                    }
+                )
+        with _locked_mobile(
+            captured.journal, captured.session, custody, cancel
+        ) as frame:
+            records = captured.journal._records(
+                frame.parent, _budget=terminal_budget, _custody=custody
+            )
+            prepared, witnesses = _mobile_state(records)
+            _SourceClaim._check_binding(captured.claim)
+            control_records._mobile_pending(
+                captured.session, captured.journal, prepared
+            )
+            _mobile_check_witnesses(records, witnesses, recovering_mode=True)
+            terminal_budget.value(witnesses, text_copies=3)
+            terminal_budget.container(3)
+            targets = []
+            for target, version in zip(prepared.targets, (82, 9, 26), strict=True):
+                terminal_budget.value(target.model_dump(), text_copies=2)
+                targets.append(
+                    {
+                        "owner_id": target.owner_id,
+                        "witnesses": [witnesses[row.path] for row in target.witnesses],
+                        "sidecars": list(
+                            _mobile_sidecar_state(records, target.owner_id).values()
+                        ),
+                        "schema_version": version,
+                    }
+                )
+            root = Path(prepared.bootstrap_root)
+            name = "pending-" + bootstrap._key(operation_id) + ".json"
+            with custody.pinned_directory(root) as pending_parent:
+                info = os.fstat(pending_parent)
+                pending_info = os.stat(
+                    name, dir_fd=pending_parent, follow_symlinks=False
+                )
+                if pending_info.st_size > bootstrap.MAX_RECORD:
+                    raise ValueError("mobile_pending_scope_changed")
+                terminal_budget.reserve(4096 + pending_info.st_size * 8)
+                pending = observe_artifact(root / name, _custody=custody)
+                terminal_budget.container(len(records) * 3 + 20)
+                for record in records:
+                    if record.event in {
+                        "mobile_prepared",
+                        "mobile_claim_observed",
+                        "mobile_capture_verified",
+                        "mobile_history_verified",
+                    }:
+                        terminal_budget.value(record.evidence, text_copies=4)
+                terminal = {
+                    "version": 1,
+                    "kind": "imported" if captured.preview.has_data else "no_data",
+                    "source_fingerprint": source_fingerprint,
+                    "destination_identity": captured.preview.destination.identity,
+                    "prepared": _mobile_ref(records[0]),
+                    "claim": _mobile_ref(
+                        next(
+                            row
+                            for row in records
+                            if row.event == "mobile_claim_observed"
+                        )
+                    ),
+                    "captures": [
+                        {
+                            "purpose": row.evidence["purpose"],
+                            "verified": _mobile_ref(row),
+                        }
+                        for row in records
+                        if row.event == "mobile_capture_verified"
+                    ],
+                    "targets": targets,
+                    "owners": owners,
+                    "history": next(
+                        (
+                            _mobile_ref(row)
+                            for row in records
+                            if row.event == "mobile_history_verified"
+                        ),
+                        None,
+                    ),
+                    "pending": pending,
+                    "bootstrap": {
+                        "path": str(root),
+                        "device": info.st_dev,
+                        "inode": info.st_ino,
+                    },
+                }
+                _check_terminal_dimensions(terminal, terminal_budget)
+                frame.append("mobile_committed", terminal)
+                # The journal barrier completed. Retire only the exact witnessed
+                # pointer while bootstrap.unbound and the source flock remain held.
+                current = os.stat(name, dir_fd=pending_parent, follow_symlinks=False)
+                if (current.st_dev, current.st_ino, current.st_size) != (
+                    pending["device"],
+                    pending["inode"],
+                    pending["size"],
+                ):
+                    raise ValueError("mobile_pending_scope_changed")
+                frame.verify()
+                bootstrap.advance_admission_epoch()
+                os.unlink(name, dir_fd=pending_parent)
+                flush_directory(pending_parent)
+                bootstrap.advance_admission_epoch()
+
+    if not captured.preview.has_data:
+        _preprice_terminal(
+            captured,
+            native_inputs=terminal_inputs,
+            receipts=None,
+            history_location=None,
+        )
+        del terminal_inputs
+        for owner_id in ("db.chachanotes.primary", "db.workspaces", "db.agent_runs"):
+            _native_preopen(captured, cancel)
+            with captured.owner(owner_id):
+                pass
+        commit_terminal()
+        return
+    from contextlib import nullcontext
+
+    from tldw_chatbook.Chat.console_trace_read_budget import _mobile_budget_pair
+
+    from .mobile_journal_frame import _locked_mobile, _verify_current_mobile
+
+    if admission[4] is not None:
+        admission[4].reserve(512)
+        if not _mobile_budget_pair(admission[4], budget):
+            raise ValueError("mobile_budget_pair_changed")
+    # Keep only the actual public read/planning phase in the existing frame.
+    # Readers retire before its flock closes; all target effects follow below.
+    with (
+        (
+            _locked_mobile(
+                captured.journal, captured.session, captured.claim.custody, cancel
+            )
+            if admission[4] is not None
+            else nullcontext()
+        ),
+        captured.sqlite_reads(password=password, cancel=cancel) as reads,
+    ):
         budget.container(6)
         native_input = (
             reads.binding,
@@ -759,7 +964,9 @@ def _consolidate(captured, *, password, cancel):
         raise ValueError("mobile_native_input_cohort_changed")
     budget.value(captured.preview.source_witnesses)
     budget.value(captured.preview.destination_witnesses)
-    _native_preopen(captured, cancel)
+    _mobile_coordinator_budget(captured.session).container(2)
+    terminal_inputs = []
+    _native_preopen(captured, cancel, _pricing_inputs=terminal_inputs)
     budget.container(3)
     if blockers:
         raise _NativeOperationBlocked(blockers)
@@ -768,8 +975,6 @@ def _consolidate(captured, *, password, cancel):
     if plan.history_members:
         import json
         from pathlib import Path
-
-        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
 
         from .journal import _mobile_active_owner
         from .mobile_native_history import _history_shapes, _target_history_location
@@ -857,151 +1062,211 @@ def _consolidate(captured, *, password, cancel):
         )
         # Keep the separately pre-admitted late codec space on this same budget;
         # no refund, replacement allowance, or pre-admitted flag is passed on.
-        if budget._remaining < codec_bound:
-            raise _TraceReadLimit("mobile_trace_input_limit")
+        budget.require_capacity(codec_bound)
 
     # These closures capture this call's actual source, native cohort and original
     # allowance. No caller plan, callback, writer registry or readiness flag enters.
     def verify_receipt(connection, family, entries):
-        count = connection.execute(
-            "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=?",
-            (operation_id,),
-        ).fetchone()[0]
-        if count == 0:
-            return False
-        if count != len(entries):
-            raise ValueError("mobile_native_owner_receipt_census_changed")
-        for key, raw in entries:
-            if (
-                connection.execute(
-                    "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=? AND source_fingerprint=? AND batch_key=? AND mapping_json=? COLLATE BINARY AND typeof(committed_at)='text' AND length(committed_at) BETWEEN 1 AND 128",
-                    (operation_id, source_fingerprint, key, raw),
-                ).fetchone()[0]
-                != 1
-            ):
-                raise ValueError("mobile_native_owner_receipt_changed")
-        return True
-
-    def verify_rows(connection, family):
-        for row, _values, final_values, _detach in grouped[family]:
-            _verify_row(connection, row, final_values)
-        if family == "chat":
-            _verify_sync(connection, sync)
-        else:
-            expected = holds[family]
-            if connection.execute(
-                "SELECT count(*) FROM mobile_import_authority_holds WHERE operation_id=?",
+        current_admission = _mobile_admission(captured.session)
+        if current_admission[2] is not budget:
+            raise ValueError("mobile_native_budget_changed")
+        if current_admission[4] is not None:
+            current_admission[4].reserve(512)
+            if not _mobile_budget_pair(current_admission[4], budget):
+                raise ValueError("mobile_budget_pair_changed")
+        # Reuse only this transaction's actual continuously held native frame.
+        with (
+            _verify_current_mobile(
+                captured.journal, captured.session, captured.claim.custody, cancel
+            )
+            if current_admission[4] is not None
+            else nullcontext()
+        ):
+            count = connection.execute(
+                "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=?",
                 (operation_id,),
-            ).fetchone()[0] != len(expected):
-                raise ValueError("mobile_native_exact_hold_census_changed")
-            for kind, identity in expected:
+            ).fetchone()[0]
+            if count == 0:
+                return False
+            if count != len(entries):
+                raise ValueError("mobile_native_owner_receipt_census_changed")
+            for key, raw in entries:
                 if (
                     connection.execute(
-                        "SELECT count(*) FROM mobile_import_authority_holds WHERE operation_id=? AND authority_kind=? AND authority_id=? AND reviewed_at IS NULL",
-                        (operation_id, kind, identity),
+                        "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=? AND source_fingerprint=? AND batch_key=? AND mapping_json=? COLLATE BINARY AND typeof(committed_at)='text' AND length(committed_at) BETWEEN 1 AND 128",
+                        (operation_id, source_fingerprint, key, raw),
                     ).fetchone()[0]
                     != 1
                 ):
-                    raise ValueError("mobile_native_exact_hold_changed")
-            if family == "runs":
-                sequence = connection.execute(
-                    "SELECT seq FROM sqlite_sequence WHERE name='change_snapshots'"
-                ).fetchone()
-                if (
-                    sequence is None
-                    or sequence[0] < plan.snapshot_allocator.required_frontier
-                ):
-                    raise ValueError("mobile_native_snapshot_frontier_changed")
+                    raise ValueError("mobile_native_owner_receipt_changed")
+            return True
+
+    def verify_rows(connection, family):
+        current_admission = _mobile_admission(captured.session)
+        if current_admission[2] is not budget:
+            raise ValueError("mobile_native_budget_changed")
+        if current_admission[4] is not None:
+            current_admission[4].reserve(512)
+            if not _mobile_budget_pair(current_admission[4], budget):
+                raise ValueError("mobile_budget_pair_changed")
+        # Reuse only this transaction's actual continuously held native frame.
+        with (
+            _verify_current_mobile(
+                captured.journal, captured.session, captured.claim.custody, cancel
+            )
+            if current_admission[4] is not None
+            else nullcontext()
+        ):
+            for row, _values, final_values, _detach in grouped[family]:
+                _verify_row(connection, row, final_values)
+            if family == "chat":
+                _verify_sync(connection, sync)
+            else:
+                expected = holds[family]
+                if connection.execute(
+                    "SELECT count(*) FROM mobile_import_authority_holds WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()[0] != len(expected):
+                    raise ValueError("mobile_native_exact_hold_census_changed")
+                for kind, identity in expected:
+                    if (
+                        connection.execute(
+                            "SELECT count(*) FROM mobile_import_authority_holds WHERE operation_id=? AND authority_kind=? AND authority_id=? AND reviewed_at IS NULL",
+                            (operation_id, kind, identity),
+                        ).fetchone()[0]
+                        != 1
+                    ):
+                        raise ValueError("mobile_native_exact_hold_changed")
+                if family == "runs":
+                    sequence = connection.execute(
+                        "SELECT seq FROM sqlite_sequence WHERE name='change_snapshots'"
+                    ).fetchone()
+                    if (
+                        sequence is None
+                        or sequence[0] < plan.snapshot_allocator.required_frontier
+                    ):
+                        raise ValueError("mobile_native_snapshot_frontier_changed")
 
     def verify_recovery_history(connection):
-        from tldw_chatbook.DB.mobile_consolidation_receipts import _read_owner_receipt
+        current_admission = _mobile_admission(captured.session)
+        if current_admission[2] is not budget:
+            raise ValueError("mobile_native_budget_changed")
+        if current_admission[4] is not None:
+            current_admission[4].reserve(512)
+            if not _mobile_budget_pair(current_admission[4], budget):
+                raise ValueError("mobile_budget_pair_changed")
+        # Reuse only this transaction's actual continuously held native frame.
+        with (
+            _verify_current_mobile(
+                captured.journal, captured.session, captured.claim.custody, cancel
+            )
+            if current_admission[4] is not None
+            else nullcontext()
+        ):
+            from tldw_chatbook.DB.mobile_consolidation_receipts import (
+                _read_owner_receipt,
+            )
 
-        result = _read_owner_receipt(
-            connection, operation_id, source_fingerprint, "runs", budget
-        )
-        if result is None:
+            result = _read_owner_receipt(
+                connection, operation_id, source_fingerprint, "runs", budget
+            )
+            if result is None:
+                if connection.execute(
+                    "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()[0]:
+                    raise ValueError("mobile_native_owner_receipt_census_changed")
+                return False
+            master, children = result
+            budget.container(len(children) * 3)
+            expected_master_raw = next(
+                raw for key, raw in receipts["runs"] if key == "runs"
+            )
+            budget.json(expected_master_raw)
+            expected_master = json.loads(expected_master_raw)
+            if any(
+                master[key] != value
+                for key, value in expected_master.items()
+                if key not in {"entry_count", "entries_sha256"}
+            ):
+                raise ValueError("mobile_native_owner_receipt_changed")
+            actual_base = [
+                child
+                for child in children
+                if child["kind"] not in {"runlog", "runlog_root", "history_publication"}
+            ]
+            if len(actual_base) != len(receipt_children["runs"]) or any(
+                child not in actual_base for child in receipt_children["runs"]
+            ):
+                raise ValueError("mobile_native_owner_receipt_changed")
+            actual_history = [
+                child
+                for child in children
+                if child["kind"] in {"runlog", "runlog_root"}
+            ]
+            if len(actual_history) != len(history_shapes):
+                raise ValueError("mobile_native_owner_receipt_changed")
+            for expected in history_shapes:
+                key = "logical_id" if expected["kind"] == "runlog" else "root_id"
+                matches = [
+                    child
+                    for child in actual_history
+                    if child["kind"] == expected["kind"]
+                    and child["data"][key] == expected["data"][key]
+                ]
+                if (
+                    len(matches) != 1
+                    or any(
+                        matches[0]["data"][name] != value
+                        for name, value in expected["data"].items()
+                        if name != "artifact"
+                    )
+                    or any(
+                        matches[0]["data"]["artifact"][name] != value
+                        for name, value in expected["data"]["artifact"].items()
+                        if name not in {"device", "inode"}
+                    )
+                ):
+                    raise ValueError("mobile_native_owner_receipt_changed")
+            publications = [
+                child for child in children if child["kind"] == "history_publication"
+            ]
+            if (
+                len(publications) != 1
+                or any(
+                    publications[0]["data"][key] != prospective_publication["data"][key]
+                    for key in (
+                        "destination_identity",
+                        "source_fingerprint",
+                        "location",
+                    )
+                )
+                or publications[0]["data"]["artifact"]["path"] != str(publication_path)
+            ):
+                raise ValueError("mobile_native_owner_receipt_changed")
             if connection.execute(
                 "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=?",
                 (operation_id,),
-            ).fetchone()[0]:
+            ).fetchone()[0] != len(children) + 1 + len(passive):
                 raise ValueError("mobile_native_owner_receipt_census_changed")
-            return False
-        master, children = result
-        budget.container(len(children) * 3)
-        expected_master_raw = next(
-            raw for key, raw in receipts["runs"] if key == "runs"
-        )
-        budget.json(expected_master_raw)
-        expected_master = json.loads(expected_master_raw)
-        if any(
-            master[key] != value
-            for key, value in expected_master.items()
-            if key not in {"entry_count", "entries_sha256"}
-        ):
-            raise ValueError("mobile_native_owner_receipt_changed")
-        actual_base = [
-            child
-            for child in children
-            if child["kind"] not in {"runlog", "runlog_root", "history_publication"}
-        ]
-        if len(actual_base) != len(receipt_children["runs"]) or any(
-            child not in actual_base for child in receipt_children["runs"]
-        ):
-            raise ValueError("mobile_native_owner_receipt_changed")
-        actual_history = [
-            child for child in children if child["kind"] in {"runlog", "runlog_root"}
-        ]
-        if len(actual_history) != len(history_shapes):
-            raise ValueError("mobile_native_owner_receipt_changed")
-        for expected in history_shapes:
-            key = "logical_id" if expected["kind"] == "runlog" else "root_id"
-            matches = [
-                child
-                for child in actual_history
-                if child["kind"] == expected["kind"]
-                and child["data"][key] == expected["data"][key]
-            ]
-            if (
-                len(matches) != 1
-                or any(
-                    matches[0]["data"][name] != value
-                    for name, value in expected["data"].items()
-                    if name != "artifact"
-                )
-                or any(
-                    matches[0]["data"]["artifact"][name] != value
-                    for name, value in expected["data"]["artifact"].items()
-                    if name not in {"device", "inode"}
-                )
-            ):
-                raise ValueError("mobile_native_owner_receipt_changed")
-        publications = [
-            child for child in children if child["kind"] == "history_publication"
-        ]
-        if (
-            len(publications) != 1
-            or any(
-                publications[0]["data"][key] != prospective_publication["data"][key]
-                for key in ("destination_identity", "source_fingerprint", "location")
-            )
-            or publications[0]["data"]["artifact"]["path"] != str(publication_path)
-        ):
-            raise ValueError("mobile_native_owner_receipt_changed")
-        if connection.execute(
-            "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=?",
-            (operation_id,),
-        ).fetchone()[0] != len(children) + 1 + len(passive):
-            raise ValueError("mobile_native_owner_receipt_census_changed")
-        for key, raw in passive:
-            if (
-                connection.execute(
-                    "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=? AND source_fingerprint=? AND batch_key=? AND mapping_json=? COLLATE BINARY",
-                    (operation_id, source_fingerprint, key, raw),
-                ).fetchone()[0]
-                != 1
-            ):
-                raise ValueError("mobile_native_owner_receipt_changed")
-        return True
+            for key, raw in passive:
+                if (
+                    connection.execute(
+                        "SELECT count(*) FROM mobile_consolidation_batches WHERE operation_id=? AND source_fingerprint=? AND batch_key=? AND mapping_json=? COLLATE BINARY",
+                        (operation_id, source_fingerprint, key, raw),
+                    ).fetchone()[0]
+                    != 1
+                ):
+                    raise ValueError("mobile_native_owner_receipt_changed")
+            return True
+
+    _preprice_terminal(
+        captured,
+        native_inputs=terminal_inputs,
+        receipts=receipts,
+        history_location=history_location if history_shapes is not None else None,
+    )
+    del terminal_inputs
 
     # A cold process can retain a later owner's unmatched OPEN. Settle only
     # that actual native owner before returning to the fixed write order. This
@@ -1030,8 +1295,20 @@ def _consolidate(captured, *, password, cancel):
         )
         budget.reserve(1024)
         _native_preopen(captured, cancel)
-        with captured.owner(stale_owner["owner_id"]) as owner:  # noqa: SIM117 -- Keep the explicit native resource/fault lifetime boundary.
-            with owner.transaction() as connection:
+        with captured.owner(
+            stale_owner["owner_id"]
+        ) as owner:  # Keep the explicit native resource/fault lifetime boundary.
+            if admission[4] is not None:
+                admission[4].reserve(512)
+            # Native construction is complete; retirement begins after unlock.
+            with (
+                _locked_mobile(
+                    captured.journal, captured.session, captured.claim.custody, cancel
+                )
+                if admission[4] is not None
+                else nullcontext(),
+                owner.transaction() as connection,
+            ):
                 _native_capture_check(captured, cancel)
                 complete = (
                     verify_recovery_history(connection)
@@ -1050,8 +1327,7 @@ def _consolidate(captured, *, password, cancel):
         from .storage_admission import _local
 
         _native_preopen(captured, cancel)
-        if budget._remaining < codec_bound:
-            raise _TraceReadLimit("mobile_trace_input_limit")
+        budget.require_capacity(codec_bound)
         with captured.journal._locked(exclusive=False) as fd:
             if _mobile_active_owner(captured.journal._records(fd)) is not None:
                 raise ValueError("mobile_history_scope_busy")
@@ -1111,8 +1387,20 @@ def _consolidate(captured, *, password, cancel):
         ("runs", "db.agent_runs"),
     ):
         _native_preopen(captured, cancel)
-        with captured.owner(owner_id) as owner:  # noqa: SIM117 -- Keep the explicit native resource/fault lifetime boundary.
-            with owner.transaction() as connection:
+        with captured.owner(
+            owner_id
+        ) as owner:  # Keep the explicit native resource/fault lifetime boundary.
+            if admission[4] is not None:
+                admission[4].reserve(512)
+            # Native construction is complete; retirement begins after unlock.
+            with (
+                _locked_mobile(
+                    captured.journal, captured.session, captured.claim.custody, cancel
+                )
+                if admission[4] is not None
+                else nullcontext(),
+                owner.transaction() as connection,
+            ):
                 _native_capture_check(captured, cancel)
                 entries = receipts[family] + (passive if family == "runs" else ())
                 if verify_receipt(connection, family, entries):
@@ -1146,3 +1434,4 @@ def _consolidate(captured, *, password, cancel):
                 verify_receipt(connection, family, entries)
                 _native_capture_check(captured, cancel)
     _native_preopen(captured, cancel)
+    commit_terminal()

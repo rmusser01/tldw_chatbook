@@ -2,12 +2,17 @@
 
 import hashlib
 import re
-import tomllib
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Mapping
 
+from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+    json_loads as _budgeted_json_loads,
+)
+from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
+
+from .mobile_preview_budget import toml_loads as _budgeted_toml_loads
 from .models import OwnerAdapter, StorageItem, discovery_context, storage_logical_id
 from .profile_paths import DATABASE_PATHS, default_config_path, setting, user_data_dir
 from .recovery_files import _RawDeclaration
@@ -152,8 +157,10 @@ class _Config(_RawDeclaration):
             data = _read_recovery_file(
                 self.owner_id, candidate, max_bytes=_MAX_CONFIG_BYTES
             )
-            tomllib.loads(data.decode("utf-8"))
+            _budgeted_toml_loads(data)
             return ()
+        except _TraceReadLimit:
+            raise
         except (OSError, ValueError, RuntimeError, UnicodeError, RecursionError):
             return ("config_validation_unavailable",)
 
@@ -319,7 +326,6 @@ class _ChatbookRegistry(_Definition):
 
     @classmethod
     def _document(cls, data, *, live=False):
-        import json
 
         def unique(pairs):
             result = {}
@@ -329,7 +335,7 @@ class _ChatbookRegistry(_Definition):
                 result[key] = value
             return result
 
-        document = json.loads(data, object_pairs_hook=unique)
+        document = _budgeted_json_loads(data, object_pairs_hook=unique)
         if not isinstance(document, dict) or not isinstance(
             document.get("records"), list
         ):

@@ -96,8 +96,10 @@ Private control protocol **3** is separate from HTTP `/api/v1/mobile` and browse
 Every method uses `.request`/`.response` suffixes. Existing recursive frame,
 value/depth/collection limits apply; extra outer fields and wrong container types
 refuse. Native snapshot/event adapters strictly validate the inner arguments. Ticket,
-command and receipt methods still refuse `authority_unavailable` until their
-transport integration; no request constructs another engine.
+command and receipt methods dispatch through the retained runtime's native
+remote ticket/command/receipt owner (`app_served.py`); unavailable authority still
+refuses. No request constructs another engine. The separate public mobile-service
+engine retirement and HTTP route cutover remain unfinished Task9 work.
 `console.changed` is body-free `{sequence: int >= 0, reset_required?: bool}` metadata.
 Correlated responses resolve directly through the pending request map; projections
 never own command outcomes, receipts or native approval resolution.

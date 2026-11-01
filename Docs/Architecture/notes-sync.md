@@ -15,7 +15,7 @@ This document describes the lasting file↔DB notes sync: the runtime owner, the
 | `Notes/notes_device_state_store.py` | Durable roots/bindings/operations/recovery records at `<user_data_dir>/tldw_chatbook_notes_sync_state.db` |
 | `Notes/notes_sync_authority.py` + `notes_scope_service.py` | `NotesScopeSyncAuthority` (DB-side CRUD authority), global/workspace scopes |
 | `Notes/sync_paths.py` + `notes_sync_filesystem.py` | Descriptor-anchored FS boundary (`O_NOFOLLOW`, dir-fd pinned ops, 10 MiB file cap, xattr bounds) |
-| `Notes/notes_sync_legacy.py` | Read-only migrator of legacy evidence into paused candidates — the only place LWW ever existed |
+| `Notes/notes_sync_legacy.py` | Reads canonical legacy evidence and persists device-private paused candidates; fixed receipt projection handles newly imported, unrepresented linked notes |
 | `Notes/file_notes_service.py` | `FileNotesService` — session-scoped file-notes editing (disk authority) |
 | `Notes/file_notes_git_*.py`, `git_process_containment.py` | Guarded session git commit/push (ADR-038/039) |
 
@@ -37,6 +37,20 @@ Synced extensions are `.md`, `.markdown`, `.txt`. The reconciler classifies each
 | Root offline / overlapping / capability loss / stale observation | Plan-level skip with reason |
 
 Last-write-wins (`newer_wins` and friends) exists only in the legacy policy vocabulary consumed by the read-only migrator.
+
+## Startup and imported linked notes
+
+`NotesSyncRuntimeOwner._start_once` retains the native cutover-admission, sole-process and closing gates. An absent marker uses the existing legacy migration path. With the exact current marker, `build_notes_sync_import_reviewer` can discover linked notes added by a completed mobile import without replaying old sync sessions or migrating represented note edits again.
+
+The boot construction gate and its captured runtime start-evidence callback in `app_service_wiring.py` first retain the existing configured-directory/root checks. Their added path requires an already existing Notes store with the exact current marker and a constant receipt-presence probe on the selected App Core owner. No-receipt/no-linked fast paths do not create a Notes database. Before full receipt decoding or file/version probes, current linked IDs already owned by ANY-state binding are excluded. Complete native Chat owner receipts then identify imported mapped IDs under one ordinary 16 MiB materialization allowance.
+
+Native root/file evidence and planning may add only genuinely new disjoint paused candidates. The private transaction rechecks all current root paths and binding ownership, including arbitrary root IDs and active roots. Ambiguous, overlapping, invalid or oversized evidence refuses the new enrollment; existing roots, leases and watchers keep their established behavior. These candidates and their pending reviews do not activate sync, grant file access or modify note/file contents.
+
+Core snapshot reads use the actual selected native owner. Private schema initialization occurs outside its transaction; newly owned Core thread handles retire before private candidate persistence. Borrowed handles remain untouched, and borrowed active transactions refuse enrollment. These are native SELECT transaction and retirement guarantees, not physical read-only/no-checkpoint or cross-database atomicity claims.
+
+The defaulted `import_review_required` boolean is projected separately through the runtime and Library snapshots. A markup-disabled status widget says: “At startup, some file links could not be added. Notes remain available in Notes; review folder setup before syncing.” It does not replace an action/failure message, change root controls or promise automatic enrollment through a new action. The runtime can remain `active` while individual paused candidate roots show `review_migration` and have no watcher.
+
+Fresh absent- and present-marker App flows verify mapped note ID/version/content digest, retained canonical candidates, default character ID1 after canonical rename/import/process exit, repeated cold-start stability and native Notes handle closure. The present-marker flow retains handles from every actual private-store open, including the receipt callback's separate store. This qualifies startup and pending-review state; it does not claim a manual Notes-screen interaction or an active sync grant.
 
 ## Dataflow (edit → sync)
 
@@ -74,7 +88,7 @@ Note templates (`Config_Files/create_custom_template.py`, stored in the user con
 
 ## Governing decisions
 
-ADR-021 (file-backed notes disk authority and recovery), ADR-029 (file-notes disk authority), ADR-035 (session git index controls), ADR-038/039 (guarded session commit/push), ADR-059 (notes folder import and device-local sync ownership), ADR-073 (round-trip and interoperability constraints). Feature doc: `Docs/Features/notes_bidirectional_sync.md` (owner table matches code).
+ADR-021 (file-backed notes disk authority and recovery), ADR-029 (file-notes disk authority), ADR-035 (session git index controls), ADR-038/039 (guarded session commit/push), ADR-059 (notes folder import and device-local sync ownership), ADR-073 (round-trip and interoperability constraints), ADR-244 (shared Console/mobile ownership and receipt-backed startup candidates). Feature doc: `Docs/Features/notes_bidirectional_sync.md` (owner table matches code).
 
 ## Verified gotchas
 

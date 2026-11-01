@@ -603,9 +603,9 @@ class RunLogWriter:
             # `base` (the dotted target) is known.
             legacy_dir_name = dir_name
             dir_name = f".{dir_name}"
-        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        from .scratch_admission import writer_storage
 
-        with acquire_storage(root):
+        with writer_storage(self, root):
             from tldw_chatbook.Tools import file_operation_tools as path_tools
             from tldw_chatbook.Tools.file_operation_tools import (
                 _IS_WITHIN_ORIGINAL,
@@ -803,9 +803,9 @@ class RunLogWriter:
             payload: Bytes to append.
             sync: Whether to force an ``fsync`` after flushing.
         """
-        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        from .scratch_admission import writer_storage
 
-        with acquire_storage(path):
+        with writer_storage(self, path):
             import os
 
             with open(path, "ab") as handle:
@@ -893,9 +893,9 @@ class RunLogWriter:
         """
         if not self._active or self.log_dir is None:
             return None
-        from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+        from .scratch_admission import writer_storage
 
-        with acquire_storage(self.log_dir):
+        with writer_storage(self, self.log_dir):
             with self._lock:
                 truncated_from = 0
                 body = content.encode("utf-8")
@@ -1096,5 +1096,49 @@ _RUN_LOG_PROBE_SOURCE = (
                 else ()
             ),
         )
+    ),
+)
+
+
+# Definition-time callbacks for the fixed native scratch composition.
+_RUN_LOG_SCRATCH_ORIGINAL = (
+    RunLogWriter,
+    tuple(
+        (
+            name,
+            function,
+            tuple(
+                (
+                    callback,
+                    callback.__code__,
+                    callback.__defaults__,
+                    callback.__kwdefaults__,
+                    tuple((callback.__kwdefaults__ or {}).items()),
+                    callback.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in (callback.__closure__ or ())
+                    ),
+                )
+                for callback in (function, wrapped)
+                if callback is not None
+            ),
+            wrapped,
+        )
+        for name in (
+            "bind",
+            "_bind_under_scope",
+            "_migrate_legacy_dir",
+            "_segment_path",
+            "_write_bytes",
+            "append",
+            "_append_under_scope",
+            "write_manifest",
+            "_write_manifest_under_scope",
+            "close",
+            "_close_under_scope",
+        )
+        for function in (getattr(RunLogWriter, name),)
+        for wrapped in (getattr(function, "__wrapped__", None),)
     ),
 )

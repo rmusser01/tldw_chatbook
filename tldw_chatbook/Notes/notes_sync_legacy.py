@@ -10,6 +10,7 @@ import stat
 import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from contextlib import contextmanager
 from pathlib import Path
 
 from tldw_chatbook.Notes.notes_device_state_store import (
@@ -265,9 +266,20 @@ def _json_value(value: object) -> object:
     return {"invalid_type": type(value).__name__}
 
 
-def _digest_payload(kind: str, *values: object) -> str:
+def _digest_payload(kind: str, *values: object, _read_budget=None) -> str:
+    if _read_budget is not None:
+        from tldw_chatbook.Backup_Recovery.mobile_runs_goal_budget import _serialization
+
+        _read_budget.container(2)
+        _read_budget.container(len(values))
+        # Scalar native digest inputs use the exact existing JSON conversion.
+        _read_budget.value(values)
+        projected = {"kind": kind, "values": [_json_value(value) for value in values]}
+        _serialization(projected, _read_budget, encoded=True)
+    else:
+        projected = {"kind": kind, "values": [_json_value(value) for value in values]}
     payload = json.dumps(
-        {"kind": kind, "values": [_json_value(value) for value in values]},
+        projected,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -275,8 +287,11 @@ def _digest_payload(kind: str, *values: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _opaque_id(kind: str, *values: object) -> str:
-    return f"legacy-{kind}-{_digest_payload(kind, *values)[:40]}"
+def _opaque_id(kind: str, *values: object, _read_budget=None) -> str:
+    if _read_budget is not None:
+        _read_budget.reserve(64 + 4 * (len(kind) + 8 + 40))
+        _read_budget.reserve(64 + 4 * 40)
+    return f"legacy-{kind}-{_digest_payload(kind, *values, _read_budget=_read_budget)[:40]}"
 
 
 def _string_path(value: object) -> str | None:
@@ -323,6 +338,7 @@ def _root_evidence(
     sync_roots: Iterable[Path | str],
     file_notes_roots: Iterable[Path | str],
     private_paths: Iterable[Path | str],
+    _read_budget=None,
 ) -> _LegacyRootEvidence:
     selected = _string_path(raw_path)
     if selected is None:
@@ -398,12 +414,14 @@ def _root_evidence(
             "root-identity",
             root_metadata.st_dev,
             root_metadata.st_ino,
+            _read_budget=_read_budget,
         )
         ancestor_identity_digests = tuple(
             _digest_payload(
                 "root-identity",
                 metadata.st_dev,
                 metadata.st_ino,
+                _read_budget=_read_budget,
             )
             for metadata in (parent.stat() for parent in canonical.parents)
         )
@@ -439,6 +457,8 @@ def _probe_note_file(
     canonical_root: str | None,
     raw_relative_path: object,
     raw_file_path: object,
+    *,
+    _read_budget=None,
 ) -> tuple[str | None, int | None, str | None, str | None]:
     if canonical_root is None:
         return None, None, None, None
@@ -487,7 +507,9 @@ def _probe_note_file(
         return None, None, None, "file_missing"
     except OSError:
         return None, None, None, "file_unavailable"
-    identity = _digest_payload("file-identity", metadata.st_dev, metadata.st_ino)
+    identity = _digest_payload(
+        "file-identity", metadata.st_dev, metadata.st_ino, _read_budget=_read_budget
+    )
     if (
         stat.S_ISLNK(metadata.st_mode)
         or getattr(metadata, "st_reparse_tag", 0)
@@ -508,6 +530,7 @@ def _probe_note_file(
         metadata.st_size,
         metadata.st_mtime_ns,
         mode,
+        _read_budget=_read_budget,
     )
     return identity, mode, freshness, None
 
@@ -777,6 +800,8 @@ def _bounded_report(
 
 def plan_legacy_notes_sync_migration(
     snapshot: LegacyNotesSyncSnapshot,
+    *,
+    _read_budget=None,
 ) -> LegacyNotesSyncMigrationPlan:
     """Purely translate a frozen legacy snapshot into inert candidate records."""
 
@@ -822,7 +847,9 @@ def plan_legacy_notes_sync_migration(
     root_ids: dict[str, str] = {}
     for root_identity in identities:
         canonical_path = canonical_by_identity[root_identity]
-        root_id = _opaque_id("root", snapshot.note_scope_id, root_identity)
+        root_id = _opaque_id(
+            "root", snapshot.note_scope_id, root_identity, _read_budget=_read_budget
+        )
         if root_identity in overlapping:
             report.append(LegacyMigrationReportEntry("root_overlap", root_id=root_id))
             continue
@@ -889,7 +916,9 @@ def plan_legacy_notes_sync_migration(
                 report.append(LegacyMigrationReportEntry("duplicate_file_identity"))
             continue
         root_id = root_ids[note.canonical_root]
-        binding_id = _opaque_id("binding", root_id, note_id, relative_path)
+        binding_id = _opaque_id(
+            "binding", root_id, note_id, relative_path, _read_budget=_read_budget
+        )
         if note.file_reason_code == "file_missing":
             report.append(
                 LegacyMigrationReportEntry(
@@ -928,7 +957,9 @@ def plan_legacy_notes_sync_migration(
 
     bindings: list[NotesSyncBindingRecord] = []
     for note, root_id, note_id, relative_path, version, content_digest in prepared:
-        binding_id = _opaque_id("binding", root_id, note_id, relative_path)
+        binding_id = _opaque_id(
+            "binding", root_id, note_id, relative_path, _read_budget=_read_budget
+        )
         if (root_id, relative_path) in duplicate_paths:
             report.append(
                 LegacyMigrationReportEntry(
@@ -980,7 +1011,9 @@ def plan_legacy_notes_sync_migration(
         )
 
     return LegacyNotesSyncMigrationPlan(
-        migration_id=_opaque_id("migration", snapshot.source_fingerprint),
+        migration_id=_opaque_id(
+            "migration", snapshot.source_fingerprint, _read_budget=_read_budget
+        ),
         source_fingerprint=snapshot.source_fingerprint,
         roots=tuple(sorted(roots, key=lambda item: item.root_id)),
         bindings=tuple(sorted(bindings, key=lambda item: item.binding_id)),
@@ -998,129 +1031,128 @@ def persist_legacy_notes_sync_migration(
         raise TypeError("store must be a NotesDeviceStateStore.")
     if type(plan) is not LegacyNotesSyncMigrationPlan:
         raise TypeError("plan must be a LegacyNotesSyncMigrationPlan.")
+    try:
+        with store.transaction(immediate=True) as connection:
+            return _persist_legacy_plan(connection, plan)
+    except Exception:
+        raise LegacyNotesSyncMigrationError("legacy_migration_failed") from None
+
+
+def _persist_legacy_plan(connection, plan):
+    """Insert a native plan inside the caller's existing private transaction."""
     timestamp = max(1, time.time_ns())
     root_count = 0
     binding_count = 0
-    try:
-        with store.transaction(immediate=True) as connection:
-            exists = connection.execute(
-                """
-                SELECT 1 FROM notes_sync_legacy_migrations
-                WHERE source_fingerprint = ?
-                """,
-                (plan.source_fingerprint,),
-            ).fetchone()
-            if exists is not None:
-                return LegacyNotesSyncMigrationResult(True, 0, 0, plan.report)
-            eligible_root_ids: set[str] = set()
-            for root in plan.roots:
-                existing_root = connection.execute(
-                    """
-                    SELECT note_scope_id, canonical_path, state
-                    FROM notes_sync_roots WHERE root_id = ?
-                    """,
-                    (root.root_id,),
-                ).fetchone()
-                if existing_root is None:
-                    connection.execute(
-                        """
-                        INSERT INTO notes_sync_roots (
-                            root_id, note_scope_id, logical_folder_id, canonical_path,
-                            remote_origin_id, direction, state, cursor, last_status_code,
-                            created_at, updated_at
-                        ) VALUES (?, ?, NULL, ?, NULL, ?, ?, NULL, ?, ?, ?)
-                        """,
-                        (
-                            root.root_id,
-                            root.note_scope_id,
-                            root.canonical_path,
-                            root.direction.value,
-                            root.state.value,
-                            root.last_status_code,
-                            timestamp,
-                            timestamp,
-                        ),
-                    )
-                    root_count += 1
-                    eligible_root_ids.add(root.root_id)
-                elif tuple(existing_root[:2]) != (
-                    root.note_scope_id,
-                    root.canonical_path,
-                ):
-                    raise LegacyNotesSyncMigrationError("legacy_candidate_collision")
-                elif existing_root[2] == NotesSyncRootState.PAUSED.value:
-                    eligible_root_ids.add(root.root_id)
-            for binding in plan.bindings:
-                existing_binding = connection.execute(
-                    """
-                    SELECT root_id, note_scope_id, note_id,
-                           normalized_relative_path
-                    FROM notes_sync_bindings WHERE binding_id = ?
-                    """,
-                    (binding.binding_id,),
-                ).fetchone()
-                if existing_binding is not None:
-                    if tuple(existing_binding) != (
-                        binding.root_id,
-                        binding.note_scope_id,
-                        binding.note_id,
-                        binding.normalized_relative_path,
-                    ):
-                        raise LegacyNotesSyncMigrationError(
-                            "legacy_candidate_collision"
-                        )
-                    continue
-                if binding.root_id not in eligible_root_ids:
-                    continue
-                connection.execute(
-                    """
-                    INSERT INTO notes_sync_bindings (
-                        binding_id, root_id, note_scope_id, note_id,
-                        normalized_relative_path, stable_identity_digest, state,
-                        utf8_bom, newline, final_newline, file_mode,
-                        content_digest, note_version, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        binding.binding_id,
-                        binding.root_id,
-                        binding.note_scope_id,
-                        binding.note_id,
-                        binding.normalized_relative_path,
-                        binding.stable_identity_digest,
-                        binding.state.value,
-                        int(binding.serialization.utf8_bom),
-                        binding.serialization.newline,
-                        int(binding.serialization.final_newline),
-                        binding.serialization.mode,
-                        binding.content_digest,
-                        binding.note_version,
-                        timestamp,
-                        timestamp,
-                    ),
-                )
-                binding_count += 1
+    exists = connection.execute(
+        """
+        SELECT 1 FROM notes_sync_legacy_migrations
+        WHERE source_fingerprint = ?
+        """,
+        (plan.source_fingerprint,),
+    ).fetchone()
+    if exists is not None:
+        return LegacyNotesSyncMigrationResult(True, 0, 0, plan.report)
+    eligible_root_ids: set[str] = set()
+    for root in plan.roots:
+        existing_root = connection.execute(
+            """
+            SELECT note_scope_id, canonical_path, state
+            FROM notes_sync_roots WHERE root_id = ?
+            """,
+            (root.root_id,),
+        ).fetchone()
+        if existing_root is None:
             connection.execute(
                 """
-                INSERT INTO notes_sync_legacy_migrations (
-                    migration_id, source_fingerprint, state, reason_code,
+                INSERT INTO notes_sync_roots (
+                    root_id, note_scope_id, logical_folder_id, canonical_path,
+                    remote_origin_id, direction, state, cursor, last_status_code,
                     created_at, updated_at
-                ) VALUES (?, ?, 'pending_review', ?, ?, ?)
+                ) VALUES (?, ?, NULL, ?, NULL, ?, ?, NULL, ?, ?, ?)
                 """,
                 (
-                    plan.migration_id,
-                    plan.source_fingerprint,
-                    (
-                        "migration_review_required"
-                        if plan.roots
-                        else "legacy_evidence_unusable"
-                    ),
+                    root.root_id,
+                    root.note_scope_id,
+                    root.canonical_path,
+                    root.direction.value,
+                    root.state.value,
+                    root.last_status_code,
                     timestamp,
                     timestamp,
                 ),
             )
-    except Exception:
-        raise LegacyNotesSyncMigrationError("legacy_migration_failed") from None
+            root_count += 1
+            eligible_root_ids.add(root.root_id)
+        elif tuple(existing_root[:2]) != (
+            root.note_scope_id,
+            root.canonical_path,
+        ):
+            raise LegacyNotesSyncMigrationError("legacy_candidate_collision")
+        elif existing_root[2] == NotesSyncRootState.PAUSED.value:
+            eligible_root_ids.add(root.root_id)
+    for binding in plan.bindings:
+        existing_binding = connection.execute(
+            """
+            SELECT root_id, note_scope_id, note_id,
+                   normalized_relative_path
+            FROM notes_sync_bindings WHERE binding_id = ?
+            """,
+            (binding.binding_id,),
+        ).fetchone()
+        if existing_binding is not None:
+            if tuple(existing_binding) != (
+                binding.root_id,
+                binding.note_scope_id,
+                binding.note_id,
+                binding.normalized_relative_path,
+            ):
+                raise LegacyNotesSyncMigrationError("legacy_candidate_collision")
+            continue
+        if binding.root_id not in eligible_root_ids:
+            continue
+        connection.execute(
+            """
+            INSERT INTO notes_sync_bindings (
+                binding_id, root_id, note_scope_id, note_id,
+                normalized_relative_path, stable_identity_digest, state,
+                utf8_bom, newline, final_newline, file_mode,
+                content_digest, note_version, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                binding.binding_id,
+                binding.root_id,
+                binding.note_scope_id,
+                binding.note_id,
+                binding.normalized_relative_path,
+                binding.stable_identity_digest,
+                binding.state.value,
+                int(binding.serialization.utf8_bom),
+                binding.serialization.newline,
+                int(binding.serialization.final_newline),
+                binding.serialization.mode,
+                binding.content_digest,
+                binding.note_version,
+                timestamp,
+                timestamp,
+            ),
+        )
+        binding_count += 1
+    connection.execute(
+        """
+        INSERT INTO notes_sync_legacy_migrations (
+            migration_id, source_fingerprint, state, reason_code,
+            created_at, updated_at
+        ) VALUES (?, ?, 'pending_review', ?, ?, ?)
+        """,
+        (
+            plan.migration_id,
+            plan.source_fingerprint,
+            ("migration_review_required" if plan.roots else "legacy_evidence_unusable"),
+            timestamp,
+            timestamp,
+        ),
+    )
     return LegacyNotesSyncMigrationResult(
         already_migrated=False,
         root_count=root_count,
@@ -1185,3 +1217,319 @@ __all__ = [
     "plan_legacy_notes_sync_migration",
     "snapshot_legacy_notes_sync",
 ]
+
+
+def _import_root_paths(connection, budget):
+    """Read all current root paths, regardless of state or identifier shape."""
+    budget.container(2)
+    count, width = connection.execute(
+        "SELECT count(*),coalesce(sum(length(CAST(canonical_path AS BLOB))),0) FROM notes_sync_roots"
+    ).fetchone()
+    if count > LEGACY_SNAPSHOT_EVIDENCE_LIMIT:
+        raise LegacyNotesSyncSnapshotError("legacy_snapshot_overflow")
+    budget.container(count * 3)
+    budget.reserve(width * 4)
+    return tuple(
+        row[0]
+        for row in connection.execute(
+            "SELECT canonical_path FROM notes_sync_roots ORDER BY root_id"
+        ).fetchall()
+    )
+
+
+def _import_note_owned(connection, scope, note_id, budget):
+    budget.container(3)
+    return (
+        connection.execute(
+            "SELECT 1 FROM notes_sync_bindings WHERE note_scope_id=? AND note_id=? LIMIT 1",
+            (scope, note_id),
+        ).fetchone()
+        is not None
+    )
+
+
+def _price_import_paths(paths, budget):
+    from tldw_chatbook.Backup_Recovery.admission import _price_paths
+
+    # Same native parse/resolve/parents unit, before each evidence call.
+    _price_paths(paths, budget)
+
+
+def _plan_imported_notes(
+    connection, store, budget, *, note_scope_id, file_notes_roots=(), private_paths=()
+):
+    """Review only receipt-backed unrepresented links; never activate a root."""
+    from tldw_chatbook.Backup_Recovery.mobile_runs_goal_budget import _serialization
+
+    if not isinstance(store, NotesDeviceStateStore):
+        raise TypeError("store must be a NotesDeviceStateStore")
+    validate_notes_sync_opaque_id(note_scope_id, field_name="note_scope_id")
+    # Identity-only no-op precedes the full receipt codec and note/file evidence.
+    linked = "deleted=0 AND (is_externally_synced=1 OR file_path_on_disk IS NOT NULL OR relative_file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL)"
+    budget.container(2)
+    budget.value(linked)
+    count, width = connection.execute(
+        "SELECT count(*),coalesce(sum(length(CAST(id AS BLOB))),0) FROM notes WHERE deleted=0 AND (is_externally_synced=1 OR file_path_on_disk IS NOT NULL OR relative_file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL)"
+    ).fetchone()
+    if not count:
+        return None, False
+    if count > LEGACY_SNAPSHOT_EVIDENCE_LIMIT:
+        raise LegacyNotesSyncSnapshotError("legacy_snapshot_overflow")
+    budget.container(count * 3)
+    budget.reserve(width * 4)
+    candidates = connection.execute(
+        "SELECT id FROM notes WHERE deleted=0 AND (is_externally_synced=1 OR file_path_on_disk IS NOT NULL OR relative_file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL)"
+    ).fetchall()
+    budget.container(count)
+    with store.transaction() as private:
+        unrepresented = tuple(
+            row[0]
+            for row in candidates
+            if not _import_note_owned(private, note_scope_id, row[0], budget)
+        )
+    if not unrepresented:
+        return None, False
+    budget.container(1)
+    if (
+        connection.execute(
+            "SELECT 1 FROM mobile_consolidation_batches WHERE substr(batch_key,1,4)='chat' LIMIT 1"
+        ).fetchone()
+        is None
+    ):
+        return None, False
+    from tldw_chatbook.DB.mobile_consolidation_receipts import _imported_note_ids
+
+    identities = _imported_note_ids(connection, budget)
+    budget.container(len(unrepresented))
+    pending = tuple(note for note in unrepresented if note in identities)
+    if not pending:
+        return None, False
+    with store.transaction() as private:
+        current_roots = _import_root_paths(private, budget)
+    budget.container(len(pending) * 3)
+    rows, roots, notes = [], [], []
+    # Only fixed columns of a selected, unrepresented, current linked note.
+    fields = (
+        "id",
+        "version",
+        "file_path_on_disk",
+        "relative_file_path_on_disk",
+        "sync_root_folder",
+        "last_synced_disk_file_hash",
+    )
+    budget.container(len(fields))
+    for note_id in pending:
+        budget.container(len(fields) + 2)
+        size = connection.execute(
+            "SELECT coalesce(length(CAST(id AS BLOB)),0),coalesce(length(CAST(version AS BLOB)),0),coalesce(length(CAST(file_path_on_disk AS BLOB)),0),coalesce(length(CAST(relative_file_path_on_disk AS BLOB)),0),coalesce(length(CAST(sync_root_folder AS BLOB)),0),coalesce(length(CAST(last_synced_disk_file_hash AS BLOB)),0) FROM notes WHERE id=? AND deleted=0 AND (is_externally_synced=1 OR file_path_on_disk IS NOT NULL OR relative_file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL)",
+            (note_id,),
+        ).fetchone()
+        if size is None:
+            continue
+        budget.container(len(fields) * 2)
+        budget.reserve(4 * sum(size))
+        row = connection.execute(
+            "SELECT id,version,file_path_on_disk,relative_file_path_on_disk,sync_root_folder,last_synced_disk_file_hash FROM notes WHERE id=? AND deleted=0 AND (is_externally_synced=1 OR file_path_on_disk IS NOT NULL OR relative_file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL)",
+            (note_id,),
+        ).fetchone()
+        if row is None:
+            raise LegacyNotesSyncSnapshotError("legacy_snapshot_changed")
+        if len(rows) >= LEGACY_SNAPSHOT_EVIDENCE_LIMIT:
+            raise LegacyNotesSyncSnapshotError("legacy_snapshot_overflow")
+        budget.value(row)
+        rows.append(tuple(row))
+        source_id = _opaque_id("note-source", row[0], _read_budget=budget)
+        # Native root/file probes retain their refusal and no-follow semantics.
+        budget.container(3)
+        path_inputs = tuple(value for value in row[2:5] if isinstance(value, str))
+        _price_import_paths(path_inputs, budget)
+        raw_root = _derive_row_root(row[2], row[3]) if row[4] is None else row[4]
+        budget.container(
+            len(current_roots) + len(file_notes_roots) + len(private_paths) + 1
+        )
+        _price_import_paths(
+            (raw_root, *current_roots, *file_notes_roots, *private_paths), budget
+        )
+        root = _root_evidence(
+            raw_root,
+            source_kind="row",
+            source_id=source_id,
+            sync_roots=current_roots,
+            file_notes_roots=file_notes_roots,
+            private_paths=private_paths,
+            _read_budget=budget,
+        )
+        budget.container(12)
+        _price_import_paths(path_inputs, budget)
+        identity, mode, freshness, reason = _probe_note_file(
+            root.canonical_path, row[3], row[2], _read_budget=budget
+        )
+        roots.append(root)
+        notes.append(
+            _LegacyNoteEvidence(
+                row[0],
+                row[1],
+                root.canonical_path,
+                root.reason_code,
+                row[3],
+                row[5],
+                identity,
+                mode,
+                freshness,
+                reason,
+            )
+        )
+    if not rows:
+        return None, False
+    # Native fingerprint framing over only this immutable selection, not sessions/config.
+    budget.value(rows)
+    budget.container(3)
+    budget.container(len(roots))
+    budget.container(len(notes))
+    for _ in roots:
+        budget.container(4)
+    for _ in notes:
+        budget.container(4)
+    payload = {
+        "notes": rows,
+        "roots": [
+            (
+                root.canonical_path,
+                root.root_identity_digest,
+                root.ancestor_identity_digests,
+                root.reason_code,
+            )
+            for root in roots
+        ],
+        "files": [
+            (
+                note.file_identity_digest,
+                note.file_mode,
+                note.file_freshness_digest,
+                note.file_reason_code,
+            )
+            for note in notes
+        ],
+    }
+    _serialization(payload, budget, encoded=True)
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")
+    ).hexdigest()
+    budget.container(len(roots) + len(notes) + 6)
+    snapshot = LegacyNotesSyncSnapshot(
+        note_scope_id, fingerprint, tuple(roots), tuple(notes), ()
+    )
+    # Native planner models, grouping/index containers and pairwise root comparisons.
+    budget.value(snapshot, text_copies=2)
+    budget.container(32 * (len(roots) + len(notes)) + len(roots) ** 2)
+    plan = plan_legacy_notes_sync_migration(snapshot, _read_budget=budget)
+    warning = len(plan.bindings) != len(notes)
+    if not plan.bindings:
+        return None, warning
+    budget.container(len(plan.bindings) + len(plan.roots))
+    admitted_roots = {binding.root_id for binding in plan.bindings}
+    plan = LegacyNotesSyncMigrationPlan(
+        plan.migration_id,
+        plan.source_fingerprint,
+        tuple(root for root in plan.roots if root.root_id in admitted_roots),
+        plan.bindings,
+        plan.report,
+    )
+    return plan, warning
+
+
+def _persist_imported_notes(
+    store, plan, budget, *, note_scope_id, file_notes_roots=(), private_paths=()
+):
+    """Recheck current private ownership after the canonical snapshot has closed."""
+    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+    if not isinstance(store, NotesDeviceStateStore):
+        raise TypeError("store must be a NotesDeviceStateStore")
+    if (
+        type(plan) is not LegacyNotesSyncMigrationPlan
+        or type(budget) is not _TraceReadBudget
+    ):
+        raise TypeError("native plan and read budget required")
+    budget.value(
+        plan
+    )  # Native insertion bindings/record materializations before writes.
+    with store.transaction(immediate=True) as private:
+        current_roots = _import_root_paths(private, budget)
+        for binding in plan.bindings:
+            if _import_note_owned(private, note_scope_id, binding.note_id, budget):
+                raise LegacyNotesSyncMigrationError("legacy_candidate_collision")
+            budget.container(2)
+            if (
+                private.execute(
+                    "SELECT 1 FROM notes_sync_bindings WHERE stable_identity_digest=? LIMIT 1",
+                    (binding.stable_identity_digest,),
+                ).fetchone()
+                is not None
+            ):
+                raise LegacyNotesSyncMigrationError("legacy_candidate_collision")
+        for root in plan.roots:
+            budget.container(
+                len(current_roots) + len(file_notes_roots) + len(private_paths) + 1
+            )
+            _price_import_paths(
+                (
+                    root.canonical_path,
+                    *current_roots,
+                    *file_notes_roots,
+                    *private_paths,
+                ),
+                budget,
+            )
+            current = _root_evidence(
+                root.canonical_path,
+                source_kind="row",
+                source_id=root.root_id,
+                sync_roots=current_roots,
+                file_notes_roots=file_notes_roots,
+                private_paths=private_paths,
+                _read_budget=budget,
+            )
+            if (
+                current.reason_code is not None
+                or _opaque_id(
+                    "root",
+                    note_scope_id,
+                    current.root_identity_digest,
+                    _read_budget=budget,
+                )
+                != root.root_id
+            ):
+                raise LegacyNotesSyncMigrationError("legacy_candidate_collision")
+        _persist_legacy_plan(private, plan)
+
+
+@contextmanager
+def _core_import_read(core):
+    """Borrow the actual selected Core; retire only a newly owned thread handle."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    if not isinstance(core, CharactersRAGDB):
+        raise LegacyNotesSyncSnapshotError("canonical_owner_unavailable")
+    before = getattr(core._local, "conn", None)
+    try:
+        with core.transaction() as cursor:
+            yield cursor.connection
+    finally:
+        current = getattr(core._local, "conn", None)
+        if current is not None and current is not before:
+            core.close_connection()
+            if getattr(core._local, "conn", None) is current:
+                raise LegacyNotesSyncSnapshotError("canonical_reader_not_retired")
+
+
+def _canonical_import_present(core):
+    with _core_import_read(core) as connection:
+        return (
+            connection.execute(
+                "SELECT 1 FROM mobile_consolidation_batches WHERE substr(batch_key,1,4)='chat' LIMIT 1"
+            ).fetchone()
+            is not None
+        )

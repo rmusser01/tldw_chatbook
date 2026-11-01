@@ -1669,3 +1669,17 @@ or failed predicate evaluation remain required or refused. Archive verification
 must reject omitted required references using the same qualified predicate; an
 archive-provided assertion of unused material grants no exception. Other credential
 kinds, acknowledgement policy, encryption and admission remain unchanged.
+
+
+### Task8 R136: native device-local Notes lock metadata
+
+The fixed `user_data_dir(config)/notes_sync_locks` directory belongs to the existing excluded Notes device state. Native coordinator construction was observed to make Complete discovery fail before PRESENT-marker import (27084). Exclusion requires complete bounded native no-follow metadata enumeration: exact private0700 root, only direct children with64 lowercase hex plus `.lock`, empty0600 UID-owned single-link regular files, stable pinned root and child identities. Absent/empty/native retained locks are valid; unknown, nested, linked, nonempty, broad-mode, changed or unobservable content stays blocking. No content, portable owner, import destination, active lease, sync grant, marker change or cleanup is introduced. Existing native inventory limits/current allowance/custody apply; no new scanner, allowance or scope. Precode identities are in `task-8-public-r136-precode.json`; actual acquire/release closure and positive/refusal controls precede another PRESENT App flow. R129/R130 remain separately pending.
+
+
+### R142 — preserved installed sources at native SafetyCopy capture
+
+The actual R141 full replacement reached native stage and then refused SafetyCopy capture because the selected profile correctly does not own bundled artwork. Keep the original profile-containment route first and unchanged. Only an included preserved builtin outside those roots may freshly authenticate the committed mobile source, acquired archive, prepared receipt, unchanged installed member closure and all current witnesses. Its current held native namespace may cover the exact package or a broader directory; pin and reopen that current root, retain all profile checks for other sources, and grant no profile binding or agent permission. All three existing original-source checks remain fresh.
+
+One distinct original ordinary16MiB allowance is issued after actual stage retirement for this SafetyCopy source-validation phase, forwarded unchanged through the fixed callbacks. It covers the new journal, selector, geometry and witness representations; unchanged generic archive/copy/encryption/SQLite work retains its original independent limits and accounting domain. Track one descriptor bucket on the actual maintenance session before new opens, borrow it only under exact current custody, reject failed buckets before opens, and retain native quarantine on ambiguous close. Reject self/physical journal identity before nested source SH; no new lock protocol, cache, role, namespace or allowance reset.
+
+The authoritative R142 snapshot and task-8-public-r142-precode.json precede the reviewed five-source implementation. Finite genuine source/namespace/default/refusal/custody controls and a component report precede any new full integration. Retained98188 is not continued. Public2GiB/native16 remain unchanged; R129/R130 remain separately pending and no restored observer or early-pricing behavior is authorized here.

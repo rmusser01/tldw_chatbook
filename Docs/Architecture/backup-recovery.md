@@ -7,7 +7,7 @@ This document describes the ADR-126 complete local backup and restore subsystem:
 | Concern | File | Key symbols |
 | --- | --- | --- |
 | Service | `Backup_Recovery/recovery_service.py` | `RecoveryService` — one worker composing all engines: backup/restore previews, inspection, extraction, rollback, recovery-copies, profiles |
-| CLI + startup unlock | `Backup_Recovery/launcher.py` | `python -m tldw_chatbook.Backup_Recovery` (`inspect / extract / restore / recover / profiles / copies`); `startup_preflight` / `startup_unlock` (master-password prompt, rekey, reset); `minimal_recovery` host |
+| CLI + startup unlock | `Backup_Recovery/launcher.py` | `python -m tldw_chatbook.Backup_Recovery` (`inspect / extract / restore / recover / profiles / copies / consolidate-mobile`); `startup_preflight` / `startup_unlock` (master-password prompt, rekey, reset); `minimal_recovery` host |
 | Admission | `Backup_Recovery/storage_admission.py`, `admission.py` | `admit_startup()` (called before runtime imports — the fence), `MaintenanceSession`, capture scopes/leases; nested admission forbidden |
 | Participants | `Backup_Recovery/participants.py` | `run_finite_local_worker`, installed persistence participants, exact-repository-type → owner-id mapping, participant-coverage requirement |
 | Inventory & groups | `Backup_Recovery/inventory.py`, `data_groups.py` | `discover` (no guessed targets on config failure), the 16 `BACKUP_GROUPS` and owner→group map |
@@ -43,7 +43,7 @@ Interrupted operations recover through `recover <operation-id> --finish|--rollba
 
 ## Startup fence and unlock
 
-`admit_startup()` runs before runtime/config imports (literally the first lines of `app.py` and `Web_Server/serve.py`, and several package `__init__`s — `Web_Server`, `RAG_Search`, `TTS`); enrollment failure is a hard `SystemExit("Recovery required: …")`. When config encryption is enabled with a verifier, `startup_unlock` prompts pre-TUI: a wrong-but-readable password offers rekey; an empty one resets encrypted config values (keys removed; chats/notes untouched). Served children refuse the unlock with a plain-language error rather than hanging. Non-unlock recovery reasons get the minimal recovery host. A recovery restart (app → CLI handoff) checks no running operation and no unsaved editors, quits guarded, and spawns a fresh process into the minimal recovery host.
+`admit_startup()` runs before runtime/config imports in `app.py`, `config.py`, `Web_Server/serve.py`, and the `Web_Server` and `RAG_Search` package initializers. Importing the `TTS` package is inert; its `__getattr__` calls the same fence before resolving a requested runtime export. In these entry paths, enrollment failure is a hard `SystemExit("Recovery required: …")`. When config encryption is enabled with a verifier, `startup_unlock` prompts pre-TUI: a wrong-but-readable password offers rekey; an empty one resets encrypted config values (keys removed; chats/notes untouched). Served children refuse the unlock with a plain-language error rather than hanging. Non-unlock recovery reasons get the minimal recovery host. A recovery restart (app → CLI handoff) checks no running operation and no unsaved editors, quits guarded, and spawns a fresh process into the minimal recovery host.
 
 ## Failure behaviors and boundaries
 
@@ -84,8 +84,11 @@ schema/count/identity/dependency metadata and capture/rollback scope. The read-o
 private SQLite role uses native checked snapshots, exact catalogs and bounded
 validation; it never constructs or reconciles a live legacy store. Unknown
 content, unsupported schemas, missing references and unsafe aliases block review.
-External note/dictionary/persona asset references without a qualified legacy
-owner binding also block; they are never discarded or guessed from path strings.
+Physical dictionary/persona asset dependencies without a qualified legacy owner
+binding block; they are never discarded or guessed from path strings. Historical
+note file locators can remain admitted database metadata. Capturing those rows
+does not capture the external note files or grant active Notes Sync authority;
+actual startup candidate behavior requires separate qualification.
 Multiple known configs sharing one physical source require destination review.
 `identity_conflicts` lists exact overlapping destination primary-key tuples;
 collisions require explicit mapping and never establish equivalent content.
@@ -133,6 +136,91 @@ stamps, and continues rejecting unknown catalogs. This installs receipts and
 quarantine consumers; the preview still performs no import or cutover.
 
 
+The Subscription database owner separates inert class/schema imports from its
+actual threshold settings read. That read retains the native configuration
+getter and admission; recovery does not need to initialize application settings
+merely to import the owner.
+
+## Local mobile consolidation service and CLI (ADR-244 R115–R121)
+
+`RecoveryService.preview_mobile_consolidation(source_config, target_config)` and
+`consolidate-mobile --preview --source-config … --target-config …` remain
+observational. `start_mobile_consolidation(..., destination_confirmed=True,
+rollback_password=...)` and the mutually exclusive CLI `--apply` enter the actual
+local maintenance/capture/import path. The CLI obtains a fresh preview, prints
+its fixed metadata, requires typing `consolidate`, then prompts for the encrypted
+rollback password. This is a local operator flow; no HTTP migration endpoint or
+mobile server startup cutover is installed by these methods.
+
+Required canonical owners must already be capturable. For a new canonical
+configuration, ordinary application startup with `--config PATH`, followed by
+physical retirement, initializes the installed Core/Workspace owners before a
+fresh preview. Configured storage parents must be valid and admitted. Start does
+not silently initialize required targets from an earlier absence preview, create
+legacy source databases, or waive Complete inventory. Optional canonical Runs
+absence uses its installed journaled creation path. Missing required captures
+refuse before preparation. Credential review failures remain blocking; an offline
+profile selected before startup is a separate supported configuration.
+
+`mobile_enrollment._start_session` keeps the complete initial observational
+inventory, native namespace registration, all-overlap plus unbound exclusion,
+strict current review, compatible profile publication, and strict postpublication
+review in that order. New bindings cover actual per-selector native roots and
+proved complete containers; existing bindings are not broadened. Selector bytes,
+physical source and destination witnesses, the entire candidate cohort and user
+scope must remain equal to the review. Changed scope returns a fresh-review
+refusal before preparation. Native PreviewScope and held DiscoveryScope carry
+pre-admission accounting and physical custody through their installed readers;
+ordinary preview does not acquire maintenance or captured-input authority.
+
+The public path finishes inside the same actual native coordinator frame.
+`mobile_committed` binds current native owner receipts, original source/capture
+references, canonical targets and exact pending publication. No-data completion
+uses real native target ownership and retirement without fabricated import
+receipts. The original source claim and stable flock remain held until the durable
+terminal and exact witnessed pending retirement finish. A durable terminal with
+interrupted pointer retirement still requires explicit recovery. Successful
+owner transactions alone do not establish public completion.
+
+`require_mobile_cutover(source_dir, CanonicalConsoleStores(...))` is an
+observational ordinary-storage check. It requires the exact committed claim,
+retained evidence, owner completion records and physical target continuity.
+After a legitimate installed configuration-owner save, it accepts only a current
+persisted native binding and unchanged source routes, stores and reviewed
+per-selector candidate membership. Raw edits, new candidates, redirects,
+substituted ancestors or changes during the check refuse. This postterminal
+observer does not relax pending/import/finish/rollback selector checks or grant
+any owner write authority.
+
+`start_recovery(operation_id, action=...)` and CLI `recover ... --finish` resume
+only the selected existing operation and direction. A missing pending pointer is
+admitted only for qualified committed-terminal reconciliation. Pre-cutover
+`--rollback` authenticates the original canonical archive with the supplied
+password and restores its coherent SQLite snapshot plus authenticated metadata
+and absence state through native owners. It retains displaced current objects;
+it does not reconstruct uncaptured original WAL bytes/inodes or change legacy
+source/capture bytes. Durable intent/observation/stage evidence reconciles rename
+gaps. Rollback continuation keeps strict physical/selector/claim bindings while
+the original source fingerprint remains an operation reference, not a claim of a
+fresh live semantic review. A completed apply is not authorization for later
+replacement rollback.
+
+Materialization exhaustion uses the fixed `mobile_materialization_limit` message,
+never arbitrary exception bodies. Preserve source and recovery files and inspect
+the actual available recovery action. A failed first call and a later successful
+explicit continuation are separate outcomes. Fresh standalone processes now
+qualify first-call no-data CLI completion and cold config reconnect, plus populated
+unbound enrollment with the original allowances unchanged after service close.
+Their real HOME/XDG environment remains intact; historical pytest epochs retain
+their separate sandbox scope. Ordinary same-target history/Goal/Discard consumers,
+a mounted new manual turn, absent/present-marker Notes startup and full native
+included-artwork restoration also have targeted evidence, detailed below.
+Imported-history holds remain enforced throughout. Targeted integrations now
+qualify the restored-generation observer and recovery under the current accounting.
+Final delivery and original-BASE review remain before canonical mobile API wiring
+can proceed.
+
+
 ## Native mobile consolidation admission (ADR-244/125/126)
 
 `MaintenanceSession.prepare_mobile_consolidation(journal, *, source_config,
@@ -178,12 +266,12 @@ of retirement. After process interruption the same opened owner can be reacquire
 under native exclusion (and the exact AgentRuns lock) before new owner progress.
 Neither journal labels nor retirement establish that an import batch committed.
 
-RecoveryService reports this typed mode as `recovery_required` with no finish,
-rollback or abort action. Durable pending records override cached worker success
-and continue fencing startup, including corrupt or mismatched journal/pending
-records. The private lifecycle below supplies provenance, source claims and native captures.
-The importer must add complete mapping/reference and byte closure, native owner
-batch receipts, validated terminal recovery and cutover before any public apply or terminal fence-release route is exposed.
+RecoveryService derives the available mobile recovery actions from the actual
+native journal and pending state. Durable pending records override cached worker
+success and continue fencing startup, including corrupt or mismatched
+journal/pending records. Public finish and pre-cutover rollback compose the
+private provenance, captures, owner receipts and terminal checks described above;
+a private owner transaction or retirement record alone never releases the fence.
 
 Before native owner construction, `mobile_mode_intended` records an exact existing
 owned regular file witness, and `mobile_mode_observed` accepts only the same
@@ -228,7 +316,10 @@ Canvas and HTTP protocols.
 approved_scope, *, destination, password, cancel)` supplies a concrete private
 lifecycle to the fixed importer. `_resume_captured_mobile` reconstructs the
 original checked review from typed records and revalidates it under fresh native
-exclusion. Neither API exposes completion, cutover or a terminal recovery action.
+exclusion. The captured object's `consolidate(password=..., cancel=...)` now runs
+completion in that same native lifetime; the public service owns the local entry
+and recovery actions. Neither a captured object nor caller-supplied records grant
+ordinary write access before durable terminal publication and pointer retirement.
 
 The immutable preview includes every reviewed candidate selector, content digest
 and strict physical witness. Native preparation rejects a changed candidate set,
@@ -469,10 +560,10 @@ lifetimes. Evals' private passive metadata path recognizes only the actual issue
 mobile discovery scope for current `recovery_pending`; ordinary startup and
 profile-launch consumers still refuse that fence.
 
-Content and normalized trace planning compose the private handlers described below.
-Sync, AgentRuns and integrated plan validation remain required pending handlers. Planning creates no imported rows, authority
-holds, batch receipts or published history and confers no public apply/cutover
-success. The complete composed plan must be reviewed before owner writes.
+Content, normalized trace, Sync and AgentRuns planning compose the fixed native
+plan consumed by `mobile_native_operation`. Planning creates no imported rows,
+authority holds, batch receipts or published history and confers no public
+apply/cutover success. The complete composed plan is checked before owner writes.
 
 ### Private content graph planning (C1)
 
@@ -939,10 +1030,92 @@ filtering (see `Backup_Recovery/mobile_native_operation.py`,
 `DB/mobile_consolidation_receipts.py`, `DB/mobile_imported_run_log.py` and
 `DB/mobile_imported_goal_privacy.py`).
 
-Public B final verification, cutover, completion and pending retirement remain
-pending, as does ordinary RunLog/consumer E2E on the same produced target. Full
-Task8/API/mobile and hardware qualification are not complete; this owner delivery
-does not activate public migration or cutover.
+A standalone Workspace fault check before R130 exited after its actual transaction
+committed and before owner retirement. A fresh process resumed the original
+captures, skipped all committed Workspace insertion, and verified exact receipts,
+rows, the nonempty binding/exclusion and its unreviewed authority hold. That
+historical private preterminal proof does not establish current-code recovery,
+public completion or graceful teardown of the deliberately terminated process.
+Fresh private recovery under R130 currently exhausts the unchanged native 16 MiB
+allowance at final receipt materialization; its early terminal check returns
+successfully. The failed operation remains preserved. Both production migration
+entry points use the public coupled pair. The fresh R145 public Workspace proof
+now exits after the same durable commit and finishes the same operation in a new
+process, preserving exact receipts, Workspace rows, exclusions, holds and captures
+without replay. It does not establish private-path parity or graceful crash teardown.
+
+The local public coordinator now composes terminal verification and pending
+retirement around these native owners, as described above. The current public
+accounting envelope is 4 GiB, with the original native 16 MiB sub-bound.
+Explicit human approval resolved the historical R129/R130 authorization blockers.
+The direct-restored-generation observer and early terminal representation pricing
+are implemented and pass their focused public integration checks. R146 explicitly
+changes the complete ordinary cutover coordinator to one nonrenewable 64 MiB
+allowance (512 bytes reserved at issuance); generic trace/Notes and private native
+16 MiB limits remain unchanged. Late charges, source and execution holds remain. R131 readonly builtin preservation and R134 native capture-source
+namespace composition received specific human approval. Their native component
+checks pass. R138 factors duplicate fixed-mobile verification with native
+component and generic-default controls. R139 adds a local reusable buffer for
+explicitly budgeted native digest reads; R141 reuses only that byte workspace
+inside one native capture scope, with unchanged per-file verification and limits.
+The fresh R141 integration completes ordinary and held later preview, all three
+source-verification phases, and native source-scope retirement. It reaches the
+staging-entry sentinel exactly once with no retained resources, current capture
+scope or SQLite staging directory, and no nested allowance. Target main/WAL/shm
+identity, metadata and bytes remain exact from stage entry through final cleanup.
+A separate full integration establishes actual `stage_restore`, including native
+preserved-builtin candidate and dependency validation. Its first attempt then
+stopped at the prepared source-binding guard before SafetyCopy capture. R142 now
+keeps original profile containment first and admits only authenticated unchanged
+preserve-only builtin members through an existing held native covering namespace
+(`mobile_builtin_preservation._mobile_safety_members`). Each of the three native
+checks freshly authenticates the source journal, archive, current binding and
+member witnesses on one original 16 MiB validation allowance.
+
+R143 holds each member parent through its current-name reopen within that one
+check; every leaf stat and expected manifest frame remains. R144 checks each
+distinct existing write Path once per check while retaining all logical owner
+mappings and restore effects. These local representations retain native exclusion
+and later source/target checks; they do not promise global filesystem atomicity.
+Genuine components now complete all three checks with exact and broader,
+unprefixed, multi-root namespaces, retire native resources and preserve measured
+main/WAL/shm facts. A separate full native integration also completes actual
+SafetyCopy capture, authentication, publication and restoration. The new verified
+SafetyCopy retains the deliberate post-import note edit while the restored target
+returns to its captured contents; final source/package checks and guards pass.
+That integration preceded R129 and observed the ordinary mobile gate refuse the
+restored generation with native `RecoveryRequired("mobile_object_changed")`.
+R129 observer support now passes genuine postrestore checks, ordinary data edits
+and native selected-theme saves with current paired fingerprints and unchanged
+DB generations. Real source-claim, activation, manifest, plan, inode, schema and
+pending tampering refuses, and restored evidence passes again. The fresh included
+artwork case also passes its restored gate after actual SafetyCopy/publication. Earlier parse
+failures, the staging-entry sentinel and retained prepared failures remain
+separate evidence. Source/package preservation and the
+expected native capture-source namespace addition remain recorded; earlier target
+hash differences include the fixture's deliberate later note edit and are not
+evidence of a preview write. R135 ephemeral scratch composition received explicit
+human approval and now passes native identity, worker, cancellation and process
+controls plus a real mounted App manual turn on the public-produced target.
+Targeted public-produced-target evidence also covers ordinary
+RunLog/command/trace APIs, native Goal privacy (including stored request-body
+erasure) with retained accounting/holds through reopen, and genuine Console
+hydration/controller Discard with no provider dispatch and unchanged provenance.
+The separate mounted qualification uses the real New Chat/Send path, native
+shutdown and ordinary reopen with one scripted generation and no tool dispatch.
+Imported identity-scoped holds and accounting remain unchanged. It uses the
+native character-estimate tokenizer fallback, not real-provider or hardware proof.
+The absent-marker Notes/Personas operator flow now proves a real App rename,
+public import and two cold App starts on the same target. The default assistant
+remains ID 1 and imported linked notes appear as paused candidates requiring
+migration review, without activating file sync or changing external files.
+The present-marker flow also passes after the R137 receipt-backed extension:
+new unrepresented imported links become disjoint paused candidates while the
+existing marker, roots, bindings and reviews are preserved. Two cold App starts
+retain the same mapped ID/version/digest and default character, report no added
+review warning, and physically close all seven observed Notes handles, including
+the callback's separate store. Full Task8 completion, API mobile wiring and
+hardware qualification remain separate unfinished gates.
 
 Native-owner FIX1 retains every actual runtime directory iterator on
 `mobile_imported_run_log._PinnedHistory` before enumeration. Iterator retirement
@@ -960,3 +1133,8 @@ Chat transaction executes these transitions and verifies the original final rows
 before committing their existing receipt; temporary attached states never enter
 receipt provenance. Empty detached graphs remain supported and unproved originals
 retain their precise pre-effect refusal under ADR-244 R109.
+
+Cold native Media construction imports the pure `Chunking._template_conversion` migration helper. The Chunking package resolves its existing runtime exports lazily so this pure import does not accidentally acquire configuration startup admission. Actual runtime export access retains the installed engine/configuration defaults and gates.
+
+
+R146 changes only the complete ordinary `require_mobile_cutover` coordinator envelope from16MiB to64MiB, with512 reserved at issuance through a private no-argument issuer. Restored and original-generation branches share that same single nonrenewable allowance and retain every journal/plan/manifest/physical/schema/selector/activation/capture/history recheck. This is an explicit bound change, not a new native child or storage permission. Default trace/Notes/private native16MiB and public4GiB/coupled-native16MiB remain. B1's first restored gate exhausted its original16 during native plan loading; its successful preceding restoration/SafetyCopy facts remain separate from the later R146 positive gate. Fresh R146 integration passes both ordinary restoration and included-artwork restoration; the latter leaves 2,718,945 units after its full gate. This measured case is not a whole-engine/RSS or universal-fit guarantee.

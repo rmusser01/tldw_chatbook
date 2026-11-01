@@ -12,6 +12,8 @@ from pathlib import Path
 from tldw_chatbook.DB.sql_validation import escape_identifier
 
 from .file_inventory import _inventory_root
+from .mobile_preview_budget import current as _budget_scope
+from .mobile_preview_budget import path_cost, reserve
 from .profile_paths import lexical_path
 
 
@@ -32,7 +34,19 @@ LEGACY_STORES = (
 )
 
 
+def require_mobile_cutover(source_dir: Path, stores: CanonicalConsoleStores) -> None:
+    """Require observed completed migration to these exact canonical stores.
+
+    This check creates no database, imports no history and grants no execution
+    authority. Ordinary storage admission and imported authority holds still apply.
+    """
+    from .mobile_consolidation_recovery import _require_mobile_cutover
+
+    _require_mobile_cutover(source_dir, stores)
+
+
 def _resource_identity(path: Path) -> tuple:
+    reserve(512 + path_cost(path, copies=2))
     path = lexical_path(path)
     for ancestor in (path, *path.parents):
         if ancestor.is_symlink():
@@ -64,7 +78,63 @@ def _refuse_witness_aliases(witnesses) -> None:
                 raise ValueError("mobile_unsafe_alias")
 
 
+def _digest_json_size(value, budget):
+    """Bound the unchanged native JSON representation before it is encoded."""
+    if type(value) is str:
+        size = 2
+        for character in value:
+            code = ord(character)
+            size += (
+                2
+                if code in (8, 9, 10, 12, 13, 34, 92)
+                else 6
+                if code < 32 or 127 <= code <= 65535
+                else 12
+                if code > 65535
+                else 1
+            )
+        return size
+    if value is None:
+        return 4
+    if type(value) is bool:
+        return 5
+    if type(value) is int:
+        return 2 + value.bit_length() * 30103 // 100000
+    if type(value) is float:
+        return 32
+    if type(value) in (tuple, list):
+        budget.reserve(128 + 32 * len(value))
+        return (
+            2 + 2 * len(value) + sum(_digest_json_size(item, budget) for item in value)
+        )
+    if type(value) is dict:
+        # Native sort_keys creates its own key/entry references. No payload text
+        # is cloned while measuring this already admitted native evidence tree.
+        budget.reserve(256 + 96 * len(value))
+        return (
+            2
+            + 4 * len(value)
+            + sum(
+                _digest_json_size(key, budget)
+                + (0 if type(key) is str else 2)
+                + _digest_json_size(item, budget)
+                for key, item in value.items()
+            )
+        )
+    if type(value) is bytes:
+        budget.reserve(256 + 4 * (4 * len(value) + 3))
+        return 8 * len(value) + 8
+    raise ValueError("mobile_digest_value_unbounded")
+
+
 def _digest(value) -> str:
+    scope = _budget_scope()
+    if scope is not None:
+        scope.read_budget.reserve(2048)
+        size = _digest_json_size(value, scope.read_budget)
+        # ensure_ascii=True is the existing codec default: its output uses only
+        # ASCII, bounded conservatively as Unicode plus its UTF-8 byte encoding.
+        scope.read_budget.reserve(512 + 5 * size)
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, default=str).encode()
     ).hexdigest()
@@ -72,6 +142,13 @@ def _digest(value) -> str:
 
 def _sqlite_row_digest(values) -> str:
     """Bind SQLite storage types as well as values in reviewed source content."""
+    scope = _budget_scope()
+    if scope is not None:
+        scope.read_budget.container(len(values))
+        for value in values:
+            scope.read_budget.reserve(
+                256 + (8 * len(value) if isinstance(value, bytes) else 0)
+            )
     encoded = []
     for value in values:
         if value is None:
@@ -160,30 +237,32 @@ def _adapters():
     return {a.owner_id: a for a in (*core_adapters(), *recovery_adapters())}
 
 
-def _inspect_store(path, adapter, *, external_references=True):
+def _inspect_store(path, adapter, *, external_references=True, _read_budget=None):
     """Inspect only an exact installed catalog, retaining IDs and counts only."""
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
-    from .sqlite_validation import _catalog, _check, _restrict_connection, _version
+    from .mobile_preview_budget import pragma_cost, scalar_cost, table_cost
+    from .sqlite_validation import _check_details, _restrict_connection
+
+    scope = _budget_scope()
+    if scope is not None and _read_budget is not scope.read_budget:
+        raise ValueError("mobile_preview_budget_changed")
+    reserve(4096)
 
     policy = adapter.schema_policy()
     with closing(
         connect_private_sqlite("recovery.mobile.preview", path, read_only=True)
     ) as connection:
         restrictions = _restrict_connection(connection)
-        catalog = _catalog(connection)
-        sql = tuple(row[3] for row in catalog if row[3] is not None)
-        matches = tuple(
-            version for version, schema in policy.schema_sql if schema == sql
+        issues, version, details = _check_details(
+            connection, adapter, policy, restrictions
         )
-        if not matches:
-            raise ValueError("unsupported_schema")
-        version = _version(connection, adapter.owner_id)
-        if version not in matches:
-            raise ValueError("unsupported_schema_version")
-        issues, version = _check(connection, adapter, policy, restrictions)
         if issues:
             raise ValueError(issues[0])
+        catalog, metadata = details
+        reserve(512 + 128 * (len(catalog) + len(metadata)))
+        sql = tuple(row[3] for row in catalog if row[3] is not None)
+        column_rows = {row[0]: row[1] for row in metadata if len(row) == 3}
         counts, identities, edges, derived = [], {}, [], []
         content_digest = hashlib.sha256()
         # Names are admitted by exact catalog equality before identifier quoting.
@@ -194,19 +273,27 @@ def _inspect_store(path, adapter, *, external_references=True):
             if ddl and ddl.startswith("CREATE VIRTUAL TABLE")
         }
         for name in tables:
+            reserve(512 + 16 * len(name))
             if name == "sqlite_sequence" or any(
                 name == root or name.startswith(root + "_") for root in fts
             ):
                 derived.append(name)
                 continue
             quoted = escape_identifier(name)
+            scalar_cost(connection)
             count = connection.execute(f"SELECT count(*) FROM {quoted}").fetchone()[0]
             if count > 100_000:
                 raise ValueError("mobile_inventory_limit")
             counts.append((name, count))
-            columns = connection.execute(f"PRAGMA table_xinfo({quoted})").fetchall()
+            columns = column_rows[name]
+            reserve(128 + 96 * len(columns))
             keys = [row[1] for row in sorted(columns, key=lambda row: row[5]) if row[5]]
             if keys:
+                if count:
+                    table_cost(connection, name, keys)
+                else:
+                    scalar_cost(connection)
+                reserve(256 + 32 * count)
                 selection = ",".join(escape_identifier(key) for key in keys)
                 values = connection.execute(
                     f"SELECT {selection} FROM {quoted} ORDER BY {selection}"
@@ -220,11 +307,17 @@ def _inspect_store(path, adapter, *, external_references=True):
                 else ""
             )
             content_digest.update(name.encode())
+            if count:
+                table_cost(connection, name, tuple(row[1] for row in columns))
+            else:
+                scalar_cost(connection)
             for values in connection.execute(f"SELECT * FROM {quoted}" + order):
                 content_digest.update(_sqlite_row_digest(values).encode())
+            pragma_cost(connection, "foreign_key_list", name)
             for row in connection.execute(f"PRAGMA foreign_key_list({quoted})"):
                 edges.append((name, row[3], row[2], row[4]))
         if path.name == "runs.db":
+            table_cost(connection, "agent_definitions", ("name",))
             identities["agent_definitions.name"] = tuple(
                 tuple(row)
                 for row in connection.execute("SELECT name FROM agent_definitions")
@@ -236,6 +329,7 @@ def _inspect_store(path, adapter, *, external_references=True):
                 "SELECT 1 FROM persona_visual_assets LIMIT 1",
                 "SELECT 1 FROM visual_identity_assets LIMIT 1",
             ):
+                scalar_cost(connection)
                 if connection.execute(query).fetchone() is not None:
                     raise ValueError("mobile_missing_file_dependency")
         # Cross-store/soft references do not appear in SQLite foreign_key_check.
@@ -243,15 +337,12 @@ def _inspect_store(path, adapter, *, external_references=True):
         for name, columns in _SOFT_REFERENCES.get(path.name, {}).items():
             if name not in tables:
                 continue
-            present = {
-                row[1]
-                for row in connection.execute(
-                    f"PRAGMA table_xinfo({escape_identifier(name)})"
-                )
-            }
+            reserve(128 + 32 * len(column_rows[name]))
+            present = {row[1] for row in column_rows[name]}
             for column, target_store, target_table, target_column in columns:
                 if column not in present:
                     continue
+                table_cost(connection, name, (column,))
                 rows = connection.execute(
                     f"SELECT DISTINCT {escape_identifier(column)} FROM {escape_identifier(name)} "
                     f"WHERE {escape_identifier(column)} IS NOT NULL"
@@ -298,13 +389,24 @@ _SOFT_REFERENCES = {
 }
 
 
-def _path_witnesses(paths):
+def _path_witnesses(paths, *, _budget=None):
     """Strict ancestor/object evidence; creation or replacement needs a journal transition."""
     result = []
     for path in paths:
+        if _budget is not None:
+            _budget.reserve(2048)
+            size = sum(len(part) + 1 for part in path.parts)
+            _budget.reserve(16 * size + 128 * len(path.parts))
         path = lexical_path(path)
         chain = []
-        for ancestor in reversed((path, *path.parents)):
+        # Construct each actual ancestor only after its own bounded admission.
+        # The root-to-leaf order is the same as reversed((path, *path.parents)).
+        for index in range(1, len(path.parts) + 1):
+            if _budget is not None:
+                _budget.reserve(256)
+                size = sum(len(path.parts[offset]) + 1 for offset in range(index))
+                _budget.reserve(16 * size + 16 * index)
+            ancestor = Path(*path.parts[:index])
             try:
                 info = ancestor.lstat()
                 witness = (info.st_dev, info.st_ino, info.st_mode)
@@ -316,16 +418,26 @@ def _path_witnesses(paths):
 
 
 def _destination_witnesses(destination):
-    return _path_witnesses(destination.paths)
+    scope = _budget_scope()
+    return _path_witnesses(
+        destination.paths, _budget=scope.read_budget if scope else None
+    )
 
 
-def _selector_observation(path):
+def _selector_observation(path, *, _budget=None, _custody=None):
     from .bootstrap import _fingerprint
 
+    if _budget is not None:
+        _budget.reserve(8192)
+        _budget.reserve(64 * sum(len(part) + 1 for part in path.parts))
     _resource_identity(path)
-    before = _path_witnesses((path,))[0][1]
-    fingerprint = _fingerprint(path) if before[-1][2] is not None else None
-    if _path_witnesses((path,))[0][1] != before:
+    before = _path_witnesses((path,), _budget=_budget)[0][1]
+    fingerprint = (
+        _fingerprint(path, _budget=_budget, _custody=_custody)
+        if before[-1][2] is not None
+        else None
+    )
+    if _path_witnesses((path,), _budget=_budget)[0][1] != before:
         raise ValueError("mobile_selector_changed")
     return fingerprint, before
 
@@ -363,6 +475,8 @@ def _sqlite_sidecars(path):
 
 
 def _destination_sidecars(destination):
+    for main in destination.paths:
+        reserve(1024 + path_cost(main, copies=8))
     paths = tuple(
         path
         for main in destination.paths
@@ -389,6 +503,12 @@ def _preview(
     _run_names=None,
     _read_budget=None,
 ):
+    native = _budget_scope()
+    if native is not None:
+        if _read_budget is not None and _read_budget is not native.read_budget:
+            raise ValueError("mobile_preview_budget_changed")
+        _read_budget = native.read_budget
+    reserve(8192)
     source_dir = lexical_path(source_dir)
     issues, schemas, counts, mappings, dependencies, derived, scope = (
         set(),
@@ -462,8 +582,18 @@ def _preview(
         )
         if lock.status not in {"unused", "included"}:
             issues.add("mobile_unsafe_source")
-        for path in source_dir.iterdir():
-            if path.name not in known:
+        if native is not None:
+            from . import bootstrap
+            from .native_files import pinned_directory
+
+            with pinned_directory(source_dir, _custody=native.custody) as parent:
+                names = bootstrap._bounded_names(
+                    parent, 100_000, _read_budget, native.custody
+                )
+        else:
+            names = (path.name for path in source_dir.iterdir())
+        for name in names:
+            if name not in known:
                 issues.add("mobile_unknown_source_content")
                 break
         for leaf, owner in LEGACY_STORES:
@@ -482,9 +612,12 @@ def _preview(
                 continue
             try:
                 version, schema, rows, keys, edges, indexes, refs, content_hash = (
-                    _inspect_store(path, adapters[owner])
+                    _inspect_store(path, adapters[owner], _read_budget=_read_budget)
                 )
                 schemas.append((leaf, version, schema))
+                reserve(
+                    1024 + 128 * (len(rows) + len(keys) + len(edges) + len(indexes))
+                )
                 counts.extend((leaf, table, count) for table, count in rows)
                 mappings.extend(
                     (leaf, table, ids) for table, ids in keys.items() if ids
@@ -594,6 +727,7 @@ def _preview(
                 target_keys = target.get(
                     target_table + "." + target_column, target.get(target_table, ())
                 )
+                reserve(128 + 32 * len(target_keys))
                 available = set(target_keys)
                 if any((value,) not in available for value in values):
                     issues.add(
@@ -607,12 +741,16 @@ def _preview(
                     continue
                 try:
                     target_keys = _inspect_store(
-                        path, adapters[owner], external_references=False
+                        path,
+                        adapters[owner],
+                        external_references=False,
+                        _read_budget=_read_budget,
                     )[3]
                 except (OSError, ValueError, sqlite3.Error):
                     issues.add("mobile_destination_unavailable")
                     continue
                 for table, keys in identities.get(leaf, {}).items():
+                    reserve(256 + 64 * (len(keys) + len(target_keys.get(table, ()))))
                     available = set(target_keys.get(table, ()))
                     overlap = tuple(row for row in keys if row in available)
                     if overlap:
@@ -732,7 +870,11 @@ def _referenced_files(
 
 
 def _preview_selected_mobile(
-    source_config: Path, target_config: Path, *, review_destination=True
+    source_config: Path,
+    target_config: Path,
+    *,
+    review_destination=True,
+    _read_budget=None,
 ) -> MobileConsolidationPreview:
     """Review admitted local config selectors and all known shared-source candidates."""
     from dataclasses import replace
@@ -741,14 +883,35 @@ def _preview_selected_mobile(
     from .inventory import read_profile_config
     from .profile_paths import canonical_console_paths, legacy_mobile_dir
 
+    native = _budget_scope()
+    if _read_budget is not None and (
+        native is None or native.read_budget is not _read_budget
+    ):
+        raise ValueError("mobile_preview_budget_changed")
+    custody = native.custody if native else None
+    reserve(4096)
+
     source_config, target_config = map(lexical_path, (source_config, target_config))
-    selectors = _selectors((source_config, target_config), include_known_profiles=True)
-    observations = {path: _selector_observation(path) for path in selectors}
+    selectors = _selectors(
+        (source_config, target_config),
+        include_known_profiles=True,
+        _budget=_read_budget,
+        _custody=custody,
+    )
+    reserve(1024 + 512 * len(selectors))
+    observations = {
+        path: _selector_observation(path, _budget=_read_budget, _custody=custody)
+        for path in selectors
+    }
     provenance = []
     for path in (source_config, target_config):
         _resource_identity(path)
-    source = read_profile_config(source_config)
-    target = read_profile_config(target_config)
+    source = read_profile_config(
+        source_config, _read_budget=_read_budget, _custody=custody
+    )
+    target = read_profile_config(
+        target_config, _read_budget=_read_budget, _custody=custody
+    )
     source_dir = legacy_mobile_dir(source)
     destination = CanonicalConsoleStores(*canonical_console_paths(target))
     candidates = {destination.identity: destination}
@@ -760,7 +923,9 @@ def _preview_selected_mobile(
             provenance.append(MobileSelectorProvenance(selected, None, chain))
             continue
         try:
-            config = read_profile_config(selected)
+            config = read_profile_config(
+                selected, _read_budget=_read_budget, _custody=custody
+            )
             if _source_group_identity(
                 legacy_mobile_dir(config)
             ) == _source_group_identity(source_dir):
@@ -787,12 +952,20 @@ def _preview_selected_mobile(
     except ValueError:
         issues.add("mobile_unsafe_alias")
     preview = _preview(
-        source_dir, destination, source, review_destination=review_destination
+        source_dir,
+        destination,
+        source,
+        review_destination=review_destination,
+        _read_budget=_read_budget,
     )
     if _selectors(
-        (source_config, target_config), include_known_profiles=True
+        (source_config, target_config),
+        include_known_profiles=True,
+        _budget=_read_budget,
+        _custody=custody,
     ) != selectors or any(
-        _selector_observation(path) != row for path, row in observations.items()
+        _selector_observation(path, _budget=_read_budget, _custody=custody) != row
+        for path, row in observations.items()
     ):
         raise ValueError("mobile_selector_changed")
     needs_review = preview.has_data and len(candidates) > 1
@@ -806,7 +979,7 @@ def _preview_selected_mobile(
         source_selector=source_config,
         target_selector=target_config,
         selector_provenance=tuple(provenance),
-        source_witnesses=_path_witnesses((source_dir,))[0][1],
+        source_witnesses=_path_witnesses((source_dir,), _budget=_read_budget)[0][1],
     )
 
 
@@ -892,6 +1065,10 @@ def _source_claim_inventory(config):
                             safe = record.source_dir == str(
                                 source
                             ) and record.claim_path == str(path)
+                            if safe:
+                                from .mobile_lineage import _inventory_lineage
+
+                                _inventory_lineage(path, source)
                         else:
                             from .admission import Admission
 

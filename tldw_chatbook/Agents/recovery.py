@@ -18,6 +18,7 @@ from tldw_chatbook.Backup_Recovery.profile_paths import (
     user_data_dir,
 )
 from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
+from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
 from tldw_chatbook.Utils.platform_files import os
 
 
@@ -90,11 +91,27 @@ class _RunLogs(_RawDeclaration):
         _read_budget=None,
     ):
         """Use the same installed log roots for explicitly reviewed legacy stores."""
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+            current,
+            path_cost,
+            reserve,
+            table_cost,
+        )
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
         from tldw_chatbook.DB.recovery_operations import recovery_adapters
         from tldw_chatbook.Skills_Interop.recovery import default_script_output_root
 
         context = discovery_context(config)
+        native = current()
+        if native is not None:
+            if (
+                _runs_scope is not None
+                or _run_names is not None
+                or _read_budget not in (None, native.read_budget)
+            ):
+                raise ValueError("mobile_runs_selector_scope_required")
+            _read_budget = native.read_budget
+            reserve(4096)
         if _runs_scope is not None:
             from tldw_chatbook.Backup_Recovery.mobile_captured_sqlite import (
                 _CapturedSQLite,
@@ -108,7 +125,7 @@ class _RunLogs(_RawDeclaration):
             ):
                 raise ValueError("mobile_runs_selector_scope_required")
             _runs_scope.check()
-        elif _run_names is not None or _read_budget is not None:
+        elif _run_names is not None or _read_budget is not None and native is None:
             raise ValueError("mobile_runs_selector_scope_required")
         script_output = default_script_output_root(config)
         configured = setting(config, "tools", "file_sandbox_root")
@@ -166,7 +183,17 @@ class _RunLogs(_RawDeclaration):
                     )
                 ) as connection:
                     connection.execute("PRAGMA trusted_schema=OFF")
+                    table_cost(
+                        connection,
+                        "workspace_runtime_bindings"
+                        if owner == "db.workspaces"
+                        else "change_snapshots",
+                        ("locator",) if owner == "db.workspaces" else ("root",),
+                    )
                     for row in connection.execute(query):
+                        reserve(
+                            1024 + 32 * len(row[0]) if isinstance(row[0], str) else 1024
+                        )
                         if (
                             not isinstance(row[0], str)
                             or not Path(row[0]).is_absolute()
@@ -187,10 +214,16 @@ class _RunLogs(_RawDeclaration):
                         (item.logical_id,),
                     )
                 )
-        names = _run_log_names(config) if _runs_scope is None else _run_names
+        names = (
+            _run_log_names(config, _read_budget=_read_budget)
+            if _runs_scope is None
+            else _run_names
+        )
+        reserve(1024 + 128 * (len(roots) + len(issues)))
         result = list(issues)
         retained_logs = False
         for root in sorted(roots):
+            reserve(2048 + path_cost(root, copies=3))
             from tldw_chatbook.Backup_Recovery.file_inventory import _inventory_root
             from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
 
@@ -249,9 +282,24 @@ class _RunLogs(_RawDeclaration):
                             pinned_directory,
                         )
 
-                        with pinned_directory(root) as parent:
-                            if set(os.listdir(parent)) - leaves:
+                        with pinned_directory(
+                            root, _custody=native.custody if native else None
+                        ) as parent:
+                            if native is not None:
+                                from tldw_chatbook.Backup_Recovery.bootstrap import (
+                                    _bounded_names,
+                                )
+
+                                children = _bounded_names(
+                                    parent, 100_000, _read_budget, native.custody
+                                )
+                                _read_budget.container(len(children))
+                            else:
+                                children = os.listdir(parent)
+                            if set(children) - leaves:
                                 container = replace(container, status="unsupported")
+                    except _TraceReadLimit:
+                        raise
                     except (OSError, ValueError, RuntimeError):
                         container = replace(container, status="unavailable")
                 result.append(container)

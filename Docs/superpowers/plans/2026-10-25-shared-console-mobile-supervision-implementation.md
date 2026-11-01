@@ -546,6 +546,117 @@ This review issue blocks apply until a fresh explicit destination choice is boun
 
 ### Task 8: Journaled consolidation and imported-authority quarantine — TASK-36766
 
+Execution clarification (R122, before accounting policy changes): issue one fixed
+512 MiB public mobile-worker aggregate with the ORIGINAL shared 16 MiB native
+T/S/input/proof child, atomically charging both for child work. Ordinary defaults,
+status and cutover observer remain unchanged. Store the aggregate in a distinct
+native admission ledger slot; preserve slot 2 and all original child identities.
+New coordinator/frame/terminal/rollback work uses the aggregate explicitly; keep
+all pre-admission, native validation/custody and both-bound before-effect checks.
+Record actual phase deltas and qualify full populated/no-data/recovery paths plus
+original/default exhaustion and atomic refusal. The larger fixed envelope is not
+measured success; no reset, refund, hidden retry, caller limit or authority change.
+ADR244 and the immutable R122 snapshot/current checkpoint bind this correction.
+
+Execution clarification (R124, before capacity edit): supersede ONLY R122's
+public512MiB literal with fixed2GiB after actual measured prefix/capture exhaustion.
+Original native16MiB/ordinary16MiB, one genuine coupled pair and all current
+validation/independent limits remain. Preserve failed epochs; qualify five
+coupling controls then one fresh guarded populated start with unchanged-charge
+phase/child evidence and corrected isolated credential setup. No retained-operation
+continuation is authorized. ADR244 and the immutable R124 snapshot/checkpoint bind
+this change; engineering margin is not complete-path success or heap measurement.
+
+**Task8 execution clarification — R125:** implement fixed SourceClaim-owned
+ancestor physical custody after reciprocal reservation and before child EX,
+with full fresh raw/native validation and no nested ancestor locks/cache/third
+budget. Mobile retained-copy no-archive calls authenticate source evidence only;
+actual acquired archive/plan/staging/publication binding, Complete current review
+and new safety capture remain mandatory before effects. ADR244 R125 and its
+immutable snapshot/checkpoint precede code. Current successor and later-copy
+qualification are open;63574 is a private-fixture materialization refusal, while
+57976 is only the first-operation frame identity/pair proof.
+
+**Task8 execution clarification — R126:** after the actual successor budget
+refusal and unchanged-source diagnostic, use the existing native journal frame
+only for genuine public initial captured-input planning and reader retirement.
+Close it before history/owner/target effects; private native16 remains unframed.
+Keep every full verification and the same coupled2GiB/16MiB pair. ADR244 R126 and
+the supplemental checkpoint precede this sequencing edit; no budget increase or
+stopped verification optimization is authorized. Actual successor/private/default
+and post-retirement consumer qualification remains required.
+
+
+**Task8 execution clarification — R127:** use the existing public journal frame
+only inside the three fixed pure receipt/row/recovery-history verification
+bodies, closing before subsequent writes, commit/rollback or owner retirement.
+Preserve private unframed16MiB, the public coupled pair and every full native
+check. ADR244 R127 and the current checkpoint precede sequencing code. The
+source-bounded before-effect coordinator tail and genuine refusal test remain
+open independently of framed success; no cap or authority change is approved.
+
+Task 8 execution clarification R119: qualify the SAME completed target across an
+actual native theme save and a fresh ordinary process. Only the postterminal
+observer may accept current persisted native config binding with unchanged
+ancestors, routes, physical stores, reviewed cohort and per-row candidate
+membership. Recheck current observations and native registry/bindings after
+owner/journal reads under the same allowance. Pending/finish/rollback/successor
+proofs remain strict. Record direct-edit, redirect, new/joined candidate, unbound,
+ancestor, concurrent-publication and pending refusals. Integrated children install
+both normal guards; earlier narrower scripts remain historical evidence. ADR-244
+and the pre-edit native SHA/AST/status checkpoint govern this implementation.
+
+Execution clarification R120: fixed pre-cutover rollback continuation authenticates
+the original canonical archive with the supplied password and validates its exact
+fixed owner/member/schema/stage/move/metadata closure under actual native custody.
+Retain original claim/flock, strict selectors/pending and physical source-path
+witnesses; remove only the newly introduced live semantic source preview. The old
+fingerprint remains an immutable operation reference, not a fresh content claim.
+Import/finish/successor checks remain strict. Preserve all source/current/capture
+bytes and same-call budget/full verification/before-effect cost checks. ADR244 and
+the separate R120 pre-edit checkpoint govern this clarification; qualify the
+actual retained intended-only rename with both guards and honest epoch reporting.
+
+Execution clarification (R121, before reader-policy changes): price initial generic
+preview/discovery and both held re-reviews on the same early-issued allowance.
+Use actual existing PreviewScope/DiscoveryScope issuers, fixed prefetch/schema
+readers and bounded custody. Preserve the entire installed registry/inventory,
+Complete semantics, register-before-maintenance ordering and strict post-binding
+review. No unpriced adapter fallback, new role, caller records or allowance reset.
+Qualify actual unbound populated data, not only no-data or parameter presence;
+ADR244 and the R121 immutable snapshot/current checkpoint bind this clarification.
+
+Execution clarification (R118, before output-policy changes): allow the exact
+native live partition's default-service encrypted output through only the
+authenticated service-container overlap. Keep current journal intention, derived
+filename, original budget/custody, profile-root disjointness and physical identity
+checks at capture preflight and both writer checks. All other overlap guards stay
+in force. Qualify the default no-data operation and finite forged/retired/review/
+custom/unknown-child/profile-overlap/parent-change refusals; ADR244 and the R118
+snapshot/checkpoint bind this correction. Acceptance criteria remain unchanged.
+
+Execution clarification (R117, before enrollment behavior changes): explicit
+selected start may compose first native enrollment for missing source/target
+profiles only. Prove per-selector complete configured roots and fixed source claim
+parent; observe default config controls through installed exact exclusions without
+enrolling their enclosing parent. Register before native maintenance, then recheck
+and publish under unbound/all-overlap exclusion retained through import. Preserve
+existing bindings and the single early-issued budget/custody. Post-binding native
+review must be equivalent for all reviewed user scope; new sibling data yields
+fresh-review-required before preparation. Qualify ordinary unbound no-data and
+populated profiles plus refusal/interruption cases. ADR244 R117 and its source
+snapshot/checkpoint bind this clarification; acceptance criteria remain unchanged.
+
+Execution clarification (R116, before dependent no-data changes): preserve native
+capture completeness. For an uninitialized required canonical target, qualify an
+explicit ordinary app `--config PATH` startup and physical retirement, followed by
+a fresh preview/capture; do not synthesize original absence or initialize inside
+the importer. Refuse incomplete inventory before preparation/pending/claim. Prove
+full no-data cutover on that same initialized target, with any supported optional
+Runs creation journaled, no legacy constructors and ordinary post-retirement reads.
+The rollback image covers the actual post-initialization pre-import state. The
+R115 terminal/rollback/lineage requirements and ADR-244 remain otherwise unchanged.
+
 **Execution dependency notes (R98/R99; original Task8 AC/status/BASE retained).** Complete R/I/C/T/S pure planning is independently approved through `01f42ea55592296224f69b5964449b3fd3bc91b4`; this is not owning-write or cutover approval. Before the pure A-runs foundation, support the actual pre-feature `81/8/24` source alongside existing `81/8/25`, keeping canonical AgentRuns26 unchanged, captured24 bytes/schema intact and ONLY authenticated native24 `console_command_receipts` absence. Amend ADR244 and preserve contemporary before-code evidence for this fixed compatibility prerequisite; independently review it. Then derive complete PURE Run/Goal transformations and ALL-owner supported-content/reference/artifact preflight before native Chat/Workspace writer activation. The foundation has no imported DB/file/hold/receipt/dispatch/cutover effects and does not make pending `require_complete()` succeed. Subsequent real same-operation owner writes must obtain complete actual all-owner preflight before the first file publication or data batch, preserve native legal lifecycle and atomic rows/maps/holds/receipts, and resume from actual receipts. Actual runtime quarantine/history consumers, all-owner closure, public B recovery/cutover/full original Task8 review, Tasks9–11 and the root whole-branch gate remain mandatory.
 
 **Files**
@@ -621,6 +732,90 @@ CREATE TABLE mobile_import_authority_holds (
 Do not copy permission-store grants or activate imported folders. Exact reviewed release must use native current scope/consent; if no supported release exists, surface the hold and leave it in place. A new manual turn may obtain its own fresh native authority without releasing any old imported chain.
 - [ ] **Step 5: Verify closure, publish cutover and support reviewed recovery.** Verify mapped identities/message trees/settings/workspace restrictions/run parentage/steps/artifact bytes and unknown-data coverage under the same admission fence. Publish completed cutover only after all owner receipts and verification are durable. Retain original stores/captures. Before cutover, rollback restores affected originals through existing recovery ownership; after canonical writes begin, route later rollback through the existing reviewed recovery flow, never automatic pre-import overwrite. Extend the CLI to preview, type-confirm destination and start the operation; errors expose the same operation ID and explicit recovery actions.
 - [ ] **Step 6: Verify and commit.** Run the three consolidation test modules, exact affected core/Workspace/AgentRuns schema tests, automatic wake/launch/Goal recovery tests and connected binding/exclusion tests. Inject faults at source claim, capture, mapping, before/after each DB commit, verification and cutover. Cover populated destinations, duplicate IDs, branches, Default conflict, unsupported/unknown content, empty sources, second-config claim, repeated cutover and stale-backup rollback. Require zero automatic provider/tool calls for imported completed undelivered results and settled active chains through recovery/resume/manual-turn controls. Commit `feat: consolidate legacy mobile history with recovery fences` after scoped static and catalog checks.
+
+R128 execution clarification (ADR244): exactly two fixed public owner transaction
+frames begin after construction and close before retirement/publication. Three
+pure verifiers require the exact current frame; private16MiB and public2GiB stay.
+Before-effect capacity and restored-generation observer decisions remain open.
+Precode SHA/AST/status supplement saved before wrapper/helper/tests.
+
+R129 execution clarification (ADR244): ordinary observer only supports the exact
+direct native restoration of this mobile canonical copy, with positive current
+activation, receipt-bound native installed chain and same-generation physical/schema
+proof. Original source-once/pending/execution restrictions remain; no fake census.
+Distinct precode checkpoint saved; actual data/config-write and tamper proof required.
+
+R130 execution clarification (ADR244): exact early terminal pricing, per-allocation
+late refusal/recovery, stronger complete rollback preflight; no generalized future
+SQL estimator. Fixed public4GiB replaces2GiB after actual8599 frontier, native16
+and ordinary16 unchanged. Precode checkpoint saved; qualification remains required.
+Execution status: automatic review rejected the R129 observer edit and R130
+capacity/early-pricing edit before execution. Both await explicit human
+authorization; current production remains2GiB and the original restored-target
+refusal remains. Precode decisions above are not implementation-success claims.
+
+Task 8 cold-import correction: preserve the Subscription owner's public getter
+name through a lazy exact forwarder, with guarded cold class/schema proof and
+existing threshold precedence tests. Actual settings use keeps native admission.
+No fixture startup-shutdown bypass or rejected R129/R130 edit is part of this fix.
+
+R131 execution clarification (ADR244): preserve only exact unchanged installed
+builtin members under native mobile-copy/current-target provenance. New accounting
+is optional on existing native copy/digest loops, one genuine-or-ordinary16 lexical
+allowance, with every read/view/slice charged before allocation. Package files are
+never restored or modified; native dependency validation and public pending gates
+remain mandatory. Changed selector/package/history shapes still refuse.
+
+R133 execution correction (ADR244) supersedes R132's false capture-entry
+assumption: Core's dependency method is not called by mobile capture/import.
+Restore R115 actual linked-note capture/import/marker qualification; first a
+genuine nonconflicting capture control, then concrete guarded App bodies for
+controller inspection before runtime. No new generic capture guard, source owner,
+source stripping, fabricated marker or automatic file authority. Preserve the
+R132 snapshots as chronology; actual support/refusal remains runtime-unqualified.
+
+R131 execution update: explicit human approval now covers the reviewed bundled
+artwork code and isolated tests. Resume its native accounting and exact ordinary
+builtin composition through normal tool review; original rejection retained,
+qualification still open, R129/R130 unaffected and still stopped.
+
+R134 execution clarification (ADR244): acquire actual complete reviewed native capture names before maintenance for existing profiles too, preserving their bindings unchanged. Fixed authenticated mobile-copy package acquisition uses native source namespaces; generic replacement checks remain. Same allowance/custody and all alias/current-review checks apply. Precode SHA/AST/status saved before production edits; full existing-bound/SafetyCopy replacement and stage16 fit are pending. R129/R130 remain stopped.
+
+R134 authorization update: the user explicitly approved the exact native backup-source namespace registration/holding code and isolated tests for already-bound profiles. The earlier automatic-review rejection remains recorded. Implementation proceeds through normal review with unchanged profile records, agent permissions, public2GiB/native16MiB limits and existing physical admission checks. R129/R130 remain awaiting separate authorization.
+
+R135 execution clarification (ADR244, ADR082, ADR126): compose only actual native Console scratch writer/manager leases with unchanged persistent profile/source admission. Authenticate every affected writer callback and fixed worker handoff; independent workers own real leases through retirement, no copied-context grant or persistent temporary registry. Three stock writer acquire sites use the same exact current private association or original ordinary storage fallback. Save precode identities/caller supplement; targeted identity/refusal/cancellation/default controls precede one fresh mounted manual proof. R129/R130 remain stopped; no user-data action.
+
+R135 qualification update: explicit human approval followed the preserved rejection. Actual native bound/default, callback identity, independent worker/cancellation/fork and default controls pass. Fresh mounted45390 completes a new manual turn on its public-produced target, drains and reopens, retaining imported identity-scoped authority/accounting; exactly one scripted provider generation and no tool dispatches. Character-estimate fallback only; no real-provider/hardware/main-entrypoint claim.
+
+R136 execution clarification (ADR126/244): validate the complete fixed native Notes lock representation as excluded device state, with bounded no-follow inventory, exact private empty-lock shape and current custody/accounting. Preserve malformed-content refusal; qualify actual lock release/closed handle and Complete/refusal controls before fresh PRESENT startup. No marker or imported execution authority changes. Precode identities saved before implementation.
+
+
+
+R134 held-preview accounting clarification: the fixed authenticated mobile canonical-copy path carries one original ordinary16MiB allowance explicitly through its new source-prefix, selector/mapping, bootstrap/journal and framed-observation representations, and its already budgeted package read/copy/view/slice work. The actual native `_capture_bound_sources` context remains the sole source-read authority; generic capture admission is unchanged. No PreviewScope may be issued during maintenance, no scope fields or generic role are added, and nested fixed callbacks reuse this exact allowance without reset. Original generic verify_sealed/plaintext and encrypted hash passes, Zip/config/native planner internals retain their existing ArchiveLimits and behavior; this counter is not a whole-engine or RSS bound. Factor the existing authenticated candidate prefix and preserve positive current nonpackage profile bindings, complete target/member/selector/store checks, cancellation and physical retirement. Optional private forwarding defaults preserve existing callers; component identity/refusal/cancel/exhaustion/default checks precede another full replacement. R129/R130 remain blocked separately.
+
+R137 execution clarification (ADR059/073/244): current-marker startup reviews only receipt-backed imported canonical note IDs unrepresented by any existing binding. Native evidence adds only new disjoint paused roots with transactional complete-root/binding rechecks; invalid/overlapping evidence surfaces a separate body-free warning while current roots retain normal behavior. Both start gates preserve zero-profile/no-receipt behavior; native SELECT-only Core lifetime and original16 receipt bound remain. No absent migration/schema/activation change. Saved precode identities precede code; finite controls precede another PRESENT App flow. R129/R130 remain independently pending.
+
+R138 execution clarification (ADR244): one native-owned current journal read only in the existing accounted fixed-mobile branch; preserve no-current/None generic/mobile reads and budget defaults. At the adjacent planner boundary remove exactly one duplicate fixed-mobile source/archive verification, dispatching on actual native proof; generic double verification/hash counts and fresh entry/plan/exit predicates remain. No new authority/cache/issuer/cap or fit claim. Saved source/AST/full-status checkpoint precedes implementation; focused native call-count/refusal/default/custody controls precede another held-prefix attempt.
+
+R139 execution clarification (ADR244): reuse one prepaid local <=64KiB buffer only for existing explicit-budget digest/noncollect reads lacking a native scope budget. Retain every verification, per-loop price, actual scope/lease/identity/cancel/EOF/growth/retirement check and default/native-buffer/copy/collect/fallback behavior. No new API/field/helper/authority/cache/cap/reset; ordinary/native16 and public2GiB unchanged. Precode+finite native controls precede another held-preview release; source arithmetic is not a fit claim. R129/R130 stay pending.
+
+R140 execution clarification (ADR244): only the fixed canonical preview entry performs source-only native verification then the immediately adjacent full acquired-archive verification using its returned actual proof. Planner/exit remain full checks; canonical archive count4→3 and verify_sealed6→5, source reads/original matches3 unchanged. The fixed caller changes for explicit and outer-None budgets; all outside generic/default source dispatch stays unchanged. Preserve every predicate, original limits/custody/cancel and separate temporal-sampling caveat; no cache/API/cap/reset/fit claim. Save precode, focused unit RED/GREEN and static report before a fresh sentinel. Bounded finally metadata labels source_context_exit_before_staging; R129/R130 stay pending.
+
+R141 execution clarification (ADR126/244): add only one private byte workspace to the existing native CaptureScope, with same-budget full66,560 prepayment before first eligible allocation and clearing in existing retirement finally before unchanged cleanup. Every file/pass retains fresh hash/admission/identity/cancel/EOF/custody checks. Ordinary adaptive/default/native Preview/Discovery behavior remains; first tiny-file earlier refusal is explicit. No budget/API/helper/evidence cache/role/cap change. Actual two-file multipass, scope isolation, defaults and fault/FD controls plus static report precede any new sentinel; no predicted fit. R129/R130 stay pending.
+
+R142 execution clarification (existing ADR126/244; no new ADR): apply the reviewed fixed SafetyCopy alternative only after original profile containment fails for an included preserved installed builtin. Reprove committed original source/archive/new prepared receipt and exact unchanged members at all three native boundaries; allow current held exact or broader native namespace geometry with pinned identity, never a profile/permission grant. Issue one distinct original16MiB phase allowance only after actual stage retirement; retain original generic limits/accounting and tracked physical custody/quarantine. Save precode/callers/AST/status before code, then finite real source, geometry, default, cancellation, budget and custody tests plus component review before a fresh full integration. No retained98188 continuation; R129/R130 remain pending.
+
+R143 execution clarification (existing ADR126/244): retain R142 failed57145 and original same16MiB/three-check contract. Apply only reviewed local parent grouping with genuine registered custody; every member leaf/stat/frame remains, current parent reopens while original FD stays held, and cancellation precedes new reopen pricing/IO. All original source/archive/overlap predicates remain. Precode/ADR before code; finite native local-mechanics RED/GREEN then one fresh exact component, one combined genuine geometry variant only if exact passes, and root report before any full replacement. No retained fixture continuation or R129/R130 scope.
+
+#### R142 remaining refusal controls after R143 geometry refusal
+
+ADR required: no new ADR; test-only qualification under ADR126/244 and R142/R143. Save source/precode before new tests. Add cheap local guard controls for source/receipt/self-lock, current namespace and native leaf predicates; clearly label mocked upstream prefix as unit mechanisms, never positive committed authority. Use actual temporary handles/session retirement for physical identities and existing native generic prepared fixture for nonpackage refusal. Preserve earlier lower-level mapping/cipher/default evidence rather than repeating producers. Record any unisolated predicates honestly. Prepare only an UNAPPLIED source alternative for duplicate write-path overlap work, with precise observation-count and timing changes; no production edit, cap/reset, path shortening, retained continuation or full integration is released.
+
+#### R144 — distinct lexical write-path validation
+
+ADR required: no new ADR; clarify ADR244 before code. Apply only the reviewed eight-line local set/lookup/growth change in `_mobile_safety_members`, preserving all logical mappings, native units and every distinct-path overlap predicate. Record reduced repeated observation timing explicitly. First finite RED/GREEN controls forwarding actual native overlap (ordering, equal-repeat vs alias, immediate refusal, fresh second call, capacity/cancel/retirement), then scoped static. Only after those pass, one fresh unchanged broader/unprefixed/multi-root three-check component; stop on actual failure. No retained continuation or full replacement before root gate.
+
+R144 full-run oracle correction (ADR required: no; test-only under existing ADR244): preserve 97088 actual replacement/SafetyCopy success and final expected-refusal exception-family failure. Change only the existing postrestore assertion to exact `bootstrap.RecoveryRequired` matching `^mobile_object_changed$`, then one genuinely fresh full integration to execute its skipped final source/package/guard footer. No R129 behavior or production change; native/public limits unchanged. Save exact precode/diff/AST and closed outcome, stop at any new failure.
 
 ### Task 9: Canonical mobile API and legacy engine retirement — TASK-36767
 
@@ -825,3 +1020,50 @@ Self-review mapped all specification sections and seven review corrections to im
 Document checks validate task frontmatter/owned sections, local links, task order/dependencies, absence of unfinished markers, Python example syntax, JavaScript syntax and the two SQL examples against isolated in-memory SQLite. These are documentation checks: no product test suite, real agent/provider call, user database, migration or phone/VPN journey has been run.
 
 The repository-wide task-ID guard reports pre-existing duplicates `34991` and `35028` from unrelated tracked/untracked files present before this work. None of the 12 new task IDs collides. Those files are preserved; this plan does not claim the entire checkout's Backlog guard is green.
+
+
+### R129/R130 explicit human approval and current-source rebase (2026-10-31)
+
+The human explicitly approved code and isolated tests for both existing decisions; the prior missing-authorization block is resolved (SDD `task-8-r129-r130-explicit-human-approval.md`). The old rejected drafts and failing epochs remain historical evidence. Implementation is pending root drift review, not yet applied or qualified. No new ADR/ruling is required.
+
+R129 remains an ordinary16-only direct restore of this mobile operation’s canonical copy: native committed replacement/receipt-bound plan/manifest/activation and current private-copy schema plus main-generation/ancestor continuity; original claim, retained encrypted captures/history, current selectors and pending fences remain checked. Ordinary imported-state census stays unchanged outside that authenticated transition. Ephemeral WAL/content timestamps are not permanent generation identity; every native copy and physical safety check still runs. No fabricated imported receipts, reimport, owner grant or activation bypass.
+
+R130 changes only the public cumulative envelope to4GiB and constructs/discards fixed maximum-width terminal representations before no-data owner creation or populated history/owner effects. Every actual late reservation remains; no escrow, refund, future-SQL estimator or universal-fit/RSS claim. Existing JSON sizing covers non-BMP escaping for every new serialization/hash. Private no-public calls still use their original16 and must be checked proportionally. Ordinary/native16, atomic pair coupling, independent archive/SQL limits and full rollback preflight remain unchanged. Current production stays2GiB until the reviewed delta is applied.
+
+Finite sequence: new local identity/manifest/Unicode/dimension controls plus existing five pair/default controls and affected capture-names debit; early refusal before first owner for populated/no-data; one proportional original private/preterminal native16 control; then one fresh direct-restore positive with native data/theme-save and tamper/refusal checks, and one fresh successor. Existing late-budget real-home two-process evidence is retained; any rerun is a new isolated fixture with unchanged reviewed harness, only if needed to qualify changed prepricing. No old-fixture continuation or accepted App/Notes/CLI repeats.
+
+
+R129/R130 component checkpoint: approved delta applied; local15P, genuine populated/no-data early-refusal2P and original-private16 preterminal3-receipt1P pass. Retain the earlier1F empty-tuple oracle epoch separately. `task-8-r129-r130-component-report.md` records exact scope/static/evidence; root integration gate precedes actual restored-generation/write/theme/tamper and4GiB successor runs. No wholeTask8 completion or new authority follows from this checkpoint.
+
+
+### R130 cold-resume implementation correction — original invocation reuse (2026-11-01)
+
+Existing ADR244/R130; no new ADR or accounting policy. The first changed-code real-home Workspace cold run failed its original16 allowance before stale-owner settlement. Its new early-pricing helper repeated native journal/prepared/pending work. The reviewed v2 correction uses pricing-only local references from the actual PRE-R130 entry preopen for no-data or post-reader preopen for populated, after original validation and retirement. Default callers still return None and retain their original call shape/checks. The new two-reference collector and shallow sizing views are prepaid and discarded before effects; no readiness, cache, native scope or authority is issued. All future original-record Ref encoding costs, fixed maximum terminal representations, actual final checks/hashes/charges and independent native16/public4 bounds remain. No new unbudgeted invocation replaces the deleted duplicate work.
+
+SDD `task-8-r130-cold-pricing-v2-reviewed-release.md` governs the exact two-file correction, affected local/default/codec controls, genuine populated/no-data refusal and private16 preterminal proof, then one fresh observed Workspace73→0. Actual fit remains unqualified until that run; the prior failed fixture and rejected v1 accounting rationale remain preserved. If green, the already released B–E integrations continue serially. No full Task8 completion follows from these components.
+
+### R130 Event tree accounting correction (2026-10-31)
+
+The cold3 native16 resume exhausted at final JSON scanning (requested256, remaining58). Before another runtime, the reviewed helper-only schedule replaces two coarse eight-text-copy Event-stage reservations with separate complete-tree reservations: the native terminal model dump, conservative Event evidence validation, and each of the two Event dumps. Constructor/model/field containers and a shallow six-field sizing view are prepaid separately. The first eight-copy `_MobileCommitted`/Path validation, existing pre-R130 input reuse, future Ref coverage, non-BMP serialization, record bound, JSON roundtrip, all final charges and native16/public4 limits remain unchanged. No authority or readiness value escapes. Pure retained-shape arithmetic is not a fit claim. Source contract and finite verification: `.superpowers/sdd/2026-10-25-shared-console-mobile-supervision-implementation/task-8-r130-event-tree-reviewed-release.md`; prior failed epochs remain preserved.
+
+### R145 - production recovery qualification scope (2026-10-31)
+
+Both production captured-consolidate entry points use a genuine public pair. Keep
+the current early prototype and every late check on all callers; no private
+exception or accounting change is made. The larger private Workspace cold4 fixture
+now legitimately exhausts original16 after early pricing, and remains a recorded
+failure rather than a parity or complete-path claim. R130 promises bounded
+refusal, not universal fit. Replace only the added private-success gate with the
+same committed Workspace/unmatched-owner graph through actual public start and
+fresh-process public finish, each genuine4GiB/16MiB pair. The smaller private
+three-receipt component retains its actual passing scope. Genuine restored-gate
+B and C-E may proceed independently; complete public crash/receipt/no-replay and
+all original Task8 qualification still precede Task9. Source contract: SDD
+`task-8-r145-public-recovery-gate.md`.
+
+
+R146 execution (ADR required: yes; existing ADR244 amendment): replace only ordinary cutover-call16 with fixed64MiB-minus512 issuance for BOTH branches; generic/private16 and public4/native16 remain. Apply exact two-source issuer/import-call delta after precode. Add finite noargument/identity/default/atomic exhaustion and before-first-read controls; preserve all native validators and default call shapes. B's finally records actual issued counter remaining on success and failure. Run one fresh B, conditional C/D/E only after green; first material failure stops. R145 public Workspace remains separately review-gated. Historical failures/limits are retained.
+
+R146 B3 fixture correction: B2 passed both restored/data-edit gates (13,610,208 remaining each), then config import refused actual data/shared intermediate directories at0755 (config_participants369), not a stale alias or failed profile association. For one fresh B fixture only, use saved/restored umask077 during genuine construction and assert owner/private mode before public start. No old fixture repair or native policy change; C–E remain conditional on B green.
+
+R146 B4 test-only cohort correction: B3 native theme save/binding/inode assertions passed, but later selecting the target changed the original effective-first selector cohort. Keep target selection stable after fixture close and obtain a genuinely fresh public target-target preview before start; no prepared witness or native guard changes. Preserve B3 failure and all scoped positives; one fresh affected B only, C–E conditional.

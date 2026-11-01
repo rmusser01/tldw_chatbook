@@ -45,7 +45,29 @@ def _mobile_admission(session):
     state = _mobile_admissions.get(session)
     if state is None or state[0] is not session._scopes:
         raise bootstrap.RecoveryRequired("mobile_admission_registry_changed")
+    if state[4] is not None:
+        from tldw_chatbook.Chat.console_trace_read_budget import _mobile_budget_pair
+
+        if not _mobile_budget_pair(state[4], state[2]):
+            raise bootstrap.RecoveryRequired("mobile_budget_pair_changed")
     return state
+
+
+def _attach_mobile_budgets(session, pair):
+    from tldw_chatbook.Chat.console_trace_read_budget import _mobile_budget_pair
+
+    state = _mobile_admission(session)
+    if type(pair) is not tuple or len(pair) != 2 or not _mobile_budget_pair(*pair):
+        raise bootstrap.RecoveryRequired("mobile_budget_pair_changed")
+    if state[2] is not None or state[4] is not None:
+        raise bootstrap.RecoveryRequired("mobile_budget_already_issued")
+    state[2], state[4] = pair[1], pair[0]
+
+
+def _mobile_coordinator_budget(session):
+    """Return this actual admission's public envelope or its private default."""
+    state = _mobile_admission(session)
+    return state[4] if state[4] is not None else state[2]
 
 
 # This local gate intentionally covers all roots: an acquisition may still be
@@ -637,10 +659,15 @@ class StorageLease:
         self.close()
 
 
-def _contains_owned_path(root: Path, selected: Path) -> bool:
+def _contains_owned_path(root: Path, selected: Path, *, _custody=None) -> bool:
     """Authorize exact objects or descendants of a declared directory, never parents."""
+    if _custody is not None and (
+        type(_custody) is not _CaptureFileDescriptors or _custody.close_failed
+    ):
+        raise ValueError("invalid_mobile_preservation_custody")
     resolved_root = root.resolve(strict=True)
-    with bootstrap.pinned_directory(resolved_root.parent) as parent:
+    pin = bootstrap.pinned_directory if _custody is None else _custody.pinned_directory
+    with pin(resolved_root.parent) as parent:
         info = os.stat(resolved_root.name, dir_fd=parent, follow_symlinks=False)
     resolved_selected = selected.resolve()
     if stat.S_ISDIR(info.st_mode):
@@ -698,9 +725,24 @@ def _mobile_discovery_pending(root, names, selected):
     } and set(names or ()) <= set(prepared.namespaces) <= set(session._names)
 
 
-def _config_capture_bindings(root, selectors, *, _mobile_session=None):
+def _config_capture_bindings(
+    root, selectors, *, _mobile_session=None, _read_budget=None, _custody=None
+):
     """Observe every bound selector that can write requested config siblings."""
-    pending, profiles = bootstrap._records(root)
+    from .mobile_preview_budget import path_cost, read_options
+
+    _read_budget, _custody = read_options(_read_budget, _custody)
+    if _read_budget is not None:
+        _read_budget.container(3 * len(selectors))
+        for path in selectors:
+            _read_budget.reserve(path_cost(path, copies=3))
+    pending, profiles = bootstrap._records(
+        root, _budget=_read_budget, _custody=_custody
+    )
+    if _read_budget is not None:
+        _read_budget.container(3 * len(profiles))
+        for row in profiles:
+            _read_budget.reserve(1024 + 16 * len(row["selector"]))
     requested = {str(lexical_path(path)) for path in selectors}
     parents = {
         Path(row["selector"]).parent for row in profiles if row["selector"] in requested
@@ -725,15 +767,26 @@ def _config_capture_bindings(root, selectors, *, _mobile_session=None):
             prepared.target_selector,
         }:
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
-    registry = bootstrap._registry(root)
+    registry = bootstrap._registry(root, _budget=_read_budget, _custody=_custody)
     result = []
     for row in profiles:
+        if _read_budget is not None:
+            _read_budget.reserve(512 + 16 * len(row["selector"]))
         selector = Path(row["selector"])
         if selector.parent not in parents:
             continue
-        if bootstrap._binding(selector, profiles, registry) != row:
+        if (
+            bootstrap._binding(
+                selector, profiles, registry, _budget=_read_budget, _custody=_custody
+            )
+            != row
+        ):
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
-        with bootstrap.pinned_directory(selector.parent) as parent:
+        with (
+            bootstrap.pinned_directory(selector.parent)
+            if _custody is None
+            else _custody.pinned_directory(selector.parent)
+        ) as parent:
             info = os.fstat(parent)
             if info.st_uid != os.geteuid() or info.st_mode & 0o077:
                 raise bootstrap.RecoveryRequired("capture_config_parent_unsafe")
@@ -741,15 +794,30 @@ def _config_capture_bindings(root, selectors, *, _mobile_session=None):
     return tuple(result)
 
 
-def _config_capture_sources(root, selectors, bindings):
+def _config_capture_sources(
+    root, selectors, bindings, *, _read_budget=None, _custody=None
+):
     """Derive only installed fixed leaves; foreign registry aliases still refuse."""
+    from .mobile_preview_budget import path_cost, read_options
     from .service_storage import default_control_root, work_root
 
+    _read_budget, _custody = read_options(_read_budget, _custody)
+    if _read_budget is not None:
+        _read_budget.reserve(4096 + path_cost(root, copies=4))
+        _read_budget.container(len(selectors) + len(bindings))
+        for path in selectors:
+            _read_budget.reserve(path_cost(path, copies=3))
+
     requested = {str(lexical_path(path)) for path in selectors}
-    registry = bootstrap._registry(root)
+    registry = bootstrap._registry(root, _budget=_read_budget, _custody=_custody)
     controls = (root, default_control_root(), work_root(default_control_root()))
     result = []
     for row, parent_identity in bindings:
+        if _read_budget is not None:
+            _read_budget.container(len(registry))
+            _read_budget.reserve(1024 + 16 * len(row["selector"]))
+            for raw in row["roots"]:
+                _read_budget.reserve(512 + 16 * len(raw))
         if row["selector"] not in requested:
             continue
         # Related profiles are held for exclusion, never adopted as ownership.
@@ -760,6 +828,16 @@ def _config_capture_sources(root, selectors, bindings):
         if not _contains_capture_path(map(Path, row["roots"]), selector):
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
         for owner, leaf in _CONFIG_CAPTURE_LEAVES.items():
+            if _read_budget is not None:
+                _read_budget.reserve(
+                    path_cost(selector, copies=8) + 4096 + 64 * len(leaf)
+                )
+                for entry in foreign:
+                    _read_budget.value(entry)
+                    for raw in entry["roots"]:
+                        _read_budget.reserve(512 + 32 * len(raw))
+                    for token in entry["historical"]:
+                        _read_budget.reserve(512 + 32 * len(token))
             path = selector.parent / leaf
             tokens = {"path:" + str(path), "path:" + str(path.resolve())}
             try:
@@ -1645,6 +1723,9 @@ class _CaptureLease:
     """A capture connection cannot outlive the native maintenance session."""
 
     def __init__(self, scope):
+        budget = getattr(scope, "read_budget", None)
+        if budget is not None:
+            budget.reserve(512)
         self.scope = scope
         self.connection = None
         self.descriptor_outcome = None
@@ -1718,6 +1799,7 @@ class _CaptureScope:
         self.sqlite_targets = {}
         self.sqlite_directory = None
         self.sqlite_directory_identity = None
+        self._digest_buffer = None
 
     def check(self):
         self.session._check()
@@ -1736,6 +1818,7 @@ class _CaptureScope:
                 self.verify_sqlite_sources()
         finally:
             self.active = False
+            self._digest_buffer = None
             for resource in tuple(self.resources):
                 resource.retire()
             if self.sqlite_directory is not None:
@@ -2010,14 +2093,31 @@ def _capture_sqlite_source(owner_id, source, progress_guard):
 class _DiscoveryScope:
     """Read-only installed owner probes within an already native-held scope."""
 
-    def __init__(self, session, *, private_sqlite=False, limits=None, byte_budget=None):
+    def __init__(
+        self,
+        session,
+        *,
+        private_sqlite=False,
+        limits=None,
+        byte_budget=None,
+        read_budget=None,
+    ):
+        if read_budget is not None:
+            read_budget.reserve(1024)
         self.session = session
+        self.read_budget = read_budget
         self.config_sources = getattr(session, "_config_capture_sources", ())
         self.resources = []
         self.active = True
+        self.custody = (
+            _CaptureFileDescriptors(self) if read_budget is not None else None
+        )
         self.sqlite_copies = (
-            _PreviewScope(limits, byte_budget, native_scope=self)
-            if private_sqlite else None
+            _PreviewScope(
+                limits, byte_budget, native_scope=self, read_budget=read_budget
+            )
+            if private_sqlite
+            else None
         )
 
     def check(self):
@@ -2053,7 +2153,10 @@ class _DiscoveryScope:
 class _PreviewScope:
     """Bounded read probes over private SQLite copies, without live admission."""
 
-    def __init__(self, limits, byte_budget, *, native_scope=None):
+    def __init__(self, limits, byte_budget, *, native_scope=None, read_budget=None):
+        if read_budget is not None:
+            read_budget.reserve(2048)
+        self.read_budget = read_budget
         self.native_scope = native_scope
         self.pid = os.getpid()
         self.thread = threading.get_ident()
@@ -2064,6 +2167,10 @@ class _PreviewScope:
         self.copied_bytes = 0
         self.directory = None
         self.snapshots = {}
+        self.custody = (
+            _CaptureFileDescriptors(self) if read_budget is not None else None
+        )
+        self.copy_buffer = None
 
     def check(self):
         if (
@@ -2090,8 +2197,20 @@ class _PreviewScope:
             if self._source_state(source) != before:
                 raise ValueError("preview_sqlite_changed")
 
-    @staticmethod
-    def _source_state(source):
+    def _buffer(self):
+        self.check()
+        if self.read_budget is None or not hasattr(os, "readv"):
+            raise ValueError("preview_copy_buffer_unavailable")
+        if self.copy_buffer is None:
+            self.read_budget.reserve(65536 + 1024)
+            self.copy_buffer = memoryview(bytearray(65536))
+        return self.copy_buffer
+
+    def _source_state(self, source):
+        if self.read_budget is not None:
+            from .mobile_preview_budget import path_cost
+
+            self.read_budget.reserve(2048 + path_cost(source, copies=3))
         result = []
         for suffix in ("", "-wal", "-journal"):
             path = source.with_name(source.name + suffix)
@@ -2130,6 +2249,10 @@ class _PreviewScope:
         from .space import require_capacity
 
         self.check()
+        if self.read_budget is not None:
+            from .mobile_preview_budget import path_cost
+
+            self.read_budget.reserve(4096 + path_cost(source, copies=5))
         source = lexical_path(source)
         if source in self.snapshots:
             previous, target = self.snapshots[source]
@@ -2138,7 +2261,10 @@ class _PreviewScope:
             # Owners sharing this source inspect one verified image per preview.
             # Ordinary live commits cannot invalidate that private image; a
             # replaced or unsafe source path still cannot reuse its identity.
-            with bootstrap.pinned_directory(source.parent) as parent:
+            with bootstrap.pinned_directory(
+                source.parent,
+                _close=self.custody.close_descriptor if self.custody else None,
+            ) as parent:
                 current = os.stat(source.name, dir_fd=parent, follow_symlinks=False)
                 if (
                     not stat.S_ISREG(current.st_mode)
@@ -2168,7 +2294,10 @@ class _PreviewScope:
         create_private_directory(target_root)
         target = target_root / "source.sqlite3"
         try:
-            with bootstrap.pinned_directory(source.parent) as parent:
+            with bootstrap.pinned_directory(
+                source.parent,
+                _close=self.custody.close_descriptor if self.custody else None,
+            ) as parent:
                 for suffix, expected in zip(("", "-wal"), before[:2], strict=True):
                     if expected is None:
                         continue
@@ -2177,6 +2306,8 @@ class _PreviewScope:
                         os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
                         dir_fd=parent,
                     )
+                    if self.custody is not None:
+                        self.custody.fds.append(descriptor)
                     try:
                         opened = os.fstat(descriptor)
                         if (
@@ -2188,17 +2319,30 @@ class _PreviewScope:
                         ) != expected:
                             raise ValueError("preview_sqlite_changed")
                         with create_private_file(
-                            target.with_name(target.name + suffix)
+                            target.with_name(target.name + suffix),
+                            _custody=self.custody,
                         ) as output:
+                            if self.read_budget is not None:
+                                self._buffer()
                             count = 0
-                            while chunk := os.read(
-                                descriptor, min(1024**2, expected[2] - count + 1)
-                            ):
+                            while True:
+                                size = min(1024**2, expected[2] - count + 1)
+                                if self.read_budget is not None:
+                                    self.read_budget.reserve(768)
+                                    view = self.copy_buffer[: min(65536, size)]
+                                    size = os.readv(descriptor, [view])
+                                    chunk = view[:size]
+                                else:
+                                    chunk = os.read(descriptor, size)
+                                if not chunk:
+                                    break
                                 count += len(chunk)
                                 if count > expected[2]:
                                     raise ValueError("preview_sqlite_changed")
                                 view = memoryview(chunk)
                                 while view:
+                                    if self.read_budget is not None:
+                                        self.read_budget.reserve(256)
                                     written = os.write(output, view)
                                     if not written:
                                         raise OSError("preview_sqlite_write_failed")
@@ -2214,7 +2358,12 @@ class _PreviewScope:
                             if count != expected[2] or observed != expected:
                                 raise ValueError("preview_sqlite_changed")
                     finally:
-                        os.close(descriptor)
+                        if self.custody is None:
+                            os.close(descriptor)
+                        else:
+                            from .native_files import _close_owned
+
+                            _close_owned(descriptor, self.custody)
             if self._source_state(source) != before:
                 raise ValueError("preview_sqlite_changed")
         except BaseException:
@@ -2241,7 +2390,7 @@ def _preview_sqlite_target(source):
 
 
 @contextmanager
-def _preview_reads(*, limits=None, byte_budget=None):
+def _preview_reads(*, limits=None, byte_budget=None, _read_budget=None):
     """Keep installed read-only discovery from bootstrapping ordinary services."""
     from .limits import ArchiveLimits
 
@@ -2256,7 +2405,12 @@ def _preview_reads(*, limits=None, byte_budget=None):
         or getattr(_local, "maintenance_session", None) is not None
     ):
         raise bootstrap.RecoveryRequired("nested_preview_scope")
-    scope = _PreviewScope(limits, byte_budget)
+    if _read_budget is not None:
+        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+        if type(_read_budget) is not _TraceReadBudget:
+            raise TypeError("invalid_preview_materialization_budget")
+    scope = _PreviewScope(limits, byte_budget, read_budget=_read_budget)
     _local.preview_scope = scope
     try:
         yield
@@ -2842,13 +2996,26 @@ class MaintenanceSession:
         )
         if any(not _contains_capture_path(self._roots, path) for path in selectors):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
+        coordinator = (
+            _mobile_coordinator_budget(self)
+            if _mobile_admission(self)[4] is not None
+            and getattr(_local, "mobile_sqlite_scope", None) is None
+            and (private_sqlite or _mobile_partition is not None)
+            else None
+        )
         with self._discovery_reads(
-            private_sqlite=private_sqlite or _mobile_partition is not None
+            private_sqlite=private_sqlite or _mobile_partition is not None,
+            _read_budget=coordinator,
         ):
-            current = discover(selectors, selections=selections)
+            current = discover(
+                selectors, selections=selections, _read_budget=coordinator
+            )
         if current.scope_digest != approved_scope and _mobile_partition is not None:
             from .mobile_native_history import _original_history_inventory
-            current = _original_history_inventory(self, _mobile_partition, current, selections, approved_scope)
+
+            current = _original_history_inventory(
+                self, _mobile_partition, current, selections, approved_scope
+            )
         if current.scope_digest != approved_scope:
             raise ValueError("scope_changed")
         sources = []
@@ -2868,11 +3035,17 @@ class MaintenanceSession:
         return current
 
     @contextmanager
-    def _discovery_reads(self, *, private_sqlite=False, limits=None, byte_budget=None):
+    def _discovery_reads(
+        self, *, private_sqlite=False, limits=None, byte_budget=None, _read_budget=None
+    ):
         """Allow installed reads, optionally using bounded private SQLite copies."""
         from .limits import ArchiveLimits
 
         self._check()
+        if (_read_budget is not None) and (
+            not private_sqlite or _mobile_coordinator_budget(self) is not _read_budget
+        ):
+            raise ValueError("mobile_preview_budget_changed")
         if getattr(_local, "discovery_scope", None) is not None:
             raise bootstrap.RecoveryRequired("nested_discovery_scope")
         if type(private_sqlite) is not bool:
@@ -2898,16 +3071,28 @@ class MaintenanceSession:
             reader.check()
             admission = _mobile_admission(self)
             if reader.read_budget is not None:
-                if admission[2] is not reader.read_budget or admission[3] is not reader.discovery_bindings:
+                if (
+                    admission[2] is not reader.read_budget
+                    or admission[3] is not reader.discovery_bindings
+                ):
                     raise ValueError("mobile_sqlite_admission_changed")
                 reader.read_budget.container(12)
                 binding_map = reader.discovery_bindings
         scope = _DiscoveryScope(
-            self, private_sqlite=private_sqlite, limits=limits, byte_budget=byte_budget
+            self,
+            private_sqlite=private_sqlite,
+            limits=limits,
+            byte_budget=byte_budget,
+            read_budget=_read_budget,
         )
         self._scopes.append(scope)
         if binding_map is not None:
-            binding_map[scope] = (reader, scope.sqlite_copies, scope.resources, scope.sqlite_copies.resources)
+            binding_map[scope] = (
+                reader,
+                scope.sqlite_copies,
+                scope.resources,
+                scope.sqlite_copies.resources,
+            )
         _local.discovery_scope = scope
         try:
             yield
@@ -2992,7 +3177,17 @@ class MaintenanceSession:
 
     @contextmanager
     def _replacement_capture_scope(
-        self, plan, journal, staging, *, limits, byte_budget
+        self,
+        plan,
+        journal,
+        staging,
+        *,
+        limits,
+        byte_budget,
+        _source_archive=None,
+        _source_read_budget=None,
+        _source_journal=None,
+        cancel=None,
     ):
         """Bind only rechecked prepared local originals, including damaged config."""
         from .limits import ArchiveLimits
@@ -3007,7 +3202,16 @@ class MaintenanceSession:
             raise ValueError("invalid_capture_budget")
         if getattr(_local, "capture_scope", None) is not None:
             raise bootstrap.RecoveryRequired("nested_capture_scope")
-        _, inventory = _checked_originals(plan, journal, self)
+        source_options = {}
+        if _source_read_budget is not None:
+            _source_read_budget.reserve(512)
+            source_options = {
+                "_source_archive": _source_archive,
+                "_source_read_budget": _source_read_budget,
+                "_source_journal": _source_journal,
+                "cancel": cancel,
+            }
+        _, inventory = _checked_originals(plan, journal, self, **source_options)
         selected = []
         for item in inventory.items:
             if item.path is not None and item.path.is_file():
@@ -3136,9 +3340,14 @@ class MaintenanceSession:
                 approved_scope,
                 private_sqlite=True,
             )
-        with self._discovery_reads(private_sqlite=True):
+        coordinator = (
+            _mobile_coordinator_budget(self)
+            if _mobile_admission(self)[4] is not None
+            else None
+        )
+        with self._discovery_reads(private_sqlite=True, _read_budget=coordinator):
             current_review = _preview_selected_mobile(
-                *selectors, review_destination=not records
+                *selectors, review_destination=not records, _read_budget=coordinator
             )
         authoritative_review = replace(
             current_review,
@@ -3182,13 +3391,17 @@ class MaintenanceSession:
             or reviewed_preview.destination_sidecars != destination_sidecars
         ):
             raise ValueError("mobile_preview_authority_changed")
-        source = read_profile_config(selectors[0])
-        target = CanonicalConsoleStores(
-            *canonical_console_paths(read_profile_config(selectors[1]))
-        )
-        with self._discovery_reads(private_sqlite=True):
+        with self._discovery_reads(private_sqlite=True, _read_budget=coordinator):
+            source = read_profile_config(selectors[0])
+            target = CanonicalConsoleStores(
+                *canonical_console_paths(read_profile_config(selectors[1]))
+            )
             preview = _preview(
-                legacy_mobile_dir(source), target, source, review_destination=False
+                legacy_mobile_dir(source),
+                target,
+                source,
+                review_destination=False,
+                _read_budget=coordinator,
             )
         if preview.issues or preview.source_fingerprint != source_fingerprint:
             raise ValueError("mobile_source_changed")
@@ -3246,7 +3459,10 @@ class MaintenanceSession:
                 or preview.destination_sidecars != destination_sidecars
             ):
                 raise ValueError("mobile_destination_changed")
+            from .mobile_lineage import _prepared_predecessor
+
             prepared = _MobilePrepared(
+                predecessor=_prepared_predecessor(self, journal, reviewed_preview),
                 bootstrap_root=str(root),
                 namespaces=sorted(
                     {name for row in bindings for name in row["namespaces"]}
@@ -3494,7 +3710,7 @@ def _mint_maintenance_session(
     session._thread = threading.get_ident()
     session._active = True
     session._scopes = []
-    _mobile_admissions[session] = [session._scopes, [], None, None]
+    _mobile_admissions[session] = [session._scopes, [], None, None, None]
     session._mobile_attempted_journal = None
     _local.maintenance_session = session
     try:
@@ -3576,6 +3792,9 @@ class _CaptureFileDescriptors:
     """Operation-private FDs with conservative unresolved-close quarantine."""
 
     def __init__(self, scope):
+        budget = getattr(scope, "read_budget", None)
+        if budget is not None:
+            budget.reserve(512)
         self.scope = scope
         self.fds = []
         self.directory_iterators = []
@@ -3597,7 +3816,9 @@ class _CaptureFileDescriptors:
 
     def close_directory_iterator(self, iterator) -> None:
         """Retain an actual native iterator after any ambiguous close outcome."""
-        if self.close_failed or not any(item is iterator for item in self.directory_iterators):
+        if self.close_failed or not any(
+            item is iterator for item in self.directory_iterators
+        ):
             raise bootstrap.RecoveryRequired("capture_resources_not_retired")
         try:
             iterator.close()
@@ -3827,12 +4048,31 @@ def _check_recovery_file(
     )
 
 
+def _recovery_read_budget(scope, supplied):
+    """Select accounting only; source admission remains with the native scope."""
+    native = getattr(scope, "read_budget", None)
+    if supplied is None:
+        return native
+    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+    from .mobile_preview_budget import current
+
+    if type(supplied) is not _TraceReadBudget:
+        raise TypeError("native_read_budget_required")
+    active = current()
+    expected = active.read_budget if active is not None else native
+    if expected is not None and supplied is not expected:
+        raise ValueError("mobile_preview_budget_changed")
+    return supplied
+
+
 def _digest_recovery_file(
     owner_id: str,
     candidate: Path,
     *,
     max_bytes: int,
     cancel: threading.Event | None = None,
+    _read_budget=None,
 ) -> tuple[int, str]:
     """Return actual byte count/SHA256 only after positive native retirement."""
     return _consume_recovery_file(
@@ -3842,6 +4082,7 @@ def _digest_recovery_file(
         collect=False,
         cancel=cancel,
         digest=True,
+        _read_budget=_read_budget,
     )
 
 
@@ -3854,10 +4095,10 @@ def _consume_recovery_file(
     cancel: threading.Event | None = None,
     digest: bool = False,
     private: bool = False,
+    _read_budget=None,
 ) -> bytes | tuple[int, str] | None:
     """Return bounded definition bytes after native reader retirement."""
     _recovery_file_limit(owner_id, max_bytes)
-    selected = lexical_path(candidate)
     # Final rediscovery may run inside capture_scope. Its bounded reads use the
     # explicitly held discovery namespace, not the narrower payload source set.
     scope = (
@@ -3865,6 +4106,13 @@ def _consume_recovery_file(
         or getattr(_local, "capture_scope", None)
         or getattr(_local, "preview_scope", None)
     )
+    native_budget = getattr(scope, "read_budget", None)
+    read_budget = _recovery_read_budget(scope, _read_budget)
+    if read_budget is not None:
+        from .mobile_preview_budget import path_cost
+
+        read_budget.reserve(2048 + path_cost(candidate, copies=2))
+    selected = lexical_path(candidate)
     lease = acquire_storage(selected) if scope is None else None
     resources = _CaptureFileDescriptors(scope)
     try:
@@ -3884,17 +4132,55 @@ def _consume_recovery_file(
                 raise bootstrap.RecoveryRequired("credential_staging_required")
             if scope is not None:
                 _check_capture_file_identity(scope, selected, info, owner_id=owner_id)
+            if read_budget is not None:
+                if info.st_size > max_bytes:
+                    raise ValueError("definition_byte_limit")
+                read_budget.reserve(256 + (2 * info.st_size if collect else 0))
             chunks = []
             import hashlib
 
             hasher = hashlib.sha256() if digest else None
             total = 0
+            digest_buffer = None
             while True:
                 if cancel is not None and cancel.is_set():
                     raise InterruptedError("cancelled")
                 if scope is not None:
                     scope.check()
-                chunk = os.read(fd, min(1024**2, max_bytes - total + 1))
+                size = min(1024**2, max_bytes - total + 1)
+                if read_budget is not None:
+                    size = min(size, max(1, info.st_size - total + 1))
+                    read_budget.reserve(768)
+                if native_budget is not None and not collect:
+                    copies = (
+                        scope.sqlite_copies if type(scope) is _DiscoveryScope else scope
+                    )
+                    view = copies._buffer()[: min(size, 65536)]
+                    length = os.readv(fd, [view])
+                    chunk = view[:length]
+                elif (
+                    _read_budget is not None
+                    and digest
+                    and not collect
+                    and hasattr(os, "readv")
+                ):
+                    if digest_buffer is None:
+                        if type(scope) is _CaptureScope:
+                            if scope._digest_buffer is None:
+                                read_budget.reserve(65536 + 1024)
+                                scope._digest_buffer = memoryview(bytearray(65536))
+                            digest_buffer = scope._digest_buffer
+                        else:
+                            width = min(65536, max(1, info.st_size + 1))
+                            read_budget.reserve(width + 1024)
+                            digest_buffer = memoryview(bytearray(width))
+                    view = digest_buffer[: min(size, len(digest_buffer))]
+                    length = os.readv(fd, [view])
+                    chunk = view[:length]
+                else:
+                    if _read_budget is not None:
+                        read_budget.reserve(64 + size)
+                    chunk = os.read(fd, size)
                 if not chunk:
                     break
                 total += len(chunk)
@@ -3917,6 +4203,8 @@ def _consume_recovery_file(
                 ):
                     raise bootstrap.RecoveryRequired("capture_target_changed")
             if hasher is not None:
+                if _read_budget is not None:
+                    read_budget.reserve(512)
                 return total, hasher.hexdigest()
             return b"".join(chunks) if collect else None
     finally:
@@ -3934,6 +4222,7 @@ def copy_capture_file(
     cancel: threading.Event,
     *,
     max_bytes: int,
+    _read_budget=None,
 ) -> None:
     """Copy one enrolled regular file into private staging without exposed handles.
 
@@ -3946,6 +4235,13 @@ def copy_capture_file(
     if scope is None:
         raise bootstrap.RecoveryRequired("capture_requires_maintenance")
     scope.check()
+    read_budget = _recovery_read_budget(scope, _read_budget)
+    if _read_budget is not None:
+        from .mobile_preview_budget import path_cost
+
+        read_budget.reserve(
+            2048 + path_cost(source, copies=2) + path_cost(destination, copies=2)
+        )
     source = lexical_path(source)
     destination = lexical_path(destination)
     if scope.staging not in destination.parents:
@@ -3980,17 +4276,24 @@ def copy_capture_file(
             scope.check()
             if cancel.is_set():
                 raise InterruptedError("cancelled")
-            chunk = os.read(fd, min(1024**2, max_bytes - total + 1))
+            width = min(1024**2, max_bytes - total + 1)
+            if _read_budget is not None:
+                read_budget.reserve(64 + width)
+            chunk = os.read(fd, width)
             if not chunk:
                 break
             total += len(chunk)
             if total > max_bytes:
                 raise ValueError("capture_byte_limit")
+            if _read_budget is not None:
+                read_budget.reserve(256)
             view = memoryview(chunk)
             while view:
                 count = os.write(out, view)
                 if count <= 0:
                     raise OSError("capture_write_unavailable")
+                if _read_budget is not None:
+                    read_budget.reserve(256)
                 view = view[count:]
         os.fsync(out)
         scope.check()

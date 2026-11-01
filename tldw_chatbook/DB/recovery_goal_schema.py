@@ -80,6 +80,15 @@ def validate_goal_rows(connection):
     import hashlib
     from typing import get_args
 
+    from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+        connection_budget,
+        scalar_cost,
+        table_cost,
+    )
+
+    budget = connection_budget(connection)
+    scalar_cost(connection, 2)
+
     from tldw_chatbook.Agents.goal_models import (
         GoalCheckpoint,
         GoalEvidence,
@@ -108,6 +117,26 @@ def validate_goal_rows(connection):
     ).fetchone()
     if invalid is not None:
         return ("invalid_goal_ownership",)
+    if budget is not None:
+        for table, columns in (
+            ("goal_runs", ("status", "request_json", "payload_hash")),
+            ("goal_reports", ("payload_json",)),
+            ("goal_checkpoints", ("attempt_id", "payload_json")),
+            ("goal_evidence", ("id", "goal_id", "attempt_id", "payload_json")),
+        ):
+            table_cost(connection, table, columns)
+        budget.reserve(2048)
+        count, size = connection.execute(
+            "SELECT count(*),coalesce(sum(coalesce(length(CAST(i.run_id AS BLOB)),0)),0) "
+            "FROM goal_evidence e JOIN goal_iterations i ON i.attempt_id=e.attempt_id"
+        ).fetchone()
+        budget.reserve(256 + 128 * count + 4 * size)
+
+    def payload_cost(payload):
+        if budget is not None:
+            budget.json(payload)
+            budget.reserve(1024 + 4 * len(payload))
+
     try:
         for status, payload, digest in connection.execute(
             "SELECT status, request_json, payload_hash FROM goal_runs"
@@ -118,15 +147,18 @@ def validate_goal_rows(connection):
                 if payload:
                     return ("invalid_goal_payload",)
                 continue
+            payload_cost(payload)
             GoalRequest.model_validate_json(payload)
             if hashlib.sha256(payload.encode()).hexdigest() != digest:
                 return ("invalid_goal_payload",)
         for (payload,) in connection.execute("SELECT payload_json FROM goal_reports"):
+            payload_cost(payload)
             GoalReport.model_validate_json(payload)
         for attempt_id, ordinal, payload in connection.execute(
             "SELECT c.attempt_id,i.ordinal,c.payload_json FROM goal_checkpoints c "
             "JOIN goal_iterations i ON i.attempt_id=c.attempt_id"
         ):
+            payload_cost(payload)
             checkpoint = GoalCheckpoint.model_validate_json(payload)
             if checkpoint.id != attempt_id or checkpoint.ordinal != ordinal:
                 return ("invalid_goal_ownership",)
@@ -134,6 +166,7 @@ def validate_goal_rows(connection):
             "SELECT e.id,e.goal_id,e.attempt_id,i.run_id,e.payload_json FROM goal_evidence e "
             "JOIN goal_iterations i ON i.attempt_id=e.attempt_id"
         ):
+            payload_cost(payload)
             evidence = GoalEvidence.model_validate_json(payload)
             if (
                 evidence.id,

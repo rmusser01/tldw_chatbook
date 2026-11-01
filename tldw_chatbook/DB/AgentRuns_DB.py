@@ -1021,7 +1021,14 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 finally:
                     conn.execute("RELEASE SAVEPOINT mobile_import_v26")
 
-    def read_imported_run_log_page(self, mapped_run_id: str, operation_id: str, source_fingerprint: str, *, cursor=None):
+    def read_imported_run_log_page(
+        self,
+        mapped_run_id: str,
+        operation_id: str,
+        source_fingerprint: str,
+        *,
+        cursor=None,
+    ):
         """Read receipt-bound original-ID history through actual enrolled pins."""
         from .mobile_imported_run_log import _read_page
 
@@ -1826,6 +1833,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             if delivered_by_run_id is not None:
                 from .automatic_work import AutomaticWorkRefused
                 from .mobile_import_authority import run_allowed
+
                 if not run_allowed(conn, delivered_by_run_id):
                     raise AutomaticWorkRefused("import_review_required")
             conn.execute(
@@ -2233,7 +2241,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 conn.execute("BEGIN")
                 try:
                     imported = _imported_definition_ids(conn, _TraceReadBudget())
-                    rows = [row for row in conn.execute(query) if row["id"] not in imported]
+                    rows = [
+                        row for row in conn.execute(query) if row["id"] not in imported
+                    ]
                 finally:
                     conn.rollback()
         return [self._definition_row_to_dict(row) for row in rows]

@@ -291,11 +291,9 @@ def _raw_participant(source):
         if not installed:
             raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     else:
+        from ..Chat.prompt_history import PromptHistory
         from ..Notes.file_notes_replica import FileNotesReplica
         from ..Widgets import emoji_picker
-
-        types = _types()
-        from ..Chat.prompt_history import PromptHistory
 
         screen_module = sys.modules.get("tldw_chatbook.UI.Screens.chat_screen")
         screen_type = getattr(screen_module, "ChatScreen", None)
@@ -316,11 +314,12 @@ def _raw_participant(source):
         elif type(source).__module__ == "tldw_chatbook.Agents.hook_permissions":
             owner = "hooks.permissions"
             selected = _hook_permissions_selection(source)
-        elif type(source) in types:
+        else:
+            types = _types()
+            if type(source) not in types:
+                raise bootstrap.RecoveryRequired("raw_participant_not_installed")
             owner = types[type(source)]
             selected = source.store_path
-        else:
-            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     selected = lexical_path(selected)
     participant = _register_raw_participant(source, owner, selected)
     state = _participant_state(participant)

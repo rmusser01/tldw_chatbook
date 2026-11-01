@@ -15,6 +15,13 @@ from tldw_chatbook.Utils.platform_files import os
 
 def lexical_path(value: str | Path) -> Path:
     """Expand home and make absolute without resolving links or probing parents."""
+    if isinstance(value, Path) and value.is_absolute() and ".." not in value.parts:
+        return value
+    from .mobile_preview_budget import path_cost, reserve
+
+    reserve(
+        path_cost(value, copies=3) if isinstance(value, Path) else 768 + 48 * len(value)
+    )
     return Path(os.path.abspath(os.path.expanduser(str(value))))
 
 

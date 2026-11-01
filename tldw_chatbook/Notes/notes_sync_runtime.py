@@ -109,6 +109,7 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
 from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
 
 if TYPE_CHECKING:  # ADR-097: annotation-only, never on the boot path.
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.Notes.note_import_planner import PriorImportObservation
 
 
@@ -332,9 +333,12 @@ class NotesSyncRuntimeSnapshot:
     status: str
     next_action: str
     roots: tuple[NotesSyncRootRuntimeSnapshot, ...] = ()
+    import_review_required: bool = False
 
     def __post_init__(self) -> None:
         _validate_projection(self.status, self.next_action)
+        if type(self.import_review_required) is not bool:
+            raise TypeError("import_review_required must be a bool")
         if type(self.roots) is not tuple or any(
             type(root) is not NotesSyncRootRuntimeSnapshot for root in self.roots
         ):
@@ -1758,6 +1762,7 @@ class NotesSyncRuntimeOwner:
         cutover_admitted: bool,
         profile_process_is_sole: bool,
         start_evidence: Callable[[], bool] | None = None,
+        review_imported_notes: Callable[[], bool] | None = None,
     ) -> None:
         if type(cutover_admitted) is not bool:
             raise TypeError("cutover_admitted must be a private boolean.")
@@ -1767,6 +1772,10 @@ class NotesSyncRuntimeOwner:
             raise TypeError("runtime factories must be callable.")
         if start_evidence is not None and not callable(start_evidence):
             raise TypeError("start_evidence must be callable when provided.")
+        if review_imported_notes is not None and not callable(review_imported_notes):
+            raise TypeError("review_imported_notes must be callable when provided.")
+        self._review_imported_notes = review_imported_notes
+        self._import_review_required = False
         self._producer_lifetime = ProducerLifetime()
         self._maintenance_closed = False
         self._maintenance_pending = set()
@@ -1930,6 +1939,7 @@ class NotesSyncRuntimeOwner:
                 self._with_watching(self._root_status[key])
                 for key in sorted(self._root_status)
             ),
+            self._import_review_required,
         )
 
     def _with_watching(
@@ -2288,6 +2298,7 @@ class NotesSyncRuntimeOwner:
             self._status = "awaiting_cutover"
             self._next_action = "finish_upgrade"
             return
+        existing_marker = marker is not None
         if marker is None:
             try:
                 await self._maintenance_offload(self._migrate_legacy)
@@ -2313,6 +2324,20 @@ class NotesSyncRuntimeOwner:
             self._status = "awaiting_cutover"
             self._next_action = "close_other_process_and_restart"
             return
+
+        if self._closing:
+            return
+        if existing_marker and self._review_imported_notes is not None:
+            try:
+                warning = await self._maintenance_offload(self._review_imported_notes)
+                if type(warning) is not bool:
+                    raise TypeError("import review must return a boolean")
+                self._import_review_required = warning
+            except Exception as error:  # noqa: BLE001 - refusal must preserve existing sync roots
+                _log_bounded_failure("import candidate review", error)
+                self._import_review_required = True
+            if self._closing:
+                return
 
         try:
             self._coordinator = (
@@ -4859,6 +4884,7 @@ def build_notes_sync_runtime_owner(
     local_user_id: str | None = None,
     recovery_capacity_bytes: int | None = None,
     start_evidence: Callable[[], bool] | None = None,
+    review_imported_notes: Callable[[], bool] | None = None,
     watcher_interval_seconds: float | None = None,
     watcher_max_interval_seconds: float | None = None,
 ) -> NotesSyncRuntimeOwner:
@@ -4918,6 +4944,7 @@ def build_notes_sync_runtime_owner(
         cutover_admitted=cutover_admitted,
         profile_process_is_sole=profile_process_is_sole,
         start_evidence=start_evidence,
+        review_imported_notes=review_imported_notes,
     )
     owner_holder["owner"] = owner
     return owner
@@ -4954,6 +4981,92 @@ def build_notes_sync_legacy_migrator(
     return migrate
 
 
+def build_notes_sync_import_reviewer(
+    *,
+    database_path: Path | str,
+    core: CharactersRAGDB,
+    note_scope_id: str,
+    file_notes_binding: Callable[[], object | None],
+    private_paths: Iterable[Path | str],
+) -> Callable[[], bool]:
+    """Build receipt-backed candidate review without opening either store.
+
+    Args:
+        database_path: Existing selected device-private Notes store.
+        core: Actual selected application Core owner.
+        note_scope_id: Canonical local Notes scope.
+        file_notes_binding: Current native FileNotes binding accessor.
+        private_paths: Application paths excluded by native root admission.
+
+    Returns:
+        A callback reporting whether any link needs folder-setup review.
+    """
+    store = NotesDeviceStateStore(database_path)
+    selected_private_paths = tuple(private_paths)
+
+    def review() -> bool:
+        from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+        from .notes_sync_legacy import (
+            _core_import_read,
+            _persist_imported_notes,
+            _plan_imported_notes,
+        )
+
+        budget = _TraceReadBudget()
+        try:
+            # The private owner's first connection performs schema writes. Establish
+            # actual work with constant-row reads, then prime it outside Core's TX.
+            with _core_import_read(core) as connection:
+                budget.container(2)
+                linked = connection.execute(
+                    "SELECT 1 FROM notes WHERE deleted=0 AND (is_externally_synced=1 OR file_path_on_disk IS NOT NULL OR relative_file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL) LIMIT 1"
+                ).fetchone()
+                receipt = (
+                    connection.execute(
+                        "SELECT 1 FROM mobile_consolidation_batches WHERE substr(batch_key,1,4)='chat' LIMIT 1"
+                    ).fetchone()
+                    if linked is not None
+                    else None
+                )
+            if receipt is None:
+                return False
+            current = getattr(core._local, "conn", None)
+            if current is not None and current.in_transaction:
+                raise ValueError("canonical_snapshot_still_borrowed")
+            store.initialize()
+            binding = file_notes_binding()
+            root_key = getattr(binding, "root_key", None)
+            budget.container(1)
+            file_roots = (root_key,) if isinstance(root_key, str) else ()
+            with _core_import_read(core) as connection:
+                plan, warning = _plan_imported_notes(
+                    connection,
+                    store,
+                    budget,
+                    note_scope_id=note_scope_id,
+                    file_notes_roots=file_roots,
+                    private_paths=selected_private_paths,
+                )
+            current = getattr(core._local, "conn", None)
+            if plan is not None and current is not None and current.in_transaction:
+                raise ValueError("canonical_snapshot_still_borrowed")
+            if plan is not None:
+                _persist_imported_notes(
+                    store,
+                    plan,
+                    budget,
+                    note_scope_id=note_scope_id,
+                    file_notes_roots=file_roots,
+                    private_paths=selected_private_paths,
+                )
+            return warning
+        finally:
+            store.close()
+
+    return review
+
+
 __all__ = [
     "CUTOVER_MARKER",
     "NOTES_SYNC_ATTENTION_STATUSES",
@@ -4968,5 +5081,6 @@ __all__ = [
     "NotesSyncRuntimeOwner",
     "NotesSyncRuntimeSnapshot",
     "build_notes_sync_legacy_migrator",
+    "build_notes_sync_import_reviewer",
     "build_notes_sync_runtime_owner",
 ]

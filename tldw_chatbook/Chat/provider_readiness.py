@@ -652,7 +652,6 @@ def resolve_provider_credential(
     """Resolve the selected credential without overriding an explicit auth mode."""
     from ..config import resolve_provider_api_key as _valid_api_key
 
-
     selected_source = configured_provider_credential_source(provider_settings)
     configured_key = _valid_api_key(provider_settings.get("api_key"))
     env_var_value = provider_settings.get("api_key_env_var")

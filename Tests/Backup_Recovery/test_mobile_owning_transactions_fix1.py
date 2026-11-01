@@ -5,7 +5,10 @@ from threading import Event
 import pytest
 
 from Tests.Backup_Recovery.test_mobile_native_operation import captured_operation
-from Tests.Backup_Recovery.test_mobile_owning_transactions import _small_native_seed
+from Tests.Backup_Recovery.test_mobile_owning_transactions import (
+    _ordinary_imported_owner,
+    _small_native_seed,
+)
 
 
 @pytest.mark.parametrize(
@@ -33,30 +36,31 @@ def test_actual_proved_original_detached_replay(tmp_path, monkeypatch, source_ca
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
     monkeypatch.setattr(mobile_native_rows, "_prepare_rows", prepared)
     with captured_operation(tmp_path, monkeypatch) as captured:
+        stores = captured.preview.destination
         captured.consolidate(password=b"test-private-mobile-rollback", cancel=Event())
-        with (
-            captured.owner("db.chachanotes.primary") as owner,
-            owner.transaction() as connection,
-        ):
-            assert (
-                _read_owner_receipt(
-                    connection.connection,
-                    captured.journal.operation_id,
-                    captured.preview.source_fingerprint,
-                    "chat",
-                    _TraceReadBudget(),
-                )
-                is not None
+    with (
+        _ordinary_imported_owner(stores, "db.chachanotes.primary") as owner,
+        owner.transaction() as connection,
+    ):
+        assert (
+            _read_owner_receipt(
+                connection.connection,
+                captured.journal.operation_id,
+                captured.preview.source_fingerprint,
+                "chat",
+                _TraceReadBudget(),
             )
-            for row in observed["rows"]:
-                mobile_native_rows._verify_row(connection, row, dict(row.values))
-            assert (
-                connection.execute(
-                    "SELECT count(*) FROM mobile_consolidation_batches WHERE batch_key='chat' AND operation_id=?",
-                    (captured.journal.operation_id,),
-                ).fetchone()[0]
-                == 1
-            )
-            assert connection.execute(
-                "SELECT count(*) FROM console_trace_owners WHERE attached=0"
-            ).fetchone()[0] == (2 if source_case == "detached_twice" else 1)
+            is not None
+        )
+        for row in observed["rows"]:
+            mobile_native_rows._verify_row(connection, row, dict(row.values))
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM mobile_consolidation_batches WHERE batch_key='chat' AND operation_id=?",
+                (captured.journal.operation_id,),
+            ).fetchone()[0]
+            == 1
+        )
+        assert connection.execute(
+            "SELECT count(*) FROM console_trace_owners WHERE attached=0"
+        ).fetchone()[0] == (2 if source_case == "detached_twice" else 1)

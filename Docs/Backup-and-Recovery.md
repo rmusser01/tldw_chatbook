@@ -323,10 +323,14 @@ Normal backup includes recognized legacy chat, workspace and run stores plus
 qualified referenced artifacts, using the existing coherent capture and
 credential policy. Unknown contents, unsupported schemas, missing dependencies or
 unsafe aliases must be resolved before capture; partial capture cannot silently
-omit blocked legacy history. File-backed note, dictionary or persona references
-without a qualified legacy binding remain blocked. Source runs and claims are
-never reconciled during preview or capture. This command currently supports
-preview only.
+omit blocked legacy history. Physical dictionary/persona artifact dependencies
+without a qualified legacy binding remain blocked. Historical note locator fields
+are a distinct case: native mobile capture can retain them as database content.
+That does not capture the external note file or grant active file-sync authority;
+import and App-owned candidate visibility still require qualification. Source runs and claims are
+never reconciled during preview or capture. The local public service and command
+also implement explicit apply and same-operation recovery; full Task8 integration
+qualification is still in progress.
 
 The native import implementation also refuses two specific trace histories before
 any import effect: a populated detached trace whose deleted original conversation
@@ -341,7 +345,7 @@ and call provenance; they do not discard those records or import the rest of a
 blocked profile. Keep the original stores and authenticated recovery captures with
 the exact owner/call diagnostic. Do not edit provenance flags, create replacement
 parents, remove history or use an older binary to force an import. The public
-command remains preview-only until the remaining cutover qualification is complete.
+apply command preserves these same preflight refusals.
 
 
 Imported unfinished response recovery remains visible but cannot retry or resume
@@ -355,8 +359,9 @@ Interrupted first publication of the canonical history directory may resume only
 from its original authenticated capture and recorded native directory identities.
 Changed or additional files remain retained and block qualification. Do not remove
 pending recovery records or modify source/provenance to force progress. Public
-cutover and ordinary access to the produced target still require the separate
-native completion/release workflow; the command remains preview-only.
+cutover and ordinary access to the produced target require durable native
+completion, legitimate pending retirement and physical owner closure. Public
+apply and explicit recovery compose this workflow.
 
 
 The explicit native `Remove payloads` action can erase local private Goal bodies
@@ -385,6 +390,76 @@ dependencies therefore block the whole consolidation before publication or owner
 writes. A path, hash or recorded SHA is not physical authority; original history,
 files and statuses are retained, and no failure/pruned status is manufactured.
 
+
+### Local mobile apply and recovery
+
+Close all application instances using the selected source or target before apply.
+Use the exact profile reviewed by preview. Applying obtains and shows a fresh
+preview, asks for `consolidate`, then prompts for a new encrypted recovery-copy
+password; keep that password for an interrupted operation.
+
+```bash
+python -m tldw_chatbook.Backup_Recovery consolidate-mobile \
+  --source-config /absolute/source/config.toml \
+  --target-config /absolute/target/config.toml --apply
+python -m tldw_chatbook.Backup_Recovery recover OPERATION_ID
+python -m tldw_chatbook.Backup_Recovery recover OPERATION_ID --finish --ask-password
+```
+
+Use the same `--control-root` before the subcommand if an explicit control root
+was selected. The status command lists actions actually available for that
+operation. A pre-cutover rollback uses `recover OPERATION_ID --rollback
+--ask-password` only when offered. It restores the authenticated coherent canonical
+pre-import snapshot/state, retains displaced current objects and leaves legacy
+source bytes untouched. It does not promise the original uncaptured WAL bytes or
+inodes. After committed cutover, restoring a retained canonical copy instead uses
+a fresh native replacement review and Safety Copy.
+
+Verified empty or absent legacy source does not require creating a legacy database.
+Required canonical owners must already be capturable: initialize the canonical
+application explicitly with its selected `--config` and valid private storage
+parents, retire it, then obtain a new preview. Missing required canonical owners
+refuse before preparation. Never initialize them silently from a stale preview.
+
+A public start or recovery currently has one fixed 4 GiB cumulative materialization
+allowance coupled to the original native 16 MiB proof allowance. These are bounded
+reservation counters, not heap measurements or a promise that every profile fits.
+A late refusal can retain pending recovery after partial native commits; use the
+explicit available same-operation recovery action with the original password.
+There is no automatic hidden retry or allowance reset within one call. Configured
+but unreadable or required missing credentials remain blocking review issues.
+
+Current targeted evidence includes fresh populated cutover, no-data completion,
+fresh-process continuation after a late bounded refusal, and ordinary RunLog,
+command history, trace and Goal privacy APIs on the same produced targets. Native
+Console hydration/controller Discard also preserves the mapped user and execution
+holds without provider dispatch. The absent-marker Notes/Personas flow also passes:
+a real App rename survives public import and two cold App starts, the default
+assistant remains ID 1, and imported linked-note metadata becomes a paused
+candidate with pending migration review. Source databases and external files
+remain unchanged; this grants no active file-sync authority. The present-marker
+flow also passes with receipt-backed disjoint candidates, preserved existing
+Notes state, two stable cold starts and all observed Notes handles closed. The
+mounted Console manual turn separately passes with one scripted generation,
+zero tool dispatches and unchanged imported holds/accounting through reopen.
+These are startup and scripted-provider proofs, not active file sync or hardware
+qualification. The explicitly approved direct post-replacement observer and
+4 GiB/early terminal-pricing changes are implemented. Their finite component
+checks are recorded separately. Fresh restored-generation checks, native data and
+theme saves, refusal controls, and rollback-to-reviewed-successor integration now
+pass. The same public Workspace operation also finishes in a new process after a
+durable-commit interruption, with exact receipts/rows/holds and no replay. Native packaged-artwork copy/hash/member controls and their
+composition with existing native source namespaces have explicit human approval
+and preserve profile bindings. Full included-artwork recovery now passes actual
+native staging, SafetyCopy capture and authentication, publication and restoration.
+The verified SafetyCopy retains the later edit while the restored target returns
+to its captured contents; final source/package and guard checks pass. The ordinary
+mobile gate now accepts that authenticated direct restoration and preserves its
+source, activation, physical, schema and retained-capture checks. Earlier
+parse and scratch-admission failures remain historical; the human-approved native
+scratch composition also passes its scoped mounted manual flow.
+Do not treat a generic replacement success as mobile write-gate acceptance.
+
 ### Native-owner qualification environment
 
 The saved native-owner integration tests emitted a Pydantic warning from
@@ -397,3 +472,38 @@ native-owner fix. The already installed Pydantic 2.12.5 environment used for FIX
 has an explicit `exclude_if` parameter. Those newer results do not erase the older
 warning or establish compatibility with older Pydantic versions. No dependency
 was installed or updated for FIX1.
+
+
+The mounted Console qualification now completes a new manual turn on the actual public-produced target and reopens its persisted response after native shutdown. The human-approved R135 composition retains the native scratch manager/writer and independent worker leases while preserving profile admission, imported holds and tool permissions. The test recorded one scripted provider generation, no tool dispatches and unchanged imported authority/accounting. It uses the native character-estimate tokenizer fallback; real providers, hardware and main-entrypoint startup remain unqualified. R129/R130 received explicit authorization; their current restored-profile and public recovery checks pass.
+
+
+Notes device-state lock files are local control metadata. R136 adds an exact-shape exclusion for the native private `notes_sync_locks` directory; malformed or foreign contents block Complete discovery. This does not activate imported sync roots or reset migration markers. Native absent, empty and acquired/released retained-lock Complete checks and scoped refusal/accounting controls pass. The present-marker App flow now passes with the separate R137 receipt-backed candidate path; lock exclusion itself grants no candidate or sync authority.
+
+
+R134 held-preview accounting clarification: the fixed authenticated mobile canonical-copy path carries one original ordinary16MiB allowance explicitly through its new source-prefix, selector/mapping, bootstrap/journal and framed-observation representations, and its already budgeted package read/copy/view/slice work. The actual native `_capture_bound_sources` context remains the sole source-read authority; generic capture admission is unchanged. No PreviewScope may be issued during maintenance and no generic role is added; R141 adds only a private byte workspace, not authority or an allowance. Nested fixed callbacks reuse the exact allowance without reset. Original generic verify_sealed/plaintext and encrypted hash passes, Zip/config/native planner internals retain their existing ArchiveLimits and behavior; this counter is not a whole-engine or RSS bound. Factor the existing authenticated candidate prefix and preserve positive current nonpackage profile bindings, complete target/member/selector/store checks, cancellation and physical retirement. Optional private forwarding defaults preserve existing callers; component identity/refusal/cancel/exhaustion/default checks precede another full replacement. The separately authorized R129/R130 changes are now qualified by their targeted public integrations.
+
+
+The R137 Notes startup extension is implemented and qualified by a fresh present-marker App flow: with an existing current cutover marker, it inspects validated canonical import receipts for unrepresented linked notes and offers only new disjoint paused candidates. Two cold starts preserve the existing marker/root/binding/review baseline and mapped note ID/version/digest; all seven observed Notes handles close each time, including the callback store. Overlapping or unreadable file links remain unadded with a separate visible warning; the note stays available. Existing sync folders and their authority remain unchanged, and activation still needs the native fresh review. The earlier PRESENT run imported note content successfully but did not expose its candidate; that failure remains recorded.
+
+
+Current artwork-recovery qualification includes the full native replacement and
+verified SafetyCopy path. Ordinary and held preview, native staging and all three
+fresh source checks complete under the original limits. Parent handles remain
+held through current-name checks, and distinct write paths are checked without
+collapsing logical owner mappings. The final full run restores the captured chat
+and retains the newer note in its authenticated SafetyCopy; final source and
+package facts remain unchanged and both guards are clear. Target data changes are
+the expected restoration, not a claim of full-run physical nonmutation.
+
+The historical qualification above returned native `mobile_object_changed` at
+the ordinary mobile gate. The approved direct-restored-generation observer is now
+implemented and passes its focused integration qualification. It requires native
+replacement provenance and current schema/physical checks; it does not recreate
+imported receipts or release execution holds. The public allowance is now 4 GiB;
+the complete ordinary cutover coordinator uses a fixed 64 MiB allowance, while
+generic trace/Notes and private native defaults remain 16 MiB. No hidden retry, universal-fit
+or whole-engine memory claim is made. Earlier failed epochs and the staging-only sentinel remain
+separate evidence.
+
+
+The ordinary mobile cutover check uses a separate fixed64MiB cumulative coordinator allowance for its complete source, native restoration, schema and retained-evidence observation (R146), replacing its former whole-call16MiB allowance. It grants no ownership or tool access and cannot renew its allowance during a call. Generic trace/Notes and private native migration defaults remain16MiB; public migration remains4GiB with its original native16MiB child. These counters are not RSS measurements or guarantees that every profile fits. Fresh restored-profile, native edit/theme-save and included-artwork recovery checks pass under this allowance. The public Workspace crash/reconnect proof passes separately; the retained private 16 MiB cold-case refusal is not claimed as fixed.

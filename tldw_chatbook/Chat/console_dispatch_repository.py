@@ -94,21 +94,52 @@ _OWNER_SELECT = """
         ON assistant_message.id = checkpoint.assistant_message_id
 """
 
+
 def _admit_owner_read(cursor, budget, *, conversation_id=None, assistant_id=None):
     """Preadmit the fixed owner projection before encoded body materialization."""
     columns = (
-        "checkpoint.assistant_message_id", "checkpoint.user_message_id", "checkpoint.conversation_id",
-        "checkpoint.preparation_id", "checkpoint.attempt_id", "checkpoint.state", "checkpoint.origin",
-        "checkpoint.queue_entry_id", "checkpoint.agent_chat_start_attempt_id", "checkpoint.frozen_authority_json",
-        "checkpoint.resolved_destination_json", "checkpoint.reconstructability_json",
-        "user_message.content", "user_message.metadata_json", "user_message.parent_message_id",
-        "user_message.conversation_id", "user_message.role", "assistant_message.content",
-        "assistant_message.conversation_id", "assistant_message.role", "assistant_message.assistant_generation_state",
-        "assistant_message.provider_continuation_json", "assistant_message.thinking_blocks_json",
+        "checkpoint.assistant_message_id",
+        "checkpoint.user_message_id",
+        "checkpoint.conversation_id",
+        "checkpoint.preparation_id",
+        "checkpoint.attempt_id",
+        "checkpoint.state",
+        "checkpoint.origin",
+        "checkpoint.queue_entry_id",
+        "checkpoint.agent_chat_start_attempt_id",
+        "checkpoint.frozen_authority_json",
+        "checkpoint.resolved_destination_json",
+        "checkpoint.reconstructability_json",
+        "user_message.content",
+        "user_message.metadata_json",
+        "user_message.parent_message_id",
+        "user_message.conversation_id",
+        "user_message.role",
+        "assistant_message.content",
+        "assistant_message.conversation_id",
+        "assistant_message.role",
+        "assistant_message.assistant_generation_state",
+        "assistant_message.provider_continuation_json",
+        "assistant_message.thinking_blocks_json",
     )
-    where, value = ("checkpoint.assistant_message_id", assistant_id) if assistant_id is not None else ("checkpoint.conversation_id", conversation_id)
-    lengths = "+".join("coalesce(length(CAST(" + column + " AS BLOB)),0)" for column in columns)
-    count, size = cursor.execute("SELECT count(*),coalesce(sum(" + lengths + "),0) " + ("FROM" + _OWNER_SELECT.split("      FROM", 1)[1]) + " WHERE " + where + "=?", (value,)).fetchone()
+    where, value = (
+        ("checkpoint.assistant_message_id", assistant_id)
+        if assistant_id is not None
+        else ("checkpoint.conversation_id", conversation_id)
+    )
+    lengths = "+".join(
+        "coalesce(length(CAST(" + column + " AS BLOB)),0)" for column in columns
+    )
+    count, size = cursor.execute(
+        "SELECT count(*),coalesce(sum("
+        + lengths
+        + "),0) "
+        + ("FROM" + _OWNER_SELECT.split("      FROM", 1)[1])
+        + " WHERE "
+        + where
+        + "=?",
+        (value,),
+    ).fetchone()
     if count > 1:
         raise ValueError("invalid_checkpoint_owner")
     budget.container(count * 64)
@@ -116,7 +147,14 @@ def _admit_owner_read(cursor, budget, *, conversation_id=None, assistant_id=None
 
 
 def _admit_owner_json(row, budget):
-    for column in ("frozen_authority_json", "resolved_destination_json", "reconstructability_json", "user_metadata_json", "provider_continuation_json", "thinking_blocks_json"):
+    for column in (
+        "frozen_authority_json",
+        "resolved_destination_json",
+        "reconstructability_json",
+        "user_metadata_json",
+        "provider_continuation_json",
+        "thinking_blocks_json",
+    ):
         raw = row[column]
         if raw is not None:
             budget.json(raw)
@@ -127,18 +165,29 @@ def _imported_checkpoint_projection(repository, row, imported, budget):
     assistant = row["assistant_message_id"]
     stamp = imported["checkpoint"].get(assistant)
     if stamp is None or imported["message"].get(row["user_message_id"]) != stamp:
-        return repository._quarantined(row["conversation_id"], assistant, "invalid_imported_checkpoint")
+        return repository._quarantined(
+            row["conversation_id"], assistant, "invalid_imported_checkpoint"
+        )
     _admit_owner_json(row, budget)
     checkpoint, error = repository._checkpoint_from_row(row)
     if checkpoint is None:
-        return repository._quarantined(row["conversation_id"], assistant, error or "invalid_checkpoint")
+        return repository._quarantined(
+            row["conversation_id"], assistant, error or "invalid_checkpoint"
+        )
     return ConsoleDispatchRecoveryState(
         kind=ConsoleDispatchRecoveryKind.QUARANTINED,
-        assistant_message_id=assistant, conversation_id=row["conversation_id"],
+        assistant_message_id=assistant,
+        conversation_id=row["conversation_id"],
         visible_copy="Imported response recovery cannot run. Discard it before sending a new message.",
-        actions=(ConsoleDispatchRecoveryAction(ConsoleDispatchRecoveryActionId.DISCARD, "Discard", True),),
-        error_code="imported_history", checkpoint=checkpoint,
-        queue_entry_id=None, preparation_id=None,
+        actions=(
+            ConsoleDispatchRecoveryAction(
+                ConsoleDispatchRecoveryActionId.DISCARD, "Discard", True
+            ),
+        ),
+        error_code="imported_history",
+        checkpoint=checkpoint,
+        queue_entry_id=None,
+        preparation_id=None,
     )
 
 
@@ -184,10 +233,15 @@ class ConsoleDispatchRepository:
     ) -> ConsoleDispatchCheckpoint:
         """Insert one USER, assistant owner, and accepted checkpoint."""
         self._validate_acceptance(acceptance)
-        if acceptance.continuation_receipt is not None or acceptance.machine_followup_receipt is not None:
+        if (
+            acceptance.continuation_receipt is not None
+            or acceptance.machine_followup_receipt is not None
+        ):
             imported = _imported_chat_records(cursor.connection, _TraceReadBudget())
             if acceptance.parent_message_id in imported["message"]:
-                raise ConsoleDispatchCheckpointValidationError("Imported follow-up parent cannot authorize current work.")
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Imported follow-up parent cannot authorize current work."
+                )
         conversation = cursor.execute(
             "SELECT deleted FROM conversations WHERE id = ?",
             (acceptance.conversation_id,),
@@ -578,16 +632,23 @@ class ConsoleDispatchRepository:
                 imported = _imported_chat_records(cursor.connection, budget)
                 _admit_owner_read(cursor, budget, conversation_id=conversation_id)
                 rows = cursor.execute(
-                    _ACTIVE_OWNER_SELECT + _OWNER_SELECT
+                    _ACTIVE_OWNER_SELECT
+                    + _OWNER_SELECT
                     + " JOIN active_path ON active_path.message_id = checkpoint.assistant_message_id WHERE checkpoint.conversation_id = ?",
                     (conversation_id, conversation_id, conversation_id),
                 ).fetchall()
                 if rows and rows[0]["assistant_message_id"] in imported["message"]:
-                    return ConsoleDispatchReadResult(ConsoleDispatchResultStatus.QUARANTINED, None, "imported_history")
+                    return ConsoleDispatchReadResult(
+                        ConsoleDispatchResultStatus.QUARANTINED,
+                        None,
+                        "imported_history",
+                    )
                 for row in rows:
                     _admit_owner_json(row, budget)
         except (sqlite3.Error, ValueError, RuntimeError):
-            return ConsoleDispatchReadResult(ConsoleDispatchResultStatus.QUARANTINED, None, "checkpoint_read_error")
+            return ConsoleDispatchReadResult(
+                ConsoleDispatchResultStatus.QUARANTINED, None, "checkpoint_read_error"
+            )
         if not rows:
             return ConsoleDispatchReadResult(
                 ConsoleDispatchResultStatus.NOT_FOUND,
@@ -636,10 +697,14 @@ class ConsoleDispatchRepository:
             # SQLite's non-retryable snapshot-upgrade deadlock under
             # concurrent writers (the recorded task-21100 wave-1 lesson).
             budget = _TraceReadBudget()
-            outcome = self._reconcile_pass(conversation_id, allow_writes=False, _read_budget=budget)
+            outcome = self._reconcile_pass(
+                conversation_id, allow_writes=False, _read_budget=budget
+            )
             if not isinstance(outcome, _ReconcileWriteNeeded):
                 return outcome
-            outcome = self._reconcile_pass(conversation_id, allow_writes=True, _read_budget=budget)
+            outcome = self._reconcile_pass(
+                conversation_id, allow_writes=True, _read_budget=budget
+            )
             if isinstance(outcome, _ReconcileWriteNeeded):  # pragma: no cover
                 raise sqlite3.IntegrityError("Reconcile write pass refused to write.")
             return outcome
@@ -674,7 +739,9 @@ class ConsoleDispatchRepository:
                 )
             if rows:
                 if rows[0]["assistant_message_id"] in imported["message"]:
-                    return _imported_checkpoint_projection(self, rows[0], imported, _read_budget)
+                    return _imported_checkpoint_projection(
+                        self, rows[0], imported, _read_budget
+                    )
                 _admit_owner_json(rows[0], _read_budget)
                 return self._reconcile_checkpoint_row(
                     cursor,
@@ -750,7 +817,9 @@ class ConsoleDispatchRepository:
                 _read_budget=_read_budget,
             )
 
-        continuation = read_provider_continuation_json(row["provider_continuation_json"])
+        continuation = read_provider_continuation_json(
+            row["provider_continuation_json"]
+        )
         if continuation.checkpoint is not None:
             if continuation.checkpoint.state != "active":
                 return self._quarantined(
@@ -838,7 +907,12 @@ class ConsoleDispatchRepository:
                 conversation_id, assistant_id, error_code or "invalid_checkpoint"
             )
         # Do not select a different branch over another unresolved owner.
-        if self._reconcile_checkpoint_free_owner(cursor, conversation_id, _read_budget=_read_budget) is not None:
+        if (
+            self._reconcile_checkpoint_free_owner(
+                cursor, conversation_id, _read_budget=_read_budget
+            )
+            is not None
+        ):
             return self._quarantined(
                 conversation_id, assistant_id, "duplicate_active_path_owner"
             )
@@ -899,9 +973,15 @@ class ConsoleDispatchRepository:
     ) -> ConsoleDispatchRecoveryState | None:
         budget = _read_budget if _read_budget is not None else _TraceReadBudget()
         imported = _imported_chat_records(cursor.connection, budget)
-        columns = ("message.id", "message.conversation_id", "message.role", "message.deleted",
-                   "message.assistant_generation_state", "message.provider_continuation_json",
-                   "conversation.active_leaf_message_id")
+        columns = (
+            "message.id",
+            "message.conversation_id",
+            "message.role",
+            "message.deleted",
+            "message.assistant_generation_state",
+            "message.provider_continuation_json",
+            "conversation.active_leaf_message_id",
+        )
         relation = """
               FROM active_path
               JOIN messages AS message ON message.id = active_path.message_id
@@ -909,11 +989,22 @@ class ConsoleDispatchRepository:
              WHERE conversation.id = ? AND conversation.deleted = 0
         """
         parameters = (conversation_id, conversation_id, conversation_id)
-        lengths = "+".join("coalesce(length(CAST(" + column + " AS BLOB)),0)" for column in columns)
-        count, size = cursor.execute(_ACTIVE_OWNER_SELECT + " SELECT count(*),coalesce(sum(" + lengths + "),0) " + relation, parameters).fetchone()
+        lengths = "+".join(
+            "coalesce(length(CAST(" + column + " AS BLOB)),0)" for column in columns
+        )
+        count, size = cursor.execute(
+            _ACTIVE_OWNER_SELECT
+            + " SELECT count(*),coalesce(sum("
+            + lengths
+            + "),0) "
+            + relation,
+            parameters,
+        ).fetchone()
         budget.container(count * 12)
         budget.reserve(size * 8)
-        query = cursor.execute(_ACTIVE_OWNER_SELECT + " SELECT " + ",".join(columns) + relation, parameters)
+        query = cursor.execute(
+            _ACTIVE_OWNER_SELECT + " SELECT " + ",".join(columns) + relation, parameters
+        )
         rows = []
         while page := query.fetchmany(100):
             rows.extend(page)
@@ -933,14 +1024,20 @@ class ConsoleDispatchRepository:
                 budget.json(private_json)
             continuation = read_provider_continuation_json(private_json)
             if candidate["id"] in imported["message"] and (
-                candidate["assistant_generation_state"] in {"accepted", "dispatch_started", "continuation_active"}
-                or (private_json is not None and not (
-                    continuation.checkpoint is not None
-                    and continuation.checkpoint.state == "complete"
-                    and candidate["assistant_generation_state"] == "complete"
-                ))
+                candidate["assistant_generation_state"]
+                in {"accepted", "dispatch_started", "continuation_active"}
+                or (
+                    private_json is not None
+                    and not (
+                        continuation.checkpoint is not None
+                        and continuation.checkpoint.state == "complete"
+                        and candidate["assistant_generation_state"] == "complete"
+                    )
+                )
             ):
-                return self._quarantined(conversation_id, str(candidate["id"]), "imported_history")
+                return self._quarantined(
+                    conversation_id, str(candidate["id"]), "imported_history"
+                )
             if continuation.checkpoint is not None:
                 if continuation.checkpoint.state == "active":
                     valid_owners.append(candidate)
@@ -1083,8 +1180,8 @@ class ConsoleDispatchRepository:
             conversation_id=conversation_id,
             visible_copy=(
                 "Imported response remains paused as read-only history. Local response recovery is unavailable."
-                if bounded == "imported_history" else
-                "Dispatch recovery is unavailable because persisted ownership is invalid."
+                if bounded == "imported_history"
+                else "Dispatch recovery is unavailable because persisted ownership is invalid."
             ),
             actions=(),
             error_code=bounded,
@@ -1136,9 +1233,14 @@ class ConsoleDispatchRepository:
             )
         with self.db.transaction(immediate=True) as cursor:
             budget = _TraceReadBudget()
-            if transition.assistant_message_id in _imported_chat_records(cursor.connection, budget)["message"]:
+            if (
+                transition.assistant_message_id
+                in _imported_chat_records(cursor.connection, budget)["message"]
+            ):
                 return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
-            _admit_owner_read(cursor, budget, assistant_id=transition.assistant_message_id)
+            _admit_owner_read(
+                cursor, budget, assistant_id=transition.assistant_message_id
+            )
             row = self._owner_by_assistant(cursor, transition.assistant_message_id)
             if row is None:
                 return self._write_status(ConsoleDispatchResultStatus.NOT_FOUND)
@@ -1349,13 +1451,21 @@ class ConsoleDispatchRepository:
             budget = _TraceReadBudget()
             imported = _imported_chat_records(cursor.connection, budget)
             stamp = imported["message"].get(settlement.assistant_message_id)
-            if stamp is not None and (settlement.terminal_state != "discarded" or imported["checkpoint"].get(settlement.assistant_message_id) != stamp):
+            if stamp is not None and (
+                settlement.terminal_state != "discarded"
+                or imported["checkpoint"].get(settlement.assistant_message_id) != stamp
+            ):
                 return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
-            _admit_owner_read(cursor, budget, assistant_id=settlement.assistant_message_id)
+            _admit_owner_read(
+                cursor, budget, assistant_id=settlement.assistant_message_id
+            )
             row = self._owner_by_assistant(cursor, settlement.assistant_message_id)
             if row is not None:
                 _admit_owner_json(row, budget)
-                if stamp is not None and (imported["message"].get(row["user_message_id"]) != stamp or self._checkpoint_from_row(row)[0] is None):
+                if stamp is not None and (
+                    imported["message"].get(row["user_message_id"]) != stamp
+                    or self._checkpoint_from_row(row)[0] is None
+                ):
                     return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
             if row is None:
                 return self._write_status(ConsoleDispatchResultStatus.NOT_FOUND)
@@ -1509,7 +1619,10 @@ class ConsoleDispatchRepository:
             )
         with self.db.transaction(immediate=True) as cursor:
             budget = _TraceReadBudget()
-            if handoff.assistant_message_id in _imported_chat_records(cursor.connection, budget)["message"]:
+            if (
+                handoff.assistant_message_id
+                in _imported_chat_records(cursor.connection, budget)["message"]
+            ):
                 return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
             _admit_owner_read(cursor, budget, assistant_id=handoff.assistant_message_id)
             row = self._owner_by_assistant(cursor, handoff.assistant_message_id)
@@ -1646,7 +1759,12 @@ class ConsoleDispatchRepository:
                 "Invalid continuation normalization."
             )
         with self.db.transaction(immediate=True) as cursor:
-            if assistant_message_id in _imported_chat_records(cursor.connection, _TraceReadBudget())["message"]:
+            if (
+                assistant_message_id
+                in _imported_chat_records(cursor.connection, _TraceReadBudget())[
+                    "message"
+                ]
+            ):
                 return self._write_status(ConsoleDispatchResultStatus.CONFLICT)
             active_ids = self._active_path_ids(cursor, conversation_id)
             if assistant_message_id not in active_ids:
@@ -1713,7 +1831,12 @@ class ConsoleDispatchRepository:
         """Freshly read one valid active-path ADR-063 owner for CAS recovery."""
         try:
             with self.db.transaction() as cursor:
-                if assistant_message_id in _imported_chat_records(cursor.connection, _TraceReadBudget())["message"]:
+                if (
+                    assistant_message_id
+                    in _imported_chat_records(cursor.connection, _TraceReadBudget())[
+                        "message"
+                    ]
+                ):
                     return None
                 if assistant_message_id not in self._active_path_ids(
                     cursor, conversation_id

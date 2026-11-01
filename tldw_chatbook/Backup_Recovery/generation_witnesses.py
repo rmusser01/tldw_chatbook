@@ -41,6 +41,11 @@ def _witnesses(path, lease):
 
 def _paired_witnesses(path, root, names, selected):
     """Read paired local control metadata; this grants no storage admission."""
+    from .mobile_preview_budget import current, path_cost
+
+    scope = current()
+    if scope is not None:
+        scope.read_budget.reserve(4096 + path_cost(root) + path_cost(selected))
     if not bootstrap.startup_permission(selected, root)[0]:
         from .storage_admission import _mobile_discovery_pending
 
@@ -48,6 +53,10 @@ def _paired_witnesses(path, root, names, selected):
             raise ValueError("projection_generation_unavailable")
     _, profiles, associations = bootstrap._control_records(root)
     registry = bootstrap._registry(root)
+    if scope is not None:
+        scope.read_budget.value(profiles, text_copies=2)
+        scope.read_budget.value(associations, text_copies=2)
+        scope.read_budget.value(registry, text_copies=2)
     held = set(names or ())
     profile = next((p for p in profiles if p["selector"] == str(selected)), None)
     if profile:

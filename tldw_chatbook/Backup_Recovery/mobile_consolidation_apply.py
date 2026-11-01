@@ -10,7 +10,7 @@ from . import bootstrap, control_records
 from .admission import Admission, fcntl
 from .journal import _mobile_state, _MobileSourceClaim, observe_artifact
 from .mobile_consolidation import (
-    MobileConsolidationRefused,
+    MobileConsolidationRefused,  # noqa: F401 -- Preserve the existing import/patch compatibility slot.
     _path_witnesses,
     _source_claim_locations,
 )
@@ -29,14 +29,64 @@ class _SourceClaim:
     def __init__(self):
         raise TypeError("mobile_source_claim_is_native_issued")
 
-    def check(self):
-        _SourceClaim._check_binding(self)
-        if getattr(self, "journal", None) is not None:
-            with self.journal._locked(exclusive=False) as fd:
-                prepared, _ = _mobile_state(self.journal._records(fd))
-            control_records._mobile_pending(self.session, self.journal, prepared)
+    @staticmethod
+    def _issue(session, journal, path, lock_path):
+        if type(session) is not MaintenanceSession:
+            raise ValueError("native_maintenance_required")
+        session._check()
+        claim = object.__new__(_SourceClaim)
+        claim.session, claim.path, claim.lock_path = session, path, lock_path
+        claim.operation_id = journal.operation_id
+        claim.original_path = path
+        claim.custody = _CaptureFileDescriptors(None)
+        session._scopes.append(claim)
+        return claim
 
-    def _check_binding(self):
+    def _lock_existing(self, parent):
+        self.descriptor = Admission._open(parent, self.lock_path.name, os.O_RDWR)
+        self.custody.fds.append(self.descriptor)
+        info = os.fstat(self.descriptor)
+        self.lock_identity = info.st_dev, info.st_ino
+        fcntl.flock(self.descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _SourceClaim._check_binding(self)
+
+    def check(self, *, _budget=None, _custody=None):
+        with self._checked_records(_budget=_budget, _custody=_custody):
+            pass
+
+    @contextmanager
+    def _checked_records(self, *, _budget=None, _custody=None):
+        """Keep this claim's actual journal locked through one validation use."""
+        _SourceClaim._check_binding(self, _budget=_budget, _custody=_custody)
+        from .storage_admission import _mobile_admission
+
+        public = _mobile_admission(self.session)[4]
+        if _budget is None and public is not None:
+            _budget, _custody = public, self.custody
+        if getattr(self, "journal", None) is not None:
+            with self.journal._locked(exclusive=False, _custody=_custody) as fd:
+                records = self.journal._records(fd, _budget=_budget, _custody=_custody)
+                if _budget is not None:
+                    _budget.value(records[0].evidence, text_copies=4)
+                prepared, _ = _mobile_state(records)
+                profiles, registry = control_records._mobile_pending(
+                    self.session,
+                    self.journal,
+                    prepared,
+                    _budget=_budget,
+                    _custody=_custody,
+                )
+                yield records, profiles, registry
+        else:
+            yield None
+
+    def _check_binding(self, *, _budget=None, _custody=None):
+        _SourceClaim._check_native_binding(self, _budget=_budget, _custody=_custody)
+        closure = getattr(self, "_ancestors", None)
+        if closure is not None:
+            closure.verify()
+
+    def _check_native_binding(self, *, _budget=None, _custody=None):
         if (
             type(self) is not _SourceClaim
             or type(self.session) is not MaintenanceSession
@@ -44,6 +94,11 @@ class _SourceClaim:
         ):
             raise ValueError("mobile_source_claim_inactive")
         self.session._check()
+        from .storage_admission import _mobile_admission
+
+        public = _mobile_admission(self.session)[4]
+        if _budget is None and public is not None:
+            _budget, _custody = public, self.custody
         if (
             getattr(self, "journal", None) is not None
             and self.session._mobile_journal is not self.journal
@@ -61,11 +116,25 @@ class _SourceClaim:
             for row in (info, named)
         ):
             raise ValueError("mobile_source_lock_changed")
-        if (
-            getattr(self, "receipt", None) is not None
-            and observe_artifact(self.path) != self.receipt
-        ):
-            raise ValueError("mobile_source_claim_changed")
+        if getattr(self, "receipt", None) is not None:
+            if _budget is None:
+                receipt = observe_artifact(self.path)
+            else:
+                from .journal import _ArtifactObservationLimits
+
+                size = self.path.lstat().st_size
+                if not 0 <= size <= bootstrap.MAX_RECORD or not stat.S_ISREG(
+                    self.path.lstat().st_mode
+                ):
+                    raise ValueError("mobile_source_claim_changed")
+                _budget.reserve(147456 + 256 * len(str(self.path)))
+                receipt = observe_artifact(
+                    self.path,
+                    _custody=_custody,
+                    _limits=_ArtifactObservationLimits(1, size, 0, 0, 0, 255),
+                )
+            if receipt != self.receipt:
+                raise ValueError("mobile_source_claim_changed")
         if (info.st_dev, info.st_ino) != self.lock_identity or (
             named.st_dev,
             named.st_ino,
@@ -104,7 +173,7 @@ def _existing_claim(path, source_dir):
 
 
 @contextmanager
-def _claim_source(session, journal, preview):
+def _claim_source(session, journal, preview, *, approved_scope=None):
     """Claim one checked source once; retain the actual lock through the caller."""
     import json
 
@@ -136,11 +205,7 @@ def _claim_source(session, journal, preview):
     )
     if not _contains_capture_path(roots, lock_path.parent):
         raise bootstrap.RecoveryRequired("mobile_source_claim_outside_scope")
-    claim = object.__new__(_SourceClaim)
-    claim.session, claim.path, claim.lock_path = session, path, lock_path
-    claim.operation_id = journal.operation_id
-    claim.custody = _CaptureFileDescriptors(None)
-    session._scopes.append(claim)
+    claim = _SourceClaim._issue(session, journal, path, lock_path)
     try:
         with claim.custody.pinned_directory(lock_path.parent) as parent:
             try:
@@ -148,26 +213,32 @@ def _claim_source(session, journal, preview):
                 flush_directory(parent)
             except FileExistsError:
                 pass
-            claim.descriptor = Admission._open(parent, lock_path.name, os.O_RDWR)
-            claim.custody.fds.append(claim.descriptor)
-            info = os.fstat(claim.descriptor)
-            claim.lock_identity = info.st_dev, info.st_ino
-            fcntl.flock(claim.descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            claim.check()
-            existing = _existing_claim(path, preview.source_dir)
-            if existing is not None and (
-                existing.operation_id != journal.operation_id
-                or existing.control_root != str(journal.root.parent)
-                or existing.destination_identity != preview.destination.identity
-            ):
-                raise MobileConsolidationRefused(
-                    "mobile_source_already_claimed",
-                    operation_id=existing.operation_id,
-                    control_root=Path(existing.control_root),
+            claim._lock_existing(parent)
+            from .mobile_lineage import _reserve_successor, _selection
+
+            existing, _ = _selection(claim, journal, preview)
+            path = claim.path
+            if approved_scope is not None:
+                from .models import DiscoverySelections
+
+                session.prepare_mobile_consolidation(
+                    journal,
+                    source_config=preview.source_selector,
+                    target_config=preview.target_selector,
+                    selections=DiscoverySelections(),
+                    approved_scope=approved_scope,
+                    source_fingerprint=preview.source_fingerprint,
+                    destination_witnesses=preview.destination_witnesses,
+                    destination_sidecars=preview.destination_sidecars,
+                    reviewed_preview=preview,
                 )
             if journal is not getattr(session, "_mobile_journal", None):
                 raise ValueError("mobile_native_preparation_required")
-            with journal._locked(exclusive=True) as journal_fd:
+            _reserve_successor(claim, journal, preview)
+            with (
+                claim.custody.pinned_directory(path.parent) as claim_parent,
+                journal._locked(exclusive=True) as journal_fd,
+            ):
                 records = journal._records(journal_fd)
                 prepared, _ = _mobile_state(records)
                 control_records._mobile_pending(session, journal, prepared)
@@ -203,8 +274,8 @@ def _claim_source(session, journal, preview):
                     encoded = json.dumps(
                         expected.model_dump(), sort_keys=True, separators=(",", ":")
                     ).encode()
-                    Admission._write_new_record(parent, path.name, encoded)
-                    flush_directory(parent)
+                    Admission._write_new_record(claim_parent, path.name, encoded)
+                    flush_directory(claim_parent)
                 records = journal._records(journal_fd)
                 observed = observe_artifact(path)
                 receipts = [
@@ -218,6 +289,9 @@ def _claim_source(session, journal, preview):
                     journal._append(journal_fd, "mobile_claim_observed", observed)
                 claim.receipt = observed
                 claim.journal = journal
+            from .mobile_lineage_ancestors import _issue_ancestors
+
+            _issue_ancestors(claim, journal, preview.source_dir)
             claim.check()
             yield claim
     finally:
@@ -230,21 +304,105 @@ class _MobileCapturePartition:
     def __init__(self):
         raise TypeError("mobile_capture_partition_is_native_issued")
 
-    def check(self):
+    def check(self, *, _budget=None, _custody=None):
+        self._check_binding()
+        if self.review_only:
+            if bootstrap._records(self.session._control.parent)[0]:
+                raise bootstrap.RecoveryRequired("recovery_pending")
+        else:
+            self.claim.check(_budget=_budget, _custody=_custody)
+
+    def _check_binding(self):
         if (
-            type(self.session) is not MaintenanceSession
+            type(self) is not _MobileCapturePartition
+            or type(self.session) is not MaintenanceSession
             or self not in self.session._scopes
             or not self.active
         ):
             raise ValueError("mobile_native_partition_required")
         self.session._check()
+        if not self.review_only and self.session._mobile_journal is not self.journal:
+            raise ValueError("mobile_native_partition_required")
+
+    def service_output_item(self, inventory, destination):
+        """Authenticate only this live intention's exact default work overlap."""
+        import hashlib
+
+        from .inventory import _service_control_exclusion
+        from .service_storage import (
+            default_control_root,
+            is_private_service_work,
+            verify_default_storage,
+            work_root,
+        )
+        from .storage_admission import _mobile_coordinator_budget
+
+        if type(self) is not _MobileCapturePartition:
+            raise ValueError("mobile_native_partition_required")
         if self.review_only:
-            if bootstrap._records(self.session._control.parent)[0]:
-                raise bootstrap.RecoveryRequired("recovery_pending")
-        else:
-            self.claim.check()
-            if self.session._mobile_journal is not self.journal:
-                raise ValueError("mobile_native_partition_required")
+            return None
+        control = default_control_root()
+        if self.journal.root.parent != control:
+            return None  # Custom captures retain every ordinary overlap check.
+        budget = _mobile_coordinator_budget(self.session)
+        if budget is None:
+            raise ValueError("mobile_native_budget_required")
+        custody = self.claim.custody
+        self._check_binding()
+        budget.reserve(8192 + 64 * len(str(destination)))
+        expected = work_root(control) / (
+            hashlib.sha256(self.journal.operation_id.encode()).hexdigest()
+            + "-"
+            + self.purpose
+            + ".tldw-backup.zip.age"
+        )
+        if (
+            self.purpose not in {"legacy", "canonical"}
+            or destination != expected
+            or self.destination != expected
+        ):
+            raise ValueError("mobile_capture_destination_changed")
+        with self.claim._checked_records(_budget=budget, _custody=custody) as (
+            records,
+            profiles,
+            registry,
+        ):
+            if (
+                records[-1].event != "mobile_capture_intended"
+                or records[-1].evidence != self.intent
+                or self.intent["destination"] != str(destination)
+            ):
+                raise ValueError("mobile_capture_state_changed")
+            items = _service_control_exclusion(_budget=budget, _custody=custody)
+            if len(items) != 1 or not is_private_service_work(
+                destination, items[0], _budget=budget, _custody=custody
+            ):
+                raise ValueError("mobile_service_output_unverified")
+            item = items[0]
+            if (
+                sum(candidate == item for candidate in inventory.items) != 1
+                or registry is None
+            ):
+                raise ValueError("mobile_service_output_unverified")
+            # These are the current objects returned by native pending validation
+            # inside this same held journal scope, never caller-supplied records.
+            for rows in (profiles, registry.values()):
+                for row in rows:
+                    budget.value(row["roots"], text_copies=8)
+                    for raw in row["roots"]:
+                        path = Path(raw).resolve()
+                        if (
+                            path == control.parent
+                            or path in control.parent.parents
+                            or control.parent in path.parents
+                        ):
+                            raise ValueError("mobile_service_output_profile_overlap")
+            identity = verify_default_storage(_budget=budget, _custody=custody)
+            previous = getattr(self, "_service_output_identity", None)
+            if previous is not None and identity != previous:
+                raise ValueError("output_parent_changed")
+            self._service_output_identity = identity
+            return item
 
     def retire(self):
         self.active = False
@@ -678,27 +836,27 @@ def _captured_mobile(
     """
     import hashlib
 
-    from .models import DiscoverySelections
+    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
     from .profile_paths import lexical_path
     from .replacement import require_rollback_password
+    from .storage_admission import _mobile_admission
 
     session._check()
     if session._mobile_attempted_journal is not None:
         raise ValueError("mobile_native_operation_already_attempted")
     require_rollback_password(password)
-    session.prepare_mobile_consolidation(
-        journal,
-        source_config=preview.source_selector,
-        target_config=preview.target_selector,
-        selections=DiscoverySelections(),
-        approved_scope=approved_scope,
-        source_fingerprint=preview.source_fingerprint,
-        destination_witnesses=preview.destination_witnesses,
-        destination_sidecars=preview.destination_sidecars,
-        reviewed_preview=preview,
-    )
+    admission = _mobile_admission(session)
+    if any(type(scope) is _CapturedMobile for scope in session._scopes):
+        raise ValueError("mobile_native_operation_already_attempted")
+    if admission[2] is None:
+        admission[2] = _TraceReadBudget()
+    elif type(admission[2]) is not _TraceReadBudget:
+        raise ValueError("mobile_native_budget_required")
     destination = lexical_path(destination)
-    with _claim_source(session, journal, preview) as claim:
+    with _claim_source(
+        session, journal, preview, approved_scope=approved_scope
+    ) as claim:
         lifecycle = object.__new__(_CapturedMobile)
         lifecycle.session, lifecycle.journal, lifecycle.claim = session, journal, claim
         lifecycle.active = True
@@ -789,17 +947,39 @@ def _review_mobile_operation(session, journal):
     if type(session) is not MaintenanceSession:
         raise ValueError("native_maintenance_required")
     session._check()
-    with journal._locked(exclusive=False) as fd:
-        records = journal._records(fd)
+    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+    from .storage_admission import _mobile_admission
+
+    # This new coordinator review belongs to the public aggregate only. Private
+    # component recovery retains its original ordinary discovery semantics; its
+    # native proof allowance is issued later by the installed captured path.
+    budget = _mobile_admission(session)[4]
+    if budget is not None and type(budget) is not _TraceReadBudget:
+        raise ValueError("mobile_native_budget_required")
+    custody = _CaptureFileDescriptors(None)
+    session._scopes.append(custody)
+    try:
+        with journal._locked(exclusive=False, _custody=custody) as fd:
+            records = journal._records(fd, _budget=budget, _custody=custody)
+    finally:
+        custody.retire()
+    if any(
+        row.event
+        in {"mobile_committed", "mobile_rollback_started", "mobile_rolled_back"}
+        for row in records
+    ):
+        raise ValueError("mobile_finish_unavailable")
     prepared, _ = _mobile_state(records)
     if not prepared.selector_review:
         raise ValueError("mobile_selector_review_required")
     control_records._mobile_pending(session, journal, prepared)
-    with session._discovery_reads(private_sqlite=True):
+    with session._discovery_reads(private_sqlite=True, _read_budget=budget):
         fresh = _preview_selected_mobile(
             Path(prepared.source_selector),
             Path(prepared.target_selector),
             review_destination=False,
+            _read_budget=budget,
         )
 
     def chain(rows):
@@ -850,10 +1030,20 @@ def _review_mobile_operation(session, journal):
 
 @contextmanager
 def _resume_captured_mobile(session, journal, *, destination, password, cancel):
-    """Cold private recovery of the same operation; public terminal actions stay absent."""
+    """Cold recovery of the same operation under its actual native maintenance."""
     preview = _review_mobile_operation(session, journal)
-    with journal._locked(exclusive=False) as fd:
-        prepared, _ = _mobile_state(journal._records(fd))
+    from .storage_admission import _mobile_admission
+
+    budget = _mobile_admission(session)[4]
+    custody = _CaptureFileDescriptors(None)
+    session._scopes.append(custody)
+    try:
+        with journal._locked(exclusive=False, _custody=custody) as fd:
+            prepared, _ = _mobile_state(
+                journal._records(fd, _budget=budget, _custody=custody)
+            )
+    finally:
+        custody.retire()
     with _captured_mobile(
         session,
         journal,
@@ -911,9 +1101,12 @@ def _preview_mobile_credential_issues(session, preview, approved_scope, *, cance
         raise bootstrap.RecoveryRequired(
             "mobile_close_old_instance_enrollment_required"
         )
-    with session._discovery_reads(private_sqlite=True):
+    from .storage_admission import _mobile_coordinator_budget
+
+    budget = _mobile_coordinator_budget(session)
+    with session._discovery_reads(private_sqlite=True, _read_budget=budget):
         current = _preview_selected_mobile(
-            preview.source_selector, preview.target_selector
+            preview.source_selector, preview.target_selector, _read_budget=budget
         )
     from dataclasses import replace
 

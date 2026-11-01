@@ -57,6 +57,14 @@ class LibraryNotesSyncRootsCanvas(Vertical):
             classes="library-notes-lasting-status",
             markup=False,
         )
+        if self.snapshot.import_review_required:
+            yield Static(
+                "At startup, some file links could not be added. Notes remain "
+                "available in Notes; review folder setup before syncing.",
+                id="notes-sync-import-review-warning",
+                classes="library-notes-lasting-status",
+                markup=False,
+            )
         with VerticalScroll(id="notes-sync-roots-body"):
             if not self.snapshot.roots:
                 yield Static(

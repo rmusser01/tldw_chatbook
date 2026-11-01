@@ -301,8 +301,10 @@ def _capture_fixture(tmp_path, monkeypatch, **options):
     from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 
     distinct_selectors = options.pop("distinct_selectors", False)
+    require_complete_inventory = options.pop("require_complete_inventory", True)
     source_state = options.pop("source_state", None)
     excluded_citation = options.pop("excluded_citation", False)
+    canonical_file_notes = options.pop("canonical_file_notes", False)
     with prepared(tmp_path, monkeypatch, **options) as values:
         _, journal, config, stores, _, _, authority = values
     if source_state is not None:
@@ -339,6 +341,25 @@ def _capture_fixture(tmp_path, monkeypatch, **options):
             profile_paths.database_path(config_values, key), "mobile-capture-fixture"
         )
         owner.close()
+    if canonical_file_notes:
+        import sqlite3
+
+        from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+
+        replica_path = profile_paths.user_data_dir(config_values) / "file_notes.sqlite"
+        assert not replica_path.exists()
+        replica = FileNotesReplica(replica_path)
+        try:
+            connection = replica._connection
+            assert isinstance(connection, sqlite3.Connection)
+        finally:
+            replica.close()
+        try:
+            sqlite3.Connection.in_transaction.__get__(connection)
+        except sqlite3.ProgrammingError as error:
+            assert str(error) == "Cannot operate on a closed database."
+        else:
+            raise AssertionError("native FileNotesReplica connection remains open")
     unused_config = tmp_path / "unused-default-config"
     unused_config.mkdir(mode=0o700)
     monkeypatch.setattr(
@@ -353,11 +374,12 @@ def _capture_fixture(tmp_path, monkeypatch, **options):
     with _preview_reads():
         inventory = discover((config,))
     preview = preview_selected_mobile(config, config)
-    assert inventory.complete, [
-        (item.owner, str(item.path), item.status)
-        for item in inventory.items
-        if item.status in {"unsupported", "missing_required", "unavailable"}
-    ]
+    if require_complete_inventory:
+        assert inventory.complete, [
+            (item.owner, str(item.path), item.status)
+            for item in inventory.items
+            if item.status in {"unsupported", "missing_required", "unavailable"}
+        ]
     with authority.maintenance(("bootstrap.unbound", "mobile.profile"), 2) as session:
         if distinct_selectors:
             from tldw_chatbook.Backup_Recovery.control_records import bind_profile

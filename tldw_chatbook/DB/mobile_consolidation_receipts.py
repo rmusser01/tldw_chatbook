@@ -897,3 +897,45 @@ def _imported_chat_records(connection, budget):
     finally:
         cursor.close()
     return result
+
+
+def _imported_note_ids(connection, budget):
+    """Project note identities only after validating every current Chat receipt."""
+    if not connection.in_transaction or type(budget) is not _TraceReadBudget:
+        _invalid()
+    budget.container(3)
+    count, operation_size, source_size = connection.execute(
+        "SELECT count(*),coalesce(max(length(CAST(operation_id AS BLOB))),0),coalesce(max(length(CAST(source_fingerprint AS BLOB))),0) FROM mobile_consolidation_batches WHERE substr(batch_key,1,4)='chat'"
+    ).fetchone()
+    if operation_size > 256 or source_size > 64:
+        _invalid()
+    budget.container(count * 4)
+    budget.reserve(count * (256 * 4 + 64 * 4))
+    budget.container()
+    result = set()
+    cursor = connection.execute(
+        "SELECT DISTINCT operation_id,source_fingerprint FROM mobile_consolidation_batches WHERE substr(batch_key,1,4)='chat' ORDER BY operation_id,source_fingerprint"
+    )
+    try:
+        while True:
+            budget.container(100)
+            page = cursor.fetchmany(100)
+            if not page:
+                break
+            for operation, source in page:
+                receipt = _read_owner_receipt(
+                    connection, operation, source, "chat", budget
+                )
+                if receipt is None:
+                    _invalid()
+                for child in receipt[1]:
+                    data = child["data"]
+                    if child["kind"] == "identity" and data["domain"] == "note":
+                        mapped = data["mapped"]
+                        if mapped in result:
+                            _invalid()
+                        budget.container(1)
+                        result.add(mapped)
+    finally:
+        cursor.close()
+    return result

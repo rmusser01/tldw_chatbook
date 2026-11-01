@@ -1,6 +1,7 @@
 """Real populated native owner commits, never caller-provided plan authority."""
 
 import json
+from contextlib import contextmanager
 from threading import Event
 
 import pytest
@@ -8,7 +9,9 @@ import pytest
 from Tests.Backup_Recovery.test_mobile_native_operation import captured_operation
 
 
-def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
+def _small_native_seed(
+    stores, *, legacy, artifact_root=None, source_case=None, note_root=None
+):
     from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
     from tldw_chatbook.Chat.console_trace_models import (
         FrozenTracePolicy,
@@ -37,7 +40,7 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
             name="Imported project" if legacy else "Current project",
             assistant_defaults=None,
         )
-        if legacy:
+        if legacy and source_case != "personas_notes":
             assert chat.update_character_card(
                 1,
                 {"name": "Imported assistant"},
@@ -77,6 +80,11 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
                 "sender": "assistant" if source_case == "passive" else "AI",
                 "role": "assistant",
                 "content": "Exact terminal result",
+                **(
+                    {"parent_message_id": message}
+                    if source_case == "history_consumers"
+                    else {}
+                ),
             }
         )
         run = runs.create_run(
@@ -93,17 +101,28 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
             )
             artifact = trace.store_sanitized_artifact(
                 cursor,
-                sanitized_bytes=b'"same bytes"',
+                sanitized_bytes=(
+                    b'{"role":"user","content":"Exact retained body"}'
+                    if source_case == "history_consumers"
+                    else b'"same bytes"'
+                ),
                 media_type="application/json",
                 normalization_version="test-v1",
             )
-            trace.append_surface_node(
+            surface = trace.append_surface_node(
                 cursor,
                 segment_id=segment.segment_id,
                 sequence=0,
                 predecessor_node_id=None,
-                component_kind="native_message",
-                reference=TraceContentRef(artifact.artifact_id, "native_message"),
+                component_kind="message"
+                if source_case == "history_consumers"
+                else "native_message",
+                reference=TraceContentRef(
+                    artifact.artifact_id,
+                    "message"
+                    if source_case == "history_consumers"
+                    else "native_message",
+                ),
             )
             policy = trace.ensure_policy(
                 cursor, FrozenTracePolicy(new_opaque_id(), "test-v1", False, None)
@@ -112,21 +131,70 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
                 cursor,
                 owner_id=owner.owner_id,
                 segment_id=segment.segment_id,
-                turn_id=turn,
+                turn_id=message if source_case == "history_consumers" else turn,
                 run_id=run,
                 call_sequence=0,
                 idempotency_key="legacy-call" if legacy else "canonical-call",
                 policy_id=policy.policy_id,
             )
-            trace.advance_call_state(
-                cursor,
-                call_id=call.call_id,
-                target=TraceCallState.NOT_DISPATCHED,
-                occurred_at=cursor.execute(
-                    "SELECT created_at FROM console_trace_calls WHERE call_id=?",
-                    (call.call_id,),
-                ).fetchone()[0],
-            )
+            if source_case == "history_consumers":
+                header = trace.create_or_reuse_request_header(
+                    cursor,
+                    provider_name="openai",
+                    model_name="native-fixture",
+                    route_identity="fresh",
+                    endpoint_identity="https://example.invalid/v1",
+                    generation_parameters={},
+                    adapter_defaults={},
+                    response_format={},
+                    reasoning_controls={},
+                    components=(),
+                )
+                trace.bind_call(
+                    cursor,
+                    call_id=call.call_id,
+                    surface_node_id=surface.node_id,
+                    request_header_id=header.header_id,
+                    provider_name="openai",
+                    model_name="native-fixture",
+                    route_identity="fresh",
+                )
+                for state in (
+                    TraceCallState.DISPATCH_STARTED,
+                    TraceCallState.RESPONSE_STARTED,
+                    TraceCallState.COMPLETE,
+                ):
+                    trace.advance_call_state(
+                        cursor,
+                        call_id=call.call_id,
+                        target=state,
+                        occurred_at="2026-10-27T00:00:00Z",
+                        integrity_state="complete",
+                    )
+                revision = cursor.execute(
+                    "SELECT revision_id FROM console_trace_semantic_revisions WHERE live_message_id=?",
+                    (turn,),
+                ).fetchone()[0]
+                trace.store_response_link(
+                    cursor, call_id=call.call_id, response=SemanticRevisionRef(revision)
+                )
+                trace.append_event(
+                    cursor,
+                    segment_id=segment.segment_id,
+                    sequence=0,
+                    event_type="call_boundary",
+                    call_id=call.call_id,
+                )
+            else:
+                trace.advance_call_state(
+                    cursor,
+                    call_id=call.call_id,
+                    target=TraceCallState.NOT_DISPATCHED,
+                    occurred_at=cursor.execute(
+                        "SELECT created_at FROM console_trace_calls WHERE call_id=?",
+                        (call.call_id,),
+                    ).fetchone()[0],
+                )
         result = {
             "conversation": conversation,
             "message": message,
@@ -134,7 +202,71 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
             "artifact": artifact.artifact_id,
             "owner": owner.owner_id,
         }
-        if source_case == "consumers":
+        if legacy and source_case == "workspace_cold_commit":
+            from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
+
+            root = stores.run_path.parent.parent / "tool_sandbox"
+            registry.save_runtime_binding(
+                WorkspaceRuntimeBinding(
+                    binding_id="cold-workspace-binding",
+                    workspace_id=named.workspace_id,
+                    binding_kind="local-filesystem",
+                    label="Cold Workspace fixture",
+                    locator=str(root),
+                    status="ready",
+                    metadata={
+                        "allow_write": True,
+                        "exclusions": [
+                            {
+                                "path": "private",
+                                "kind": "directory",
+                                "added_at": "2026-10-25",
+                            }
+                        ],
+                    },
+                )
+            )
+        if source_case == "personas_notes" or (
+            legacy and source_case == "linked_note_capture"
+        ):
+            import hashlib
+            from pathlib import Path
+
+            # Historical fixture metadata is created while this real current
+            # owner is live, before the source's deliberate downgrade/retirement.
+            if source_case == "linked_note_capture" and note_root is None:
+                raise ValueError("explicit_external_note_fixture_required")
+            folder = (
+                Path(note_root)
+                if note_root is not None
+                else stores.chat_path.parent.parent / "operator-note-files"
+            )
+            folder.mkdir(mode=0o700)
+            path = folder / "retained.md"
+            body = "Historical note body Ω"
+            path.write_text(body, encoding="utf-8")
+            digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            note_id = chat.add_note("Legacy note" if legacy else "Canonical note", body)
+            with chat.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE notes SET file_path_on_disk=?,relative_file_path_on_disk=?,sync_root_folder=?,last_synced_disk_file_hash=?,last_synced_disk_file_mtime=?,is_externally_synced=1,sync_strategy='manual',file_extension='.md' WHERE id=?",
+                    (
+                        str(path),
+                        path.name,
+                        str(folder),
+                        digest,
+                        path.stat().st_mtime,
+                        note_id,
+                    ),
+                )
+            result["operator_note"] = {
+                "id": note_id,
+                "path": str(path),
+                "root": str(folder),
+                "sha256": digest,
+                "version": chat.get_note_by_id(note_id)["version"],
+            }
+        if source_case in {"consumers", "consumers_privacy"}:
             from tldw_chatbook.Agents.agent_models import AgentDefinition
 
             result["definition"] = runs.create_agent_definition(
@@ -169,6 +301,19 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
                     }
                 )
                 goal = runs.goal_runs.create(launch, launch_id="native-imported-goal")
+                if source_case == "consumers_privacy":
+                    goal = runs.goal_runs.set_provisioning(goal, status="ready")
+                    reservation = runs.automatic_work.reserve(
+                        goal.chain_id,
+                        reservation_id="native-historical-uncertain",
+                        owner_id="fixture-owner",
+                        kind="tokens",
+                        amount=1,
+                    )
+                    runs.automatic_work.commit(reservation.id, owner_id="fixture-owner")
+                    runs.automatic_work.settle(
+                        reservation.id, owner_id="fixture-owner", actual_amount=None
+                    )
                 goal = runs.goal_runs.control(goal.id)
                 chat.add_conversation(
                     {
@@ -253,7 +398,11 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
                 ).send("Historical fleet report")
             finally:
                 messenger.close()
-            result.update(dispatch=checkpoint.assistant_message_id, fleet=fleet_id)
+            result.update(
+                dispatch=checkpoint.assistant_message_id,
+                dispatch_user=checkpoint.user_message_id,
+                fleet=fleet_id,
+            )
         if legacy and source_case in {"physical_snapshot", "physical_worktree"}:
             from tldw_chatbook.Workspaces.models import WorkspaceRuntimeBinding
 
@@ -365,7 +514,7 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
                         "SELECT * FROM change_snapshots WHERE run_id=?", (run,)
                     ).fetchone()
                 )
-        if legacy and source_case == "history":
+        if legacy and source_case in {"history", "history_consumers"}:
             from tldw_chatbook.Agents.run_log import RunLogWriter
 
             root = stores.run_path.parent.parent / "tool_sandbox"
@@ -513,6 +662,41 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
             request = _seal_post_dispatch_import(replace(request, run_id=voice_run))
             trace.import_post_dispatch_trace(chat, request)
             result["blocked_identity"] = request.calls[0].call_id
+        if legacy and source_case == "history_consumers":
+            from Tests.DB.test_console_command_receipts import receipt
+            from tldw_chatbook.Chat.console_remote_models import ConsoleTarget
+            from tldw_chatbook.Chat.console_trace_native_reader import (
+                ConsoleTraceNativeReader,
+            )
+
+            command = receipt(
+                "retained-command",
+                state="applied",
+                native_id=run,
+                target=ConsoleTarget(
+                    server_epoch="server",
+                    console_id="console",
+                    session_id="session",
+                    incarnation_id="incarnation",
+                    run_id=run,
+                ),
+            )
+            assert runs.command_receipts.claim(command).inserted
+            with runs.transaction() as cursor:
+                result["command_fields"] = tuple(
+                    dict(
+                        cursor.execute(
+                            "SELECT * FROM console_command_receipts WHERE command_id=?",
+                            (command.command_id,),
+                        ).fetchone()
+                    ).items()
+                )
+            result["trace_original"] = ConsoleTraceNativeReader(chat).read_calls(turn)
+            assert (
+                len(result["trace_original"]) == 1
+                and result["trace_original"][0].verified
+            )
+            result["turn"] = turn
         return result
     finally:
         if legacy:
@@ -535,6 +719,53 @@ def _small_native_seed(stores, *, legacy, artifact_root=None, source_case=None):
         lease.close()
 
 
+@contextmanager
+def _native_terminal_interruption(monkeypatch):
+    """Keep original private recovery proofs before terminal publication."""
+    from tldw_chatbook.Backup_Recovery import mobile_journal_frame
+
+    def interrupted(*args, **kwargs):
+        raise OSError("injected before terminal journal entry")
+
+    with monkeypatch.context() as fault:
+        fault.setattr(mobile_journal_frame, "_locked_mobile", interrupted)
+        with pytest.raises(OSError, match="injected before terminal journal entry"):
+            yield
+
+
+@contextmanager
+def _ordinary_imported_owner(stores, owner_id):
+    """Open the actual produced stores only after all maintenance has retired."""
+    from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    if owner_id == "db.agent_runs":
+        with ConsoleExecutionOwner.acquire(stores.run_path) as lease:
+            owner = AgentRunsDB(
+                stores.run_path, "ordinary-import-consumer", execution_owner=lease
+            )
+            try:
+                yield owner
+            finally:
+                owner.close()
+    elif owner_id == "db.chachanotes.primary":
+        owner = CharactersRAGDB(stores.chat_path, "ordinary-import-consumer")
+        try:
+            yield owner
+        finally:
+            owner.close_connection()
+    elif owner_id == "db.workspaces":
+        owner = WorkspaceDB(stores.workspace_path, "ordinary-import-consumer")
+        try:
+            yield owner
+        finally:
+            owner.close()
+    else:
+        raise AssertionError(owner_id)
+
+
 def test_populated_same_operation_commits_three_real_owner_receipts(
     tmp_path, monkeypatch
 ):
@@ -549,46 +780,50 @@ def test_populated_same_operation_commits_three_real_owner_receipts(
 
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
     with captured_operation(tmp_path, monkeypatch) as captured:
+        stores = captured.preview.destination
+        operation = captured.journal.operation_id
+        fingerprint = captured.preview.source_fingerprint
         captured.consolidate(password=b"test-private-mobile-rollback", cancel=Event())
-        for owner_id, batch in (
-            ("db.chachanotes.primary", "chat"),
-            ("db.workspaces", "workspaces"),
-            ("db.agent_runs", "runs"),
+    for owner_id, batch in (
+        ("db.chachanotes.primary", "chat"),
+        ("db.workspaces", "workspaces"),
+        ("db.agent_runs", "runs"),
+    ):
+        with (
+            _ordinary_imported_owner(stores, owner_id) as owner,
+            owner.transaction() as connection,
         ):
-            with captured.owner(owner_id) as owner, owner.transaction() as connection:
-                receipts = connection.execute(
-                    "SELECT source_fingerprint,batch_key FROM mobile_consolidation_batches WHERE operation_id=? AND batch_key=?",
-                    (captured.journal.operation_id, batch),
+            receipts = connection.execute(
+                "SELECT source_fingerprint,batch_key FROM mobile_consolidation_batches WHERE operation_id=? AND batch_key=?",
+                (operation, batch),
+            ).fetchall()
+            assert [tuple(row) for row in receipts] == [(fingerprint, batch)]
+            if batch == "chat":
+                assert (
+                    connection.execute(
+                        "SELECT count(*) FROM conversations WHERE title='Retained title'"
+                    ).fetchone()[0]
+                    == 2
+                )
+                artifacts = connection.execute(
+                    "SELECT artifact_id FROM console_trace_artifacts WHERE sanitized_bytes=?",
+                    (b'"same bytes"',),
                 ).fetchall()
-                assert [tuple(row) for row in receipts] == [
-                    (captured.preview.source_fingerprint, batch)
-                ]
-                if batch == "chat":
-                    assert (
-                        connection.execute(
-                            "SELECT count(*) FROM conversations WHERE title='Retained title'"
-                        ).fetchone()[0]
-                        == 2
-                    )
-                    artifacts = connection.execute(
-                        "SELECT artifact_id FROM console_trace_artifacts WHERE sanitized_bytes=?",
-                        (b'"same bytes"',),
-                    ).fetchall()
-                    assert len(artifacts) == 2
-                if batch == "runs":
-                    rows = connection.execute(
-                        "SELECT id,status,result,wake_delivered_at FROM agent_runs ORDER BY id"
-                    ).fetchall()
-                    assert len(rows) == 2
-                    assert all(
-                        tuple(row)[1:] == ("done", "Exact terminal result", None)
-                        for row in rows
-                    )
-                    holds = connection.execute(
-                        "SELECT authority_kind,authority_id FROM mobile_import_authority_holds"
-                    ).fetchall()
-                    assert len(holds) == 1 and holds[0][0] == "run"
-                    assert holds[0][1] != seeded["canonical"]["run"]
+                assert len(artifacts) == 2
+            if batch == "runs":
+                rows = connection.execute(
+                    "SELECT id,status,result,wake_delivered_at FROM agent_runs ORDER BY id"
+                ).fetchall()
+                assert len(rows) == 2
+                assert all(
+                    tuple(row)[1:] == ("done", "Exact terminal result", None)
+                    for row in rows
+                )
+                holds = connection.execute(
+                    "SELECT authority_kind,authority_id FROM mobile_import_authority_holds"
+                ).fetchall()
+                assert len(holds) == 1 and holds[0][0] == "run"
+                assert holds[0][1] != seeded["canonical"]["run"]
 
 
 def test_fixed_schedule_preserves_native_owner_before_trace_nodes(
@@ -916,9 +1151,10 @@ def test_real_chat_commit_resumes_receipt_first_after_next_owner_rollback(
                 password=b"test-private-mobile-rollback",
                 cancel=Event(),
             ) as captured:
-                captured.consolidate(
-                    password=b"test-private-mobile-rollback", cancel=Event()
-                )
+                with _native_terminal_interruption(monkeypatch):
+                    captured.consolidate(
+                        password=b"test-private-mobile-rollback", cancel=Event()
+                    )
                 for owner_id, key in (
                     ("db.chachanotes.primary", "chat"),
                     ("db.workspaces", "workspaces"),
@@ -1179,9 +1415,10 @@ def _resume_crashed_import(evidence):
         ) as captured:
             assert observe_artifact(captured.source.path) == evidence["source"]
             assert observe_artifact(captured.canonical.path) == evidence["canonical"]
-            captured.consolidate(
-                password=b"test-private-mobile-rollback", cancel=Event()
-            )
+            with _native_terminal_interruption(monkeypatch):
+                captured.consolidate(
+                    password=b"test-private-mobile-rollback", cancel=Event()
+                )
             for owner_id, key in (
                 ("db.chachanotes.primary", "chat"),
                 ("db.workspaces", "workspaces"),
@@ -1489,7 +1726,20 @@ def test_actual_writer_publishes_native_history_and_commits_member_witnesses(
 
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
     with captured_operation(tmp_path, monkeypatch) as captured:
-        captured.consolidate(password=b"test-private-mobile-rollback", cancel=Event())
+        stores = captured.preview.destination
+        # Component proof ends at an actual interrupted terminal boundary;
+        # ordinary public completion is qualified by separate public callers.
+        from tldw_chatbook.Backup_Recovery import mobile_journal_frame
+
+        def interrupt_terminal(*args, **kwargs):
+            raise OSError("injected before terminal journal entry")
+
+        with monkeypatch.context() as fault:
+            fault.setattr(mobile_journal_frame, "_locked_mobile", interrupt_terminal)
+            with pytest.raises(OSError, match="injected before terminal journal entry"):
+                captured.consolidate(
+                    password=b"test-private-mobile-rollback", cancel=Event()
+                )
         with (
             captured.owner("db.agent_runs") as owner,
             owner.transaction() as connection,
@@ -1501,30 +1751,30 @@ def test_actual_writer_publishes_native_history_and_commits_member_witnesses(
                 "runs",
                 _TraceReadBudget(),
             )
-        assert receipt is not None
-        children = receipt[1]
-        roots = [row["data"] for row in children if row["kind"] == "runlog_root"]
-        members = [row["data"] for row in children if row["kind"] == "runlog"]
-        assert roots and members
-        for row in roots + members:
-            assert observe_artifact(Path(row["artifact"]["path"])) == row["artifact"]
-        framed = [row for row in members if row["framed_runs"]]
-        assert len(framed) == 1
-        assert framed[0]["framed_runs"][0][0] == seeded["legacy"]["run"]
-        assert (
-            Path(framed[0]["artifact"]["path"]).read_bytes()
-            == next(seeded["legacy"]["log_dir"].glob("logs.*.txt")).read_bytes()
-        )
-        assert (
-            len([row for row in children if row["kind"] == "history_publication"]) == 1
-        )
+    assert receipt is not None
+    children = receipt[1]
+    roots = [row["data"] for row in children if row["kind"] == "runlog_root"]
+    members = [row["data"] for row in children if row["kind"] == "runlog"]
+    assert roots and members
+    for row in roots + members:
+        assert observe_artifact(Path(row["artifact"]["path"])) == row["artifact"]
+    framed = [row for row in members if row["framed_runs"]]
+    assert len(framed) == 1
+    assert framed[0]["framed_runs"][0][0] == seeded["legacy"]["run"]
+    assert (
+        Path(framed[0]["artifact"]["path"]).read_bytes()
+        == next(seeded["legacy"]["log_dir"].glob("logs.*.txt")).read_bytes()
+    )
+    assert len([row for row in children if row["kind"] == "history_publication"]) == 1
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
     from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(captured.preview.target_selector))
-    with pytest.raises(RecoveryRequired, match="recovery_pending"):  # noqa: SIM117 -- Keep the explicit native resource/fault lifetime boundary.
-        with acquire_storage(captured.preview.destination.run_path):
-            pytest.fail("pending mobile target admitted ordinary runtime storage")
+    with (
+        pytest.raises(RecoveryRequired, match="recovery_pending"),
+        acquire_storage(stores.run_path),
+    ):
+        pytest.fail("interrupted mobile target admitted ordinary runtime storage")
 
 
 def test_native_publication_failure_resumes_same_objects_before_owner_commits(
@@ -1611,9 +1861,10 @@ def test_native_publication_failure_resumes_same_objects_before_owner_commits(
                 observe_artifact(captured.source.path),
                 observe_artifact(captured.canonical.path),
             ) == original_ciphers
-            captured.consolidate(
-                password=b"test-private-mobile-rollback", cancel=Event()
-            )
+            with _native_terminal_interruption(monkeypatch):
+                captured.consolidate(
+                    password=b"test-private-mobile-rollback", cancel=Event()
+                )
             with (
                 captured.owner("db.agent_runs") as owner,
                 owner.transaction() as connection,
@@ -1653,7 +1904,19 @@ def test_actual_goal_note_definition_owners_preserve_history_and_current_guards(
 
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
     with captured_operation(tmp_path, monkeypatch) as captured:
-        captured.consolidate(password=b"test-private-mobile-rollback", cancel=Event())
+        # Component proof ends at an actual interrupted terminal boundary;
+        # ordinary public completion is qualified by separate public callers.
+        from tldw_chatbook.Backup_Recovery import mobile_journal_frame
+
+        def interrupt_terminal(*args, **kwargs):
+            raise OSError("injected before terminal journal entry")
+
+        with monkeypatch.context() as fault:
+            fault.setattr(mobile_journal_frame, "_locked_mobile", interrupt_terminal)
+            with pytest.raises(OSError, match="injected before terminal journal entry"):
+                captured.consolidate(
+                    password=b"test-private-mobile-rollback", cancel=Event()
+                )
         with captured.owner("db.agent_runs") as owner:
             with owner.transaction() as connection:
                 _master, children = _read_owner_receipt(
@@ -1734,6 +1997,7 @@ def test_actual_passive_chat_rows_commit_with_native_consumer_disposition(
 
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
     with captured_operation(tmp_path, monkeypatch) as captured:
+        stores = captured.preview.destination
         from tldw_chatbook.Backup_Recovery.mobile_native_operation import (
             _NativeOperationBlocked,
         )
@@ -1744,55 +2008,48 @@ def test_actual_passive_chat_rows_commit_with_native_consumer_disposition(
             )
         except _NativeOperationBlocked as error:
             pytest.fail(repr(error.blockers))
-        with captured.owner("db.chachanotes.primary") as owner:
-            with owner.transaction() as cursor:
-                _master, children = _read_owner_receipt(
-                    cursor.connection,
-                    captured.journal.operation_id,
-                    captured.preview.source_fingerprint,
-                    "chat",
-                    _TraceReadBudget(),
-                )
-                mapped = {
-                    (row["data"]["domain"], row["data"]["original"]): row["data"][
-                        "mapped"
-                    ]
-                    for row in children
-                    if row["kind"] == "identity"
-                    and type(row["data"]["original"]) in (str, int)
-                }
-                fleet = cursor.execute(
-                    "SELECT body FROM fleet_progress_messages WHERE message_id=?",
-                    (mapped["fleet_message", seeded["legacy"]["fleet"]],),
+    with _ordinary_imported_owner(stores, "db.chachanotes.primary") as owner:
+        with owner.transaction() as cursor:
+            _master, children = _read_owner_receipt(
+                cursor.connection,
+                captured.journal.operation_id,
+                captured.preview.source_fingerprint,
+                "chat",
+                _TraceReadBudget(),
+            )
+            mapped = {
+                (row["data"]["domain"], row["data"]["original"]): row["data"]["mapped"]
+                for row in children
+                if row["kind"] == "identity"
+                and type(row["data"]["original"]) in (str, int)
+            }
+            fleet = cursor.execute(
+                "SELECT body FROM fleet_progress_messages WHERE message_id=?",
+                (mapped["fleet_message", seeded["legacy"]["fleet"]],),
+            ).fetchone()
+            assert fleet[0] == "Historical fleet report"
+            for table in (
+                "console_hook_continuation_receipts",
+                "console_machine_followup_receipts",
+            ):
+                association = cursor.execute(
+                    f"SELECT parent_assistant_message_id,assistant_message_id FROM {table}"
                 ).fetchone()
-                assert fleet[0] == "Historical fleet report"
-                for table in (
-                    "console_hook_continuation_receipts",
-                    "console_machine_followup_receipts",
-                ):
-                    association = cursor.execute(
-                        f"SELECT parent_assistant_message_id,assistant_message_id FROM {table}"
-                    ).fetchone()
-                    assert (
-                        association[1]
-                        == mapped["message", seeded["legacy"]["dispatch"]]
-                    )
-                    assert association[0] != seeded["legacy"]["dispatch"]
-            conversation = mapped["conversation", seeded["legacy"]["conversation"]]
-            recovery = ConsoleDispatchRepository(owner).reconcile_for_session(
-                conversation
-            )
-            assert recovery.kind is ConsoleDispatchRecoveryKind.QUARANTINED
-            assert recovery.error_code == "imported_history"
-            assert [
-                (action.action_id, action.enabled) for action in recovery.actions
-            ] == [(ConsoleDispatchRecoveryActionId.DISCARD, True)]
-            assert (
-                recovery.assistant_message_id
-                == mapped["message", seeded["legacy"]["dispatch"]]
-            )
-            assert recovery.queue_entry_id is recovery.preparation_id is None
-            assert FleetProgressRepository(owner).load(conversation) == ()
+                assert association[1] == mapped["message", seeded["legacy"]["dispatch"]]
+                assert association[0] != seeded["legacy"]["dispatch"]
+        conversation = mapped["conversation", seeded["legacy"]["conversation"]]
+        recovery = ConsoleDispatchRepository(owner).reconcile_for_session(conversation)
+        assert recovery.kind is ConsoleDispatchRecoveryKind.QUARANTINED
+        assert recovery.error_code == "imported_history"
+        assert [(action.action_id, action.enabled) for action in recovery.actions] == [
+            (ConsoleDispatchRecoveryActionId.DISCARD, True)
+        ]
+        assert (
+            recovery.assistant_message_id
+            == mapped["message", seeded["legacy"]["dispatch"]]
+        )
+        assert recovery.queue_entry_id is recovery.preparation_id is None
+        assert FleetProgressRepository(owner).load(conversation) == ()
 
 
 def test_actual_failed_snapshot_retains_native_history_without_git(
@@ -1816,55 +2073,55 @@ def test_actual_failed_snapshot_retains_native_history_without_git(
 
     monkeypatch.setattr(mobile_consolidation_fixture, "_seed", seed)
     with captured_operation(tmp_path, monkeypatch) as captured:
+        stores = captured.preview.destination
         captured.consolidate(password=b"test-private-mobile-rollback", cancel=Event())
-        with (
-            captured.owner("db.agent_runs") as owner,
-            owner.transaction() as connection,
-        ):
-            _master, children = _read_owner_receipt(
-                connection,
-                captured.journal.operation_id,
-                captured.preview.source_fingerprint,
-                "runs",
-                _TraceReadBudget(),
-            )
-            mapped = {
-                (row["data"]["domain"], row["data"]["original"]): row["data"]["mapped"]
-                for row in children
-                if row["kind"] == "identity"
-                and type(row["data"]["original"]) in (str, int)
-            }
-            original = seeded["snapshot"]
-            saved = dict(
-                connection.execute(
-                    "SELECT * FROM change_snapshots WHERE id=?",
-                    (mapped["change_snapshot", original["id"]],),
-                ).fetchone()
-            )
-            assert saved == original | {
-                "id": mapped["change_snapshot", original["id"]],
-                "run_id": mapped["run", seeded["run"]],
-            }
-            assert (
-                connection.execute(
-                    "SELECT seq FROM sqlite_sequence WHERE name='change_snapshots'"
-                ).fetchone()[0]
-                >= saved["id"]
-            )
-            service = ShadowRepoService(data_dir=tmp_path / "unopened-shadow")
+    with (
+        _ordinary_imported_owner(stores, "db.agent_runs") as owner,
+        owner.transaction() as connection,
+    ):
+        _master, children = _read_owner_receipt(
+            connection,
+            captured.journal.operation_id,
+            captured.preview.source_fingerprint,
+            "runs",
+            _TraceReadBudget(),
+        )
+        mapped = {
+            (row["data"]["domain"], row["data"]["original"]): row["data"]["mapped"]
+            for row in children
+            if row["kind"] == "identity" and type(row["data"]["original"]) in (str, int)
+        }
+        original = seeded["snapshot"]
+        saved = dict(
+            connection.execute(
+                "SELECT * FROM change_snapshots WHERE id=?",
+                (mapped["change_snapshot", original["id"]],),
+            ).fetchone()
+        )
+        assert saved == original | {
+            "id": mapped["change_snapshot", original["id"]],
+            "run_id": mapped["run", seeded["run"]],
+        }
+        assert (
+            connection.execute(
+                "SELECT seq FROM sqlite_sequence WHERE name='change_snapshots'"
+            ).fetchone()[0]
+            >= saved["id"]
+        )
+        service = ShadowRepoService(data_dir=tmp_path / "unopened-shadow")
 
-            def no_git(*args, **kwargs):
-                pytest.fail("failed snapshot history attempted a Git lookup")
+        def no_git(*args, **kwargs):
+            pytest.fail("failed snapshot history attempted a Git lookup")
 
-            monkeypatch.setattr(service, "repo_for_root", no_git)
-            provider = AgentRunsChangeReviewProvider(
-                db=owner,
-                service=service,
-                conversation_id="unused",
-                diff_display_max_lines=2000,
-            )
-            assert provider.changed_files(saved) == []
-            assert not (tmp_path / "unopened-shadow").exists()
+        monkeypatch.setattr(service, "repo_for_root", no_git)
+        provider = AgentRunsChangeReviewProvider(
+            db=owner,
+            service=service,
+            conversation_id="unused",
+            diff_display_max_lines=2000,
+        )
+        assert provider.changed_files(saved) == []
+        assert not (tmp_path / "unopened-shadow").exists()
 
 
 def test_actual_publisher_iterator_close_failure_quarantines_native_admission(

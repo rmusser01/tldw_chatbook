@@ -2496,9 +2496,7 @@ def _custom_endpoint_declared_credential(
 
     env = environ if environ is not None else os.environ
     if entry.api_key_env:
-        if (
-            resolve_provider_api_key(env.get(entry.api_key_env, "")) is not None
-        ):
+        if resolve_provider_api_key(env.get(entry.api_key_env, "")) is not None:
             return f"env {entry.api_key_env}", "environment"
     if resolve_provider_api_key(entry.api_key) is not None:
         return "stored api_key", "stored"

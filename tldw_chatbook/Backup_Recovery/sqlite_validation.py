@@ -768,7 +768,12 @@ def _restrict_connection(connection, cancel=None):
         raise ValueError("sqlite_security_unavailable") from error
 
 
-def _catalog(connection):
+def _catalog(connection, *, _schemas=None):
+    from .mobile_preview_budget import catalog_cost, current, literal_catalog
+
+    if _schemas is not None and current() is not None:
+        return literal_catalog(connection, _schemas)
+    catalog_cost(connection)
     rows = []
     size = 0
     for row in connection.execute(
@@ -782,6 +787,10 @@ def _catalog(connection):
 
 
 def _metadata(connection, catalog, restrictions=None):
+    from .mobile_preview_budget import pragma_cost, reserve
+
+    reserve(256 + 96 * len(catalog))
+
     def quote(name):
         return '"' + name.replace('"', '""') + '"'
 
@@ -796,6 +805,7 @@ def _metadata(connection, catalog, restrictions=None):
                     and "USING fts5(" in sql
                 )
             try:
+                pragma_cost(connection, "table_xinfo", name)
                 columns = tuple(
                     connection.execute(f"PRAGMA table_xinfo({quote(name)})")
                 )
@@ -803,6 +813,7 @@ def _metadata(connection, catalog, restrictions=None):
                 if restrictions is not None:
                     restrictions.reading_fts_metadata = False
             # Sequence reflects creation order, not index semantics.
+            pragma_cost(connection, "index_list", name)
             indexes = tuple(
                 sorted(
                     row[1:]
@@ -811,6 +822,7 @@ def _metadata(connection, catalog, restrictions=None):
             )
             result.append((name, columns, indexes))
         elif kind == "index":
+            pragma_cost(connection, "index_xinfo", name)
             result.append(
                 (name, tuple(connection.execute(f"PRAGMA index_xinfo({quote(name)})")))
             )
@@ -920,6 +932,17 @@ def _canvas_payload_issues(connection, restrictions):
 def _reference(schema, *, _scope=None):
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
+    from .mobile_preview_budget import current, reserve
+
+    preview_scope = current()
+    if preview_scope is not None:
+        if _scope is not None and _scope is not preview_scope:
+            raise ValueError("mobile_preview_scope_changed")
+        _scope = preview_scope
+        # Reference schema is installed text. These are new statement/catalog
+        # containers and fixed scalar query results, not a second data copy.
+        reserve(4096 + 1024 * len(schema))
+
     with ExitStack() as resources:
         reference = connect_private_sqlite("recovery.validation_schema", ":memory:")
         if _scope is None:
@@ -936,8 +959,8 @@ def _reference(schema, *, _scope=None):
             tables = [
                 sql
                 for sql in schema
-                if sql.upper().startswith("CREATE TABLE")
-                or sql.upper().startswith("CREATE VIRTUAL TABLE")
+                if sql[:20].upper().startswith("CREATE TABLE")
+                or sql[:20].upper().startswith("CREATE VIRTUAL TABLE")
             ]
             others = [sql for sql in schema if sql not in tables]
             for sql in tables + others:
@@ -958,11 +981,18 @@ def _reference(schema, *, _scope=None):
                 if existing:
                     continue
                 reference.execute(sql)
-            catalog = _catalog(reference)
+            catalog = (
+                _catalog(reference, _schemas=((0, schema),))
+                if preview_scope is not None
+                else _catalog(reference)
+            )
             return catalog, _metadata(reference, catalog)
 
 
 def _version(connection, owner_id):
+    from .mobile_preview_budget import scalar_cost, table_cost
+
+    scalar_cost(connection, 2)
     if owner_id in {
         "db.chachanotes.primary",
         "study.local",
@@ -997,17 +1027,30 @@ def _version(connection, owner_id):
     else:
         query = "PRAGMA user_version"
     if owner_id == "db.dreams":
-        history = [row[0] for row in connection.execute("SELECT version FROM schema_version")]
-        if not history or any(type(version) is not int or version not in range(1, 7) for version in history):
+        table_cost(connection, "schema_version", ("version",))
+        history = [
+            row[0] for row in connection.execute("SELECT version FROM schema_version")
+        ]
+        if not history or any(
+            type(version) is not int or version not in range(1, 7)
+            for version in history
+        ):
             return None
     rows = connection.execute(query).fetchmany(2)
     return rows[0][0] if len(rows) == 1 else None
 
 
-def _check(connection, owner, policy, restrictions):
+def _check_details(connection, owner, policy, restrictions):
+    from .mobile_preview_budget import current, integrity_cost, reserve
+
     if restrictions.expired():
         raise ValueError("sqlite_resource_limit")
-    actual = _catalog(connection)
+    actual = (
+        _catalog(connection, _schemas=policy.schema_sql)
+        if current() is not None
+        else _catalog(connection)
+    )
+    reserve(256 + 64 * (len(actual) + len(policy.schema_sql)))
     actual_sql = tuple(row[3] for row in actual if row[3] is not None)
     matched = tuple(
         (version, schema)
@@ -1015,28 +1058,29 @@ def _check(connection, owner, policy, restrictions):
         if schema == actual_sql
     )
     if not matched:
-        return ("unsupported_schema",), None
+        return ("unsupported_schema",), None, None
     # Only after exact catalog match may metadata/version/domain queries prepare
     # expressions contained in the imported schema.
     version = _version(connection, owner.owner_id)
     if version not in policy.versions or not any(v == version for v, _ in matched):
-        return ("unsupported_schema_version",), None
+        return ("unsupported_schema_version",), None, None
     with _canvas_schema_access(connection, matched[0][1], restrictions):
         reference_catalog, metadata = _reference(
             matched[0][1], _scope=getattr(restrictions, "capture_scope", None)
         )
-        if (
-            actual != reference_catalog
-            or _metadata(connection, actual, restrictions) != metadata
-        ):
-            return ("unsupported_schema",), None
+        if actual != reference_catalog:
+            return ("unsupported_schema",), None, None
+        actual_metadata = _metadata(connection, actual, restrictions)
+        if actual_metadata != metadata:
+            return ("unsupported_schema",), None, None
+        integrity_cost(connection, actual)
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-            return ("invalid_domain_reference",), None
+            return ("invalid_domain_reference",), None, None
         payload_issues = _canvas_payload_issues(connection, restrictions)
         if payload_issues:
-            return payload_issues, None
+            return payload_issues, None, None
         if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
-            return ("invalid_sqlite_integrity",), None
+            return ("invalid_sqlite_integrity",), None, None
         if owner.owner_id == "db.subscriptions" and any(
             row[1] == "db_schema_version" for row in actual
         ):
@@ -1051,15 +1095,20 @@ def _check(connection, owner, policy, restrictions):
                 ).fetchone()
                 not in expected_stamps
             ):
-                return ("unsupported_schema_version",), None
+                return ("unsupported_schema_version",), None, None
         checker = getattr(owner, "_validate_connection", None)
         if checker is not None:
             issues = checker(connection)
             if issues:
-                return issues, None
+                return issues, None, None
         if restrictions.expired():
             raise ValueError("sqlite_resource_limit")
-        return (), version
+        return (), version, (actual, actual_metadata)
+
+
+def _check(connection, owner, policy, restrictions):
+    issues, version, _ = _check_details(connection, owner, policy, restrictions)
+    return issues, version
 
 
 def _validate_candidate(

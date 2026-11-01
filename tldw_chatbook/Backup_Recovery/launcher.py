@@ -636,7 +636,9 @@ def _parser() -> argparse.ArgumentParser:
     mobile = commands.add_parser("consolidate-mobile", allow_abbrev=False)
     mobile.add_argument("--source-config", type=_path, required=True)
     mobile.add_argument("--target-config", type=_path, required=True)
-    mobile.add_argument("--preview", action="store_true", required=True)
+    mobile_action = mobile.add_mutually_exclusive_group(required=True)
+    mobile_action.add_argument("--preview", action="store_true")
+    mobile_action.add_argument("--apply", action="store_true")
     inspect = commands.add_parser("inspect", allow_abbrev=False)
     inspect.add_argument("archive", type=_path)
     inspect.add_argument("--ask-password", action="store_true")
@@ -853,7 +855,24 @@ def recovery_main(argv: Sequence[str] | None = None) -> int:
                 args.source_config, args.target_config
             )
             _show(preview)
-            return 1 if preview.issues else 0
+            if args.preview:
+                return 1 if preview.issues else 0
+            if any(
+                issue != "mobile_destination_review_required"
+                for issue in preview.issues
+            ):
+                return 1
+            if (
+                input("Type consolidate to import into this reviewed target: ").strip()
+                != "consolidate"
+            ):
+                return 0
+            password = _password("New encrypted recovery-copy password: ", confirm=True)
+            operation = service.start_mobile_consolidation(
+                preview, destination_confirmed=True, rollback_password=password
+            )
+            password = None
+            return 0 if _wait(service, operation)["state"] == "succeeded" else 1
         if args.command == "inspect":
             return (
                 0

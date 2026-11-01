@@ -263,6 +263,40 @@ def test_empty_cli_preview_does_not_create_source_or_destination(tmp_path, capsy
     output = json.loads(capsys.readouterr().out)
     assert output["has_data"] is False
     assert not (tmp_path / "data").exists()
+
+
+def test_cli_apply_requires_typed_confirmation_before_password_or_preparation(
+    tmp_path, monkeypatch
+):
+    import pytest
+
+    from tldw_chatbook.Backup_Recovery import launcher
+
+    config = _config(tmp_path, "selected", tmp_path / "canonical")
+    monkeypatch.setattr("builtins.input", lambda prompt: "cancel")
+
+    def unexpected_secret(prompt):
+        pytest.fail("password requested before destination confirmation")
+
+    monkeypatch.setattr(launcher, "_secret", unexpected_secret)
+    assert (
+        launcher.recovery_main(
+            [
+                "--control-root",
+                str(tmp_path / "control"),
+                "consolidate-mobile",
+                "--source-config",
+                str(config),
+                "--target-config",
+                str(config),
+                "--apply",
+            ]
+        )
+        == 0
+    )
+    assert not (tmp_path / "data").exists()
+    assert not (tmp_path / "canonical").exists()
+    assert not tuple((tmp_path / "control").glob("operation-*"))
     assert not (tmp_path / "canonical").exists()
     assert not (tmp_path / "control").exists()
 

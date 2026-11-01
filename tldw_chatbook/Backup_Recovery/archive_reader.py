@@ -245,7 +245,7 @@ def _producer_inventory(doc: ArchiveManifest, limits: ArchiveLimits) -> None:
             raise ValueError("shared_payload_mismatch")
 
 
-def _central_preflight(stream, limits):
+def _central_preflight(stream, limits, *, _read_budget=None):
     """Bound count/metadata before ZipFile allocates its central-directory list."""
     stream.seek(0, 2)
     size = stream.tell()
@@ -286,6 +286,10 @@ def _central_preflight(stream, limits):
         raise ValueError("member_limit")
     if offset + central_size != end_offset:
         raise ValueError("invalid_zip_ranges")
+    if _read_budget is not None:
+        # Admit ZipInfo records, decoded names, collision keys and local-range
+        # maps before ZipFile materializes the native central directory.
+        _read_budget.reserve(8192 + count * 4096 + central_size * 32)
     stream.seek(offset)
     for _ in range(count):
         header = stream.read(46)
@@ -398,7 +402,7 @@ def _member_chunks(stream, info, offset, cancel):
         raise ValueError("member_integrity_mismatch")
 
 
-def _inspect(
+def _inspect_with_manifest(
     path: Path,
     limits: ArchiveLimits,
     encrypted: bool,
@@ -406,9 +410,10 @@ def _inspect(
     digest: str,
     *,
     _custody=None,
-) -> bytes:
+    _read_budget=None,
+) -> tuple[bytes, ArchiveManifest]:
     with _regular(path, _custody=_custody) as stream:
-        central = _central_preflight(stream, limits)
+        central = _central_preflight(stream, limits, _read_budget=_read_budget)
         with zipfile.ZipFile(stream) as archive:
             infos = archive.infolist()
             names = set()
@@ -447,10 +452,17 @@ def _inspect(
             info = archive.getinfo("manifest.json")
             if info.file_size > limits.manifest_bytes:
                 raise ValueError("manifest_limit")
+            if _read_budget is not None:
+                _read_budget.reserve(131072 + 3 * info.file_size)
             _space(path.parent, total)
             data = b"".join(
                 _member_chunks(stream, info, offsets[info.filename], cancel)
             )
+            if _read_budget is not None:
+                _read_budget.json(data)
+                # Native duplicate-key/schema validation and canonical encoding
+                # make bounded clones of this length-admitted manifest.
+                _read_budget.reserve(16384 + 32 * len(data))
             doc = _manifest(data, limits, encrypted)
             if len(infos) + len(doc.directories) > limits.members:
                 raise ValueError("member_limit")
@@ -477,15 +489,31 @@ def _inspect(
                     digest.update(chunk)
                 if count != payload.size or digest.hexdigest() != payload.sha256:
                     raise ValueError("payload_digest_mismatch")
-            return json.dumps(
+            canonical = json.dumps(
                 doc.model_dump(mode="json"),
                 sort_keys=True,
                 separators=(",", ":"),
                 ensure_ascii=True,
             ).encode()
+            return canonical, doc
 
 
-def acquire(
+def _inspect(
+    path, limits, encrypted, cancel, digest, *, _custody=None, _read_budget=None
+):
+    """Keep the established byte-only inspection result for existing callers."""
+    return _inspect_with_manifest(
+        path,
+        limits,
+        encrypted,
+        cancel,
+        digest,
+        _custody=_custody,
+        _read_budget=_read_budget,
+    )[0]
+
+
+def _acquire_with_manifest(
     source: Path,
     work_root: Path,
     limits: ArchiveLimits,
@@ -493,9 +521,16 @@ def acquire(
     cancel: Event,
     *,
     _custody=None,
-) -> SealedArchive:
+    _read_budget=None,
+) -> tuple[SealedArchive, ArchiveManifest]:
     """Copy, authenticate, and inspect into newly allocated private staging."""
     custody = {} if _custody is None else {"_custody": _custody}
+    if _read_budget is not None:
+        if _custody is None:
+            raise ValueError("mobile_native_custody_required")
+        # Streaming input, crypto pipes and member hashing retain fixed buffers;
+        # archive byte limits remain independently enforced by installed code.
+        _read_budget.reserve(8 * _BUFFER + 65536)
     _check(cancel)
     operation = None
     completed = False
@@ -559,7 +594,15 @@ def acquire(
                 **custody,
             )
         digest = _hash(path, cancel, **custody)
-        manifest_bytes = _inspect(path, limits, encrypted, cancel, digest, **custody)
+        manifest_bytes, document = _inspect_with_manifest(
+            path,
+            limits,
+            encrypted,
+            cancel,
+            digest,
+            _read_budget=_read_budget,
+            **custody,
+        )
         if digest != _hash(path, cancel, **custody):
             raise ValueError("sealed_changed")
         _check(cancel)
@@ -579,7 +622,7 @@ def acquire(
             )
         sealed = SealedArchive(path, digest, manifest_bytes, provenance)
         completed = True
-        return sealed
+        return sealed, document
     except (
         zipfile.BadZipFile,
         UnicodeError,
@@ -598,6 +641,21 @@ def acquire(
         # Successful return owns the operation; every incomplete stage is removed.
         if operation is not None and not completed and _custody is None:
             shutil.rmtree(operation)
+
+
+def acquire(
+    source, work_root, limits, password, cancel, *, _custody=None, _read_budget=None
+) -> SealedArchive:
+    """Copy, authenticate, and inspect into newly allocated private staging."""
+    return _acquire_with_manifest(
+        source,
+        work_root,
+        limits,
+        password,
+        cancel,
+        _custody=_custody,
+        _read_budget=_read_budget,
+    )[0]
 
 
 def verify_sealed(

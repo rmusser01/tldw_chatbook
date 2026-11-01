@@ -44,6 +44,7 @@ class ConsoleScratchSpaceManager:
     """Own isolated scratch directories and revoke them safely on chat close."""
 
     def __init__(self, *, temp_parent: Path | None = None) -> None:
+        self._creation_pid = os.getpid()
         self._temp_parent = Path(temp_parent) if temp_parent is not None else None
         self._condition = threading.Condition(threading.RLock())
         self._by_session: dict[str, _ScratchRecord] = {}
@@ -66,6 +67,7 @@ class ConsoleScratchSpaceManager:
                 allocation cannot establish a private directory.
         """
 
+        self._check_process()
         normalized_session_id = str(session_id)
         if not normalized_session_id:
             raise ConsoleScratchSpaceUnavailable("A live Console session is required")
@@ -127,6 +129,7 @@ class ConsoleScratchSpaceManager:
                 missing, symlinked, or replaced on disk.
         """
 
+        self._check_process()
         with self._condition:
             record = self._matching_record_locked(snapshot)
             if record is None or record.tombstoned:
@@ -143,6 +146,7 @@ class ConsoleScratchSpaceManager:
         try:
             yield snapshot.root
         finally:
+            self._check_process()
             with self._condition:
                 record.leases = max(0, record.leases - 1)
                 if record.tombstoned and record.leases == 0:
@@ -160,6 +164,7 @@ class ConsoleScratchSpaceManager:
             directory generation and its filesystem identity is unchanged.
         """
 
+        self._check_process()
         with self._condition:
             record = self._matching_record_locked(snapshot)
             if record is None or record.tombstoned:
@@ -176,6 +181,7 @@ class ConsoleScratchSpaceManager:
             session_id: Process-local identifier for the live Console session.
         """
 
+        self._check_process()
         with self._condition:
             record = self._by_session.pop(str(session_id), None)
             if record is None:
@@ -185,6 +191,7 @@ class ConsoleScratchSpaceManager:
     def tombstone_all(self) -> None:
         """Synchronously revoke every live scratch space without blocking on I/O."""
 
+        self._check_process()
         with self._condition:
             self._disposed = True
             records = tuple(self._records.values())
@@ -205,6 +212,7 @@ class ConsoleScratchSpaceManager:
             ``True`` when every record retired before the deadline.
         """
 
+        self._check_process()
         deadline = time.monotonic() + max(0.0, timeout_seconds)
         with self._condition:
             while self._records:
@@ -224,6 +232,7 @@ class ConsoleScratchSpaceManager:
             ``True`` when every scratch record retired before the deadline.
         """
 
+        self._check_process()
         self.tombstone_all()
         deadline = time.monotonic() + max(0.0, timeout_seconds)
         with self._condition:
@@ -236,6 +245,12 @@ class ConsoleScratchSpaceManager:
                     return False
                 self._condition.wait(remaining)
             return True
+
+    def _check_process(self) -> None:
+        if self._creation_pid != os.getpid():
+            raise ConsoleScratchSpaceUnavailable(
+                "Console scratch belongs to another process"
+            )
 
     def _matching_record_locked(
         self,
@@ -329,3 +344,50 @@ class ConsoleScratchSpaceManager:
         except OSError:
             return False, "delete-failed"
         return True, "deleted"
+
+
+# Definition-time callbacks for the fixed native scratch composition.
+_SCRATCH_ADMISSION_ORIGINAL = (
+    ConsoleScratchSpaceManager,
+    tuple(
+        (
+            name,
+            function,
+            tuple(
+                (
+                    callback,
+                    callback.__code__,
+                    callback.__defaults__,
+                    callback.__kwdefaults__,
+                    tuple((callback.__kwdefaults__ or {}).items()),
+                    callback.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in (callback.__closure__ or ())
+                    ),
+                )
+                for callback in (function, wrapped)
+                if callback is not None
+            ),
+            wrapped,
+        )
+        for name in (
+            "snapshot",
+            "lease",
+            "is_live",
+            "close",
+            "tombstone_all",
+            "wait_for_cleanup",
+            "dispose",
+            "_matching_record_locked",
+            "_identity_matches",
+            "_check_process",
+            "_tombstone_locked",
+            "_schedule_cleanup_locked",
+            "_cleanup_worker_main",
+            "_cleanup_record",
+        )
+        for function in (getattr(ConsoleScratchSpaceManager, name),)
+        for wrapped in (getattr(function, "__wrapped__", None),)
+    ),
+)

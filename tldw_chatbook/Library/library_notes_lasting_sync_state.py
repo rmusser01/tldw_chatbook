@@ -625,8 +625,11 @@ class LibraryNotesLastingSyncSnapshot:
     root_page_count: int = 1
     conflict_focus_binding_id: str | None = None
     write_receipts: tuple[LastingSyncWriteReceipt, ...] = ()
+    import_review_required: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.import_review_required) is not bool:
+            raise TypeError("import_review_required must be a boolean")
         if self.phase not in _PHASES:
             raise ValueError("unknown lasting-sync phase")
         if type(self.write_receipts) is not tuple or any(

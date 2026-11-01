@@ -415,12 +415,20 @@ def _verify_candidate(scope, restrictions, candidate, digest):
         check_name()
 
 
-def _retire_staging(scope, root, identity):
+def _retire_staging(scope, root, identity, *, _read_budget=None):
     """Remove only the witnessed private read tree after every reader retired."""
     custody = _CaptureFileDescriptors(scope)
 
     def remove_children(parent):
-        for name in os.listdir(parent):
+        if _read_budget is None:
+            names = os.listdir(parent)
+        else:
+            from .bootstrap import _bounded_names
+
+            names = _bounded_names(
+                parent, ArchiveLimits().members, _read_budget, custody
+            )
+        for name in names:
             before = os.stat(name, dir_fd=parent, follow_symlinks=False)
             if before.st_uid != os.geteuid() or before.st_mode & 0o077:
                 raise ValueError("mobile_sqlite_staging_changed")

@@ -1,10 +1,12 @@
 """Inert inventory of the installed managed store and selected dependency closure."""
 
 import hashlib
-import json
 from dataclasses import replace
 from pathlib import Path
 
+from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+    json_loads as _budgeted_json_loads,
+)
 from tldw_chatbook.Backup_Recovery.models import (
     OwnerAdapter,
     StorageItem,
@@ -101,7 +103,7 @@ class _Artifacts(_RawDeclaration):
 
         from .service import ArtifactDescriptor
 
-        raw = json.loads(
+        raw = _budgeted_json_loads(
             _read_recovery_file(self.owner_id, candidate, max_bytes=16 * 1024**2),
             object_pairs_hook=_unique_object,
         )

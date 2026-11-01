@@ -1076,8 +1076,10 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
         Archive and publication fingerprints check bytes; this hook checks the
         declared relationship and regular candidate, without opening source paths.
         """
-        import tomllib
-
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import table_cost
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+            toml_loads as _budgeted_toml_loads,
+        )
         from tldw_chatbook.Backup_Recovery.recovery_files import _RawDeclaration
         from tldw_chatbook.Backup_Recovery.storage_admission import _read_recovery_file
         from tldw_chatbook.DB.private_sqlite import open_recovery_validation
@@ -1098,6 +1100,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             with open_recovery_validation(
                 self.owner_id, candidate, writable=False
             ) as connection:
+                table_cost(connection, "briefing_audio", ("file_path",))
                 paths = tuple(
                     row[0]
                     for row in connection.execute(
@@ -1109,10 +1112,10 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             config_key = f"profile:{parts[1]}:config"
             if config_key not in item.dependencies or config_key not in candidates:
                 return ("dependency_unavailable",)
-            config = tomllib.loads(
+            config = _budgeted_toml_loads(
                 _read_recovery_file(
                     "config", candidates[config_key], max_bytes=16 * 1024**2
-                ).decode("utf-8")
+                )
             )
             root = user_data_dir(config) / "briefing_audio"
             prefix = f"profile:{parts[1]}:subscriptions.assets:"
@@ -1151,6 +1154,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
         from dataclasses import replace
 
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import table_cost
         from tldw_chatbook.Backup_Recovery.recovery_files import _tree_member_id
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
@@ -1166,6 +1170,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     "recovery.operations.subscriptions", item.path, read_only=True
                 )
             ) as connection:
+                table_cost(connection, "briefing_audio", ("file_path",))
                 paths = tuple(
                     row[0]
                     for row in connection.execute(
@@ -1255,12 +1260,19 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
         )
         if issues:
             return issues
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+            catalog_cost,
+            scalar_cost,
+        )
+
+        scalar_cost(connection, 2)
         if connection.execute(
             "SELECT 1 FROM sqlite_schema WHERE name='db_schema_version'"
         ).fetchone():
             stamp = connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()
+            catalog_cost(connection)
             actual = tuple(
                 row[0]
                 for row in connection.execute(
@@ -1449,6 +1461,8 @@ _SUBSCRIPTIONS_SCHEMA += (
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_MOBILE_V82_SCHEMAS:
+        return ((82,),)
     if schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS:
         return ((80,),)
     if schema in _SUBSCRIPTIONS_SARGABLE_SCHEMAS:
@@ -1685,4 +1699,30 @@ _WORKSPACES_SCHEMA += tuple(
     (9, tuple(sorted(catalog + WORKSPACE_MIGRATION[:-1], key=_installed_schema_order)))
     for version, catalog in _WORKSPACES_SCHEMA
     if version == 8
+)
+
+
+# ADR-244: exact shared-file successors of the already qualified Core80 family.
+# Preserve the historical source-index absence and current native constructor
+# index as separate full catalogs. Neither stamp81 nor unknown DDL is admitted.
+from .mobile_import_authority import CHAT_MIGRATION
+from .recovery_core_schema import CHACHANOTES_V81_ADDITIONS
+
+_SUBSCRIPTIONS_MOBILE_V82_SCHEMAS = tuple(
+    tuple(
+        sorted(
+            schema + CHACHANOTES_V81_ADDITIONS + CHAT_MIGRATION + source_index,
+            key=_installed_schema_order,
+        )
+    )
+    for schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS
+    for source_index in (
+        (),
+        ("CREATE INDEX idx_subscriptions_source ON subscriptions(source)",),
+    )
+)
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (version, schema)
+    for schema in _SUBSCRIPTIONS_MOBILE_V82_SCHEMAS
+    for version in (2, 3)
 )
