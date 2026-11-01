@@ -7,6 +7,24 @@ Supersedes: N/A
 
 ## Decision
 
+### Amendment 2026-10-29: observe qualification cost (TASK-38100)
+
+The owner requested the remaining CI audit improvements. Add one checkout-free
+reporting step after the existing aggregate verdicts, with actions-read permission
+and a one-minute step limit. This diagnostic alone tolerates failure; every
+verdict and prerequisite stays fail-closed. It adds no runner job or test skipping.
+
+Report observed completed-job execution minutes for the current attempt and all
+recorded attempts separately, plus created-to-start job wait. Deduplicate job IDs,
+exclude skipped jobs, and disclose unavailable/inverted times and the exclusion
+of the running aggregate and later queue tick. This is not a billing estimate.
+Warn above 500 cumulative observed runner-minutes (the audit's 397-minute median
+first attempt plus roughly 26 percent headroom), without failing or shortening
+qualification. Reassess against hosted observations when coverage grows.
+
+Spec: `Docs/superpowers/specs/2026-10-29-ci-cost-reporting.md`.
+Plan: `Docs/superpowers/plans/2026-10-29-ci-cost-reporting.md`.
+
 ### Amendment 2026-10-29: preflight before test fan-out (TASK-37800)
 
 The owner approved early rejection after the backlog audit measured a median
