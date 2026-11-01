@@ -274,7 +274,36 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-31: re-measured after rebasing onto dev 94a8a85f03 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24335/737 -> 24397/737.
     #: 2026-10-31: re-measured after rebasing onto dev 14de6845b3 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24289/737 -> 24350/737.
     #: PR3300 on dev63b764c858: explicit user size waiver; exact24598/741.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24598, 741),
+    #: Raised 24319 -> 24323 (methods unchanged) 2026-10-27 by TASK-33620.2,
+    #: comment; never move or reflow code to make it fit): the composer sync
+    #: passes the vision block in its own slot (one kwarg line), compose
+    #: yields its row (one line), and the row joins the composer's Tab region
+    #: and F6 pane map (two lines) so both actions are keyboard-reachable.
+    #: The row, its sync and both actions live in
+    #: Console_Modules/composer_run_controls.py, and Remove image shares the
+    #: clear-attachment handler's selector. Dev f9baac8706 measures
+    #: 24319/736; with the fix, 24323/736, the exact measurement.
+    #: Rebased 2026-10-29 onto dev 3efe8476ce, which measures 24329/737;
+    #: with the same +4, 24333/737, the exact measurement.
+    #: with the same +4, 24333/737. Rebased again 2026-10-29 onto dev
+    #: b5150753eb, which measures 24327/737 (its row kept 24329); with the
+    #: same +4, 24331/737, the exact measurement.
+    #: Raised to 24331/737 on 2026-10-29 by TASK-33620.2, owner rule (a fix
+    #: Raised to 24333/737 on 2026-10-29 by TASK-33620.2, owner rule (a fix
+    #: over a size ratchet raises the row with a dated comment; never move or
+    #: reflow code to make it fit). Dev d36affec9b measures 24329/737; the
+    #: fix adds 4 lines and no methods: the composer sync passes the vision
+    #: block in its own slot (one kwarg line), compose yields its row (one
+    #: line), and the row joins the composer's Tab region and F6 pane map
+    #: (two lines) so both actions are keyboard-reachable. The row, its sync
+    #: and both actions live in Console_Modules/composer_run_controls.py.
+    #: 2026-10-29: re-measured after rebasing onto dev ff815f8559 (owner rule: the row is the exact measurement): 24333/737 -> 24331/737.
+    #: 2026-10-30: re-measured after rebasing onto dev 7536ac3b87 (owner rule: the row is the exact measurement): 24331/737 -> 24335/737.
+    #: 2026-10-31: re-measured after rebasing onto dev 57e330e735 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24335/737 -> 24339/737.
+    #: 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 24377/739 -> 24381/739.
+    # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
+    # Final PR3301 on dev59b8fe0249: explicit owner size waiver, exact measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24602, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

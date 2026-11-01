@@ -462,6 +462,24 @@ QUEUE_REASON_FULL = "Queue full — manage it to make room"
 QUEUE_REASON_RUN_HOLD = "Wait for the current run to finish"
 
 
+@dataclass(frozen=True, slots=True)
+class ConsoleAttachmentBlock:
+    """A staged attachment the selected model can't take (TASK-33620.2).
+
+    Typed apart from provider setup: it used to ride ``setup_blocked_reason``,
+    where the word "model" in it read as "choose a model" and the strip
+    became a link into the first-run wizard.
+
+    Attributes:
+        notice: Short copy naming the model and the cause, e.g.
+            ``"claude-2.1 can't accept images"``.
+        reason: The send gate's verbatim refusal (Send tooltip, System row).
+    """
+
+    notice: str
+    reason: str
+
+
 def console_setup_blocked_reason(readiness: ConsoleSettingsReadiness) -> str:
     """Return the native composer's setup-specific send blocker copy.
 
@@ -512,6 +530,7 @@ def build_console_disabled_reason(
     dispatch_recovery_blocked: bool = False,
     send_label: str = "Send",
     queue_blocked_reason: str = "",
+    attachment_block: ConsoleAttachmentBlock | None = None,
 ) -> str:
     """Return concise disabled copy for Console action controls.
 
@@ -520,6 +539,8 @@ def build_console_disabled_reason(
         has_draft: Whether the composer currently has message text.
         send_blocked: Whether sending is blocked by setup or run state.
         setup_blocked_reason: Provider/setup blocker copy, when present.
+        attachment_block: A staged attachment the model can't take. Named
+            as itself, below a setup blocker and above a queue state.
         dispatch_recovery_blocked: An unresolved response needs explicit recovery.
         send_label: The send control's current label. TASK-33625.1: mid-run it
             reads a queue state (``Preparing...``, ``Queue``, ``Queue full``);
@@ -556,7 +577,10 @@ def build_console_disabled_reason(
 
     setup_reason = _clean(setup_blocked_reason, "")
     queue_reason = _clean(queue_blocked_reason, "")
-    queue_blocked = send_blocked and bool(queue_reason) and not setup_reason
+    attachment_notice = _clean(attachment_block.notice, "") if attachment_block else ""
+    queue_blocked = (
+        send_blocked and bool(queue_reason) and not (setup_reason or attachment_notice)
+    )
     if queue_blocked and send_label == SEND_LABEL_PREPARING:
         # TASK-33620.4: a chainless hold (regenerate / continue / wake) is
         # labelled Preparing too, but no queue ever opens behind it.
@@ -593,6 +617,8 @@ def build_console_disabled_reason(
         if "retry connection" in setup_reason_lower:  # TASK-33005.2
             return "Send blocked — retry the connection to continue"
         return "Send blocked — finish provider setup to continue"
+    if send_blocked and attachment_notice:  # TASK-33620.2: never setup copy
+        return f"Send blocked — {attachment_notice}"
     if queue_blocked:
         # TASK-33620.4: any other queue refusal names itself -- it never
         # falls through to provider-setup or active-run copy.

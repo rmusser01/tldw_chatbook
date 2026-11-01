@@ -77,7 +77,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _BUDGETS: dict[str, int] = {
     # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
     "tldw_chatbook/Utils/app_shutdown.py": 776,
-    "tldw_chatbook/Chat/console_display_state.py": 2882,
+    # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 2873 -> 2899.
+    # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/Chat/console_display_state.py": 2908,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     "tldw_chatbook/Widgets/Console/console_canvas_card.py": 244,
     "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": 1680,
@@ -650,10 +652,23 @@ _BUDGETS: dict[str, int] = {
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
     # PR3299, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7139,
+
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
+    #: Raised 7024 -> 7039 on 2026-10-27 by TASK-33620.2, owner rule (a fix
+    #: Raised 7043 -> 7058 on 2026-10-29 by TASK-33620.2, owner rule (a fix
+    #: over a size ratchet raises the row with a dated comment; never move or
+    #: reflow code to make it fit): the vision block gets its own typed
+    #: `attachment_block` slot in `sync_action_state` (signature, docstring,
+    #: replay, Send tooltip, disabled reason) instead of riding the setup slot
+    #: into "choose a model" and the first-run wizard link. The row and its
+    #: actions live in Console_Modules/composer_run_controls.py. Dev
+    #: f9baac8706 measures 7024; with the fix, 7039, the exact measurement.
+    #: d36affec9b measures 7043; with the fix, 7058, the exact measurement.
+    # 2026-10-29: re-measured after rebasing onto dev ed7481a30c (owner rule: the row is the exact measurement): 7043 -> 7058.
+    # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7154,
     "tldw_chatbook/UI/Console_Modules/session.py": 7065,
     # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
