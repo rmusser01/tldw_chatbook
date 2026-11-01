@@ -24911,6 +24911,7 @@ class ConsoleChatController:
                     self._replies_in_pre_provider_setup.discard(assistant_message_id)
                     return ConsoleSubmitResult(
                         True, False, terminal_status=ConsoleRunStatus.BLOCKED,
+                        blocker=ConsoleSubmitBlocker.OWNER_CHANGED,
                         provider_started=False,
                     )
                 if not setup_authority.live_ephemeral_acceptance(
@@ -26128,6 +26129,7 @@ class ConsoleChatController:
                         session_id=owner_id,
                         assistant_message_id=assistant_message_id,
                         terminal_status=ConsoleRunStatus.BLOCKED,
+                        blocker=ConsoleSubmitBlocker.OWNER_CHANGED,
                         provider_started=not generation_authority.accepted_before_dispatch(
                             generation_continuation, assistant_message_id
                         ),
