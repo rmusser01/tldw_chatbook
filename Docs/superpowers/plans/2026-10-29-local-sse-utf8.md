@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python, Requests, pytest.
 
-**Spec:** TASK-37600 and the user's approved fix following the screenshot investigation.
+**Spec:** TASK-38328 and the user's approved fix following the screenshot investigation.
 
 **ADR required:** no
 **ADR path:** N/A; existing ADR-063/179 provider boundaries apply.
@@ -28,7 +28,7 @@
 - [x] Run `pytest Tests/LLM_Calls/test_local_sse_encoding.py -q`; raw Unicode with missing or misleading charset must fail on corrupted content, while UTF-8-header/escaped-JSON/ASCII controls pass.
 - [x] Select UTF-8 before local SSE consumption and document why the response header is insufficient.
 - [x] Run the regression file and relevant local-dispatch, native-tool, stream-lifetime and provider tests; run scoped Ruff lint/format and diff checks. Document evidence limits and the existing private-profile test startup issue.
-- [x] Self-review, request focused independent review, and record results in TASK-37600 before closeout.
+- [x] Self-review, request focused independent review, and record results in TASK-38328 before closeout.
 
 ## Review Focus
 

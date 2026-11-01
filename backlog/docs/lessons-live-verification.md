@@ -63,6 +63,22 @@ low ratio across unrelated widgets points at a backdrop, not at your change.
 
 **What to do.** Before a live compaction check, give the chat more older-turn text than a summary can be. Set Chat settings ▸ Context and memory ▸ Summary response max to about 120 and send a couple of long replies first; a few hundred "Next request" tokens was enough. That failure message means the fixture is too small. It says nothing about the code under test.
 
+## A modal can expose a character launch that bypassed workspace alignment (TASK-37600, 2026-10-29)
+
+**Incident.** The Pixel Migu report combined a provider change with a jump to an
+older chat after model Apply. A controlled probe showed that Apply updated the
+correct character session; the subsequent resume reconciled its global scope
+against a registry still pointing at the source's named workspace. Resume alone
+also reproduced the jump. Real served-app UAT after routing both character
+launches through the existing alignment seam retained the same session through
+Apply, backdrop cancellation, and an HTTP-backed reply.
+
+**Practice.** Check the originating session's committed settings separately from
+the session selected after a dialog closes. A correct visible model label also
+does not prove character-launch inputs: a second probe reproduced stale vLLM
+control mirrors overriding both saved llama.cpp defaults and the active chat.
+Evidence: `Docs/superpowers/qa/2026-10-29-character-chat-selection/`.
+
 ## A native terminal launched by automation can inherit TERM=dumb (TASK-37173, 2026-10-28)
 
 **Incident.** The Windows resize investigation initially launched its native Logs probe through an executor exporting `TERM=dumb`. Both output streams were real TTYs and `os.get_terminal_size` reported 120x36, but Rich's dumb-terminal fallback initialized Textual at 80x25. That extra starting gap obscured verification of the actual defect: Textual 8.2.8 omitted `ENABLE_WINDOW_INPUT`, so subsequent Windows resize events were discarded. Removing only the automation's `TERM=dumb` override in the QA launcher produced matching 98x42 initial panes. Resizing the same Terminal window to 135x68 left stock Textual at 98x42 while the fixed driver filled 135x68, confirmed visually by the user and by independent OS/app/layout traces in `qa/windows-terminal-resize-2026-10-28/`.

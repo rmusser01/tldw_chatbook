@@ -1,5 +1,5 @@
 ---
-id: TASK-37600
+id: TASK-38328
 title: Decode local SSE responses as UTF-8
 status: Done
 created_date: 2026-10-29 20:22
@@ -62,3 +62,7 @@ Subsequent dev rebase (2026-10-30): all 38 hosted jobs were green on b5227809a9,
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-37600 during PR3306 integration on 2026-11-01. The character-selection task keeps that ID: its created_date is 2026-10-29 20:04 and original add commit 55f90ba935 is 20:27:14 UTC; this SSE task was created at 20:22 and added by eddf63e1f8 at 20:31:41 UTC. The older-arrival rule applies regardless of Done status. TASK-38328 was unclaimed in reachable historical filenames (maximum 38298) and current worktree task files. Scope, completed acceptance criteria and prior evidence remain unchanged.

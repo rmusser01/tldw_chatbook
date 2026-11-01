@@ -249,7 +249,7 @@ checkpoint into the next request and response parser, including skipped or
 deferred tool calls. Assert terminal state and save/acknowledgment failures before
 the next request; valid outgoing JSON alone does not prove a valid round trip.
 
-## Pre-decoded SSE fixtures hide charset corruption (TASK-37600, 2026-10-29)
+## Pre-decoded SSE fixtures hide charset corruption (TASK-38328, 2026-10-29)
 
 A user screenshot showed repeated accented characters in llama.cpp agent
 replies, also present in copied/exported text. Raw UTF-8 SSE bytes through the

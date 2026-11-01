@@ -32,6 +32,10 @@ from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
 )
 
 from Tests.UI.test_destination_shells import _build_test_app
+from Tests.private_profile import private_profile_test
+from Tests.UI.console_fixture_ownership import (
+    owned_console_apps as owned_console_apps,  # noqa: PLC0414
+)
 
 
 def test_macros_resolved_in_system_prompt_and_greeting():
@@ -245,7 +249,9 @@ def _start_chat_handoff(card: dict) -> ChatHandoffPayload:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_personas_start_chat_seeds_template_provenance_with_global_name(
+    request,
     monkeypatch,
 ):
     """Bypassing the store seed would persist a greeting with no trusted source."""
@@ -270,7 +276,10 @@ async def test_personas_start_chat_seeds_template_provenance_with_global_name(
 
 
 @pytest.mark.asyncio
-async def test_character_picker_new_chat_seeds_template_provenance(monkeypatch):
+@private_profile_test
+async def test_character_picker_new_chat_seeds_template_provenance(
+    request, monkeypatch
+):
     """The picker-new path must not fall back to ordinary eager greeting text."""
     card = _roleplay_card()
     screen = _character_screen(monkeypatch, card)
@@ -292,7 +301,9 @@ async def test_character_picker_new_chat_seeds_template_provenance(monkeypatch):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_character_picker_keeps_raw_identity_but_sanitizes_notification(
+    request,
     monkeypatch,
 ):
     raw_name = "Nyx\n\tAdmin\x00[/bold]"
@@ -320,7 +331,9 @@ async def test_character_picker_keeps_raw_identity_but_sanitizes_notification(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_character_picker_swap_uses_override_and_only_greets_empty_chat(
+    request,
     monkeypatch,
 ):
     """A swap in a non-empty chat must update provenance without interrupting it."""
@@ -362,7 +375,9 @@ async def test_character_picker_swap_uses_override_and_only_greets_empty_chat(
     ]
 
 
-def test_character_swap_surfaces_refused_durable_projection(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_character_swap_surfaces_refused_durable_projection(request, monkeypatch):
     """A live-first swap must not report clean success after a refused write."""
     card = _roleplay_card(card_id=8, name="Brynn")
     screen = _character_screen(monkeypatch, card)

@@ -1798,3 +1798,10 @@ Tests/UI/test_console_quit_loss_guard.py::test_tab_close_reports_a_parked_unsent
 
 # PR3303: no prompt-derived or explicitly renamed title in app quit from Home.
 Tests/UI/test_console_quit_loss_guard.py::test_ctrl_q_from_home_keeps_short_and_renamed_titles_private
+# TASK-37600: app-backed character prompt seeds use isolated private profiles;
+# individual nodes stay within the UI gate's per-entry time budget (~20 s each).
+Tests/UI/test_character_session_prompt_seed.py::test_personas_start_chat_seeds_template_provenance_with_global_name
+Tests/UI/test_character_session_prompt_seed.py::test_character_picker_new_chat_seeds_template_provenance
+Tests/UI/test_character_session_prompt_seed.py::test_character_picker_keeps_raw_identity_but_sanitizes_notification
+Tests/UI/test_character_session_prompt_seed.py::test_character_picker_swap_uses_override_and_only_greets_empty_chat
+Tests/UI/test_character_session_prompt_seed.py::test_character_swap_surfaces_refused_durable_projection
