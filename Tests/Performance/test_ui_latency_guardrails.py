@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -340,11 +341,14 @@ async def test_library_opens_within_budget_on_a_seeded_profile(
         deadline = started + SCREEN_SWITCH_BUDGET_SECONDS
         while not counted and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(_SETTLE_INTERVAL)
-            await pilot.pause()
+            await pilot.pause(0)
             counted = [
                 str(widget.renderable)
                 for widget in app.screen.query(Static)
-                if "Notes (" in str(widget.renderable)
+                if re.search(
+                    r"Notes \(\d+\).*Media \(\d+\).*Conversations \(\d+\)",
+                    str(widget.renderable),
+                )
             ]
         settled = asyncio.get_running_loop().time() - started
         stuck_on = type(app.screen).__name__
@@ -373,4 +377,5 @@ async def test_library_opens_within_budget_on_a_seeded_profile(
     assert (
         f"Notes ({SEEDED_PROFILE_NOTES})" in counted[0]
         and f"Media ({SEEDED_PROFILE_MEDIA})" in counted[0]
+        and f"Conversations ({SEEDED_PROFILE_CONVERSATIONS})" in counted[0]
     ), f"the seeded profile never reached the screen: {counted[:3]}"

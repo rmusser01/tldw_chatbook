@@ -5662,11 +5662,10 @@ class ConsoleSessionController:
                 finally:
                     composer._authored_draft_observer = observer
             self._restore_banked_raw_cli_stashes_fn(active_session_id, composer)
-            if visible_session_id is not None:
-                try:
-                    store.set_session_draft(visible_session_id, composer.draft_text())
-                except KeyError:
-                    pass
+            try:
+                store.set_session_draft(visible_session_id, composer.draft_text())
+            except KeyError:
+                pass
             if self._initial_composer_sync_pending:
                 self._sync_console_command_popup()
                 if self._on_draft_session_changed is not None:
