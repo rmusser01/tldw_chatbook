@@ -267,9 +267,9 @@ async def test_a_failed_commit_says_not_saved_and_leaves_the_running_state(
             # The failed send is a pause the card and the shelf can both end.
             preparation = _preparation(controller, session_id)
             assert preparation is not None
-            assert preparation.state is ConsoleTurnPreparationState.PAUSED, (
-                preparation.state
-            )
+            assert (
+                preparation.state is ConsoleTurnPreparationState.PAUSED
+            ), preparation.state
             assert preparation.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
             await until(lambda: _NOT_SAVED in _screen_text(host))
             screen = _screen_text(host)

@@ -583,6 +583,9 @@ ADMISSION_2_TARGETS = (
     # sidebar and while the launch wake loads its tree.
     "Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_settles",
     "Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_two_overlapping_opens_of_a_chat_make_one_session",
+    "Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_missing_policy_repair_survives_restart_and_reuses_accepted_rows",
+    "Tests/Chat/test_console_dispatch_recovery_fix_round1.py::test_missing_policy_recovery_preserves_frozen_authority",
+    "Tests/Chat/test_console_durable_turn_acceptance.py::test_missing_policy_repair_rolls_back_with_a_late_turn_failure",
     "Tests/Chat/test_automatic_launch_recovery.py::test_chat_opened_while_the_wake_loads_its_tree_is_not_opened_twice",
     # TASK-33641.4: an enabled recurring reminder shows its next run, and the
     # two queue pins the row-order fix rewrote (now marked, as the new nodes).

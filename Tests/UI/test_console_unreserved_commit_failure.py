@@ -91,9 +91,7 @@ async def test_a_commit_that_fails_before_its_reservation_pauses_for_persistence
     """
     controller, store = _controller(lambda _store, _preparation_id: None)
 
-    result, warnings = await _submit_recording_warnings(
-        controller, "capital of Japan?"
-    )
+    result, warnings = await _submit_recording_warnings(controller, "capital of Japan?")
 
     assert result.accepted is False
     assert "Couldn't save the prepared turn" in (result.visible_copy or "")
@@ -122,9 +120,7 @@ async def test_a_commit_another_owner_holds_is_left_committing(
 
     controller, store = _controller(claim)
 
-    result, warnings = await _submit_recording_warnings(
-        controller, "capital of Japan?"
-    )
+    result, warnings = await _submit_recording_warnings(controller, "capital of Japan?")
 
     assert result.accepted is False
     held = _held(store)
@@ -160,9 +156,7 @@ async def test_a_newer_attempt_of_the_failed_send_is_left_alone(
 
     controller, store = _controller(supersede)
 
-    result, warnings = await _submit_recording_warnings(
-        controller, "capital of Japan?"
-    )
+    result, warnings = await _submit_recording_warnings(controller, "capital of Japan?")
 
     assert result.accepted is False
     held = _held(store)

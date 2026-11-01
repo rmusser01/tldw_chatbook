@@ -1805,7 +1805,6 @@ Tests/UI/test_character_session_prompt_seed.py::test_character_picker_new_chat_s
 Tests/UI/test_character_session_prompt_seed.py::test_character_picker_keeps_raw_identity_but_sanitizes_notification
 Tests/UI/test_character_session_prompt_seed.py::test_character_picker_swap_uses_override_and_only_greets_empty_chat
 Tests/UI/test_character_session_prompt_seed.py::test_character_swap_surfaces_refused_durable_projection
-# TASK-33621.53: a durable commit that fails before its reservation pauses as PERSISTENCE unless another owner holds it (three unmounted cases on the real controller and store, about 8 s).
 # TASK-33621.53: a durable commit that fails before its reservation pauses as PERSISTENCE unless another owner or a newer attempt holds it (four unmounted cases on the real controller and store, about 11 s; 40 s at load average 30+).
 Tests/UI/test_console_unreserved_commit_failure.py
 # TASK-33621.53 AC#1: after that failure, the shelf's Discard frees the chat and the next send is answered (about 5-13 s).

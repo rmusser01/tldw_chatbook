@@ -588,9 +588,9 @@ async def test_a_card_retry_whose_failed_commit_pauses_and_cancel_send_frees_the
                 lambda: _shelf_offers_unsent_turn(console)
                 or _paused(controller, ConsolePreparationPauseKind.PERSISTENCE)
             )
-            assert _paused(controller, ConsolePreparationPauseKind.PERSISTENCE), (
-                getattr(store.preparation_for_session(session_id), "state", None)
-            )
+            assert _paused(
+                controller, ConsolePreparationPauseKind.PERSISTENCE
+            ), getattr(store.preparation_for_session(session_id), "state", None)
             assert gateway.stream_calls == 0
             cancel = console.query_one(_CARD_ACTIONS["Cancel send"], Button)
             await until(

@@ -621,8 +621,10 @@ def _safe_row_missing_at_commit(
         source=source,  # type: ignore[arg-type]
         error_code="policy_read_error" if source == "unavailable" else None,
     )
-    store._session_or_raise("session-1").library_policy_holder.snapshot = (
-        dataclass_replace(safe, policy_revision=None, source="missing", error_code=None)
+    store._session_or_raise(
+        "session-1"
+    ).library_policy_holder.snapshot = dataclass_replace(
+        safe, policy_revision=None, source="missing", error_code=None
     )
     acceptance = dataclass_replace(
         acceptance,
@@ -847,3 +849,32 @@ def test_durable_publication_preserves_committed_parent_metadata(tmp_path, publi
         assert assistant.parent_message_id == user.persisted_message_id
     finally:
         db.close_connection()
+
+
+@pytest.mark.parametrize(
+    "failure_point", ["checkpoint", "contribution_insert", "commit"]
+)
+def test_missing_policy_repair_rolls_back_with_a_late_turn_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    db, store, acceptance = _safe_row_missing_at_commit(tmp_path, source="missing")
+    before = _database_snapshot(db)
+    cleanup = _install_failure(db, store.persistence, failure_point, monkeypatch)
+    try:
+        with pytest.raises(
+            Exception,
+            match="injected|task14|could not be committed|Commit failed|FOREIGN KEY",
+        ):
+            store.commit_durable_turn(acceptance)
+        assert _policy_rows(db, acceptance.conversation_id) == []
+        assert _database_snapshot(db) == before
+    finally:
+        cleanup()
+    paused = store.preparation_by_id(acceptance.preparation_id)
+    assert paused is not None
+    assert paused.pause_kind is ConsolePreparationPauseKind.PERSISTENCE
+    _resume_persistence_retry(store, paused)
+    store.commit_durable_turn(acceptance)
+    assert _policy_rows(db, acceptance.conversation_id) == [(0, 0, 1)]

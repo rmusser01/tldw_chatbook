@@ -207,9 +207,7 @@ async def test_relaunch_after_a_crash_mid_reply_discard_keeps_the_user_message(
 
 
 @pytest.mark.asyncio
-async def test_relaunched_accepted_recovery_retry_response_settles(
-    tmp_path, databases
-):
+async def test_relaunched_accepted_recovery_retry_response_settles(tmp_path, databases):
     """The ACCEPTED shape ("Retry response"), restored with fresh native ids."""
     db, conversation_id, repository = _database(tmp_path / "accepted.sqlite")
     databases.append(db)
@@ -456,3 +454,93 @@ async def test_two_overlapping_opens_of_a_chat_make_one_session(
         assert len(opens) == 1
         assert store.active_session_id == opens[0]
         await _discard_settles_from(screen, opens[0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("checkpoint_state", ["accepted", "dispatch_started"])
+async def test_missing_policy_repair_survives_restart_and_reuses_accepted_rows(
+    tmp_path, databases, monkeypatch, checkpoint_state
+):
+    """Repair bookkeeping must not strand the original response after restart."""
+    original = _console(tmp_path, databases)
+    assert (await original.controller.submit_draft("first question")).accepted
+    conversation_id = original.store.sessions()[0].persisted_conversation_id
+    with original.db.transaction() as cursor:
+        cursor.execute(
+            "DELETE FROM console_conversation_library_policy WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+    legacy = await _relaunch(original.db, conversation_id)
+    assert legacy.store.sessions()[0].library_policy_holder.snapshot.source == "missing"
+    pending = None
+    try:
+        if checkpoint_state == "accepted":
+
+            def fail_before_provider(_transition):
+                raise RuntimeError("injected stop before provider dispatch")
+
+            repository = legacy.store.persistence.console_dispatch_repository
+            with monkeypatch.context() as patch:
+                patch.setattr(repository, "cas_state", fail_before_provider)
+                submitted = await legacy.controller.submit_draft("repaired question")
+            assert submitted.accepted
+            assert legacy.gateway.seen == []
+        else:
+            legacy.gateway.mode = "hang"
+            pending = asyncio.create_task(
+                legacy.controller.submit_draft("repaired question")
+            )
+            await asyncio.wait_for(legacy.gateway.started.wait(), 10)
+        with closing(sqlite3.connect(tmp_path / "repaired-crash.sqlite")) as crashed:
+            original.db.get_connection().backup(crashed)
+    finally:
+        if pending is not None:
+            legacy.gateway.release.set()
+            await asyncio.wait_for(pending, 10)
+
+    db = CharactersRAGDB(tmp_path / "repaired-crash.sqlite", client_id="repair-restart")
+    databases.append(db)
+    policy = (
+        db.get_connection()
+        .execute(
+            "SELECT auto_retrieve_on_send, assistant_library_access, policy_revision "
+            "FROM console_conversation_library_policy WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+        .fetchone()
+    )
+    assert tuple(policy) == (0, 0, 1)
+    relaunched = await _relaunch(db, conversation_id)
+    _assert_fresh_native_ids_for_the_settled_turn(relaunched)
+    recovery = relaunched.store.dispatch_recovery_for_session(relaunched.session_id)
+    assert recovery.checkpoint.state.value == checkpoint_state
+    assert recovery.checkpoint.frozen_authority.policy.source == "missing"
+    assert recovery.checkpoint.frozen_authority.policy.policy_revision is None
+    ids_before = [
+        tuple(row)
+        for row in db.get_connection().execute(
+            "SELECT id, role FROM messages WHERE conversation_id = ? ORDER BY id",
+            (conversation_id,),
+        )
+    ]
+    pending_user_id = recovery.checkpoint.user_message_id
+    pending_assistant_id = recovery.assistant_message_id
+
+    result = await relaunched.controller.retry_dispatch_recovery(relaunched.session_id)
+
+    assert result.accepted, result.visible_copy
+    assert len(relaunched.gateway.seen) == 1
+    assert [
+        tuple(row)
+        for row in db.get_connection().execute(
+            "SELECT id, role FROM messages WHERE conversation_id = ? ORDER BY id",
+            (conversation_id,),
+        )
+    ] == ids_before
+    assert [
+        (row.persisted_message_id, row.content) for row in _path(relaunched)[-2:]
+    ] == [
+        (pending_user_id, "repaired question"),
+        (pending_assistant_id, REPLY),
+    ]
+    assert relaunched.store.dispatch_recovery_for_session(relaunched.session_id) is None
