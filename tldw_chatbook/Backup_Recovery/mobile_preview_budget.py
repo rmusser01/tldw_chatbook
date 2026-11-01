@@ -5,6 +5,186 @@ An ordinary preview has no allowance; a mobile start carries its one allowance
 through the existing preview and maintenance discovery issuers.
 """
 
+import os
+import sqlite3
+import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
+
+_completion_scope = ContextVar("mobile_completion_accounting", default=None)
+_uncertain_completion_scopes = set()
+
+
+class _CompletionObservation:
+    """Accounting and retirement only; never installed as storage authority."""
+
+    def __init__(self, budget, custody):
+        budget.reserve(2048)
+        self.read_budget = budget
+        self.custody = custody
+        self.pid = os.getpid()
+        self.thread = threading.current_thread()
+        self.active = True
+        self.resources = []  # Existing installed in-memory reference resources.
+        self.connections = {}
+        self.uncertain_connections = []
+        self.copy_buffer = None
+
+    def _buffer(self):
+        """Reuse the existing prepaid digest workspace without SQLite copying."""
+        from tldw_chatbook.Utils.platform_files import os as native_os
+
+        self.check()
+        if not hasattr(native_os, "readv"):
+            raise ValueError("preview_copy_buffer_unavailable")
+        if self.copy_buffer is None:
+            self.read_budget.reserve(65536 + 1024)
+            self.copy_buffer = memoryview(bytearray(65536))
+        return self.copy_buffer
+
+    def check(self):
+        from .storage_admission import _local
+
+        if (
+            not self.active
+            or _completion_scope.get() is not self
+            or self.pid != os.getpid()
+            or self.thread is not threading.current_thread()
+            or any(
+                getattr(_local, name, None) is not None
+                for name in (
+                    "preview_scope",
+                    "discovery_scope",
+                    "capture_scope",
+                    "maintenance_session",
+                )
+            )
+        ):
+            raise ValueError("mobile_completion_scope_inactive")
+
+    def bind(self, connection, path):
+        self.check()
+        self.read_budget.reserve(512 + path_cost(path))
+        lease = self.provenance(connection, path)
+        if connection in self.connections:
+            raise ValueError("mobile_completion_connection_changed")
+        self.connections[connection] = lease
+
+    def provenance(self, connection, path=None):
+        from tldw_chatbook.DB.private_sqlite import (
+            _ordinary_connections,
+            _validated_owner_policy,
+        )
+
+        from . import storage_admission as storage
+        from .profile_paths import lexical_path
+
+        self.check()
+        with storage._lock:
+            try:
+                lease = _ordinary_connections.get(connection)
+            except TypeError:
+                lease = None
+            if (
+                type(lease) is not storage.StorageLease
+                or lease not in storage._live_leases
+                or lease.resource_policy
+                is not _validated_owner_policy("recovery.mobile.completion.read")
+                or lease.resource_thread is not self.thread
+                or lease.resource_close_failed
+                or getattr(connection, "_admission_close_attempted", True)
+                or path is not None
+                and lease.resource_path != lexical_path(path)
+            ):
+                raise ValueError("mobile_completion_connection_changed")
+            # The native getter refuses closed handles without running SQL.
+            sqlite3.Connection.in_transaction.__get__(connection)
+            return lease
+
+    def retired(self, connection):
+        """Accept only physical native close and ordinary lease retirement."""
+        from tldw_chatbook.DB.private_sqlite import _ordinary_connections
+
+        from . import storage_admission as storage
+
+        try:
+            sqlite3.Connection.in_transaction.__get__(connection)
+        except sqlite3.ProgrammingError:
+            pass
+        else:
+            self.uncertain(connection)
+            raise ValueError("mobile_completion_connection_not_retired")
+        lease = self.connections.get(connection)
+        with storage._lock:
+            if connection in _ordinary_connections or lease in storage._live_leases:
+                self.uncertain(connection)
+                raise ValueError("mobile_completion_connection_not_retired")
+        self.connections.pop(connection, None)
+
+    def uncertain(self, connection):
+        from tldw_chatbook.DB.private_sqlite import _ordinary_connections
+
+        from . import storage_admission as storage
+
+        with storage._lock:
+            lease = self.connections.get(connection) or _ordinary_connections.get(
+                connection
+            )
+            if lease is not None:
+                lease.resource_close_failed = True
+        if not any(row is connection for row in self.uncertain_connections):
+            self.uncertain_connections.append(connection)
+        _uncertain_completion_scopes.add(self)
+
+
+@contextmanager
+def _completion_observation(budget, custody):
+    """Borrow one original allowance/custody without preview/capture admission."""
+    from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadBudget
+
+    from .storage_admission import _CaptureFileDescriptors, _local
+
+    if (
+        type(budget) is not _TraceReadBudget
+        or type(custody) is not _CaptureFileDescriptors
+    ):
+        raise TypeError("mobile_completion_accounting_required")
+    if _completion_scope.get() is not None or any(
+        getattr(_local, name, None) is not None
+        for name in (
+            "preview_scope",
+            "discovery_scope",
+            "capture_scope",
+            "maintenance_session",
+        )
+    ):
+        raise ValueError("mobile_completion_scope_nested")
+    scope = _CompletionObservation(budget, custody)
+    token = _completion_scope.set(scope)
+    try:
+        yield scope
+    finally:
+        try:
+            for resource in tuple(scope.resources):
+                resource.retire()  # Only installed in-memory reference handles.
+            if scope.connections or scope.uncertain_connections:
+                raise ValueError("mobile_completion_connection_not_retired")
+        except BaseException:
+            _uncertain_completion_scopes.add(scope)
+            raise
+        finally:
+            scope.active = False
+            _completion_scope.reset(token)
+            # Custody belongs to the complete coordinator, not this read phase.
+
+
+def _current_completion():
+    scope = _completion_scope.get()
+    if type(scope) is not _CompletionObservation:
+        raise ValueError("mobile_completion_scope_required")
+    scope.check()
+    return scope
+
 
 def current():
     from .storage_admission import (
@@ -17,6 +197,11 @@ def current():
     scope = getattr(_local, "discovery_scope", None) or getattr(
         _local, "preview_scope", None
     )
+    completion = _completion_scope.get()
+    if completion is not None:
+        if scope is not None:
+            raise ValueError("mobile_completion_scope_nested")
+        return _current_completion()
     if scope is None:
         return None
     if type(scope) not in (_PreviewScope, _DiscoveryScope):
@@ -101,6 +286,26 @@ def connection_budget(connection):
         return None
     from .storage_admission import _CaptureLease
 
+    if type(scope) is _CompletionObservation and connection in scope.connections:
+        if scope.provenance(connection) is not scope.connections[connection]:
+            raise ValueError("mobile_completion_connection_changed")
+        return scope.read_budget
+    if type(scope) is _CompletionObservation:
+        # File-backed handles cannot borrow an installed memory reference lease.
+        scope.read_budget.reserve(512)
+        if not any(
+            type(resource) is _CaptureLease
+            and resource.connection is connection
+            and not resource.resource_closed
+            and not resource.resource_close_failed
+            for resource in scope.resources
+        ):
+            raise ValueError("mobile_completion_connection_changed")
+        if any(
+            row[2] or row[1] not in {"main", "temp"}
+            for row in connection.execute("PRAGMA database_list")
+        ):
+            raise ValueError("mobile_completion_reference_changed")
     if not any(
         type(resource) is _CaptureLease
         and resource.connection is connection

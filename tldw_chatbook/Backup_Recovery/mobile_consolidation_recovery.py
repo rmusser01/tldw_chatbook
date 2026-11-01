@@ -6,6 +6,37 @@ from pathlib import Path
 from . import bootstrap
 
 
+@contextmanager
+def _open_completion_read(path):
+    """Own a fixed ordinary read connection, never a preview-copy capability."""
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+
+    from .mobile_preview_budget import _current_completion, path_cost
+
+    scope = _current_completion()
+    scope.read_budget.reserve(1024 + path_cost(path))
+    connection = connect_private_sqlite(
+        "recovery.mobile.completion.read",
+        path,
+        read_only=True,
+        must_exist=True,
+        immutable=False,
+        isolation_level=None,
+        cached_statements=0,
+    )
+    try:
+        scope.bind(connection, path)
+        yield connection
+    finally:
+        try:
+            connection.close()
+        except BaseException:
+            scope.uncertain(connection)
+            raise
+        else:
+            scope.retired(connection)
+
+
 def _terminal_bindings(session, journal, prepared, terminal, budget, custody):
     """Check terminal admission without changing ongoing _mobile_pending rules."""
     from .capture_service import _selectors
@@ -79,37 +110,36 @@ def _terminal_bindings(session, journal, prepared, terminal, budget, custody):
         raise bootstrap.RecoveryRequired("mobile_terminal_scope_changed")
 
 
-def _verify_terminal_owners(session, journal, terminal, budget, cancel):
-    """Read current immutable completion records through native private copies."""
+def _verify_terminal_owners(
+    session, journal, terminal, budget, cancel, *, _custody=None
+):
+    """Read completion records under ordinary or maintenance-owned snapshots."""
     import hashlib
     from contextlib import closing
 
     from tldw_chatbook.DB.mobile_consolidation_receipts import _read_owner_receipt
-    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
+    from .mobile_consolidation import _open_preview_read
     from .mobile_native_operation import _require_readers_retired
+    from .mobile_preview_budget import _completion_observation
     from .sqlite_validation import _restrict_connection, _version
-    from .storage_admission import _preview_reads
 
     for target, family in zip(
         terminal.targets, ("chat", "workspaces", "runs"), strict=True
     ):
         budget.container(20)
         with (
-            _preview_reads(_read_budget=budget)
+            _completion_observation(budget, _custody)
             if session is None
             else session._discovery_reads(private_sqlite=True, _read_budget=budget),
-            closing(
-                connect_private_sqlite(
-                    "recovery.mobile.preview",
-                    Path(target.witnesses[-1].path),
-                    read_only=True,
-                    isolation_level=None,
-                    cached_statements=0,
-                )
+            (
+                _open_completion_read(Path(target.witnesses[-1].path))
+                if session is None
+                else closing(_open_preview_read(Path(target.witnesses[-1].path)))
             ) as connection,
         ):
-            # Fixed deferred read transaction on the native private copy.
+            # Ordinary reads hold the live native read-only transaction;
+            # maintenance reads retain their strict native private copy.
             # Every imported/schema query follows restriction installation;
             # the unchanged authorizer grants no transaction statements.
             connection.execute("BEGIN")
@@ -158,7 +188,7 @@ def _verify_terminal_owners(session, journal, terminal, budget, cancel):
                     raise ValueError("mobile_terminal_owner_changed")
             if restrictions.expired():
                 raise ValueError("sqlite_resource_limit")
-                # Physical native close retires the read transaction.
+            # Physical native close retires the read transaction.
         if session is not None:
             _require_readers_retired(session)
 
@@ -260,7 +290,9 @@ def _require_mobile_cutover(source_dir, stores):
                 ) as restored:
                     _retained_cutover_evidence(records, terminal, budget, custody)
                     if not restored:
-                        _verify_terminal_owners(None, journal, terminal, budget, None)
+                        _verify_terminal_owners(
+                            None, journal, terminal, budget, None, _custody=custody
+                        )
                     with journal._locked(exclusive=False, _custody=custody) as parent:
                         current = journal._records(
                             parent, _budget=budget, _custody=custody

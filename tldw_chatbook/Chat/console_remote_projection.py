@@ -391,8 +391,6 @@ class ConsoleRemoteProjection:
                                         getattr(handle, "undelivered_steering", 0),
                                     ),
                                 ),
-                                started_at=getattr(handle, "started_at", None),
-                                finished_at=getattr(handle, "finished_at", None),
                             ),
                         )
                     )

@@ -465,6 +465,8 @@ async def test_private_child_ticket_submit_query_and_discovery(
         served_canvas_control=SimpleNamespace(host_identity=owner.host_identity),
     )
 
+    runtime._app = app
+
     async def request(method, data):
         response = await app_served._handle_served_control_request(
             app,

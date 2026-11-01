@@ -1,10 +1,11 @@
 # Shared Console ownership and mobile agent supervision
 
 Date: 2026-10-25
-Status: Reviewed and accepted 2026-10-25; review corrections verified; implementation has not started
+Status: Design accepted 2026-10-25; implementation and Task11 bounded served qualification are present; independent Task11/whole-feature review remain pending (2026-11-01).
 Task: [TASK-36728](../../../backlog/tasks/task-36728%20-%20Design-shared-Console-ownership-and-mobile-agent-supervision.md)
 Decision: [ADR-244](../../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md)
 Implementation plan: [Shared Console mobile supervision](../plans/2026-10-25-shared-console-mobile-supervision-implementation.md)
+Delivery evidence: [Task11 qualification packet](../qa/2026-10-25-shared-console-mobile-supervision/README.md). Automated/emulated checks and physical phone/VPN qualification are recorded separately; this status does not claim release completion.
 
 ```text
 ADR required: yes

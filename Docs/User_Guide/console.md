@@ -1278,6 +1278,39 @@ plain notice and how to clear it; `/emergency-stop clear` resumes normal
 operation immediately, no restart needed. To end just this tab's in-flight
 run, use **Stop**, **Ctrl+G**, or `/stop` instead.
 
+## Phone supervision in served mode
+
+Open the authenticated `/m` page on the same server as the browser terminal.
+Chats shows live and saved conversations; choosing a chat on the phone does not
+select a desktop tab. Send submits that chat's text through the native Console.
+Steer, Redirect and Stop name the current main run; a worker's guidance and Stop
+name that exact worker. Supported tool approvals and questions can be answered
+on the phone. Reviews labelled **Open terminal** remain pending there.
+
+After **New chat** or **Open saved chat**, the phone waits for that original
+command's receipt and current live chat before selecting it. Choosing another
+chat while it completes keeps your newer choice. Controls pause while the
+selected target cannot be confirmed; reconnect does not repeat the action.
+
+Closing the browser terminal leaves the served Console running. Reopening it
+reattaches to the retained app; only one terminal attachment is current at a time.
+Run either the native terminal app or the served app for an executing profile:
+the physical execution lease prevents a second owner from taking over live work.
+
+A missing response does not mean the command failed. The phone queries the
+original command receipt after reconnect instead of sending it again. Preparing
+is not acceptance, queued guidance is not confirmed consumption, and Stop
+requested is not proof that the worker has physically exited.
+
+Drafts live only in the page's memory. They are scoped to the selected chat or
+worker, but a page reload or close can lose them. There is no offline queue or
+browser localStorage persistence. Keep an unsent draft elsewhere before closing
+the page if it matters.
+
+Served-browser qualification and remaining release checks are listed
+in the [qualification packet](../superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).
+Physical phone/VPN reconnection has not yet been verified.
+
 ## Related settings & docs
 
 - **Settings ▸ Console Behavior** — parallel-run limit, paste collapse, and

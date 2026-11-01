@@ -2557,3 +2557,189 @@ removes the separate preview only after coherent history includes that exact
 window. It does not invent a complete transcript or duplicate output. Existing
 history cursor order/epoch/reset rules remain; no capture cache, owner, service,
 protocol mode or execution permission is added.
+
+
+### Task11 qualification prerequisite (R155, 2026-11-01, before code)
+
+Final shared-Console qualification includes the five source-seam diagnostics and
+two owner-role inventory omissions recorded before Task9. They are not waived as
+whole-feature inheritance. Verify them against the original feature baseline and
+repair using existing native module-owned read/validation seams, retaining read
+restrictions, cancellation, physical custody, admission and accounting budgets.
+Source-inventory guards remain strict; a new role or boundary, if unavoidable,
+requires a code-backed proposal and amendment of this decision before code.
+This adds no execution permission, schema, store owner or real-profile migration.
+
+
+### Task11 module-owned read seams (R156, 2026-11-01, before code)
+
+The two cross-module preview connections move behind a private opener in their
+existing registered production module, `mobile_consolidation`. It uses the same
+fixed read-only policy, autocommit and no statement cache; callers retain their
+native discovery scope, explicit transaction, restriction installation and close
+custody. Existing native preview may reuse this opener without changing its
+schema/hash/accounting checks.
+
+Three captured-candidate validators reuse one private `sqlite_validation` context
+helper that resolves the installed native owner, requests only read-only restricted
+`open_recovery_validation`, and propagates unchanged cancellation and custody.
+It yields the installed owner and actual connection/restrictions; call sites keep
+all original candidate/schema/version/hash/citation checks. Static source guards
+qualify this fixed structure with negative mutation controls. No new role, worker,
+resource lifetime, budget, execution permission or generic source exemption is added.
+
+
+### Task11 Notes boot read qualification (R157, 2026-11-01, before code)
+
+Both adjacent Notes boot-evidence reads use the existing `NotesDeviceStateStore`
+read-only, must-exist connection seam, whose constructor does no I/O or schema
+initialization and whose connection retains native resource admission/retirement.
+The feature-added imported-marker probe and the inherited configured-roots probe
+keep their exact SELECTs, missing-table/error semantics and final close. Neither
+uses a schema-ready getter. No absent store is created, no source bytes/schema or
+boot-start policy changes, and no role/census exemption is introduced. Focused
+controls preserve imported-history verification and the fail-open startup contract.
+
+
+### Task11 authoritative path selection (R158, 2026-11-01, before code)
+
+`serve._canonical_console_selection` derives all Console, Media and legacy-source
+paths from one existing `get_atomic_config_snapshot().values`. The normal runtime
+settings projection drops the native paths/Paths section and can select a different
+legacy claim directory despite correct explicit Console DB paths. The native atomic
+snapshot preserves that section under the existing config lock/private read and
+strict decryption. Existing path validators, stores, cutover claim and read-only
+owners remain unchanged; the server adds no writer, cache or selection authority.
+
+
+### Task11 read-only tokenizer availability (R159, 2026-11-01, before code)
+
+The token estimator's existing availability gate must not create a custom-tokenizer
+folder merely to report that no mappings exist. With the optional library absent,
+it returns False without I/O. A cached manager retains its existing behavior. For
+an uncached manager, only a fixed default root/mappings leaf proven absent through
+native no-follow pinned directory metadata returns False without construction.
+Existing mappings and unsafe, symlinked, non-directory, denied or uncertain paths
+continue through the unchanged manager/storage admission path, without swallowing
+its errors. There is no negative cache. Explicit constructor, install and mapping
+writer semantics and pause/admission contracts remain unchanged.
+
+This fixes ordinary fresh-profile token-counting without creating enrollment
+scaffolds, widening a parent namespace, changing admission or adding writer
+permissions. The fresh unseeded post-cutover served Send must be qualified; the
+previous seeded cohort proves only its explicitly already-enrolled case.
+
+
+### Ordinary live completion reads (R160, 2026-11-01, before code)
+
+Ordinary `require_mobile_cutover` checks must work while the admitted Console
+writes canonical SQLite databases. A maintenance preview copier requires unchanged
+main/WAL metadata during copying and cannot guarantee that progress. The original
+and authenticated-restored ordinary completion/schema reads therefore use a fixed
+module-owned `recovery.mobile.completion.read` role in
+`Backup_Recovery/mobile_consolidation_recovery`, restricted to READ_ONLY_URI,
+non-immutable mode=ro, must-exist, fixed deferred read transactions and existing
+restrictions. The role has no capture or centralized-backup permission. SQLite's
+own SHM coordination is allowed; SQL row/schema writes, migrations and checkpoints
+are not. It opens only the canonical targets already authenticated by the existing
+claim/config/journal/generation checks and ordinary native storage admission.
+
+This intentionally supersedes the ordinary verifier's prior physical-source-
+unchanged/three-preview-copy expectation. Public preview, maintenance, import and
+capture retain their existing strict copies, source proofs and budgets; the change
+is not a generic exception in preview/discovery admission. Main/WAL content and
+user records are never written by verification; independent legitimate writers
+may continue during its consistent read transactions.
+
+A private accounting-only observation context preserves the SAME original
+64MiB ordinary allowance and existing implicit plan/catalog/model charges and
+custody. It grants no storage, preview or capture authority and is incompatible
+with active preview/discovery contexts. Its PID/thread/lifetime and actual live
+connection association are checked through native admitted-connection/lease
+provenance, never a caller Boolean. Installed in-memory schema references keep
+their existing physical-resource retirement, without borrowing file authority.
+Live admitted connections close only through their real ordinary wrapper so
+normal retirement releases the exact lease and ambiguous close retains native
+holds. Borrowed custody is not retired early. No new allowance, reset, refund,
+cache, mutation replay, or weakened claim/schema/hash/generation check is added.
+
+Qualification must include deterministic concurrent WAL writes, cold phone Create
+and immediate Create→Send, authenticated restored ordinary reads, strict unchanged
+maintenance-copy controls, budget association/progress, fake/wrong/closed/inactive
+connection refusal, source/receipt/schema tampering and physical close/cancel/hold
+behavior. The new role and exact source sites are documented and statically
+inventoried; no broad guard waiver is permitted.
+
+
+### Fleet wire qualification note (R161, 2026-11-01, before routine fix)
+
+Live fleet metadata omits the unused optional float clock timestamps so snapshots
+satisfy the existing strict private control protocol. IDs/status/task/activity/queue
+fields and native clocks are unchanged. Qualification uses the actual ControlMessage
+transport, not only JSON serialization. This implements the existing boundary;
+no new protocol representation, authority or architectural decision is introduced.
+
+### Explicit host selection completion (R162, 2026-11-01, before client fix)
+
+The actual trusted-proxy cold journey witnessed an applied Create receipt while
+the UI searched an older in-flight list only once; a later authoritative list
+included the exact new chat but the composer stayed unselected. Explicit
+Create/Open selection therefore follows a page-memory intent tied to its
+original command ID, native host epoch/Console identity and the selection revision
+captured before dispatch. Reuse the existing retained command receipt map; a
+delayed original-ID query may complete that same intent without replaying it.
+
+Only an applied/accepted receipt with a native session ID and a complete current
+same-owner live list can select the exact row. Subsequent navigation, a newer
+explicit host action or replacement owner invalidates the intent; unrelated late
+receipts cannot replace it. Clear the intent before entering existing target
+selection. The normal live detail, metadata revisions and connection confirmation
+still gate controls. No target is synthesized from a receipt, no draft moves,
+and no offline/persistent state, automatic mutation retry, style change or general
+refresh redesign is introduced. Deterministic delayed-list/receipt, navigation
+and owner-mismatch controls run in both engines, followed by the actual affected
+cold journey. This corrects implementation of the existing explicit-selection
+contract rather than granting new execution authority.
+
+### Reset-fixture qualification (R163, 2026-11-01, before test correction)
+
+The feature-era browser regression for stale approvals still mocked the retired
+`/approvals` API and child-ID UI/reset strings after the canonical Task9/10
+cutover. Adapt only that test to the existing authenticated canonical browser
+helper and real stream reset/invalidation. First prove a visible enabled native
+approval; while current metadata is withheld or unavailable, controls and
+answerability must revoke with no decision ticket/effect. Fresh authoritative
+metadata removes the obsolete round; only valid current metadata may restore
+controls. Disabled retained cards need not reproduce retired literal UI text.
+Both engines, exact owner/target checks and the Task2 no-stale-authority contract
+remain. This is test qualification, with no production reset semantics, policy,
+new helper harness, skip, deletion or permission change.
+
+### Connected fixture composition (R164, 2026-11-01, before test corrections)
+
+The private ticket/discovery test reuses a runtime created without an app but
+then constructs its own native-control app. Bind that exact runtime to its
+already-created app before requesting real projection metadata; do not add a
+production fallback for an unwired runtime. The two Canvas setup-failure variants
+need the existing `bootstrap_profile` node marker so guarded config reads retain
+the collection-bound private source, as neighboring actual served flows do.
+Keep actual receipt/projection/protocol checks and both injected TCPSite failure
+and owned-resource rollback assertions. These three test-local corrections
+change no production behavior, shared fixture/conftest, guard, config or admission
+authority and add no skip or assertion waiver.
+
+### Task11 bounded qualification status (2026-11-01)
+
+R156–R164 are implemented and source-bound evidence is indexed in the
+[qualification packet](../../Docs/superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).
+Actual retained-child, cold TLS/proxy, independent chat/worker, command-loss,
+security and distinct process-failure cases have separate qualified epochs;
+there is no synthetic aggregate all-green browser run. Current connected
+migration/hold checks passed28, and physical staged/unwitnessed migration exits
+plus final two-engine reset controls passed6. The historical transport attempt
+without a third click/request witness remains unclassified. Source-unchanged
+Dreams inventory and model-limit expectation mismatches remain explicit review
+inputs, with no waiver or unrelated repair. Scoped static checks have no new
+findings; incumbent findings and AST-equivalent formatting are recorded exactly.
+Independent Task11/whole-feature review and physical phone/VPN qualification are
+not claimed complete. Task36769 completion metadata remains with the coordinator.

@@ -391,3 +391,14 @@ this symbol, literal adapter selection, candidate argument, and validation call.
 
 | C98 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB._get_thread_connection | db.chachanotes.read | read_only_uri | existing canonical current schema only | Migrated via `connect_private_sqlite`. Ordinary storage admission and Core participant custody; must-exist SQLite read-only, no migration or execution authority. |
 | C99 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase._get_thread_connection | db.media.read | read_only_uri | existing canonical current schema only | Migrated via `connect_private_sqlite`. Ordinary storage admission and Media participant custody; active/trash filtering and physical retirement remain native. |
+
+| C100 | tldw_chatbook/DB/AgentRuns_DB | AgentRunsDB._open_connection | db.agent_runs.read | read_only_uri | canonical run history without initialization or reconciliation | Migrated via `connect_private_sqlite`. Existing module-owned read role; physical execution fence grants no reader write authority. |
+| C101 | tldw_chatbook/Backup_Recovery/mobile_consolidation | _open_preview_read | recovery.mobile.preview | read_only_uri | native discovery snapshots under maintenance custody | Migrated via `connect_private_sqlite`. Fixed read-only connection; callers retain discovery scope, restrictions, cancellation and exact terminal schema/hash checks. |
+| C102 | tldw_chatbook/Backup_Recovery/mobile_consolidation_recovery | _open_completion_read | recovery.mobile.completion.read | read_only_uri | ordinary admitted canonical completion/schema reads | Migrated via `connect_private_sqlite`. Fixed non-immutable read-only must-exist connection and same accounting/custody; SQLite SHM coordination allowed, no SQL writes, capture or backup authority (ADR-244 R160). |
+
+ADR-244 candidate validation uses `sqlite_validation._open_installed_candidate`:
+resolve a frozen installed owner before the existing restricted read-only seam,
+forward cancellation and physical custody unchanged, and retain caller-owned
+schema/version/hash/citation checks and accounting. The source guard pins the
+helper's complete structure and rejects writable, unrestricted, unqualified,
+cancellation-dropping or custody-dropping variants. It adds no role or budget.

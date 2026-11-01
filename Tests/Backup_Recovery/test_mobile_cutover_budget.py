@@ -73,17 +73,14 @@ def test_depleted_cutover_counter_refuses_before_source_discovery(
     assert sorted(path.name for path in tmp_path.iterdir()) == before_names
 
 
-def assert_original_observer_accounting(tmp_path, monkeypatch, preview, stores):
-    """Exercise real copies on a genuine public target, then inject scarcity only."""
+def assert_strict_preview_accounting(tmp_path, monkeypatch, preview, stores):
+    """R160 leaves strict preview-copy accounting/source custody unchanged."""
     import errno
     import hashlib
     import json
     from pathlib import Path
 
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
-        require_mobile_cutover,
-    )
 
     def target_facts():
         result = {}
@@ -104,6 +101,19 @@ def assert_original_observer_accounting(tmp_path, monkeypatch, preview, stores):
                     hashlib.sha256(path.read_bytes()).hexdigest(),
                 )
         return result
+
+    from contextlib import closing
+
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import _open_preview_read
+
+    def strict_copies():
+        budget = accounting._mobile_cutover_budget()
+        for path in stores.paths:
+            with (
+                storage._preview_reads(_read_budget=budget),
+                closing(_open_preview_read(path)) as connection,
+            ):
+                connection.execute("SELECT count(*) FROM sqlite_schema").fetchone()
 
     native_issue = accounting._mobile_cutover_budget
     native_init = storage._PreviewScope.__init__
@@ -157,12 +167,12 @@ def assert_original_observer_accounting(tmp_path, monkeypatch, preview, stores):
                 patch.setattr(storage._PreviewScope, "_buffer", buffer)
                 patch.setattr(storage.os, "readv", readv)
                 if phase == "positive":
-                    assert require_mobile_cutover(preview.source_dir, stores) is None
+                    assert strict_copies() is None
                 else:
                     with pytest.raises(
                         accounting._TraceReadLimit, match="mobile_trace_input_limit"
                     ):
-                        require_mobile_cutover(preview.source_dir, stores)
+                        strict_copies()
             assert len(issued) == 1
             assert len(scopes) == (3 if phase == "positive" else 1)
             assert all(scope.read_budget is issued[0] for scope in scopes)
@@ -229,9 +239,78 @@ def assert_original_observer_accounting(tmp_path, monkeypatch, preview, stores):
                     "target_after": target_facts(),
                 }
             )
-            (tmp_path / "original-cutover-accounting.json").write_text(
+            (tmp_path / "strict-preview-accounting.json").write_text(
                 json.dumps(outcomes, indent=2)
             )
 
     for phase in ("positive", "source-scarcity", "copy-scarcity"):
         check_phase(phase)
+
+
+def assert_original_observer_accounting(tmp_path, monkeypatch, preview, stores):
+    """R160 uses one allowance and physically retired ordinary read leases."""
+    import json
+    import sqlite3
+
+    from tldw_chatbook.Backup_Recovery import mobile_preview_budget as budgets
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        require_mobile_cutover,
+    )
+    from tldw_chatbook.DB.private_sqlite import _ordinary_connections
+
+    assert_strict_preview_accounting(tmp_path, monkeypatch, preview, stores)
+    native_issue = accounting._mobile_cutover_budget
+    native_init = budgets._CompletionObservation.__init__
+    native_bind = budgets._CompletionObservation.bind
+    issued, scopes, connections = [], [], []
+
+    def issue():
+        value = native_issue()
+        issued.append(value)
+        return value
+
+    def initialize(scope, *args, **kwargs):
+        native_init(scope, *args, **kwargs)
+        scopes.append(scope)
+
+    def bind(scope, connection, path):
+        native_bind(scope, connection, path)
+        connections.append((connection, scope.connections[connection]))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(accounting, "_mobile_cutover_budget", issue)
+        patch.setattr(budgets._CompletionObservation, "__init__", initialize)
+        patch.setattr(budgets._CompletionObservation, "bind", bind)
+        assert require_mobile_cutover(preview.source_dir, stores) is None
+    assert len(issued) == 1 and len(scopes) == len(connections) == 3
+    assert all(row.read_budget is issued[0] for row in scopes)
+    assert len({id(row.custody) for row in scopes}) == 1
+    assert all(
+        not row.active
+        and not row.connections
+        and not row.resources
+        and not row.uncertain_connections
+        and not row.custody.fds
+        and not row.custody.close_failed
+        for row in scopes
+    )
+    for connection, lease in connections:
+        with pytest.raises(sqlite3.ProgrammingError):
+            sqlite3.Connection.in_transaction.__get__(connection)
+        assert (
+            connection not in _ordinary_connections
+            and lease not in storage._live_leases
+        )
+    (tmp_path / "original-cutover-accounting.json").write_text(
+        json.dumps(
+            {
+                "contract": "R160 ordinary reads; strict copies separately qualified",
+                "one_original_budget": True,
+                "remaining": issued[0]._remaining,
+                "three_ordinary_connections_physically_closed": True,
+                "borrowed_coordinator_custody_retired": True,
+            },
+            indent=2,
+        )
+    )

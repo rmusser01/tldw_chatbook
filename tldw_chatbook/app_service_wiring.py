@@ -565,7 +565,10 @@ def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
         return False
     import sqlite3
 
-    connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(path)
+    connection = store._connect(read_only=True, must_exist=True)
     try:
         row = connection.execute(
             "SELECT 1 FROM notes_sync_roots LIMIT 1"
@@ -575,6 +578,7 @@ def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
         return False
     finally:
         connection.close()
+        store.close()
     return row is not None
 
 
@@ -586,7 +590,10 @@ def _notes_sync_state_has_imports(state_path: Any, core: Any) -> bool:
     path = Path(state_path)
     if not path.exists():
         return False
-    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(path)
+    connection = store._connect(read_only=True, must_exist=True)
     try:
         row = connection.execute(
             "SELECT 1 FROM notes_sync_store_settings WHERE setting_key='cutover_marker' AND setting_value='notes-sync-cutover-v1' LIMIT 1"
@@ -597,6 +604,7 @@ def _notes_sync_state_has_imports(state_path: Any, core: Any) -> bool:
         return False
     finally:
         connection.close()
+        store.close()
     if row is None:
         return False
     from tldw_chatbook.Notes.notes_sync_legacy import _canonical_import_present

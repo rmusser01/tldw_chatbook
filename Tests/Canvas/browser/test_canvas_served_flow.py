@@ -13,7 +13,6 @@ import tomllib
 from http.cookies import SimpleCookie
 from pathlib import Path
 from threading import Event, Thread
-from time import monotonic
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
@@ -27,6 +26,9 @@ from Tests.Canvas.browser.canvas_live_chatbook_child import _ScriptedCanvasGatew
 from Tests.Canvas.browser.canvas_live_harness import (
     LiveServedStack,
     ProductRouteRecorder,
+    _login_live_page,
+    _send_console_prompt,
+    _wait_for_initial_console_ready,
     adversarial_cases,
     assert_only_owned_browser_traffic,
     egress_probe,
@@ -317,47 +319,6 @@ async def _load_owned_shell(page) -> None:
     await page.add_script_tag(path=_SERVED_STATIC / "served_shell.js")
 
 
-async def _login_live_page(page, *, origin: str, access_token: str) -> None:
-    """Complete the real remote-login path without exposing the credential."""
-
-    await page.goto(origin)
-    await page.get_by_label("Access token").fill(access_token)
-    await page.get_by_role("button", name="Sign in").click()
-    await expect(page.locator("#terminal-region")).to_be_visible()
-
-
-async def _wait_for_initial_console_ready(page, *, timeout_ms=45_000) -> None:
-    """Wait for both initial Console signals within one shared deadline."""
-
-    deadline = monotonic() + timeout_ms / 1_000
-
-    def remaining_ms(stage: str) -> float:
-        remaining = (deadline - monotonic()) * 1_000
-        if remaining <= 0:
-            raise PlaywrightTimeoutError(
-                f"initial Console startup deadline expired before {stage}"
-            )
-        return remaining
-
-    first_output_timeout = remaining_ms("first output")
-    try:
-        await expect(page.locator("body")).to_have_class(
-            re.compile("first-byte"), timeout=first_output_timeout
-        )
-    except AssertionError as error:
-        error.add_note("initial Console readiness stage: first output")
-        raise
-
-    composer_timeout = remaining_ms("terminal Composer")
-    try:
-        await expect(page.locator("#terminal")).to_contain_text(
-            "Composer", timeout=composer_timeout
-        )
-    except AssertionError as error:
-        error.add_note("initial Console readiness stage: terminal Composer")
-        raise
-
-
 async def _live_browser_session_id(server, page, *, port: int) -> str:
     cookie = next(
         item["value"]
@@ -421,25 +382,6 @@ async def _served_shell_projection(page) -> dict[str, object]:
     body = result.get("body")
     assert isinstance(body, dict)
     return body
-
-
-async def _send_console_prompt(page, prompt: str, focus_ack: Path) -> None:
-    keyboard_target = page.locator("#terminal .xterm-helper-textarea")
-    await keyboard_target.focus()
-    deadline = asyncio.get_running_loop().time() + 5
-    while asyncio.get_running_loop().time() < deadline:
-        focus_ack.unlink(missing_ok=True)
-        await keyboard_target.press("Escape")
-        await keyboard_target.press("F11")
-        while not focus_ack.exists() and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(0.05)
-        if focus_ack.exists() and focus_ack.read_text(encoding="ascii") == "focused":
-            break
-    else:
-        raise AssertionError("actual Console composer focus was not acknowledged")
-    await keyboard_target.press_sequentially(prompt, delay=5)
-    await wait_for_terminal_text(page, prompt, timeout=5_000)
-    await keyboard_target.press("Enter")
 
 
 async def _wait_for_gateway_calls(path: Path, expected: int) -> None:
@@ -1280,6 +1222,7 @@ async def test_live_stack_cleanup_failure_still_reaps_child_and_owned_files(tmp_
     assert not owned.exists()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("fail_site", [1, 2], ids=["backend", "proxy"])
 async def test_live_stack_setup_failure_rolls_back_owned_resources(
     tmp_path, monkeypatch, fail_site

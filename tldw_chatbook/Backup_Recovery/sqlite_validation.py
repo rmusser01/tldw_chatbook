@@ -85,6 +85,23 @@ def _installed_owner(owner_id):
     raise ValueError("unsupported_sqlite_owner")
 
 
+@contextmanager
+def _open_installed_candidate(owner_id, path, *, cancel=None, _custody=None):
+    """Retain the native restricted read of an installed owner's candidate."""
+    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+
+    installed = _installed_owner(owner_id)
+    with open_recovery_validation(
+        installed.owner_id,
+        path,
+        writable=False,
+        with_restrictions=True,
+        cancel=cancel,
+        _custody=_custody,
+    ) as (connection, restrictions):
+        yield connection, restrictions, installed
+
+
 #: The five Evals tables whose inert ``version`` column the v5 -> v6 step drops.
 _EVALS_VERSION_COLUMN_TABLES = frozenset(
     {"eval_tasks", "eval_datasets", "eval_models", "eval_runs", "ab_tests"}

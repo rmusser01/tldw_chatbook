@@ -6,7 +6,6 @@ import zipfile
 from contextlib import ExitStack, contextmanager
 from uuid import uuid4
 
-from tldw_chatbook.DB.private_sqlite import open_recovery_validation
 from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader, control_records, native_files, sqlite_validation
@@ -803,18 +802,15 @@ def _sqlite_reads(captured, *, password, cancel):
                 raise ValueError("mobile_sqlite_member_limit")
             for purpose, family, owner_id, expected, payload, candidate in prepared:
                 scope.check()
-                connection, restrictions = connections.enter_context(
-                    open_recovery_validation(
+                connection, restrictions, owner = connections.enter_context(
+                    sqlite_validation._open_installed_candidate(
                         owner_id,
                         candidate,
-                        writable=False,
-                        with_restrictions=True,
                         cancel=cancel,
                         _custody=scope.custody,
                     )
                 )
                 _verify_candidate(scope, restrictions, candidate, payload.sha256)
-                owner = sqlite_validation._installed_owner(owner_id)
                 issues, version = sqlite_validation._check(
                     connection, owner, owner.schema_policy(), restrictions
                 )

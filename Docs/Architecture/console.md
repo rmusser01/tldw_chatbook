@@ -260,3 +260,16 @@ observer Future is allocated; callbacks are delivered outside that critical
 section. Manual Save, durable publication/discard/retirement use the same handoff.
 Joined Character presentation carries the exact session, incarnation and durable
 binding to final publication; failed noncreator cleanup cannot remove that owner.
+
+## Fresh-profile tokenizer availability (Task11)
+
+The token counter asks `custom_tokenizers_available()` before entering the custom
+tokenizer tier. With no cached manager, the availability probe uses the native
+pinned directory seam and no-follow stat to prove that the default tokenizer
+root or mappings file is absent. Definite absence returns false without creating
+a directory, manager or storage lease; it is not cached. Existing mappings and
+uncertain/unsafe paths retain the original admitted manager path and errors.
+Explicit manager construction, installation and mapping writes retain their
+existing admission and pause behavior. A fresh unseeded served profile reached
+the provider and completed its phone continuation with the tokenizer directory
+still absent; see the [qualification packet](../superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).

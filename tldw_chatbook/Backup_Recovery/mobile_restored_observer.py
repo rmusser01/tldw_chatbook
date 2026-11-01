@@ -2,7 +2,7 @@
 
 import hashlib
 import stat
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 
@@ -13,11 +13,11 @@ from .archive_reader import _manifest, _regular
 from .journal import Journal, _evidence_digest, _mobile_ref, _Prepared
 from .limits import ArchiveLimits
 from .mobile_cutover_observer import _observe_committed_selectors
-from .mobile_preview_budget import path_cost
+from .mobile_preview_budget import _completion_observation, path_cost
 from .mobile_rollback_io import observation
 from .mobile_runs_goal_budget import _serialization
 from .plan_records import _load_plan
-from .storage_admission import _mobile_check_witnesses, _preview_reads
+from .storage_admission import _mobile_check_witnesses
 
 
 def _digest(value, budget):
@@ -163,7 +163,7 @@ def _direct_restoration(
     ):
         raise ValueError("mobile_restored_generation_required")
     budget.value(activation, text_copies=4)
-    with _preview_reads(_read_budget=budget):
+    with _completion_observation(budget, custody):
         journal = Journal._open_existing(
             mobile.root.parent,
             activation["operation_id"],
@@ -267,8 +267,7 @@ def _direct_restoration(
             before = _physical(
                 terminal.targets, installed, replacement.artifacts, budget, custody
             )
-            from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
-
+            from .mobile_consolidation_recovery import _open_completion_read
             from .owner_registry import install_adapters
             from .sqlite_validation import _check, _restrict_connection
 
@@ -277,14 +276,8 @@ def _direct_restoration(
             for target in terminal.targets:
                 owner = next(row for row in owners if row.owner_id == target.owner_id)
                 budget.container(12)
-                with closing(
-                    connect_private_sqlite(
-                        "recovery.mobile.preview",
-                        Path(target.witnesses[-1].path),
-                        read_only=True,
-                        isolation_level=None,
-                        cached_statements=0,
-                    )
+                with _open_completion_read(
+                    Path(target.witnesses[-1].path)
                 ) as connection:
                     connection.execute("BEGIN")
                     restrictions = _restrict_connection(connection, cancel)

@@ -751,9 +751,7 @@ def validate_citation_coverage(staging, payloads, records, *, _mobile_partition=
     Payload paths come from installed inventory or verified archive declarations.
     Neither an archive record nor a caller flag can declare a key unused.
     """
-    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
-
-    from .sqlite_validation import _check, _installed_owner
+    from .sqlite_validation import _check, _open_installed_candidate
 
     if _mobile_partition is not None:
         from .mobile_consolidation_apply import _MobileCapturePartition
@@ -775,10 +773,11 @@ def validate_citation_coverage(staging, payloads, records, *, _mobile_partition=
             continue
         seen.add(path)
         path = _staged_path(staging, path)
-        installed = _installed_owner(owner_id)
-        with open_recovery_validation(
-            owner_id, path, writable=False, with_restrictions=True
-        ) as (source, restrictions):
+        with _open_installed_candidate(owner_id, path) as (
+            source,
+            restrictions,
+            installed,
+        ):
             if _check(source, installed, installed.schema_policy(), restrictions)[0]:
                 raise ValueError("unsupported_credential_schema")
             for key_id in _citation_context_values(source):

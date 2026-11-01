@@ -774,6 +774,25 @@ def test_fleet_display_is_bounded_pure_and_invalidates_queued_guidance(remote_ca
     handle.status = "done"
     assert not projection.snapshot(target)["fleet"][0]["live"]
     assert len(json.dumps(page).encode()) <= 65536
+    from tldw_chatbook.Canvas.control_protocol import (
+        CONTROL_PROTOCOL_VERSION,
+        ControlMessage,
+    )
+
+    # The actual served boundary is stricter than json.dumps: native fleet
+    # timestamps are floats, while this control channel accepts integral JSON.
+    for status, finished in (("running", None), ("done", 2.5)):
+        handle.status, handle.finished_at = status, finished
+        snapshot = projection.snapshot(target)
+        snapshot["execution_admitted"] = True
+        message = ControlMessage(
+            CONTROL_PROTOCOL_VERSION,
+            "console.snapshot.response",
+            "fleet-snapshot",
+            None,
+            {"snapshot": snapshot},
+        )
+        assert message.payload["snapshot"]["fleet"][0]["status"] == status
 
 
 def _pending_receipt_pages(projection, target, count):

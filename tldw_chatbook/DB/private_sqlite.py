@@ -114,6 +114,12 @@ _PRIVATE_MEMORY_AND_READ_ONLY = frozenset(
 )
 
 _SQLITE_OWNER_POLICIES = {
+    "recovery.mobile.completion.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/mobile_consolidation_recovery",
+        _READ_ONLY_URI,
+        "Ordinary admitted completion/schema reads; SQLite SHM coordination only.",
+        preserve_read_only_source_mode=True,
+    ),
     "recovery.mobile.preview": SQLiteOwnerPolicy(
         "tldw_chatbook/Backup_Recovery/mobile_consolidation",
         _READ_ONLY_URI,

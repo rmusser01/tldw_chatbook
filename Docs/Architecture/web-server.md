@@ -293,4 +293,26 @@ row. Its transient result explicitly reports
 `stop_requested_exit_unconfirmed_receipt_unavailable_capacity` (or a refusal).
 Its query can return null. It is never reported as durable completion; clients
 must inspect native state and retain uncertainty instead of retrying on reconnect.
-The public API and client cutover remain separate implementation steps.
+The public API and phone client implement this receipt contract; their qualification is recorded below.
+
+## Selected profile and served qualification (Task11)
+
+`ChatbookWebServerMixin._canonical_console_selection` derives the canonical
+Console stores, media store and legacy mobile source from one
+`get_atomic_config_snapshot().values`. The snapshot retains the selected config's
+`[paths]` or `[Paths]` data directory under the native config lock and decryption
+path. The general `load_settings()` runtime projection omits those sections and
+must not be used to reconstruct these storage selections. Explicit DB overrides
+continue through the existing native path selectors.
+
+The actual TLS/AppService browser fixture uses the same selected canonical
+profile in parent and child. Its retained-run, cold-command, terminal interaction,
+worker-control and security evidence, plus separate physical phone/VPN status
+are recorded in the [Task11 qualification packet](../superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).
+
+The client retains a Create/Open selection intent in its existing command map,
+bound to original command ID, host epoch/Console and selection revision. A complete
+current live list plus that command's applied/accepted receipt selects the exact
+native session; detail confirmation still gates control. Navigation, a newer
+explicit action or owner replacement cancels the intent. This avoids treating a
+coalesced refresh call as proof that the new row has already arrived (R162).

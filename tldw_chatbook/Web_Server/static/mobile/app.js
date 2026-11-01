@@ -23,7 +23,7 @@
     itemTitle: $("item-title"), itemMeta: $("item-meta"), itemTranscripts: $("item-transcripts"),
   };
   const state = {
-    selectedTarget: null, drafts: new Map(), outstandingCommands: new Map(), connectionState: "connecting",
+    selectedTarget: null, drafts: new Map(), outstandingCommands: new Map(), hostSelectionCommand: null, connectionState: "connecting",
     lastConfirmedUpdate: null, chats: [], chat: null, snapshot: null, ws: null, wsAttempt: 0,
     activeTab: "chats", view: "chats", available: false, hostAvailable: false, ownerAvailable: false, refreshing: false, refreshAgain: false,
     selectionRevision: 0, confirmationRevision: 0, targetConfirmed: false, targetMissing: false, historyLoading: false, renderedDecisions: [], hostBusy: false, history: null, readWorker: null, workerHistory: [], workerCursor: null, workerConversation: null, workerReading: false, workerResultOffset: null, workerResultRevision: null,
@@ -214,6 +214,7 @@
       state.chats = list.chats;
       if (state.ownerAvailable) { state.savedPage = 0; state.savedHasMore = false; }
       for (const receipt of list.command_receipts) applyReceipt(receipt);
+      if (completeHostSelection(list)) return;
       if (state.selectedTarget && state.view === "chat") {
         const current = list.chats.find(row => row.live && draftKey(targetOf(row)) === draftKey({...state.selectedTarget, handle_id: null}));
         if (current) {
@@ -316,17 +317,35 @@
       throw "history_limit";
     } catch (error) { showError(error); }
   }
+  function completeHostSelection(list) {
+    const id = state.hostSelectionCommand, command = state.outstandingCommands.get(id);
+    const intent = command?.hostSelection;
+    if (!intent) return false;
+    if (intent.revision !== state.selectionRevision || list.server_epoch !== intent.server_epoch || list.console_id !== intent.console_id) {
+      state.hostSelectionCommand = null; return false;
+    }
+    const receipt = command.receipt;
+    if (!receipt) return false;
+    if (receipt.command_id !== id || receipt.action !== intent.action || receipt.server_epoch !== intent.server_epoch || receipt.console_id !== intent.console_id || ["refused", "expired", "outcome_unknown"].includes(receipt.state)) {
+      state.hostSelectionCommand = null; return false;
+    }
+    if (!["applied", "accepted"].includes(receipt.state) || !receipt.native_id) return false;
+    const row = list.chats.find(row => row.live && row.server_epoch === intent.server_epoch && row.console_id === intent.console_id && row.session_id === receipt.native_id);
+    if (!row) return false;
+    // Complete only the original explicit action; normal detail confirmation still gates controls.
+    state.hostSelectionCommand = null;
+    state.chat = row; chooseTarget(targetOf(row, true));
+    return true;
+  }
   async function hostCommand(action, payload) {
     if (state.hostBusy || !navigator.onLine || (state.lastConfirmedUpdate && state.connectionState !== "connected")) return;
+    const revision = state.selectionRevision;
+    state.hostSelectionCommand = null;
     state.hostBusy = true; updateControls();
     try {
       const {host} = await api("POST", API_BASE + "/console/host", {protocol_version: 1});
-      const receipt = await submit(action, host, payload);
+      await submit(action, host, payload, null, {revision, action, server_epoch: host.server_epoch, console_id: host.console_id});
       await refresh();
-      if (receipt && ["applied", "accepted"].includes(receipt.state)) {
-        const row = state.chats.find(row => row.session_id === receipt.native_id);
-        if (row) { state.chat = row; chooseTarget(targetOf(row, true)); }
-      }
     } catch (error) { showError(error); }
     finally { state.hostBusy = false; updateControls(); }
   }
@@ -460,10 +479,11 @@
     if (prior.submission && ["accepted", "queued", "applied"].includes(receipt.state)) clearAcceptedDraft(prior.submission);
     updateControls();
   }
-  async function submit(action, target, payload, submission) {
+  async function submit(action, target, payload, submission, hostSelection = null) {
     const ticket = await api("POST", API_BASE + "/commands/tickets", {protocol_version: 1, action, target, payload});
     // Retain ID before the effect request. A lost ACK can only query this ID.
-    state.outstandingCommands.set(ticket.command_id, {submission, unknown: false});
+    state.outstandingCommands.set(ticket.command_id, {submission, unknown: false, hostSelection});
+    if (hostSelection && hostSelection.revision === state.selectionRevision) state.hostSelectionCommand = ticket.command_id;
     updateControls();
     try {
       const receipt = await api("POST", API_BASE + "/commands", {protocol_version: 1, ticket: ticket.ticket, payload});

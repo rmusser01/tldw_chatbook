@@ -500,6 +500,47 @@ def _qualified_core_recovery_dispatch(source_path, symbol, call):
     return owner_property is not None and len(owner_property.body) == 1 and isinstance(owner_property.body[0], ast.Return) and ast.dump(owner_property.body[0].value) == ast.dump(expected)
 
 
+def _qualified_completion_read(source_path, symbol):
+    """One fixed live role retains actual accounting, close and lease proof."""
+    if symbol != "_open_completion_read":
+        return False
+    expected = ast.parse("""
+@contextmanager
+def _open_completion_read(path):
+    from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
+    from .mobile_preview_budget import _current_completion, path_cost
+    scope = _current_completion()
+    scope.read_budget.reserve(1024 + path_cost(path))
+    connection = connect_private_sqlite(
+        "recovery.mobile.completion.read", path, read_only=True, must_exist=True,
+        immutable=False, isolation_level=None, cached_statements=0)
+    try:
+        scope.bind(connection, path)
+        yield connection
+    finally:
+        try:
+            connection.close()
+        except BaseException:
+            scope.uncertain(connection)
+            raise
+        else:
+            scope.retired(connection)
+""").body[0]
+    actual = next(
+        (
+            node
+            for node in _parse_source(source_path).body
+            if isinstance(node, ast.FunctionDef) and node.name == symbol
+        ),
+        None,
+    )
+    if actual is None:
+        return False
+    if ast.get_docstring(actual):
+        actual.body.pop(0)
+    return ast.dump(actual) == ast.dump(expected)
+
+
 def _qualified_fixed_validation_dispatch(source_path, production_module, symbol, call):
     """Admit the six reviewed restore sites only with their fixed declarations."""
     if production_module == "tldw_chatbook/DB/recovery_response_rules":
@@ -519,17 +560,47 @@ def _qualified_fixed_validation_dispatch(source_path, production_module, symbol,
         expected_validation = ast.parse(
             'issues = validate_candidate(owner, candidate, cancel, migrate=False)'
         ).body[0]
-        expected_guard = ast.parse("if issues:\n    raise ValueError(issues[0])").body[0]
-        statements = [node for node in function.body
-                      if not isinstance(node, (ast.Import, ast.ImportFrom))
-                      and not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))]
-        return (len(statements) == 4
-                and ast.dump(statements[0]) == ast.dump(expected_owner)
-                and ast.dump(statements[1]) == ast.dump(expected_validation)
-                and ast.dump(statements[2]) == ast.dump(expected_guard)
-                and isinstance(statements[3], ast.With)
-                and len(statements[3].items) == 1
-                and ast.dump(statements[3].items[0].context_expr) == ast.dump(call))
+        expected_guard = ast.parse("if issues:\n    raise ValueError(issues[0])").body[
+            0
+        ]
+        statements = [
+            node
+            for node in function.body
+            if not isinstance(node, (ast.Import, ast.ImportFrom))
+            and not (
+                isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+            )
+        ]
+        return (
+            len(statements) == 4
+            and ast.dump(statements[0]) == ast.dump(expected_owner)
+            and ast.dump(statements[1]) == ast.dump(expected_validation)
+            and ast.dump(statements[2]) == ast.dump(expected_guard)
+            and isinstance(statements[3], ast.With)
+            and len(statements[3].items) == 1
+            and ast.dump(statements[3].items[0].context_expr) == ast.dump(call)
+        )
+    if (
+        production_module == "tldw_chatbook/Backup_Recovery/sqlite_validation"
+        and symbol == "_open_installed_candidate"
+    ):
+        expected = ast.parse("""
+@contextmanager
+def _open_installed_candidate(owner_id, path, *, cancel=None, _custody=None):
+    from tldw_chatbook.DB.private_sqlite import open_recovery_validation
+    installed = _installed_owner(owner_id)
+    with open_recovery_validation(installed.owner_id, path, writable=False,
+                                  with_restrictions=True, cancel=cancel, _custody=_custody) as (connection, restrictions):
+        yield connection, restrictions, installed
+""").body[0]
+        actual = next(
+            node
+            for node in _parse_source(source_path).body
+            if isinstance(node, ast.FunctionDef) and node.name == symbol
+        )
+        if ast.get_docstring(actual):
+            actual.body.pop(0)
+        return ast.dump(actual) == ast.dump(expected)
     declarations = {
         "tldw_chatbook/DB/recovery_operations": ("_SubscriptionsAdapter", "db.subscriptions"),
         "tldw_chatbook/Backup_Recovery/recovered_media": ("_RecoveredAdapter", "recovered.media"),
@@ -651,6 +722,14 @@ def _private_sqlite_seam_violations(
                     continue
                 violations.append(
                     f"{production_module}:{symbol}: non-literal {keyword_name}"
+                )
+                continue
+            if (
+                owner_id == "recovery.mobile.completion.read"
+                and not _qualified_completion_read(source_path, symbol)
+            ):
+                violations.append(
+                    f"{production_module}:{symbol}: unqualified ordinary completion read"
                 )
                 continue
             policy = SQLITE_OWNER_REGISTRY.get(owner_id)
@@ -807,7 +886,8 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 98) if number not in {8, 9, 10, 75}
+        for number in range(1, 103)
+        if number not in {8, 9, 10, 75}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
@@ -1796,6 +1876,7 @@ def test_core_recovery_factory_exactly_matches_registered_backup_authority():
     installed_domain_authority = {
         "recovery.domain.research", "recovery.domain.writing",
         "recovery.domain.evals", "recovery.domain.study",
+        "recovery.mobile.preview",
     }
     installed_domain_authority |= {
         'recovery.operations.guardian',
@@ -1928,3 +2009,74 @@ def test_response_rule_import_dispatch_is_exact_and_validated(tmp_path, damage):
     candidate.write_text(source)
     _, violations = _private_sqlite_seam_violations(candidate, module)
     assert any("unqualified recovery validation" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("installed = _installed_owner(owner_id)", "installed = owner_id"),
+        ("installed.owner_id, path", "owner_id, path"),
+        ("writable=False", "writable=True"),
+        ("with_restrictions=True", "with_restrictions=False"),
+        ("cancel=cancel", "cancel=None"),
+        ("_custody=_custody", "_custody=None"),
+    ],
+)
+def test_installed_candidate_opener_qualification_rejects_changed_authority(
+    tmp_path, before, after
+):
+    path = PRODUCTION_ROOT / "Backup_Recovery/sqlite_validation.py"
+    tree = _parse_source(path)
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_open_installed_candidate"
+    )
+    source = ast.unparse(helper)
+    assert before in source
+    candidate = tmp_path / "sqlite_validation.py"
+    candidate.write_text(source.replace(before, after))
+    _calls, violations = _private_sqlite_seam_violations(
+        candidate, "tldw_chatbook/Backup_Recovery/sqlite_validation"
+    )
+    assert violations == [
+        "tldw_chatbook/Backup_Recovery/sqlite_validation:_open_installed_candidate: unqualified recovery validation"
+    ]
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    [
+        ("read_only=True", "read_only=False"),
+        ("must_exist=True", "must_exist=False"),
+        ("immutable=False", "immutable=True"),
+        ("isolation_level=None", "isolation_level='DEFERRED'"),
+        ("cached_statements=0", "cached_statements=128"),
+        ("scope.bind(connection, path)", "scope.bind(connection, alternate)"),
+        ("connection.close()", "sqlite3.Connection.close(connection)"),
+        ("scope.uncertain(connection)", "pass"),
+        ("scope.retired(connection)", "pass"),
+    ],
+)
+def test_completion_read_qualification_rejects_changed_native_lifetime(
+    tmp_path, before, after
+):
+    tree = _parse_source(
+        PRODUCTION_ROOT / "Backup_Recovery/mobile_consolidation_recovery.py"
+    )
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_open_completion_read"
+    )
+    source = ast.unparse(helper)
+    assert before in source
+    candidate = tmp_path / "completion.py"
+    candidate.write_text(source.replace(before, after))
+    _, violations = _private_sqlite_seam_violations(
+        candidate, "tldw_chatbook/Backup_Recovery/mobile_consolidation_recovery"
+    )
+    assert violations == [
+        "tldw_chatbook/Backup_Recovery/mobile_consolidation_recovery:_open_completion_read: unqualified ordinary completion read"
+    ]

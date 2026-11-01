@@ -507,3 +507,18 @@ separate evidence.
 
 
 The ordinary mobile cutover check uses a separate fixed64MiB cumulative coordinator allowance for its complete source, native restoration, schema and retained-evidence observation (R146), replacing its former whole-call16MiB allowance. It grants no ownership or tool access and cannot renew its allowance during a call. Generic trace/Notes and private native migration defaults remain16MiB; public migration remains4GiB with its original native16MiB child. These counters are not RSS measurements or guarantees that every profile fits. Fresh restored-profile, native edit/theme-save and included-artwork recovery checks pass under this allowance. The public Workspace crash/reconnect proof passes separately; the retained private 16 MiB cold-case refusal is not claimed as fixed.
+
+### Served qualification after cutover
+
+The serving parent and native app child must select the same canonical profile,
+including its configured data directory and legacy mobile source. The parent
+now derives these paths from one authoritative config snapshot. A fresh NoData
+profile has completed an actual terminal prompt and phone continuation without
+pre-creating an optional tokenizer directory.
+
+Cold phone Create followed by immediate Send now uses native read-only
+completion transactions, so concurrent app writes do not require a stable byte
+copy of the live database. Preview and maintenance keep their stricter copy
+checks. This does not repeat a completed migration or grant new authority.
+The exact current evidence and
+remaining release checks are in the [Task11 qualification packet](superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).

@@ -1117,8 +1117,9 @@ new unrepresented imported links become disjoint paused candidates while the
 existing marker, roots, bindings and reviews are preserved. Two cold App starts
 retain the same mapped ID/version/digest and default character, report no added
 review warning, and physically close all seven observed Notes handles, including
-the callback's separate store. Full Task8 completion, API mobile wiring and
-hardware qualification remain separate unfinished gates.
+the callback's separate store. Task8 and the API/client cutover are implemented.
+Task11 records connected served qualification separately; physical phone/VPN
+operation remains unverified.
 
 Native-owner FIX1 retains every actual runtime directory iterator on
 `mobile_imported_run_log._PinnedHistory` before enumeration. Iterator retirement
@@ -1141,3 +1142,29 @@ Cold native Media construction imports the pure `Chunking._template_conversion` 
 
 
 R146 changes only the complete ordinary `require_mobile_cutover` coordinator envelope from16MiB to64MiB, with512 reserved at issuance through a private no-argument issuer. Restored and original-generation branches share that same single nonrenewable allowance and retain every journal/plan/manifest/physical/schema/selector/activation/capture/history recheck. This is an explicit bound change, not a new native child or storage permission. Default trace/Notes/private native16MiB and public4GiB/coupled-native16MiB remain. B1's first restored gate exhausted its original16 during native plan loading; its successful preceding restoration/SafetyCopy facts remain separate from the later R146 positive gate. Fresh R146 integration passes both ordinary restoration and included-artwork restoration; the latter leaves 2,718,945 units after its full gate. This measured case is not a whole-engine/RSS or universal-fit guarantee.
+
+## Served integration qualification boundary (Task11)
+
+The genuine fresh NoData fixture selects its config and canonical roots before
+public cutover and before either serving parent or app child starts. R158 makes
+the serving parent's canonical, media and legacy-source selections use the same
+authoritative atomic config snapshot as the native producer. R159 lets an absent
+optional tokenizer mapping remain absent through first Send and continuation;
+fixture directory seeding is not fresh-profile qualification.
+
+Actual cold Create/immediate Send exposed `preview_sqlite_changed` when ordinary
+completion verification copied live WAL databases. R160 gives original and
+authenticated-restored completion reads the fixed `recovery.mobile.completion.read`
+role: must-exist `mode=ro`, deferred read transactions, existing restrictions and
+receipt/schema/generation checks. SQLite shared-memory coordination is allowed;
+SQL writes, checkpoints and migrations are not. Preview and maintenance still
+use their strict private copies and unchanged-source checks.
+
+The accounting-only completion context borrows the coordinator's same 64 MiB
+allowance and custody. Installed schema references and the prepaid reusable
+64 KiB digest workspace consume that allowance. Actual registered ordinary
+connections close through the native admitted wrapper; uncertain physical close
+retains the lease and accounting. This context grants no preview or capture
+storage authority. Live concurrent-write, authenticated restored-generation,
+strict-copy and physical-retirement evidence are recorded separately in the
+[Task11 qualification packet](../superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).

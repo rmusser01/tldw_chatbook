@@ -237,10 +237,21 @@ def _adapters():
     return {a.owner_id: a for a in (*core_adapters(), *recovery_adapters())}
 
 
-def _inspect_store(path, adapter, *, external_references=True, _read_budget=None):
-    """Inspect only an exact installed catalog, retaining IDs and counts only."""
+def _open_preview_read(path):
+    """Open only a read-only native discovery snapshot under this module's role."""
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
+    return connect_private_sqlite(
+        "recovery.mobile.preview",
+        path,
+        read_only=True,
+        isolation_level=None,
+        cached_statements=0,
+    )
+
+
+def _inspect_store(path, adapter, *, external_references=True, _read_budget=None):
+    """Inspect only an exact installed catalog, retaining IDs and counts only."""
     from .mobile_preview_budget import pragma_cost, scalar_cost, table_cost
     from .sqlite_validation import _check_details, _restrict_connection
 
@@ -250,9 +261,7 @@ def _inspect_store(path, adapter, *, external_references=True, _read_budget=None
     reserve(4096)
 
     policy = adapter.schema_policy()
-    with closing(
-        connect_private_sqlite("recovery.mobile.preview", path, read_only=True)
-    ) as connection:
+    with closing(_open_preview_read(path)) as connection:
         restrictions = _restrict_connection(connection)
         issues, version, details = _check_details(
             connection, adapter, policy, restrictions

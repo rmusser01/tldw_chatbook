@@ -12,6 +12,19 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+# Bind the selected profile and guards before importing application owners.
+if os.environ.get("TLDW_MOBILE_CANONICAL_FIXTURE") == "1":
+    import sys
+
+    from Tests.network_guard import NetworkMode, install, set_mode
+    from Tests.real_profile_guard import install as install_profile_guard
+
+    install_profile_guard()
+    install()
+    set_mode(NetworkMode.LOOPBACK_ONLY)
+    for module in ("sounddevice", "pyaudio"):
+        sys.modules[module] = None
+
 from textual.widgets import Button
 
 from Tests.UI.app_factory import (
@@ -144,7 +157,7 @@ class _ScriptedCanvasGateway:
         self._call_count_path = (
             Path(
                 os.environ.get(
-                    "TLDW_CANVAS_TEST_DATA_ROOT", os.environ["XDG_DATA_HOME"]
+                    "TLDW_CANVAS_TEST_DATA_ROOT", os.environ.get("XDG_DATA_HOME", "")
                 )
             )
             / "canvas-live-gateway-calls"
@@ -152,7 +165,7 @@ class _ScriptedCanvasGateway:
         self._tool_status_path = (
             Path(
                 os.environ.get(
-                    "TLDW_CANVAS_TEST_DATA_ROOT", os.environ["XDG_DATA_HOME"]
+                    "TLDW_CANVAS_TEST_DATA_ROOT", os.environ.get("XDG_DATA_HOME", "")
                 )
             )
             / "canvas-live-tool-status"
@@ -160,7 +173,7 @@ class _ScriptedCanvasGateway:
         self._disclosure_path = (
             Path(
                 os.environ.get(
-                    "TLDW_CANVAS_TEST_DATA_ROOT", os.environ["XDG_DATA_HOME"]
+                    "TLDW_CANVAS_TEST_DATA_ROOT", os.environ.get("XDG_DATA_HOME", "")
                 )
             )
             / "canvas-live-tool-disclosure"
@@ -395,6 +408,118 @@ class _ScriptedCanvasGateway:
         yield "CHATBOOK_CANVAS_UPDATED"
 
 
+class _ScriptedConsoleGateway(_ScriptedCanvasGateway):
+    """One real provider invocation per exact prompt, held after native admission."""
+
+    def __init__(self, root):
+        self.root = root
+        self.calls = 0
+
+    async def stream_chat(self, _resolution, messages, **_kwargs):
+        self.calls += 1
+        prompt = next(
+            str(row.get("content", ""))
+            for row in reversed(messages)
+            if row.get("role") == "user"
+        )
+        digest = hashlib.sha256(prompt.encode()).hexdigest()
+        _publish_owner_receipt(
+            self.root / f"console-entry-{digest}.json",
+            {"pid": os.getpid(), "call": self.calls, "prompt": prompt},
+        )
+        _publish_counter(self.root / "console-gateway-calls", self.calls)
+        if os.environ.get("TLDW_LIFECYCLE_BLOCK") == "1":
+            import time
+
+            time.sleep(2.5)  # noqa: ASYNC251 - intentional bounded provider stall proves retained fence.
+            yield "EXACT_REPLY:" + prompt
+            return
+        while not (self.root / f"console-release-{digest}").exists():
+            await asyncio.sleep(0.02)
+        yield "EXACT_REPLY:" + prompt
+
+
+class _ScriptedFleetConsoleGateway(_ScriptedConsoleGateway):
+    """Controlled native tool/worker turns; barriers never grant tool permission."""
+
+    def __init__(self, root):
+        super().__init__(root)
+        self.phases = {}
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        markers = ("EXACT_FLEET_PARENT", "EXACT_WORKER_A", "EXACT_WORKER_B")
+        prompt = next(
+            (
+                str(row.get("content", ""))
+                for row in messages
+                if row.get("role") == "user" and str(row.get("content", "")) in markers
+            ),
+            None,
+        )
+        if prompt is None:
+            async for chunk in super().stream_chat(resolution, messages, **kwargs):
+                yield chunk
+            return
+        phase = self.phases.get(prompt, 0)
+        self.phases[prompt] = phase + 1
+        self.calls += 1
+        _publish_counter(self.root / "console-gateway-calls", self.calls)
+        _publish_owner_receipt(
+            self.root / f"fleet-entry-{prompt}-{phase}.json",
+            {
+                "pid": os.getpid(),
+                "call": self.calls,
+                "phase": phase,
+                "prompt": prompt,
+                "received": [
+                    str(row.get("content", ""))
+                    for row in messages
+                    if row.get("role") in {"user", "tool"}
+                ],
+            },
+        )
+        if prompt.startswith("EXACT_WORKER_"):
+            while not (self.root / f"fleet-release-{prompt}-{phase}").exists():
+                await asyncio.sleep(0.02)
+            if phase == 0:
+                tool = {"name": "find_tools", "arguments": {"query": "date time"}}
+                yield "```tool_call\n" + json.dumps(tool) + "\n```"
+            else:
+                yield "EXACT_WORKER_REPLY:" + prompt
+            return
+        script = (
+            {"name": "spawn_subagent", "arguments": {"task": "EXACT_WORKER_A"}},
+            {"name": "spawn_subagent", "arguments": {"task": "EXACT_WORKER_B"}},
+            {"name": "find_tools", "arguments": {"query": "character_search ask_user"}},
+            {
+                "name": "load_tools",
+                "arguments": {"ids": ["local:character_search", "local:ask_user"]},
+            },
+            {"name": "character_search", "arguments": {"limit": 1}},
+            {
+                "name": "ask_user",
+                "arguments": {
+                    "questions": [
+                        {
+                            "header": "Fixture",
+                            "question": "Choose the exact fixture answer.",
+                            "options": [
+                                {"label": "EXACT_ANSWER_A"},
+                                {"label": "EXACT_ANSWER_B"},
+                            ],
+                        }
+                    ]
+                },
+            },
+        )
+        if phase < len(script):
+            yield "```tool_call\n" + json.dumps(script[phase]) + "\n```"
+            return
+        while not (self.root / "fleet-release-parent").exists():
+            await asyncio.sleep(0.02)
+        yield "EXACT_FLEET_PARENT_REPLY"
+
+
 def main() -> None:
     diagnostic_root = os.environ.get("TLDW_CANVAS_TEST_DB_DIAGNOSTICS")
     if diagnostic_root:
@@ -410,7 +535,9 @@ def main() -> None:
         rows = []
         diagnostic_lock = threading.Lock()
         owned_root = Path(
-            os.environ.get("TLDW_CANVAS_TEST_DATA_ROOT", os.environ["XDG_DATA_HOME"])
+            os.environ.get(
+                "TLDW_CANVAS_TEST_DATA_ROOT", os.environ.get("XDG_DATA_HOME", "")
+            )
         ).resolve()
 
         def observed_connect(database, *args, **kwargs):
@@ -484,33 +611,78 @@ def main() -> None:
     app = None
     database = None
     try:
-        app = _build_test_app(configured_default="chat")
+        canonical_mode = os.environ.get("TLDW_MOBILE_CANONICAL_FIXTURE") == "1"
+        if canonical_mode:
+            from tldw_chatbook.app import TldwCli
+
+            if os.environ.get("TLDW_FLEET_FIXTURE") == "1":
+                from tldw_chatbook import app_served
+
+                original_control = app_served._handle_served_control_request
+
+                async def observed_control(*args, **kwargs):
+                    try:
+                        return await original_control(*args, **kwargs)
+                    except BaseException:
+                        import traceback
+
+                        path = (
+                            Path(os.environ["TLDW_CANVAS_TEST_DATA_ROOT"])
+                            / "fleet-control-errors.txt"
+                        )
+                        with path.open("a") as output:
+                            output.write(traceback.format_exc())
+                        raise
+
+                app_served._handle_served_control_request = observed_control
+            app = TldwCli()
+        else:
+            app = _build_test_app(configured_default="chat")
         data_root = Path(
-            os.environ.get("TLDW_CANVAS_TEST_DATA_ROOT", os.environ["XDG_DATA_HOME"])
+            os.environ.get(
+                "TLDW_CANVAS_TEST_DATA_ROOT", os.environ.get("XDG_DATA_HOME", "")
+            )
         )
         data_root.mkdir(parents=True, exist_ok=True)
-        database = CharactersRAGDB(
-            data_root / "canvas-live-chatbook.sqlite", "canvas-live-chatbook"
-        )
-        app.chachanotes_db = database
+        if canonical_mode:
+            from tldw_chatbook.Backup_Recovery.profile_paths import (
+                canonical_console_paths,
+            )
+
+            database = app.chachanotes_db
+            assert database.db_path == canonical_console_paths(app.app_config)[0]
+        else:
+            database = CharactersRAGDB(
+                data_root / "canvas-live-chatbook.sqlite", "canvas-live-chatbook"
+            )
+            app.chachanotes_db = database
         # The app factory initially wires services with no DB. Bind the normal
         # saved-conversation reader to this same owned durable database as well.
         app._wire_chat_conversation_services()
-        _configure_native_ready_console(app, model="gpt-4o")
-        if not config_module.save_settings_to_cli_config(
-            {
-                "first_run": {"setup_completed": True},
-                "model_catalog": {
-                    "auto_refresh_enabled": False,
-                    "refresh_consent_recorded": True,
-                },
-            }
-        ):
-            raise RuntimeError("canvas_live_first_run_config_failed")
+        if not canonical_mode:
+            _configure_native_ready_console(app, model="gpt-4o")
+            if not config_module.save_settings_to_cli_config(
+                {
+                    "first_run": {"setup_completed": True},
+                    "model_catalog": {
+                        "auto_refresh_enabled": False,
+                        "refresh_consent_recorded": True,
+                    },
+                }
+            ):
+                raise RuntimeError("canvas_live_first_run_config_failed")
         app.app_config = config_module.load_settings(force_reload=True)
         app.chat_api_provider_value = "llama_cpp"
         app.chat_api_model_value = "gpt-4o"
-        gateway = _ScriptedCanvasGateway()
+        gateway = (
+            (
+                _ScriptedFleetConsoleGateway(data_root)
+                if os.environ.get("TLDW_FLEET_FIXTURE") == "1"
+                else _ScriptedConsoleGateway(data_root)
+            )
+            if canonical_mode
+            else _ScriptedCanvasGateway()
+        )
         app.console_provider_gateway_factory = lambda: gateway
         recovered_root_revision = None
 
@@ -586,6 +758,8 @@ def main() -> None:
         app.action_canvas_fixture_reopen = reopen_exact_created_card
         app._bindings.bind("f12", "canvas_fixture_reopen", priority=True)
 
+        observed_input_threads = []
+
         def acknowledge_composer_focus():
             if os.environ.get("TLDW_CANVAS_TEST_PREVIEW_FAILURE") == "1":
                 draft = app.screen.query_one("#console-native-composer").draft_text()
@@ -609,13 +783,20 @@ def main() -> None:
             )
             import threading
 
+            input_thread = app._driver._key_thread
+            if not any(thread is input_thread for thread in observed_input_threads):
+                observed_input_threads.append(input_thread)
             composer = app.screen.query_one("#console-native-composer")
             region = composer.query_one("#console-command-visible-text").region
             _publish_owner_receipt(
                 data_root / "canvas-live-terminal-state",
                 {
                     "pid": os.getpid(),
-                    "input_thread": app._driver._key_thread.ident,
+                    "core_path": str(database.db_path),
+                    "session_id": app.screen._console_chat_store.active_session_id,
+                    "input_thread": input_thread.ident,
+                    "input_thread_object": id(input_thread),
+                    "input_thread_objects_observed": len(observed_input_threads),
                     "input_threads": sum(
                         t.name == "textual-input" for t in threading.enumerate()
                     ),
@@ -638,6 +819,64 @@ def main() -> None:
             (data_root / "canvas-live-composer-focused").write_text(
                 "focused" if focused is not None else "other", encoding="ascii"
             )
+
+        if canonical_mode:
+            original_setup = app._post_mount_setup
+
+            async def observed_setup():
+                result = await original_setup()
+                _publish_owner_receipt(
+                    data_root / "console-app-ready.json",
+                    {"pid": os.getpid(), "ui_ready": app._ui_ready},
+                )
+                return result
+
+            app._post_mount_setup = observed_setup
+
+        if canonical_mode and os.environ.get("TLDW_SECURITY_FIXTURE") == "1":
+            runtime = app.console_runtime
+            native_receipts = runtime.ensure_remote_receipts
+
+            def observed_receipts(identity):
+                receipts = native_receipts(identity)
+                if not getattr(receipts, "_fixture_clock_installed", False):
+                    native_clock = receipts.monotonic_ns
+                    offset = data_root / "fixture-command-clock-offset-ns"
+                    receipts.monotonic_ns = lambda: (
+                        native_clock()
+                        + (int(offset.read_text()) if offset.exists() else 0)
+                    )
+                    receipts._fixture_clock_installed = True
+                return receipts
+
+            runtime.ensure_remote_receipts = observed_receipts
+
+            def request_unsupported_review():
+                session_id = runtime.chat_store.active_session_id
+                app.run_worker(
+                    runtime._select_project_instruction_binding(
+                        session_id, (), "no_eligible_folders"
+                    ),
+                    name="fixture-native-unsupported-review",
+                    group="fixture-native-review",
+                    exclusive=True,
+                )
+
+            def create_native_library_note():
+                note_id = app.chachanotes_db.add_note(
+                    "EXACT_CANONICAL_LIBRARY_NOTE",
+                    'EXACT_CANONICAL_LIBRARY_BODY<img src=x onerror="window.__task11Executed=1">'
+                    "<script>window.__task11Executed=2</script>",
+                )
+                _publish_owner_receipt(
+                    data_root / "fixture-native-note.json",
+                    {"id": note_id, "core_path": str(app.chachanotes_db.db_path)},
+                )
+
+            app.action_fixture_native_note = create_native_library_note
+            app._bindings.bind("f8", "fixture_native_note", priority=True)
+            app.action_fixture_native_review = request_unsupported_review
+            app._bindings.bind("f9", "fixture_native_review", priority=True)
 
         app.action_canvas_fixture_focus_ack = acknowledge_composer_focus
         app._bindings.bind("f11", "canvas_fixture_focus_ack", priority=True)

@@ -1390,3 +1390,193 @@ async def test_fix1_saved_history_refuses_invalid_or_stale_filtered_continuation
     await expect(case.page.locator("#send-command")).to_be_disabled()
     assert not case.commands
     assert not any(call[0] == "bootstrap" for call in case.service.calls)
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "delayed",
+        "lost-response",
+        "navigation",
+        "replacement-owner",
+        "replacement-console",
+        "newer-action",
+    ],
+)
+async def test_host_selection_waits_for_exact_original_receipt_and_current_row(
+    mobile_browser_case, monkeypatch, outcome
+):
+    from dataclasses import replace
+
+    case = mobile_browser_case
+    original_snapshot = case.service.snapshot
+    original_receipt = case.service.receipt
+
+    def receipt(ticket, state):
+        row = original_receipt(ticket, state)
+        if outcome == "newer-action" and ticket == "command-1":
+            row = replace(row, native_id="chat-c")
+            case.service.receipts[ticket] = row
+        return row
+
+    monkeypatch.setattr(case.service, "receipt", receipt)
+    visible = False
+    replacement = False
+    restored_owner = False
+    unrelated_delivered = asyncio.Event()
+
+    async def observe_snapshot(response):
+        if (
+            "/api/v1/mobile/console/snapshot?" in response.url
+            and response.status == 200
+        ):
+            body = await response.json()
+            if any(
+                row["command_id"] == "unrelated-command"
+                for row in body["command_receipts"]
+            ):
+                unrelated_delivered.set()
+
+    case.page.on("response", observe_snapshot)
+
+    async def snapshot(*args, **kwargs):
+        data = await original_snapshot(*args, **kwargs)
+        if not visible:
+            data["chats"] = [
+                row for row in data["chats"] if row["session_id"] != "chat-b"
+            ]
+        if visible and outcome == "newer-action":
+            if not args and not kwargs.get("target"):
+                data["chats"].append(case.service.row("chat-c"))
+            for row in data["chats"]:
+                if row["session_id"] == "chat-c":
+                    row["title"] = "Newer explicit chat"
+        if replacement:
+            field = "console_id" if outcome == "replacement-console" else "server_epoch"
+            data[field] = "replacement-owner"
+            for row in data["chats"]:
+                row[field] = "replacement-owner"
+        unrelated = case.service.receipts.get("unrelated-command")
+        if unrelated is not None:
+            data["command_receipts"].append(unrelated.public())
+        if restored_owner:
+            for row in data["chats"]:
+                if row["session_id"] == "chat-b":
+                    row["title"] = "Planning restored"
+        return data
+
+    monkeypatch.setattr(case.service, "snapshot", snapshot)
+    await case.page.reload()
+    await expect(
+        case.page.locator('#chat-list button[data-session-id="chat-a"]')
+    ).to_be_visible()
+    await expect(
+        case.page.locator('#chat-list button[data-session-id="chat-b"]')
+    ).to_have_count(0)
+    await expect(case.page.locator("#connection-state")).to_contain_text("Connected")
+    old_ready, release_old, effect_response = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+    gated = False
+
+    async def delay_old_list(route):
+        nonlocal gated
+        if gated or "session_id=" in route.request.url:
+            await route.continue_()
+            return
+        gated = True
+        response = await route.fetch()
+        body = await response.json()
+        assert all(row["session_id"] != "chat-b" for row in body["chats"])
+        old_ready.set()
+        await release_old.wait()
+        await route.fulfill(response=response, json=body)
+
+    async def observe_effect(route):
+        response = await route.fetch()
+        assert (await response.json())["native_id"] in {"chat-b", "chat-c"}
+        effect_response.set()
+        if outcome == "lost-response":
+            await route.abort("failed")
+        else:
+            await route.fulfill(response=response)
+
+    await case.page.route("**/api/v1/mobile/console/snapshot?*", delay_old_list)
+    await case.page.route("**/api/v1/mobile/commands", observe_effect)
+    case.service.receipt_state = "applied"
+    case.service.release.set()
+    try:
+        # Foreground refresh retains the connected state while its list is in flight.
+        await case.page.evaluate(
+            "document.dispatchEvent(new Event('visibilitychange'))"
+        )
+        await asyncio.wait_for(old_ready.wait(), 5)
+        await case.page.locator("#new-chat-button").click()
+        await asyncio.wait_for(effect_response.wait(), 5)
+        if outcome == "lost-response":
+            await expect(case.page.locator("#status-line")).to_contain_text(
+                "Unable to complete"
+            )
+        else:
+            await expect(case.page.locator("#new-chat-button")).to_be_enabled()
+        original = case.service.receipts["command-0"]
+        case.service.receipts["unrelated-command"] = replace(
+            original, command_id="unrelated-command", native_id="chat-a"
+        )
+        if outcome == "navigation":
+            await case.page.locator(
+                '#chat-list button[data-session-id="chat-a"]'
+            ).click()
+            await case.page.locator("#chat-draft").fill("KEEP_EXPLICIT_CHAT_A_DRAFT")
+        if outcome == "newer-action":
+            effect_response.clear()
+            await case.page.locator("#new-chat-button").click()
+            await asyncio.wait_for(effect_response.wait(), 5)
+            await expect(case.page.locator("#new-chat-button")).to_be_enabled()
+        replacement = outcome in {"replacement-owner", "replacement-console"}
+        visible = True
+        release_old.set()
+        if outcome in {"delayed", "lost-response", "newer-action"}:
+            await expect(case.page.locator("#chat-title")).to_have_text(
+                "Newer explicit chat" if outcome == "newer-action" else "Planning"
+            )
+            await expect(case.page.locator("#chat-draft")).to_be_enabled()
+            await expect(case.page.locator("#target-state")).not_to_contain_text(
+                "Target not confirmed"
+            )
+        elif outcome == "navigation":
+            await expect(case.page.locator("#chat-title")).to_have_text("Research")
+            await expect(case.page.locator("#target-state")).not_to_contain_text(
+                "Target not confirmed"
+            )
+            await expect(case.page.locator("#chat-draft")).to_have_value(
+                "KEEP_EXPLICIT_CHAT_A_DRAFT"
+            )
+        else:
+            await expect(
+                case.page.locator('#chat-list button[data-session-id="chat-b"]')
+            ).to_be_visible()
+            await expect(case.page.locator("#chat-draft")).to_be_disabled()
+            replacement = False
+            restored_owner = True
+            await case.service.events_queue.put(
+                MobileEvent("console.changed", "", {}, 11)
+            )
+            await expect(
+                case.page.locator('#chat-list button[data-session-id="chat-b"]')
+            ).to_contain_text("Planning restored")
+            await expect(case.page.locator("#chat-draft")).to_be_disabled()
+        assert (
+            len(case.commands)
+            == len(case.service.tickets)
+            == (2 if outcome == "newer-action" else 1)
+        )
+        assert case.commands[0]["command_id"] == "command-0"
+        assert case.commands[0]["payload"] == {"workspace_id": "global"}
+        if outcome == "lost-response":
+            assert ("query", "command-0") in case.service.calls
+    finally:
+        release_old.set()
+        case.page.remove_listener("response", observe_snapshot)

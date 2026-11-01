@@ -212,3 +212,20 @@ pruning and 4,096 capacity still address only `console_command_receipts`.
 Passive records have no expiry or new deletion API; database backup/lifecycle and
 applicable privacy semantics remain. This component introduces no RunLog reader,
 imported-definition activation, schema migration or owner-readiness handoff.
+
+## Task11 SQLite seam qualification
+
+Fixed mobile preview reads are opened by the existing module-owned
+`mobile_consolidation._open_preview_read`; installed disposable candidates use
+`sqlite_validation._open_installed_candidate`. The latter resolves the installed
+owner and forwards the same cancellation/custody objects to restricted read-only
+validation. Callers retain their transaction, exact schema, hash and receipt
+checks. Structural inventory controls reject changes to owner resolution,
+writable/restriction flags and cancellation/custody forwarding. Neither helper
+adds a registered role or grants live repository write authority.
+
+The two Notes startup probes use `NotesDeviceStateStore._connect(read_only=True,
+must_exist=True)`, retaining their exact SELECT and missing/corrupt error policy.
+They do not initialize schema or create a parent/store; each connection and
+store closes after observation. The probe result remains startup evidence, not
+permission to import or activate Notes sync.

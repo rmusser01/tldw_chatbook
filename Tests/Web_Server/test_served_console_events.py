@@ -5,6 +5,11 @@ import asyncio
 import pytest
 from pydantic import ValidationError
 
+from Tests.Web_Server import test_mobile_console_ui as mobile_controls
+
+mobile_browser_case = mobile_controls.mobile_browser_case
+mobile_surface_gate = mobile_controls.mobile_surface_gate
+
 
 def test_unread_projection_overflow_requires_snapshot_not_disconnect():
     from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
@@ -227,96 +232,97 @@ async def test_console_host_identity_is_stable_and_replacement_changes_console()
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
-@pytest.mark.parametrize("child_reset", [False, True])
+@pytest.mark.parametrize("unavailable", [False, True])
 async def test_phone_reset_clears_stale_approval_and_shows_unavailable(
-    monkeypatch, child_reset
+    mobile_browser_case, unavailable
 ):
-    from pathlib import Path
+    from playwright.async_api import expect
 
-    from playwright.async_api import async_playwright
+    from tldw_chatbook.Web_Server.mobile_service import MobileEvent
 
-    from Tests.Web_Server.test_served_shell_browser import (
-        _real_playwright_browsers_path,
-    )
+    case = mobile_browser_case
+    service = case.service
+    service.body = "Current native transcript"
+    service.decisions = [
+        dict(
+            service.row("chat-a"),
+            kind="approval",
+            round_id="approval-before-reset",
+            supported=True,
+            calls=[
+                {
+                    "call_id": "call-before-reset",
+                    "llm_name": "fs_read",
+                    "options": ["approve_once", "deny"],
+                    "arguments_summary": "/notes/readme",
+                }
+            ],
+        )
+    ]
+    await case.open_chat("chat-a")
+    page = case.page
+    decision = page.get_by_role("button", name="Submit decision", exact=True)
+    await expect(decision).to_be_enabled()
+    await page.locator("#chat-draft").fill("Keep this unsent draft")
+    send = page.get_by_role("button", name="Send", exact=True)
+    stop = page.get_by_role("button", name="Stop", exact=True)
+    await expect(send).to_be_enabled()
+    await expect(stop).to_be_enabled()
 
-    cache = _real_playwright_browsers_path()
-    if cache:
-        monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", cache)
-    assets = (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "Web_Server"
-        / "static"
-        / "mobile"
-    )
-    async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
-        try:
-            page = await browser.new_page()
-            await page.set_content(assets.joinpath("index.html").read_text())
-            await page.evaluate("""() => {
-              window.fetch = async (path) => ({ok: true, json: async () => path.endsWith('/approvals') ? {approvals: [{round_id: 'round-a', surface: 'desktop', child_id: 'child-a', calls: [{call_id: 'call-a', llm_name: 'fs_write', options: ['deny']}]}]} : {items: []}});
-              window.WebSocket = class extends EventTarget { constructor() { super(); window.mobileSocket = this; } };
-            }""")
-            await page.clock.install()
-            await page.add_script_tag(content=assets.joinpath("app.js").read_text())
-            await page.locator("#approvals-list button").wait_for(state="attached")
-            reset_payload = {"reset_required": True}
-            if child_reset:
-                reset_payload["child_id"] = "child-a"
-            await page.evaluate(
-                """payload => window.mobileSocket.dispatchEvent(new MessageEvent('message', {data: JSON.stringify({type:'reset', payload, session_id:''})}))""",
-                reset_payload,
-            )
-            notice = await page.locator("#status-line").inner_text()
-            assert ("Refresh this page" in notice) is not child_reset
-            assert await page.locator("#approvals-list button").count() == 0
-            assert (
-                "unavailable"
-                in (await page.locator("#status-line").inner_text()).lower()
-            )
-            assert await page.locator("#status-line").is_visible()
-            await page.locator("#approvals-button").click()
-            await page.clock.run_for(20)
-            assert await page.locator("#approvals-list button").count() == 0
-            await page.evaluate("""() => {
-                window.fetch = async () => { throw new Error('offline'); };
-                document.dispatchEvent(new Event('visibilitychange'));
-            }""")
-            await page.clock.run_for(6100)
-            assert await page.locator("#status-line").is_visible()
-            assert (
-                "unavailable"
-                in (await page.locator("#status-line").inner_text()).lower()
-            )
-            if child_reset:
-                page = await browser.new_page()
-                await page.set_content(assets.joinpath("index.html").read_text())
-                await page.evaluate(
-                    """payload => {
-                    window.fetch = async () => ({ok: true, json: async () => ({items: [], approvals: []})});
-                    window.WebSocket = class extends EventTarget {
-                        constructor() {
-                            super();
-                            queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', {data: JSON.stringify({type: 'reset', payload, session_id: ''})})));
-                        }
-                    };
-                }""",
-                    reset_payload,
+    async def answerability(value, after=0):
+        async with asyncio.timeout(5):
+            while not any(
+                name == "answerable"
+                and args[-1] is value
+                and args[1].round_id == "approval-before-reset"
+                and args[1].session_id == "chat-a"
+                and args[1].server_epoch == "epoch"
+                for name, args in service.calls[after:]
+            ):
+                await asyncio.sleep(0.01)
+
+    await answerability(True)
+    before_reset = len(service.calls)
+    service.metadata_gate = asyncio.Event()
+    service.decisions = []
+    try:
+        await service.events_queue.put(
+            MobileEvent("reset", "", {"reset_required": True}, 2)
+        )
+        await expect(page.locator("#connection-state")).to_contain_text("uncertain")
+        await expect(decision).to_be_disabled()
+        await expect(send).to_be_disabled()
+        await expect(stop).to_be_disabled()
+        await answerability(False, before_reset)
+        assert not service.tickets and not service.commands
+        assert not service.metadata_gate.is_set()
+
+        service.unavailable = unavailable
+        if unavailable:
+            async with page.expect_response(
+                lambda response: (
+                    "/console/snapshot" in response.url and response.status == 503
                 )
-                await page.add_script_tag(content=assets.joinpath("app.js").read_text())
-                await page.locator("#status-line").wait_for(state="visible")
-                assert (
-                    "unavailable"
-                    in (await page.locator("#status-line").inner_text()).lower()
-                )
-                assert (
-                    "Refresh this page"
-                    not in await page.locator("#status-line").inner_text()
-                )
-                assert await page.locator("#approvals-list button").count() == 0
-        finally:
-            await browser.close()
+            ) as failed_snapshot:
+                service.metadata_gate.set()
+            await (await failed_snapshot.value).finished()
+            await expect(decision).to_be_disabled()
+            await expect(send).to_be_disabled()
+            assert not service.tickets and not service.commands
+            service.unavailable = False
+            await service.events_queue.put(MobileEvent("console.changed", "", {}, 3))
+        else:
+            service.metadata_gate.set()
+        await expect(decision).to_have_count(0)
+        await expect(page.locator("#connection-state")).to_contain_text("Connected")
+        await expect(send).to_be_enabled()
+        await expect(stop).to_be_enabled()
+        await expect(page.locator("#chat-draft")).to_have_value(
+            "Keep this unsent draft"
+        )
+        assert not service.tickets and not service.commands
+    finally:
+        service.metadata_gate.set()
 
 
 @pytest.mark.loopback_network

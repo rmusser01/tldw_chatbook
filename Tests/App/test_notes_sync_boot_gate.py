@@ -21,6 +21,7 @@ from tldw_chatbook.app_service_wiring import (
     ServiceWiringMixin,
     _notes_sync_boot_start_evidence,
     _notes_sync_state_db_has_configured_roots,
+    _notes_sync_state_has_imports,
 )
 
 pytestmark = pytest.mark.unit
@@ -270,3 +271,54 @@ def test_owner_inputs_are_read_once_at_construction_not_at_use():
 def test_mixin_safe_reader_lives_on_service_wiring_mixin():
     """The reader is part of the app's composition surface, not the screen's."""
     assert "_read_notes_sync_runtime_owner_safe" in vars(ServiceWiringMixin)
+
+
+@pytest.mark.parametrize(
+    "probe",
+    [
+        _notes_sync_state_db_has_configured_roots,
+        lambda path: _notes_sync_state_has_imports(path, None),
+    ],
+)
+def test_native_boot_probe_is_read_only_and_does_not_initialize_schema(
+    tmp_path, monkeypatch, probe
+):
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    path = tmp_path / "state.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE unrelated(value)")
+    before = path.read_bytes()
+    original_paths = set(tmp_path.iterdir())
+    opened = []
+    native = NotesDeviceStateStore._connect
+
+    def observed(self, **options):
+        assert options == {"read_only": True, "must_exist": True}
+        connection = native(self, **options)
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            connection.execute("CREATE TABLE forbidden(value)")
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(NotesDeviceStateStore, "_connect", observed)
+    assert probe(path) is False
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        opened[0].execute("SELECT 1")
+    assert path.read_bytes() == before
+    assert set(tmp_path.iterdir()) == original_paths
+
+
+@pytest.mark.parametrize("kind", ["absent", "corrupt"])
+def test_import_marker_probe_preserves_missing_and_corrupt_store(tmp_path, kind):
+    path = tmp_path / "state.db"
+    if kind == "absent":
+        assert _notes_sync_state_has_imports(path, None) is False
+        assert not path.exists()
+    else:
+        path.write_bytes(b"invalid sqlite store")
+        before = path.read_bytes()
+        with pytest.raises(sqlite3.DatabaseError):
+            _notes_sync_state_has_imports(path, None)
+        assert path.read_bytes() == before

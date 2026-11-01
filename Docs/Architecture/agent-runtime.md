@@ -172,3 +172,14 @@ unsettled and erasure still refuses; no path clears the marker to force erasure.
 Import/recovery must never invoke erasure automatically or resurrect erased
 bodies from an archive merely to match an old receipt. No hold-release workflow
 is provided.
+
+## Served qualification evidence boundary (Task11)
+
+The actual TLS/AppService fixture controls the provider seam after native prompt
+acceptance. A retained PID alone is insufficient: the recorded session,
+incarnation, run and exact persisted prompt/reply rows establish continuity.
+The browser interaction receipt retains the original input Thread object, so
+matching a reused OS thread identifier cannot masquerade as thread continuity.
+Worker queue acceptance and physical worker exit remain separate native events;
+see the [qualification packet](../superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md)
+for executed and outstanding journeys.

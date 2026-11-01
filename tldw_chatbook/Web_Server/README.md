@@ -285,6 +285,19 @@ the composer reachable. On macOS Safari/WebKit, Option-Tab reaches all controls
 when the system's ordinary Tab preference skips buttons. Browser-engine checks
 are separate from physical iPhone/Safari, Android/Chrome and VPN qualification.
 
+### Qualification status
+
+Task11 has driven an actual TLS server and retained native AppService child with
+one selected canonical profile and a controlled provider. Its fresh unseeded
+first Send, phone continuation, terminal reattachment and terminal interaction
+checks are recorded in the [qualification packet](../../Docs/superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).
+Cold Create/immediate Send and four distinct owned-process shutdown/crash cases
+also pass. Separate actual-browser epochs qualify two chats/two workers, an
+admitted local tool and decision, original-ID queries after lost acknowledgements,
+expiry/revocation, stale attachments, bounded overflow and mobile-off behavior.
+The packet records exact source epochs and final review status. Physical
+phone/VPN operation is unverified; a narrow Chromium viewport does not establish that hardware/network result.
+
 ## Binary Distribution
 
 When packaged as a binary (future feature), users will be able to:

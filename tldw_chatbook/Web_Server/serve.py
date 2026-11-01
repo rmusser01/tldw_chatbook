@@ -1538,9 +1538,9 @@ class ChatbookWebServerMixin:
             database_path,
             legacy_mobile_dir,
         )
-        from tldw_chatbook.config import load_settings
+        from tldw_chatbook.config import get_atomic_config_snapshot
 
-        settings = load_settings()
+        settings = get_atomic_config_snapshot().values
         return (CanonicalConsoleStores(*canonical_console_paths(settings)),
                 database_path(settings, "media_db_path"), legacy_mobile_dir(settings))
 

@@ -5,7 +5,6 @@ import zipfile
 from pathlib import Path
 from uuid import uuid4
 
-from tldw_chatbook.DB.private_sqlite import open_recovery_validation
 from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader, native_files, sqlite_validation
@@ -144,17 +143,12 @@ def _authenticate_stages(session, frame, password, cancel):
                                     view = view[count:]
                         if size != payload.size or digest.hexdigest() != payload.sha256:
                             raise ValueError("mobile_rollback_member_changed")
-                        with open_recovery_validation(
+                        with sqlite_validation._open_installed_candidate(
                             value["owner_id"],
                             candidate,
-                            writable=False,
-                            with_restrictions=True,
                             cancel=cancel,
                             _custody=custody,
-                        ) as (connection, restrictions):
-                            owner = sqlite_validation._installed_owner(
-                                value["owner_id"]
-                            )
+                        ) as (connection, restrictions, owner):
                             issues, version = sqlite_validation._check(
                                 connection, owner, owner.schema_policy(), restrictions
                             )

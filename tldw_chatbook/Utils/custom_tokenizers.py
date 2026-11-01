@@ -464,7 +464,31 @@ def custom_tokenizers_available() -> bool:
     Returns:
         ``True`` only when the library is present and mappings are loaded.
     """
-    return TOKENIZERS_AVAILABLE and get_tokenizer_manager().has_tokenizers()
+    if not TOKENIZERS_AVAILABLE:
+        return False
+    if _tokenizer_manager is None:
+        from ..Backup_Recovery.native_files import pinned_directory
+        from ..Backup_Recovery.profile_paths import default_config_path
+        from .platform_files import os as native_os
+
+        directory = default_config_path().parent / "tokenizers"
+        try:
+            with pinned_directory(directory.parent) as parent:
+                try:
+                    native_os.stat(directory.name, dir_fd=parent, follow_symlinks=False)
+                except FileNotFoundError:
+                    return False
+            with pinned_directory(directory) as parent:
+                try:
+                    native_os.stat(
+                        "mappings.json", dir_fd=parent, follow_symlinks=False
+                    )
+                except FileNotFoundError:
+                    return False
+        except OSError:
+            # Uncertain or aliased paths retain the original native admission.
+            pass
+    return get_tokenizer_manager().has_tokenizers()
 
 
 def count_tokens_with_custom(text: str, model: str, provider: str) -> Optional[int]:
