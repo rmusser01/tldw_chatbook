@@ -33,7 +33,7 @@ Files: `console_trace_service.py`, `console_trace_final_values.py` only as neede
 - [x] Apply the smallest descriptor/range applicability correction. Do not catch arbitrary proof errors or relax completed-turn ownership checks.
 - [x] Run affected rewritten-tail/history/planner and final-value files, the two existing dictionary/source-pin controls, the safe completed-history/native-rounds control, stale/rollback custody negatives, and project-turn controls if selection changes them. Check the specific workflow target pin.
 - [x] Verify changed diagnostic projections and exact size pins. Resolve duplicate incoming task ID through existing backlog tooling and update its references.
-- [ ] Record source hashes and precise results/limitations, update task status only when its criteria are met, commit, and obtain independent exact-head review before publication.
+- [x] Record source hashes and precise results/limitations, update task status only when its criteria are met, commit, and obtain independent exact-head review before publication.
 
 Review focus: equal-count unrelated witnesses; matching descriptors with a wider compaction range; current-turn dictionary transformation; mixed completed/native witness types; final-binding refusal after durable state changes. Existing negative tests qualify the latter boundaries rather than introducing a new proof mechanism.
 
@@ -46,3 +46,5 @@ Corrected RED: `../r-558a3b87` ran the three send cases with unchanged source ma
 Task identity: the incoming trace follow-up is now TASK-38298; the existing dev TASK-37600 SSE fix remains untouched. The read-only 300-snapshot filename audit found maximum 38268, and the local filename/frontmatter helper confirms 38298 was free. The trace ADR, guide and two owning tasks now reference the corrected ID.
 
 Prepared integration: all 99 selected cases have passing results across frozen receipts, including native completed replay and stale/rollback negatives after correcting private-profile/signature/Windows socketpair fixture issues. Detailed failures and qualifications: `Docs/superpowers/qa/2026-10-31-pr3298-backlog-integration.md`. Production source review and fixture review report no blockers; final rebase onto PR3295 merge and exact-head approval remain.
+
+Final source review cleared integrated head `1c4f01847871f61baceb095ba3e35ca2659330d3` on `3926ab8e672cef0b7ab8eba20b7e5c8800f4b929`. Native completed replay and critical workflow-pin checks passed2/2 with frozen sources (`../r-6ebc2c79`). Final completion metadata is reviewed before publication; hosted CI and release remain outside this task.

@@ -55,3 +55,14 @@ Independent prepared-source review found no Critical or Important issues and
 matched all 81 receipt hashes. A separate fixture review found no new issue or
 guard bypass. Final current-base rebase, targeted integration and exact-head
 approval are recorded below when completed. This session performs no release.
+
+Final rebase: `1c4f01847871f61baceb095ba3e35ca2659330d3` on PR3295 merge
+`3926ab8e672cef0b7ab8eba20b7e5c8800f4b929`. The only conflict was size metadata:
+PR3295's runtime pin remains 7076 and the repaired trace-service pin is 6765.
+All four PR3298 production files are byte-identical to the tested repair, and
+all 55 non-overlapping base files are preserved exactly. Final current-base
+receipt `r-6ebc2c79` passed both native completed-history replay and the critical
+workflow-target contract in 67.615 seconds, with zero failures/errors/skips and
+matching source manifests. Independent final source review found no outstanding
+issues. The completion commit changes only this evidence, the plan and task
+status/notes; its publication still requires the exact-head review check.
