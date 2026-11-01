@@ -53,3 +53,17 @@ both substantial mandatory input and a provider input cap against real preflight
 then low-unknown/high-advisory agent states without calling tool preview. Preserve
 pending/bound/actual-skill summary fences, recovery/provider-contact copy,
 emergency-stop precedence, held-send rewind/resume and current metadata publication.
+
+## Final integration qualification
+
+Current receipt outcomes, source identities and remaining limits are recorded in
+[the integration QA](../qa/2026-11-01-pr3328-backlog-integration.md). I1/I2/I3 causal
+controls and narrow currentness/fence/recovery controls pass. Three mounted held
+journeys time out before hold assertions in finite native authority capture; one
+exact merged-base comparison reproduces that shared precondition timeout, not
+hold-feature completion. No timeout or admission guard is weakened. Seven
+passing node selectors are added to the UI census without deleting entries or
+changing its floor. TASK33621.4 stays In Progress and broad AC3 unchecked; old
+task implementation/live/all-green/ratchet paragraphs are historical source
+evidence, superseded by this final qualification. Parent owns independent review
+continuation and remote actions.

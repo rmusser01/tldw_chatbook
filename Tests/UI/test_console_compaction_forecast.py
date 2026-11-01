@@ -6,10 +6,11 @@ over the 1,200-token trigger, yet the header read "Ready · not tested",
 Inspect's "What happens if I send now?" read "Run: Ready" and the Context
 chip read "Context 1%". The next send paused with no warning.
 
-The forecast asks the same question the send preflight does
-(``decide_compaction`` over the conversation's own tokens and complete
-turns, the draft excluded), so the surfaces cannot disagree with the hold
-about whether a send will pause.
+The qualified static forecast uses ``decide_compaction`` with estimated
+history, current mandatory input and capacity. Agent/tool-dependent next-send
+behavior stays unavailable, with a qualified high-context advisory. These
+controls preserve the explicit estimate qualification rather than promising
+exact future-send parity for dynamic inputs.
 """
 
 from __future__ import annotations
@@ -681,7 +682,7 @@ def test_the_context_chip_leads_with_the_forecast_and_explains_it() -> None:
 
     assert over.label.startswith(COMPACTION_PAUSE_FORECAST_COPY)
     assert over.compact_label.startswith("Pauses to compact")
-    assert "Next send pauses for compaction approval" in over.tooltip
+    assert "Estimated next send pauses for compaction approval:" in over.tooltip
     assert "1,656 of 1,500" in over.tooltip
     assert COMPACTION_PAUSE_FORECAST_COPY not in under.label
     assert "compaction approval" not in under.tooltip
