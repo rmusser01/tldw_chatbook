@@ -23,3 +23,13 @@ A staged image the selected model cannot take reads 'Send blocked — <model> ca
 - [ ] #2 The Send tooltip still names the model
 - [ ] #3 A mounted test asserts the strip at that width
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no new ADR. ADR path: backlog/decisions/211-ephemeral-provider-failure-presentation.md. Reason: bounded presentation-only copy repair within existing geometry.
+
+Use model-independent strip copy while retaining the full model in the tooltip. Verify mounted ordinary widths and unchanged resize/draft budget.
+
+## Implementation Notes
+
+PR3330 current-base integration shortens the image notice to “this model can't accept images”; full model-specific refusal remains in the tooltip. TASK38424 stays open: existing dynamic width policy can hide/ellipsize below its legibility budget, so AC1 (whole meaning at narrowest width) is not fulfilled by this scoped copy change. Mounted evidence pending; no geometry or size budget changed.

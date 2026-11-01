@@ -301,6 +301,70 @@ async def _held_received_record(case):
 
 
 @pytest.mark.parametrize("route", ["enter", "send-button"])
+async def test_stock_received_image_refused_enter_preserves_custody(route, monkeypatch):
+    """Stock readers keep the image and draft through a refusal, without contact."""
+    import copy
+    from textual.widgets import Static
+    from Tests.UI.test_console_send_strip_codes import _image
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
+    from tldw_chatbook.UI.Screens.chat_screen import _CONSOLE_RECEIVED_SCREEN_SELECTORS
+
+    async with _received_console_case(monkeypatch, f"image-refused-{route}") as case:
+        assert stock_native_methods(case.console, _CONSOLE_RECEIVED_SCREEN_SELECTORS)
+        image = _image()
+        assert case.store.add_pending_attachment(case.session.id, image)
+        refusal = case.console._console_attachment_blocked_reason()
+        assert "local-model can't accept images" in refusal
+        _send(case, route)
+        record = await _held_received_record(case)
+        claim = record.received_claim
+        assert record.received_intent.inputs.attachments == (image,)
+        assert record.session_id == case.session.id
+        assert case.store.received_turn_for_session(case.session.id) is claim
+        case.probe.release.set()
+        assert await _until(case.probe.retired, 5)
+        assert await _until(
+            lambda: not case.runtime.has_custodied_turns(case.session.id), 15
+        )
+        rows = case.store.messages_for_session(case.session.id)
+        system = [row for row in rows if row.role is ConsoleMessageRole.SYSTEM]
+        assert system and type(system[-1].content) is str
+        assert system[-1].content == refusal
+        assert case.provider_calls == []
+        assert not any(row.role is ConsoleMessageRole.USER for row in rows)
+        assert case.store.pending_attachments(case.session.id) == [image]
+        assert (
+            case.composer.draft_text()
+            == case.store.session_draft(case.session.id)
+            == case.draft
+        )
+        assert case.store.received_turn_for_session(case.session.id) is None
+        assert case.store.preparation_for_session(case.session.id) is None
+        ack = vars(case.console).get("_console_send_ack")
+        assert case.session.id not in vars(ack).get("_pending", {})
+
+        def painted():
+            return [
+                str(widget.content)
+                for widget in case.console.query_one(
+                    "#console-native-transcript"
+                ).query(Static)
+            ]
+
+        assert await _until(
+            lambda: any(refusal in text for text in painted())
+            and not any("Sending…" in text for text in painted()),
+            10,
+        )
+        copy.deepcopy(rows)
+        assert (
+            await case.controller.build_context_snapshot("", session_id=case.session.id)
+            is not None
+        )
+
+
+@pytest.mark.parametrize("route", ["enter", "send-button"])
 async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
     route, monkeypatch, record_property
 ):

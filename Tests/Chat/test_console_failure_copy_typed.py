@@ -11,6 +11,7 @@ System row the user reads.
 from __future__ import annotations
 
 import json
+import base64
 
 import httpx
 import pytest
@@ -292,9 +293,7 @@ def _raw_http_error(status: int, message: str) -> httpx.HTTPStatusError:
 
 
 @pytest.mark.asyncio
-async def test_escaped_401_with_an_image_in_history_gets_no_image_hint(
-    tmp_path, hooks
-):
+async def test_escaped_401_with_an_image_in_history_gets_no_image_hint(tmp_path, hooks):
     """Dev appended the image hint to ANY escaped failure with a response
     status (a 401 included) on the controller's catch-all path."""
     _gateway, store, controller, session = _console(
@@ -328,8 +327,11 @@ async def test_a_plain_400_names_neither_the_model_nor_the_image(
 @pytest.mark.parametrize(
     ("status", "message"),
     [
-        (400, "messages.0.content.1.image.source.base64.data: Image does not "
-              "match the provided media type image/png"),
+        (
+            400,
+            "messages.0.content.1.image.source.base64.data: Image does not "
+            "match the provided media type image/png",
+        ),
         (413, "image exceeds 5 MB maximum: 7340032 bytes > 5242880 bytes"),
         (415, "Unsupported media type for image input"),
         (422, "This model does not support vision input"),
@@ -364,9 +366,7 @@ async def test_an_image_refusal_without_an_image_in_the_chat_gets_no_image_hint(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [500, 429])
-async def test_image_words_on_another_status_get_no_image_hint(
-    tmp_path, hooks, status
-):
+async def test_image_words_on_another_status_get_no_image_hint(tmp_path, hooks, status):
     """Only 400/413/415/422 can be an image refusal; a 500 that mentions the
     image (llama.cpp's mmproj reply) keeps the body but no hint."""
     message = "image input is not supported - hint: you may need to provide the mmproj"
@@ -409,3 +409,241 @@ async def test_the_model_hint_is_only_for_404_and_model_not_found(tmp_path, hook
     )
     assert visible.endswith(NOT_FOUND), visible
     assert IMAGE_HINT not in visible
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent", [True, False], ids=["agent", "direct"])
+@pytest.mark.parametrize("staged", [True, False], ids=["staged", "history"])
+async def test_tool_schema_image_name_is_not_an_image_rejection(
+    tmp_path, hooks, monkeypatch, agent, staged
+):
+    """A sent tool schema and an admitted image must remain separate facts."""
+    from tldw_chatbook.Chat.attachment_core import PendingAttachment
+    from tldw_chatbook.Chat.provider_error_reason import is_image_input_rejection
+
+    message = (
+        "Invalid schema for function 'generate_image': schema must have type 'object'."
+    )
+    calls = []
+    failure = _failing_call(
+        400,
+        {
+            "type": "invalid_request_error",
+            "message": message,
+            "param": "tools[0].function.parameters",
+            "code": "invalid_function_parameters",
+        },
+        lambda: ChatBadRequestError(message, provider="anthropic", status_code=400),
+    )
+
+    def call(**kwargs):
+        calls.append(kwargs)
+        return failure(**kwargs)
+
+    outcomes = []
+
+    class ObservedBridge(ConsoleAgentBridge):
+        def run_reply(self, **kwargs):
+            result = super().run_reply(**kwargs)
+            outcomes.append(result[1])
+            return result
+
+    gateway, store, controller, session = _console(
+        tmp_path, hooks, call, agent=agent, bridge_type=ObservedBridge
+    )
+    # The fixture supplies the exact sent schema at the existing preparation
+    # seam; provider dispatch/projection/controller/agent loop remain real.
+    prepare = gateway.prepare_chat_request
+
+    def prepared(*args, **kwargs):
+        kwargs["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_image",
+                    "description": "Synthetic schema control",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        return prepare(*args, **kwargs)
+
+    monkeypatch.setattr(gateway, "prepare_chat_request", prepared)
+    if staged:
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII="
+        )
+        assert store.add_pending_attachment(
+            session.id,
+            PendingAttachment(
+                file_path="leaf.png",
+                display_name="leaf.png",
+                file_type="image",
+                insert_mode="attachment",
+                data=png,
+                mime_type="image/png",
+                original_size=len(png),
+                processed_size=len(png),
+            ),
+        )
+    else:
+        _with_image_turn(store, session)
+    result = await controller.submit_draft("hello")
+    assert result.accepted
+    assert calls, "provider must be reached, rather than a capability/preflight refusal"
+    sent = json.dumps(calls[0], default=str)
+    assert "generate_image" in sent and "image" in sent
+    assert any(isinstance(m.get("content"), list) for m in calls[0]["messages_payload"])
+    visible = _system_row(store, session)
+    assert "tool" in visible.lower() and "generate_image" in visible
+    assert IMAGE_HINT not in visible
+    assert not any(hint in visible for hint in MODEL_HINTS)
+    if agent:
+        assert outcomes and outcomes[-1].console_image_rejection is False
+    projected = await _projected(gateway)
+    assert projected.image_input_rejected is False
+    assert is_image_input_rejection(projected) is False
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {
+            "error": {
+                "message": "Invalid schema for function 'generate_image': bad schema"
+            }
+        },
+        {
+            "error": {
+                "message": "Invalid schema for function 'image_to_text': bad schema"
+            }
+        },
+        {"error": {"code": "generate_image", "type": "vision_error"}},
+        {"error": {"param": "tools[0].function.parameters.properties.image"}},
+        {"error": {"message": "Schema allows image/png; see image documentation"}},
+        {
+            "error": {
+                "message": "Schema quotes 'messages.0.content.1.image.source.data: invalid'"
+            }
+        },
+        {"metadata": {"error": {"code": "invalid_image_format"}}},
+        {"error": {"code": ["invalid_image_format"]}},
+    ],
+)
+def test_tool_schema_carriers_do_not_establish_image_rejection(body):
+    from tldw_chatbook.Chat.provider_error_reason import is_image_input_rejection
+
+    response = requests.Response()
+    response.status_code = 400
+    response._content = json.dumps(body).encode()
+    assert not is_image_input_rejection(requests.HTTPError(response=response))
+
+
+@pytest.mark.parametrize("carrier", ["reason", "text"])
+def test_tool_schema_plain_carriers_do_not_establish_image_rejection(carrier):
+    from tldw_chatbook.Chat.provider_error_reason import is_image_input_rejection
+
+    message = (
+        "Invalid schema for function 'generate_image': image/png property is invalid"
+    )
+    error = ChatBadRequestError(status_code=400)
+    if carrier == "reason":
+        error.provider_reason = message
+    else:
+        response = requests.Response()
+        response.status_code = 400
+        response._content = message.encode()
+        error.response = response
+    assert not is_image_input_rejection(error)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        {"code": "invalid_image_format", "message": "Invalid request"},
+        {"type": "INVALID_IMAGE_FORMAT", "message": "Invalid request"},
+        {"param": "messages[0].content[1].image_url", "message": "Invalid request"},
+        {"param": "content.1.image.source.base64.data", "message": "Invalid request"},
+    ],
+)
+@pytest.mark.parametrize("agent", [True, False], ids=["agent", "direct"])
+@pytest.mark.asyncio
+async def test_structured_image_evidence_survives_projection(
+    tmp_path, hooks, error, agent
+):
+    call = _failing_call(400, error, lambda: ChatBadRequestError(status_code=400))
+    gateway, visible = await _row_for(
+        tmp_path, hooks, call, image_turn=True, agent=agent
+    )
+    assert visible == _anthropic_sentence(400, "Invalid request") + IMAGE_HINT
+    assert (await _projected(gateway)).image_input_rejected is True
+
+
+def test_unknown_malformed_and_severed_image_evidence_fails_closed():
+    from tldw_chatbook.Chat.provider_error_reason import is_image_input_rejection
+
+    for body in (
+        '{"error": {"message": "Invalid image format"',
+        '{"padding":"' + "x" * 65536 + '","error":{"code":"invalid_image_format"}}',
+        "image documentation",
+        "null",
+        "[]",
+    ):
+        response = requests.Response()
+        response.status_code = 400
+        response._content = body.encode()
+        assert not is_image_input_rejection(requests.HTTPError(response=response))
+
+    class BrokenResponse:
+        @property
+        def status_code(self):
+            raise RuntimeError("unusable status")
+
+    broken = RuntimeError()
+    broken.response = BrokenResponse()
+    assert not is_image_input_rejection(broken)
+    positive = _raw_http_error(400, "Invalid image format")
+    severed = RuntimeError()
+    severed.__context__ = positive
+    severed.__suppress_context__ = True
+    assert not is_image_input_rejection(severed)
+    severed.__cause__ = severed
+    assert not is_image_input_rejection(severed)
+    for verdict in (1, "true"):
+        severed.image_input_rejected = verdict
+        assert not is_image_input_rejection(severed)
+
+
+def test_refused_stream_model_recovery_survives_recursion():
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _provider_error_copy_with_model_recovery,
+    )
+    from tldw_chatbook.Chat.refused_stream import REFUSED_STREAM_ADVICE
+
+    copy = _provider_error_copy_with_model_recovery(
+        "failure",
+        model=MODEL,
+        status_code=400,
+        refused_stream=True,
+        model_unavailable=True,
+    )
+    assert copy.endswith(REFUSED_STREAM_ADVICE)
+    assert copy.count(REFUSED_STREAM_ADVICE) == 1
+    assert "Selected model" in copy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent", [True, False], ids=["agent", "direct"])
+async def test_401_with_image_rejection_words_is_still_authentication(
+    tmp_path, hooks, agent
+):
+    call = _failing_call(
+        401,
+        {"code": "invalid_image_format", "message": "Invalid image format"},
+        lambda: ChatAuthenticationError(provider="anthropic"),
+    )
+    _gateway, visible = await _row_for(
+        tmp_path, hooks, call, image_turn=True, agent=agent
+    )
+    assert IMAGE_HINT not in visible
+    assert not any(hint in visible for hint in MODEL_HINTS)

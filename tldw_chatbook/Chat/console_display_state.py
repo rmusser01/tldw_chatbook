@@ -577,7 +577,7 @@ def console_image_blocker(
     return ConsoleBlockedReason(
         refusal,
         code=CONSOLE_BLOCKER_IMAGE_UNSUPPORTED,
-        notice=f"{model or 'the selected model'} can't accept images",
+        notice="this model can't accept images",
     )
 
 

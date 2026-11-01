@@ -53,16 +53,75 @@ async def test_a_staged_image_the_model_cannot_take_names_the_image_not_setup():
         # A model IS selected: readiness is ready; only the image blocks.
         assert console._console_setup_blocked_reason() == ""
         verbatim = console._console_attachment_blocked_reason()
-        assert verbatim.startswith(f"Console send blocked: {MODEL} can't accept images.")
+        assert verbatim.startswith(
+            f"Console send blocked: {MODEL} can't accept images."
+        )
 
         strip = composer.query_one("#console-send-disabled-reason", Static)
-        assert strip.content.plain == f"Send blocked — {MODEL} can't accept images"
+        assert strip.content.plain == "Send blocked — this model can't accept images"
         assert "choose a model" not in strip.content.plain
         assert "run_setup_wizard" not in strip.content.markup
         assert not composer.has_class("console-composer-setup-blocked")
         send = composer.query_one("#console-send-message", Button)
         assert send.disabled
         assert send.tooltip == verbatim
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("width", [160, 235])
+async def test_long_model_image_strip_keeps_the_limitation_visible(width):
+    from rich.cells import cell_len
+    from textual.geometry import Region
+
+    long_model = "org/very-long-selected-nonvision-model:Q4_K_M/" + "catalog-id-" * 8
+    _app, host = _ready_host()
+    _configure_native_ready_console(_app, model=long_model)
+    async with host.run_test(size=(width, 52)) as pilot:
+        console = await _mounted_console(host, pilot)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store = console._ensure_console_chat_store()
+        session_id = store.ensure_session().id
+        composer.load_draft("what colour is this leaf?")
+        image = _image()
+        assert store.add_pending_attachment(session_id, image)
+        console._sync_console_control_bar()
+        await pilot.pause()
+        assert console._console_setup_blocked_reason() == ""
+        assert long_model in console._console_attachment_blocked_reason()
+        strip = composer.query_one("#console-send-disabled-reason", Static)
+        send = composer.query_one("#console-send-message", Button)
+        assert strip.content.plain == "Send blocked — this model can't accept images"
+        painted = "".join(
+            line.text
+            for line in strip.render_lines(
+                Region(0, 0, strip.size.width, strip.size.height)
+            )
+        ).strip()
+        assert painted == strip.content.plain
+        assert (
+            "…" not in strip.content.plain
+            and "run_setup_wizard" not in strip.content.markup
+        )
+        assert not composer.has_class("console-composer-setup-blocked")
+        assert send.disabled and long_model in send.tooltip
+        for resized in (110, 80):
+            await pilot.resize_terminal(resized, 30)
+            await pilot.pause()
+            assert composer.draft_text() == "what colour is this leaf?"
+            assert store.pending_attachments(session_id) == [image]
+            assert long_model in send.tooltip
+            assert composer.query_one("#console-command-visible-text").region.width >= (
+                32 if resized > 80 else 8
+            )
+            if strip.display:
+                painted = "".join(
+                    line.text
+                    for line in strip.render_lines(
+                        Region(0, 0, strip.size.width, strip.size.height)
+                    )
+                ).strip()
+                assert cell_len(painted) <= strip.region.width
+                assert strip.region.width <= composer._send_reason_width_cap()
 
 
 # --- Review of TASK-33621.11: the code rides beside the sentence -----------

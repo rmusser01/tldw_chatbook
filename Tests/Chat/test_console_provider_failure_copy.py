@@ -8,8 +8,11 @@ same undiagnosable 500 (UX review finding
 j3-provider-error-discards-detail-poisons-conversation, REGRESSION).
 """
 
+import json
+
 import httpx
 import pytest
+import requests
 
 from tldw_chatbook.Agents.hook_permissions import HookPermissions
 
@@ -313,17 +316,33 @@ async def test_typed_gateway_error_reaches_console_without_changing_diagnostics(
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [400, 404])
+@pytest.mark.parametrize("body_kind", ["none", "image", "tool"])
 async def test_typed_console_presentation_never_enters_durable_agent_error(
-    tmp_path, provider_failure_hooks, status
+    tmp_path, provider_failure_hooks, status, body_kind
 ):
     """A real gateway projection must retain content-free STEP_ERROR persistence."""
 
     def fail(**_kwargs):
-        raise ChatBadRequestError(
+        error = ChatBadRequestError(
             "Authorization: Bearer SECRET-CANARY",
             provider="anthropic",
             status_code=status,
         )
+        if body_kind != "none":
+            response = requests.Response()
+            response.status_code = status
+            response._content = json.dumps(
+                {
+                    "error": {
+                        "code": "invalid_image_format"
+                        if body_kind == "image"
+                        else "generate_image",
+                        "message": "PRESENTATION-CANARY",
+                    }
+                }
+            ).encode()
+            error.__cause__ = requests.HTTPError(response=response)
+        raise error
 
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
@@ -365,6 +384,13 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
         hook_permissions_accessor=lambda: provider_failure_hooks,
     )
     session = store.create_session(title="Typed failure", ephemeral=True)
+    store.append_message(
+        session.id,
+        role=ConsoleMessageRole.USER,
+        content="image history",
+        image_data=b"\x89PNG-fake",
+        image_mime_type="image/png",
+    )
     result = await controller.submit_draft("hello")
     assert result.accepted
     visible = [
@@ -375,11 +401,11 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
     assert "Provider error from Anthropic" in visible
     # TASK-33621.11 AC#3: only the 404 names the model.
     assert (model in visible) is (status == 404)
-    assert ("choose another model from the model picker" in visible) is (
-        status == 404
-    )
+    assert ("choose another model from the model picker" in visible) is (status == 404)
     assert f"Status: {status}" in visible
     assert "SECRET-CANARY" not in visible
+    image_hint = ConsoleChatController._IMAGE_REJECTION_RECOVERY_HINT
+    assert (image_hint in visible) is (body_kind == "image" and status == 400)
     runs = db.list_runs(session.id)
     assert runs
     steps = [step for run in runs for step in run["steps"]]
@@ -393,6 +419,7 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
     assert model not in summary
     assert "Provider error from Anthropic" not in summary
     assert "SECRET-CANARY" not in summary
+    assert image_hint not in summary and "PRESENTATION-CANARY" not in summary
 
     from tldw_chatbook.Agents.run_log import resolve_existing_log_dir
 
@@ -407,4 +434,5 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
     assert model not in durable
     assert "Provider error from Anthropic" not in durable
     assert "SECRET-CANARY" not in durable
+    assert image_hint not in durable and "PRESENTATION-CANARY" not in durable
     db.close()

@@ -3,7 +3,7 @@ id: TASK-38420
 title: >-
   Console: a tool name ending in _image makes a tool-schema 400 read as an image
   refusal
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-10-31 03:29'
 labels:
@@ -25,3 +25,11 @@ The image hint on a failed reply follows a typed verdict: a 400, 413, 415 or 422
 - [ ] #2 A real image refusal (for example OpenAI's 'invalid_image_format' or Anthropic's content image error) still adds the hint
 - [ ] #3 Tests drive both cases through the real gateway and failure-copy code
 <!-- AC:END -->
+
+## Implementation Plan
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/211-ephemeral-provider-failure-presentation.md.
+Reason: repair existing transient classification; diagnostics and contact/custody stay separate. Existing ADR094/230 remain applicable.
+
+Follow Docs/superpowers/plans/2026-11-01-pr3330-backlog-integration.md: causal gateway/schema and structured-seam RED, bounded strict parser, targeted GREEN; preserve current accounting and received custody.

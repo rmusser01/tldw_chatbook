@@ -107,7 +107,7 @@ and the strip asks you to choose a model first; the row appears once you
 pick one that can't read images.
 
 Where the composer row has room, the strip beside Send reads
-`Send blocked — <model> can't accept images` (it is not a link). Hovering
+`Send blocked — this model can't accept images` (it is not a link). Hovering
 Send, or pressing Enter, gives the full message: "Console send blocked:
 <model> can't accept images. Remove the attachment, switch to a vision
 model, or mark this model as vision-capable under
