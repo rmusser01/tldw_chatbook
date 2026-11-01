@@ -578,6 +578,9 @@ class ConsoleRequestTokenAccounting:
     rag_context_tokens: int = 0
     rag_attributed: bool = False
     attachment_tokens: int = 0
+    # Ephemeral display metadata: rendered minus original system prompt at
+    # preflight. Signed; not a category or part of the authoritative total.
+    system_prompt_delta_tokens: int = 0
 
     @property
     def non_compactable_tokens(self) -> int:

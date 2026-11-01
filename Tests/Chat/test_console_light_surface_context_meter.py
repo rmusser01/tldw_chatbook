@@ -293,7 +293,12 @@ def _openai_native():
     return _native_resolution()
 
 
-def _meter_state(tool_schema_tokens: int):
+def _meter_state(
+    tool_schema_tokens: int,
+    *,
+    used_tokens: int | None = 14,
+    system_prompt_delta: int = 0,
+):
     """The Context view's state on an 8,192-token llama-server, after one
     send whose accounting carried ``tool_schema_tokens`` of tools."""
     from tldw_chatbook.Chat.console_prepared_request import (
@@ -311,19 +316,24 @@ def _meter_state(tool_schema_tokens: int):
         provider="llama_cpp", model="qwen", max_tokens=4096
     )
     estimate = ConsoleSettingsContextEstimate(
-        used_tokens=14,
+        used_tokens=used_tokens,
         token_limit=8_192,
-        label="14 / 8,192 tokens; 4,096 response tokens reserved",
+        label=(
+            f"{used_tokens:,} / 8,192 tokens; 4,096 response tokens reserved"
+            if used_tokens is not None
+            else "Not estimated"
+        ),
         token_limit_verified=True,
     )
     accounting = ConsoleRequestTokenAccounting(
-        total_input_tokens=10 + tool_schema_tokens + 4,
-        system_tokens=10,
+        total_input_tokens=10 + system_prompt_delta + tool_schema_tokens + 4,
+        system_tokens=10 + system_prompt_delta,
         memory_tokens=0,
         mandatory_tokens=0,
         compactable_tokens=0,
         active_request_tokens=4,
         tool_schema_tokens=tool_schema_tokens,
+        system_prompt_delta_tokens=system_prompt_delta,
     )
     return (
         settings,
@@ -405,7 +415,7 @@ async def test_the_context_view_rows_show_the_tool_share():
         ConsoleSettingsModal,
     )
 
-    settings, estimate, state = _meter_state(489)
+    settings, estimate, state = _meter_state(489, used_tokens=2014)
     app = _ContextHarness()
     async with app.run_test(size=(120, 42)) as pilot:
         await app.push_screen(
@@ -429,7 +439,13 @@ async def test_the_context_view_rows_show_the_tool_share():
         assert text("#console-context-overhead") == (
             "Request overhead    499 tokens (tool schemas 489)"
         )
-        assert text("#console-context-next-request") == "Next request        503 tokens"
+        assert (
+            text("#console-context-next-request") == "Next request        2,503 tokens"
+        )
+        assert (
+            "remembered"
+            in screen.query_one("#console-context-next-request", Static).tooltip
+        )
         from tldw_chatbook.Widgets.Console.console_settings_field_row import (
             REQUEST_ESTIMATE_DISCLOSURE_ID,
         )
@@ -437,7 +453,8 @@ async def test_the_context_view_rows_show_the_tool_share():
         title = str(
             screen.query_one(f"#{REQUEST_ESTIMATE_DISCLOSURE_ID}", Collapsible).title
         )
-        assert "503 / 8,192 tokens (tool schemas 489)" in title
+        assert "2,503 / 8,192 tokens (tool schemas 489)" in title
+        assert "remembered overhead estimate" in title
 
 
 # -- one definition: the send, the meter and the Summary agree ---------------
@@ -960,7 +977,16 @@ def test_switching_a_tool_on_never_leaves_fewer_tools_than_the_default(tmp_path)
 # -- review round 3: the history preflight -- every send after the first (TE-1)
 
 
-async def _history_preflight(bridge, resolution, words_per_row, *, memory=False):
+async def _history_preflight(
+    bridge,
+    resolution,
+    words_per_row,
+    *,
+    memory=False,
+    system_prompt="",
+    accounting_sink=None,
+    prepare_request=None,
+):
     """Drive the real history-path preflight
     (``_apply_conversation_memory_preflight``) for a session holding two
     exchanges of ``words_per_row`` words each plus the current request.
@@ -1020,7 +1046,7 @@ async def _history_preflight(bridge, resolution, words_per_row, *, memory=False)
             _memory(snapshots, boundary=snapshots[-2].message_id)
         )
     sized: list[list[dict]] = []
-    prepare = gateway.prepare_chat_request
+    prepare = prepare_request or gateway.prepare_chat_request
 
     def recording(resolution_, messages, *, tools=None, **kwargs):
         if tools is not None:
@@ -1028,17 +1054,28 @@ async def _history_preflight(bridge, resolution, words_per_row, *, memory=False)
         return prepare(resolution_, messages, tools=tools, **kwargs)
 
     gateway.prepare_chat_request = recording
+    raw_request = controller._provider_messages_for_session(
+        session.id, annotate_ids=True
+    )
+    if system_prompt:
+        raw_request.insert(0, {"role": "system", "content": system_prompt})
     output, blocked = await controller._apply_conversation_memory_preflight(
         session_id=session.id,
         resolution=resolution,
-        provider_messages=controller._provider_messages_for_session(
-            session.id, annotate_ids=True
-        ),
+        provider_messages=raw_request,
         assistant_message_id=assistant.id,
         agent_tools_enabled=True,
     )
     assert blocked is None, blocked
     assert sized, "the preflight never sized the request's tools"
+    if accounting_sink is not None:
+        accounting_sink.append(
+            (
+                controller.context_breakdown_accounting(session.id),
+                raw_request,
+                session.id,
+            )
+        )
     return sized[0], output
 
 
@@ -1285,20 +1322,118 @@ def test_review_catalog_only_chip_names_availability():
     assert chip.tools_label == "Tools: 4 available"
 
 
-def test_review_fenced_headline_counts_the_prepared_system_protocol():
-    from dataclasses import replace
+@pytest.mark.parametrize(
+    "tool_tokens,prompt_delta",
+    [(0, 0), (489, 0), (0, 780), (0, -4)],
+    ids=["plain", "native", "fenced", "shorter-prompt"],
+)
+def test_review_next_request_tracks_fresh_draft_with_fixed_accounting(
+    tool_tokens, prompt_delta
+):
+    from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
     from tldw_chatbook.Widgets.Console.console_context_controls import (
-        ContextBreakdownRow,
+        build_console_context_cost_state,
+        context_token_row,
     )
 
-    _settings, estimate, state = _meter_state(0)
-    state = replace(
-        state,
-        breakdown_rows=(
-            ContextBreakdownRow("System prompt", 790),
-            ContextBreakdownRow("Conversation", 4),
-        ),
+    _settings, _estimate, before = _meter_state(
+        tool_tokens, system_prompt_delta=prompt_delta
     )
-    assert state.next_request_tokens == 794
-    assert state.request_estimate_label(estimate).startswith("794 / 8,192 tokens")
-    assert "last prepared" in state.request_estimate_label(estimate)
+    _settings, estimate, after = _meter_state(
+        tool_tokens, used_tokens=2014, system_prompt_delta=prompt_delta
+    )
+    assert before.breakdown_rows == after.breakdown_rows
+    assert after.next_request_tokens == before.next_request_tokens + 2000
+    expected = 2014 + tool_tokens + prompt_delta
+    assert context_token_row("Next request", after.next_request_tokens).endswith(
+        f"{expected:,} tokens"
+    )
+    cost = ConsoleCostState(
+        label="$0.00", compact_label="$0.00", tooltip="", alert=False, cold=False
+    )
+    assert (
+        f"Context: ~{expected:,} / "
+        in build_console_context_cost_state(after, cost).tooltip
+    )
+    assert after.request_estimate_label(estimate).startswith(
+        f"{expected:,} / 8,192 tokens"
+    )
+
+
+def test_review_next_request_without_accounting_and_with_unknown_inputs():
+    from dataclasses import replace
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        build_console_context_control_state,
+    )
+
+    settings, estimate, _state = _meter_state(489, used_tokens=2014)
+    fresh = build_console_context_control_state(settings=settings, estimate=estimate)
+    assert fresh.next_request_tokens == 2014
+    assert fresh.request_estimate_label(estimate) == estimate.label
+    _settings, unknown, remembered = _meter_state(
+        489, used_tokens=None, system_prompt_delta=780
+    )
+    assert remembered.next_request_tokens is None
+    assert remembered.request_estimate_label(unknown) == "Not estimated"
+    assert (
+        replace(
+            remembered, request_tokens=0, system_prompt_delta_tokens=-1000
+        ).next_request_tokens
+        == 0
+    )
+
+
+@pytest.mark.parametrize("native", [True, False], ids=["native", "fenced"])
+def test_review_remembered_prompt_delta_uses_prepared_raw_and_rendered_cost(
+    tmp_path, native
+):
+    from dataclasses import replace
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        build_console_context_control_state,
+    )
+
+    bridge, _gateway, _session, _assistant = _production_bridge(tmp_path, [])
+    bridge._native_tools_enabled = lambda: native
+    resolution = _roomy_native()
+    captured = []
+    prepare = ConsoleProviderGateway(environ={}).prepare_chat_request
+    asyncio.run(
+        _history_preflight(
+            bridge,
+            resolution,
+            20,
+            system_prompt=_words(500),
+            accounting_sink=captured,
+            prepare_request=prepare,
+        )
+    )
+    accounting, raw_request, session_id = captured[0]
+    original = prepare(resolution, raw_request, apply_safety_window=False)
+    surface = bridge.preview_tool_surface(
+        resolution, session_id=session_id, messages=raw_request
+    )
+    rendered = prepare(
+        resolution,
+        surface.request_messages(raw_request),
+        tools=list(surface.tools),
+        apply_safety_window=False,
+    )
+    assert accounting.total_input_tokens == rendered.accounting.total_input_tokens
+    assert accounting.system_prompt_delta_tokens > 0
+    assert (accounting.tool_schema_tokens > 0) is native
+    # Reconstruct the rendered request from the live raw-input estimate: the
+    # existing base prompt is counted once, fenced/native additions once.
+    settings, estimate, _state = _meter_state(0)
+    estimate = replace(estimate, used_tokens=original.accounting.total_input_tokens)
+    state = build_console_context_control_state(
+        settings=settings, estimate=estimate, accounting=accounting
+    )
+    assert state.next_request_tokens == rendered.accounting.total_input_tokens
+    changed = build_console_context_control_state(
+        settings=settings,
+        estimate=replace(estimate, used_tokens=estimate.used_tokens + 2000),
+        accounting=accounting,
+    )
+    assert changed.next_request_tokens == state.next_request_tokens + 2000
+    assert changed.breakdown_rows == state.breakdown_rows

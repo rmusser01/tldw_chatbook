@@ -113,6 +113,7 @@ class ConsoleContextControlState:
     #: TASK-26019: named category rows from the LAST prepared request's
     #: accounting; empty until a send has been prepared this session.
     breakdown_rows: tuple["ContextBreakdownRow", ...] = ()
+    system_prompt_delta_tokens: int = 0
 
     @property
     def conversation_budget_tokens(self) -> int | None:
@@ -145,10 +146,15 @@ class ConsoleContextControlState:
 
     @property
     def next_request_tokens(self) -> int | None:
-        """Last prepared request estimate, including fenced/system overhead."""
-        if self.breakdown_rows:
-            return sum(row.tokens for row in self.breakdown_rows)
-        return self.request_tokens
+        """Current inputs plus remembered tool/prompt overhead, never the old total."""
+        if self.request_tokens is None:
+            return None
+        return max(
+            0,
+            self.request_tokens
+            + self.tool_schema_tokens
+            + self.system_prompt_delta_tokens,
+        )
 
     def overhead_label(self) -> str:
         """The "Request overhead" value, naming the tool schemas' share.
@@ -165,10 +171,12 @@ class ConsoleContextControlState:
             return "unknown"
         text = f"{format_context_tokens(overhead)} tokens"
         tools = self.tool_schema_tokens
-        return f"{text} (tool schemas {format_context_tokens(tools)})" if tools else text
+        return (
+            f"{text} (tool schemas {format_context_tokens(tools)})" if tools else text
+        )
 
     def request_estimate_label(self, estimate: ConsoleSettingsContextEstimate) -> str:
-        """Name the prepared estimate honestly; retain the pre-send fallback."""
+        """Keep the current estimate and qualify its remembered overhead."""
         label = estimate.label.strip() or "Not estimated"
         used, limit = estimate.used_tokens, estimate.token_limit
         head = f"{used:,} / {limit:,} tokens" if used is not None and limit else ""
@@ -178,7 +186,7 @@ class ConsoleContextControlState:
         tool_note = f" (tool schemas {tools:,})" if tools else ""
         return (
             f"{self.next_request_tokens:,} / {limit:,} tokens{tool_note}"
-            f"{label[len(head):]} (last prepared estimate)"
+            f"{label[len(head):]} (remembered overhead estimate)"
         )
 
     @property
@@ -474,6 +482,9 @@ def build_console_context_control_state(
         breakdown_rows=(
             build_context_breakdown(accounting) if accounting is not None else ()
         ),
+        system_prompt_delta_tokens=(
+            accounting.system_prompt_delta_tokens if accounting is not None else 0
+        ),
     )
 
 
@@ -516,6 +527,8 @@ def build_console_context_cost_state(
             f"Context: ~{format_context_tokens(used)} / "
             f"{format_context_tokens(ceiling)} safe input ({fullness} full)"
         )
+        if context.breakdown_rows:
+            context_line += " (remembered overhead estimate)"
         if (
             context.model_window_tokens is not None
             and not context.model_window_verified
@@ -555,9 +568,7 @@ def build_console_context_cost_state(
             f"{context_part}Current {current_label} "
             f"· On next send {next_send.label}"
         ),
-        compact_label=(
-            f"{compact_part}Now {current_label} · Next {next_send.label}"
-        ),
+        compact_label=(f"{compact_part}Now {current_label} · Next {next_send.label}"),
         tooltip="\n".join(
             (
                 context_line,

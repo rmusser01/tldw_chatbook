@@ -3516,9 +3516,28 @@ class ConsoleCompactionPreflight:
         capacity = prepared_before.capacity
         # TASK-26019: this accounting IS the request's own (AC#2); the
         # breakdown surface reads the latest copy, no re-estimation.
-        self.read_controller__context_accounting_by_session()[session_id] = (
-            prepared_before.accounting
-        )
+        accounting = prepared_before.accounting
+        if surface.system_prompt is not None:
+            # Count only the original prompt, never history or a second send.
+            # The live estimate already includes this prompt; remember only
+            # the signed rendering delta (fenced tools/runtime guidance).
+            original_system = []
+            for row in retained_messages:
+                if row.get("role") != "system":
+                    break
+                original_system.append(row)
+            original = prepare(
+                resolution,
+                [*original_system, {"role": "user", "content": ""}],
+                apply_safety_window=False,
+            )
+            accounting = self.read_global_replace()(
+                accounting,
+                system_prompt_delta_tokens=(
+                    accounting.system_tokens - original.accounting.system_tokens
+                ),
+            )
+        self.read_controller__context_accounting_by_session()[session_id] = accounting
         mandatory_tokens = (
             prepared_before.accounting.non_compactable_tokens
             - prepared_before.accounting.memory_tokens

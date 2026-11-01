@@ -1877,12 +1877,18 @@ class ConsoleSettingsModal(
                             classes="console-settings-modal-row",
                             markup=False,
                         )
-                        yield Static(
+                        next_request = Static(
                             context_token_row("Next request", self._context_state.next_request_tokens),
                             id="console-context-next-request",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
+                        next_request.tooltip = (
+                            "Current draft estimate with remembered tool/prompt overhead."
+                            if self._context_state.breakdown_rows
+                            else "Current draft estimate."
+                        )
+                        yield next_request
                         yield Static(
                             f"{'Request overhead':<20}{self._context_state.overhead_label()}",
                             id="console-context-overhead",

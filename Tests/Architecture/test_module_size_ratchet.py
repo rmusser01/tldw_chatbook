@@ -180,7 +180,8 @@ _BUDGETS: dict[str, int] = {
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
-    "tldw_chatbook/Chat/console_context_compaction.py": 4198,
+    # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
+    "tldw_chatbook/Chat/console_context_compaction.py": 4217,
     "tldw_chatbook/Chat/console_chat_store.py": 22338,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
@@ -502,7 +503,8 @@ _BUDGETS: dict[str, int] = {
     # Rebased onto dev 69771c1811, whose TASK-33008 keyless-403 hint added 13: 6,166.
     # TASK-35578: 6,159; the dead _snapshot_model went, the saved-list note came.
     # Its review: 6,162; a named custom endpoint's listing gets its own note.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6162,
+    # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-overhead tooltip measurement.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6168,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7010,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,

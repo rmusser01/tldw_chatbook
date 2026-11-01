@@ -157,3 +157,14 @@ runtime-free direct light tier remains deferred in TASK-34100.5.3.1: enabling fu
 mode can therefore yield fewer directly offered tools on a small window. Historical
 no-tools/inbox-only traces predate compact discovery and are not current guarantees.
 No new runtime authority or capacity limit is introduced by these repairs.
+
+The live Next request estimate retains current draft, history and session-prompt
+changes. It adds the last prepared native tool share and signed system-prompt delta
+(rendered prompt minus original prompt), explicitly as remembered overhead. The
+delta is measured once at preflight using the existing pure prompt-only preparation
+seam; the empty user row is counting input, never dispatched. No history reprocessing,
+source discovery, provider transport, reservation or ledger write is introduced.
+This ephemeral display metadata neither changes prepared totals nor persists a new
+format. Unknown current estimates remain unknown; the last-request breakdown remains
+historical. Changed sources or tool selection may make remembered overhead stale
+until another preflight, so dispatch accounting remains authoritative.
