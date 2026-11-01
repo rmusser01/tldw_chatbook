@@ -1994,6 +1994,29 @@ TOML, reloads, reads the setting). When new code reads a section from `app_confi
 in `load_settings()`'s returned dict and test through a real save-then-load, not
 a hand-seeded dict.
 
+**TASK-34100.4 part 2, 2026-10-05: the same trap, read-only.** The setup
+wizard's Protect step and `stored_plaintext_key_present` asked
+`app_config["encryption"]["enabled"]` whether keys were encrypted. `[encryption]`
+is not in `load_settings()`'s dict, so in the running app the answer was always
+"no" -- and the unlocked session holds the DECRYPTED keys, so an encrypted config
+read as "plain text" and was offered a second password. Every unit test passed,
+because each one seeded `{"encryption": {"enabled": True}}` by hand. The fix
+reads the file back (`load_cli_config_and_ensure_existence(force_reload=True)`,
+which keeps the table), and the new test feeds the step the in-memory shape the
+real app has: decrypted key, no `[encryption]`. If a section is deliberately not
+copied, a reader of it must not use `app_config` at all.
+
+**TASK-34100.4 review round 1, 2026-10-06: the file read-back has its own trap.**
+Round 1 made Protect walk that read-back for every secret encryption would
+encrypt (`is_sensitive_config_key`: any `*_key`, `*_token`, ...), and tested it
+on hand-built dicts plus one real `config.toml` -- a FRESH one. Live, mid-setup,
+the file also holds the wizard's own checkpoint, and `[first_run.draft_values.
+provider] provider_key = "llama_cpp"` matches the `_key` suffix: a keyless user
+was offered encryption for "1 secret (first_run.draft_values.provider.
+provider_key)". A whole-file walk must be tested against the file as it is at
+the moment the code runs (after the flow has written its own state), not only
+against a fresh template.
+
 ## Tests/UI `RecoveryRequired` at setup is a profile-selection trip, not a broken test
 
 **TASK-32954, 2026-09-25.** Task 5's `Tests/UI/test_personas_character_changed.py`
@@ -23348,3 +23371,16 @@ The root rebased after starting the corrected UI partition controls. Two cases c
 ## Preserve the fixture layer when probing native UI controls (PR3290 CI repair, 2026-10-29)
 
 The first held-folder probe was collected from scratch outside Tests/UI. It failed marker registration before App execution, and config import occurred before the UI fixture bootstrap. It was invalid evidence and kept private. Selecting the original Tests/UI node and installing an observation/probe plugin preserved the real UI conftest/bootstrap/profile guards; later native runs reproduced the actual folder-publication and retired-row message gap. Do not mistake a scratch test with the same code for the original collection/fixture environment, and never count its setup failure as product RED.
+
+## Exception-only doubles can hide a loader's real fallback contract (TASK-34100.4, 2026-10-31)
+
+**Incident.** PR3293's Protect test replaced the public config loader with an
+OSError. The real loader catches malformed TOML and strict-decrypt failures and
+returns defaults or its retained good snapshot, so Protect still falsely said
+plain text or Nothing to protect. Real isolated-file regressions reproduced both
+failures; Protect now checks the existing bootstrap success result.
+
+**What to do.** Before mocking a load failure, inspect the loader's returned
+failure contract. Exercise swallowed failures with a real malformed file and a
+retained snapshot as well as an empty cache; a raising double only covers the
+exception branch.

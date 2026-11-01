@@ -162,7 +162,10 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
-from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+from tldw_chatbook.Chat.provider_readiness import (
+    custom_endpoint_family_readiness,
+    get_provider_readiness,
+)
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_session_settings import reasoning_effort_hint_for_model
@@ -4240,13 +4243,25 @@ class ConsoleProviderGateway:
                 or endpoint
                 or DEFAULT_LLAMACPP_BASE_URL
             )
+        from tldw_chatbook.Chat.provider_readiness import STILL_ENCRYPTED_REASON
+        from tldw_chatbook.config import is_encrypted_config_value
+
         api_key = None
+        stranded = False
         if entry:
             api_key, _ = _custom_entry_credential(entry, self._environ)
+            stranded = api_key is None and is_encrypted_config_value(entry.api_key)
         elif family in URL_BASED_PROVIDER_KEYS or family == "openrouter":
-            api_key = get_provider_readiness(
+            readiness = get_provider_readiness(
                 identity.readiness_key, config, environ=self._environ
-            ).api_key
+            )
+            api_key = readiness.api_key
+            stranded = readiness.reason == STILL_ENCRYPTED_REASON
+        if stranded:
+            # TASK-34100.4 review (F4): the server wants the key that is still
+            # `enc:`; a keyless metadata probe only earns a 401 for a target
+            # readiness already blocks. No endpoint, no probe.
+            endpoint = ""
         return ContextWindowTarget(
             settings.provider, family, endpoint or "", settings.model or "", api_key
         )
@@ -4569,8 +4584,8 @@ class ConsoleProviderGateway:
             # keyed entry sends unauthenticated (server 401) while the Task 3
             # UI gate says Ready. The missing-key gate reuses Task 3's
             # session-settings semantics so the UI and the gateway block
-            # identically; keyless entries (nothing declared) ride the plain
-            # family readiness unchanged.
+            # identically. Entry presence owns the credential decision, including
+            # None: a keyless entry never borrows the ordinary family's key.
             missing_entry_key = _custom_endpoint_missing_key_readiness(
                 custom_entry, identity.readiness_key, self._environ
             )
@@ -4586,7 +4601,13 @@ class ConsoleProviderGateway:
                 custom_entry, self._environ
             )
         if identity.uses_direct_llama_path:
-            readiness = get_provider_readiness(
+            # TASK-34100.4 review (F3): an entry never blocks on the family
+            # slot's own stranded key; its credential was resolved above.
+            readiness = (
+                custom_endpoint_family_readiness
+                if custom_entry is not None
+                else get_provider_readiness
+            )(
                 identity.readiness_key,
                 app_config,
                 environ=self._environ,
@@ -4618,12 +4639,12 @@ class ConsoleProviderGateway:
                     configured_model=selection.configured_model,
                     api_key=(
                         entry_api_key
-                        if entry_api_key is not None
+                        if custom_entry is not None
                         else readiness.api_key
                     ),
                     api_key_source=(
                         entry_api_key_source
-                        if entry_api_key is not None
+                        if custom_entry is not None
                         else readiness.api_key_source
                     ),
                     temperature=selection.temperature,
@@ -4837,7 +4858,9 @@ class ConsoleProviderGateway:
             )
 
         readiness_call = functools.partial(
-            get_provider_readiness,
+            custom_endpoint_family_readiness
+            if custom_entry is not None
+            else get_provider_readiness,
             identity.readiness_key,
             app_config,
             environ=self._environ,
@@ -4934,11 +4957,11 @@ class ConsoleProviderGateway:
                 else ""
             ),
             api_key=(
-                entry_api_key if entry_api_key is not None else readiness.api_key
+                entry_api_key if custom_entry is not None else readiness.api_key
             ),
             api_key_source=(
                 entry_api_key_source
-                if entry_api_key is not None
+                if custom_entry is not None
                 else readiness.api_key_source
             ),
             prompt_caching=prompt_caching,
