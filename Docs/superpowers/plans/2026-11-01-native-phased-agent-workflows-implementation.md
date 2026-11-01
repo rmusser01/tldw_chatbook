@@ -16,7 +16,7 @@
 
 **Baseline:** finalized design commit `8f989edc9f`. Source mapping was inspected in the current dirty checkout; unrelated staged additions are not implied to be committed prerequisites. Recheck the integrated source, symbols and schema before execution.
 
-**Status:** Implementation in progress. Tasks 1–5 passed their independent review gates; Tasks 6–10 remain pending. Runtime/UI delivery is incomplete.
+**Status:** Implementation in progress. Tasks 1–6 passed their independent review gates; Tasks 7–10 remain pending. Runtime/UI delivery is incomplete.
 
 ```text
 ADR required: no
@@ -273,9 +273,9 @@ Filter advertised tools by captured mode, but enforce the same boundary at runti
 
 **Consumes:** native spawn/continuation, Task 2 phase/task claims and Task 5 authorization. **Produces:** a shared private prepared-child launch path and, for Task 8 integration, `AgentService.launch_workflow_task(task: WorkflowTaskSpec, *, authorization: WorkflowTaskAuthorization, should_cancel: Callable[[], bool]) -> WorkflowChildReceipt`. `WorkflowChildReceipt` contains `attempt_id`, `run_id`, `handle_id` and its `ExecutionOwner`; it grants no new authority. The runtime-only caller must supply Task 5 custody; that module, including its type, must be present before positive workflow dispatch is enabled. Ordinary spawning still enters the same shared private launcher with ordinary native custody. A persisted identifier cannot call this seam directly.
 
-- [ ] **1. Characterize actual `_launch_fleet_child`, `spawn`, continuation and finalization callers** before moving code. Add assertions for one capacity reservation, one persisted run, owner/run binding, exactly one hook lifecycle, frozen endpoint/fallback refs, current per-run approval stamps, provider closure and result settlement. Cover a child surviving its parent, cancelled/uncertain workers and failed thread start.
-- [ ] **2. Run the existing cases before refactoring:** `.venv/bin/python -m pytest -q Tests/Agents/test_fleet_runtime.py Tests/Agents/test_fleet_continuation.py Tests/Chat/test_fleet_client_lifecycle.py`. Retain actual bootstrap failures separately; do not use the refactor to hide them.
-- [ ] **3. Extract the existing composition/launch tail with explicit captured inputs.** Preserve per-turn roster, instruction activation, task budget, native origin, model client and cancellation closures. Never retain a closure into a later phase's mutable turn state. Ordinary inline/skill paths and `max_live_subagents <= 1` behavior remain unchanged. Host-planned shared-worktree tasks use the same authority and capacity owners and cannot select isolation as a side effect.
+- [x] **1. Characterize actual `_launch_fleet_child`, `spawn`, continuation and finalization callers** before moving code. Add assertions for one capacity reservation, one persisted run, owner/run binding, exactly one hook lifecycle, frozen endpoint/fallback refs, current per-run approval stamps, provider closure and result settlement. Cover a child surviving its parent, cancelled/uncertain workers and failed thread start.
+- [x] **2. Run the existing cases before refactoring:** `.venv/bin/python -m pytest -q Tests/Agents/test_fleet_runtime.py Tests/Agents/test_fleet_continuation.py Tests/Chat/test_fleet_client_lifecycle.py`. Retain actual bootstrap failures separately; do not use the refactor to hide them.
+- [x] **3. Extract the existing composition/launch tail with explicit captured inputs.** Preserve per-turn roster, instruction activation, task budget, native origin, model client and cancellation closures. Never retain a closure into a later phase's mutable turn state. Ordinary inline/skill paths and `max_live_subagents <= 1` behavior remain unchanged. Host-planned shared-worktree tasks use the same authority and capacity owners and cannot select isolation as a side effect.
 
 ```python
 def test_untrusted_host_launch_never_creates_a_child(service):
@@ -288,9 +288,9 @@ def test_untrusted_host_launch_never_creates_a_child(service):
 ```
 
 Define the `service` fixture in the new test module with the same real temporary AgentRunsDB/registry construction used in `Tests/Agents/test_fleet_runtime.py`; record its original row and capacity counts and assert both remain unchanged. The deliberately invalid arguments must fail authorization before task construction or child creation.
-- [ ] **4. Preserve failure unwind.** Proven pre-dispatch refusal refunds only unconsumed reservations. An already claimed launch with unknown thread/provider/effect state remains inspectable and unavailable for replay. Root completion cannot release held model/tool operations. Do not change automatic survivor delivery yet; Task 8 adds typed membership handling with end-to-end tests.
-- [ ] **5. Run parity plus** `Tests/Agents/test_agent_routing_integration.py`, `Tests/Agents/test_fleet_stop_semantics.py`, `Tests/Chat/test_individual_fleet_settlement.py` and the new negative-launch module. Add positive approved-task tests when Task 5 custody is available; Task 8 must exercise the same seam with the actual coordinator.
-- [ ] **6. Review and commit** `refactor: share native fleet child launch custody`. Report moved behavior and measured regression results rather than claiming a new executor was built.
+- [x] **4. Preserve failure unwind.** Proven pre-dispatch refusal refunds only unconsumed reservations. An already claimed launch with unknown thread/provider/effect state remains inspectable and unavailable for replay. Root completion cannot release held model/tool operations. Do not change automatic survivor delivery yet; Task 8 adds typed membership handling with end-to-end tests.
+- [x] **5. Run parity plus** `Tests/Agents/test_agent_routing_integration.py`, `Tests/Agents/test_fleet_stop_semantics.py`, `Tests/Chat/test_individual_fleet_settlement.py` and the new negative-launch module. Add positive approved-task tests when Task 5 custody is available; Task 8 must exercise the same seam with the actual coordinator.
+- [x] **6. Review and commit** `refactor: share native fleet child launch custody`. Report moved behavior and measured regression results rather than claiming a new executor was built.
 
 <a id="task-7"></a>
 ## Task 7: Required evidence, checkpoint settlement and explicit recovery

@@ -1,7 +1,7 @@
 ---
 id: TASK-38529
 title: Share the existing fleet child launch path without behavior drift
-status: In Progress
+status: Done
 created_date: 2026-11-01 17:31
 dependencies:
 - TASK-38524
@@ -16,7 +16,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md
 - backlog/decisions/285-native-phased-agent-workflows.md
-updated_date: 2026-11-01 21:30
+updated_date: 2026-11-01 21:33
 ---
 
 ## Description
@@ -27,9 +27,9 @@ Deliver implementation slice 6 of the accepted native shared-worktree workflow d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Ordinary spawn and continuation retain routing, frozen targets, hooks, instructions, permission stamps, accounting and physical/client cleanup.
-- [ ] #2 A host-only child-launch seam accepts captured task launch custody without a bare thread or parallel execution owner.
-- [ ] #3 Inline/threaded behavior and failure/refund/settlement paths remain independently verified against existing fleet regressions.
+- [x] #1 Ordinary spawn and continuation retain routing, frozen targets, hooks, instructions, permission stamps, accounting and physical/client cleanup.
+- [x] #2 A host-only child-launch seam accepts captured task launch custody without a bare thread or parallel execution owner.
+- [x] #3 Inline/threaded behavior and failure/refund/settlement paths remain independently verified against existing fleet regressions.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,17 +48,18 @@ Reason: This slice implements the approved native shared-child-launch boundary; 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Shared the existing native child composition and fleet launch/settlement tail with private workflow preparation. Original Task5 custody, activity-before-capacity, reserved allowance/run identity and native commit remain authoritative. Frozen task-only messages and explicit instruction snapshots survive caller mutation; one native service per task and duplicate fences protect the original row, client and owner, including the direct no-log route. Task-owned logs reuse native finalization once; shared parent logs remain parent-owned.
+Shared the existing native child composition and fleet launch/settlement tail. Original private workflow custody, activity-before-capacity, original reservation/run identity and native commit stay authoritative. Frozen task-only messages, explicit instruction snapshots, one native service per workflow task, duplicate fences and owned-log finalization preserve the original row/client/owner. Genuine fleet capacity waits retain the same preparation/allowance and optional writer; typed waits permit coordinator pending state without parsing error strings. Unknown/accepted launch states remain fenced.
 
-Extended real native host/duplicate/failure/client-drain tests, ordinary owner/continuation assertions and exact hook lifecycle counts. The full named regression run executed422 passing bodies with four inherited isolated-worktree scope failures; exact BASE consumer import reproduced those four without replacing shared source. Original source-profile failures and exact-node supported-profile qualifications remain separately recorded. Scoped lint/format/compile and preservation checks passed; legacy lint/format findings were not broadly rewritten. The task remains In Progress with AC pending independent review.
+Independent spec+quality review found and verified the fleet-capacity retry correction; scoped re-review passed. Full named qualification executed422 passing bodies with4 inherited isolation failures/4teardown, reproduced through read-only exact-BASE consumer import. Final owned-log covering48 passed; fix21host+7ordinary=28passed plus4 original allowance controls. Original profile failures and narrow supported-profile qualification remain separate. Scoped static checks and recorded unrelated-file/index preservation passed. Existing warnings remain disclosed; no full suite/live provider/GUI claim.
 
-ADR: backlog/decisions/285-native-phased-agent-workflows.md. Architecture and the observed source-profile masking lesson updated. Full commands/results/contracts/limits are in .superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-6-report.md. Real coordinator wiring and required-result settlement remain with their existing subsequent implementation slices; workflow hooks/scripts stay unsupported.
-Review fix1 (I1): a proven no-handle fleet-capacity wait now keeps the original workflow allowance/preparation, unwinds transient activity/capacity and leaves the task log pending. Typed host wait signals distinguish activity/fleet waits from terminal refusal; native runtime CapacityRefused remains unchanged. Real fleet exhaustion/drain retries the same authorization and produces exactly one eventual row/commit/bound owner. Host plus affected ordinary fleet controls:28 passed; original automatic refund/setup-charge controls:4 passed. Static/preservation evidence and exact commands appended to the Task6 report. Status/AC remain pending independent re-review.
+ADR required: no (existing ADR applies)
+ADR path: backlog/decisions/285-native-phased-agent-workflows.md
+Reason: Implements accepted native child-launch boundary with source-backed private preparation/wait contracts. Updated architecture and observed testing lesson. Runtime/coordinator bridge integration and required-result settlement remain later slices; workflow hook/script guards remain. Full evidence/contracts in .superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-6-report.md. Commits e8a77b4db6 ande9cc2d2f39.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Shared native composition/launch custody passed independent spec+quality review after the fleet-capacity retry fix. Targeted evidence and inherited limits are retained; required-result/coordinator integration follows in the existing plan.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
