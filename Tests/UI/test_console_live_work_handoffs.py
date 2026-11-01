@@ -3261,7 +3261,8 @@ async def test_notes_handoff_evidence_bundle_reaches_capture_as_real_context(req
         assert launch is not None
 
     capture_app = SimpleNamespace(
-        chachanotes_db=_ExistingChaChaDBDouble(note_ids={"42"})
+        citation_trace_repository=None,
+        chachanotes_db=_ExistingChaChaDBDouble(note_ids={"42"}),
     )
     result = await capture_console_staged_evidence_for_chat(
         capture_app, launch, user_message="What should I follow up on?"
@@ -3294,7 +3295,8 @@ async def test_conversation_handoff_evidence_bundle_reaches_capture_as_real_cont
         assert launch is not None
 
     capture_app = SimpleNamespace(
-        chachanotes_db=_ExistingChaChaDBDouble(conversation_ids={"conv-9"})
+        citation_trace_repository=None,
+        chachanotes_db=_ExistingChaChaDBDouble(conversation_ids={"conv-9"}),
     )
     result = await capture_console_staged_evidence_for_chat(
         capture_app, launch, user_message="What did we plan?"

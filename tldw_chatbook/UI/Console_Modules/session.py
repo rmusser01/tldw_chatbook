@@ -2811,23 +2811,11 @@ class ConsoleSessionController:
     def _fork_conversation_kwargs(
         snapshot: ConsoleChatForkSnapshot,
     ) -> dict[str, object]:
-        configuration = snapshot.configuration
-        global_scope = configuration.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
-        return {
-            "conversation_title": snapshot.title,
-            "scope_type": "global" if global_scope else "workspace",
-            "workspace_id": None if global_scope else configuration.workspace_id,
-            "system_prompt": configuration.settings.system_prompt,
-            "runtime_backend": configuration.runtime_backend,
-            "assistant_kind": configuration.assistant_kind,
-            "assistant_id": configuration.assistant_id,
-            "assistant_authority_id": configuration.assistant_authority_id,
-            "persona_memory_mode": configuration.persona_memory_mode,
-            "character_id": configuration.character_id,
-            "character_name": configuration.character_name,
-            "speech_preferences": configuration.speech_preferences,
-            "thinking_history_policy": configuration.thinking_history_policy,
-        }
+        from tldw_chatbook.Chat.console_chat_fork import fork_conversation_kwargs
+
+        return fork_conversation_kwargs(
+            snapshot, global_workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID
+        )
 
     def _registered_fork_exists(
         self,

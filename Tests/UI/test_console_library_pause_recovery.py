@@ -202,7 +202,14 @@ async def test_the_shelf_never_offers_a_send_the_card_is_sending(phase):
             with pytest.raises(RuntimeError):
                 runtime.restore_turn_recovery(entry.turn_id)
             await until(lambda: not _shelf_offers_unsent_turn(console))
-            assert composer.draft_text() == ""
+            if phase == "search":
+                # A held search has not accepted the send or consumed its draft.
+                preparation = controller.store.preparation_by_id(entry.preparation_id)
+                assert preparation is not None
+                assert preparation.state is ConsoleTurnPreparationState.PREPARING
+                assert preparation.executed_draft == composer.draft_text() == FIRST
+            else:
+                assert composer.draft_text() == ""
 
             library.release.set()
             gateway.release.set()

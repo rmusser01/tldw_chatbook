@@ -3317,32 +3317,10 @@ class ConsoleRuntime:
         )
 
     def _turn_recovery_offered(self, entry: ConsoleTurnRecoveryEntry) -> bool:
-        """Whether an unsent turn may be restored or discarded right now.
+        """Read the shelf/card owner's current recovery offer decision."""
+        from tldw_chatbook.Chat.console_unsent_turn import turn_recovery_offered
 
-        Not while its paused send's card is acting on it (held), and not once
-        that send has been accepted: either way Restore would send it twice.
-        Other states are not a signal: a failed durable commit is paused, or
-        COMMITTING under another owner, and its turn must stay restorable.
-        """
-        preparation_id = entry.preparation_id
-        if preparation_id is None:
-            return True
-        if preparation_id in self._card_held_preparations:
-            return False
-        store = getattr(self._chat_controller, "store", None)
-        lookup = getattr(store, "preparation_by_id", None)
-        preparation = lookup(preparation_id) if callable(lookup) else None
-        if preparation is None:
-            return True
-        from tldw_chatbook.Chat.console_turn_preparation import (
-            ConsoleTurnPreparationState as State,
-        )
-
-        return preparation.state not in {
-            State.ACCEPTED,
-            State.DISPATCH_STARTED,
-            State.DISPATCHED,
-        }
+        return turn_recovery_offered(self, entry)
 
     def restore_turn_recovery(self, turn_id: str) -> ConsoleTurnRecoveryEntry:
         """Re-stage one exact recovery into its still-live owning session."""

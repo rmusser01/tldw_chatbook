@@ -353,3 +353,32 @@ def return_turn_recovery_to_draft(
         self.forget_turn_recoveries_for_preparation(preparation_id)
     store._publish_session_draft_handoff(session, entry.draft)
     return entry
+
+
+def turn_recovery_offered(self: Any, entry: Any) -> bool:
+    """Whether an unsent turn may be restored or discarded right now.
+
+    Not while its paused send's card is acting on it (held), and not once
+    that send has been accepted: either way Restore would send it twice.
+    Other states are not a signal: a failed durable commit is paused, or
+    COMMITTING under another owner, and its turn must stay restorable.
+    """
+    preparation_id = entry.preparation_id
+    if preparation_id is None:
+        return True
+    if preparation_id in self._card_held_preparations:
+        return False
+    store = getattr(self._chat_controller, "store", None)
+    lookup = getattr(store, "preparation_by_id", None)
+    preparation = lookup(preparation_id) if callable(lookup) else None
+    if preparation is None:
+        return True
+    from tldw_chatbook.Chat.console_turn_preparation import (
+        ConsoleTurnPreparationState as State,
+    )
+
+    return preparation.state not in {
+        State.ACCEPTED,
+        State.DISPATCH_STARTED,
+        State.DISPATCHED,
+    }

@@ -109,7 +109,7 @@ _BUDGETS: dict[str, int] = {
     # ``_notes_sync_runtime_lazy_start_task`` slot beside the start-task
     # slot, so the Library's bounded settle wait can tell the task it
     # scheduled from boot's own (M-1).
-    "tldw_chatbook/app.py": 5704,
+    "tldw_chatbook/app.py": 5700,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -715,13 +715,13 @@ _BUDGETS: dict[str, int] = {
     # carries card_held) instead of dropped, so Cancel loses no attachment.
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6990 -> 7001.
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
-    "tldw_chatbook/UI/Console_Modules/session.py": 6886,
+    "tldw_chatbook/UI/Console_Modules/session.py": 6884,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7068,
+    "tldw_chatbook/Chat/console_runtime.py": 7064,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-097 amendment 2026-10-27). The proof itself lives in
@@ -752,7 +752,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Model_Artifacts/service.py": 4896,
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     "tldw_chatbook/DB/Prompts_DB.py": 4760,
-    "tldw_chatbook/Chat/citation_trace_repository.py": 4719,
+    "tldw_chatbook/Chat/citation_trace_repository.py": 4712,
     # 2026-10-29, TASK-34000.28/.40 polish-1a (PR #3259), rebased onto dev
     # 38c9d2edcf: 4,646 -> 4,736 (+90: the filter fast path, kept draft and
     # one-hop link-back on the Notes canvas). Owner rule "expand limits,

@@ -404,6 +404,7 @@ def _capture_app(service, *note_ids: str) -> SimpleNamespace:
         library_rag_search_service=service,
         chachanotes_db=_ExistingNotesDouble(*note_ids),
         workspace_registry_service=registry,
+        citation_trace_repository=None,
     )
 
 
