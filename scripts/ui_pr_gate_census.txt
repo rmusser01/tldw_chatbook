@@ -1881,10 +1881,18 @@ Tests/UI/test_console_composer_token_expand_key.py::test_the_expand_key_expands_
 Tests/UI/test_console_raw_cli_admission_repairs.py
 # TASK-33621.22 (2026-10-29): Stop in the pre-provider "Connecting tools…"
 # window settles as Stopped and the next send reaches the provider, for a
-# fresh send and for a Retry of a failed reply. One node id per mounted case
-# (each about 8-15 s locally) keeps every entry well under the lane's 30 s
-# budget; appended at the tail.
+# fresh send and for a Retry of a failed reply. Keep one node per mounted
+# case at the tail; current Windows functional timings are in PR3320 QA.
 Tests/UI/test_console_stop_connecting_tools.py::test_stop_while_connecting_tools_lets_the_next_send_reach_the_provider[composing-tools]
 Tests/UI/test_console_stop_connecting_tools.py::test_stop_while_connecting_tools_lets_the_next_send_reach_the_provider[after-dispatch-checkpoint]
 Tests/UI/test_console_stop_connecting_tools.py::test_stop_while_a_retry_connects_tools_frees_the_tab[composing-tools]
 Tests/UI/test_console_stop_connecting_tools.py::test_stop_while_a_retry_connects_tools_frees_the_tab[after-retry-prepared]
+
+# PR3320 integration: exact accepted owner, temporary privacy and native error boundaries.
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[hook]
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[memory]
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[create-chain]
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[temporary-compose]
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[temporary-dispatch]
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[postwrite]
+Tests/UI/test_console_accepted_setup_stop.py::test_accepted_setup_stop_retires_exact_owner[prewrite]

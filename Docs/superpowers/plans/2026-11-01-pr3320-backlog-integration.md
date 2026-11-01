@@ -1,6 +1,6 @@
 # PR3320 backlog integration
 
-Original source ea80c2427c0c3c92ebfa68ce834ff622bd1aa2d6 (true base b1ca1b11fa44a8e0ff0a09dfbffe940072861ba4) is provisionally rebased onto dev b5aef686c5ee190c30297ec6150ef839e6158827 as75f35131a10da9ffc05031de305b4ba5187c04d3. Refresh/rebase onto confirmed dev after PR3319 before final validation/publication. This PR is non-draft and unarmed. No release/main or excluded PR3267/3297 actions.
+Original source ea80c2427c0c3c92ebfa68ce834ff622bd1aa2d6 (true base b1ca1b11fa44a8e0ff0a09dfbffe940072861ba4) is provisionally rebased onto dev b5aef686c5ee190c30297ec6150ef839e6158827 as75f35131a10da9ffc05031de305b4ba5187c04d3. Final rebase onto PR3319 dev d424d1b6887a0f834ca4f68bcf2103e869e89a9d completed as e788e2bc6f744407dbe1ed6129fd9ae50a271ae6; current-base qualification is recorded in the paired QA note. This PR is non-draft and unarmed. No release/main or excluded PR3267/3297 actions.
 
 ADR required: no new ADR.
 ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md and backlog/decisions/230-console-send-preparation-and-io-ownership.md.
@@ -38,3 +38,13 @@ Mounted regressions also observe the real `_finish_custodied_turn` result and re
 ### Direct-provider authored prefill preservation
 
 Existing response-prefill spec (Docs/superpowers/specs/2026-07-20-console-response-prefill-design.md, sections 2/3/6) requires immediate visible seeding and retaining the visible prefix on pre-chunk failure. Preserve those display promises while closing the direct readiness handoff. Boundary audit found the durable acceptance clear_staged_input function already consumes the captured one-shot revision before readiness; its source is byte-identical to provisional baseline75f35131a10da9ffc05031de305b4ba5187c04d3 (SHA25678d1f1a7cd8772eb273fdb5fc84c8760c4d77763e6b3520450e5a0e7d7dc36db). That differs from the older spec and non-durable fixtures. This repair preserves that existing acceptance policy and records the mismatch; it must not consume a newly armed revision during failed settlement or claim to retain an original slot already consumed before its boundary. Bind any expected accepted prefix to the exact original direct continuation/commit and generation owner; the existing native terminal owner must require the actual buffered/materialized content to equal that authored prefix. Default expectation remains empty for all other callers; unexpected content, changed ownership and outstanding generation tokens still refuse. No reset/replay, fabricated dispatch or hidden display delay. Qualify prefilling Stop, prewrite failure, ordinary failed/completed/stopped prefill behavior and unexpected-content refusal. This implements existing ADR094/230 and response-prefill contracts; no new ADR.
+
+
+## Task 2: Refresh original mounted verification on current dev
+
+Diagnose and repair obsolete test-owned boundaries in the four original Connecting-tools cases, preserving every behavioral assertion and real received-intent route. The old diagnostic-monitor close barrier no longer belongs to each UI turn because the UI supplies an app-owned monitor. The current Retry initial wait is held in real ledger storage admission; establish the cause or measured completion before changing bounds. No production or lifecycle timeout changes. ADR required: no; ADR094/230 remain applicable. Preserve failing receipts and run all four corrected cases before final review.
+
+
+## Final-review fix wave: Temporary accepted ledger interval
+
+Reproduce the real temporary-create-chain case with accepted ephemeral checkpoint and registered stream task but no cancel event. Retain exact live preparation/assistant/task ownership until real reply takeover, through the existing no-SQL temporary settlement, with normal returned runtime task and successful next send. Preserve durable/failed/restored/in-flight refusal, original authority and physical native retirement. This is the complete Important list from final review; stale timing prose is parent-owned and corrected. ADR required: no new ADR; ADR094/230 govern.

@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+## A supplied app monitor is not a per-turn cleanup seam (PR3320,2026-11-01)
+
+The old Connecting-tools test waited for `UIResponsivenessMonitor.close`, but the
+received UI path now supplies its app-owned monitor; the send scope does not close
+it. The test missed its tail barrier even on unchanged pre-repair code. Holding
+the real queue `_after_turn` await after terminal work, and asserting that the same
+accepted runtime custody task is still live, restored the intended repeated-Stop
+check. All four corrected cases passed in `r-518d3372`. Observe the operation's
+actual lifetime owner instead of assuming a similarly named cleanup method runs.
+Windows native admission also took48.296s before the first reply could fail;
+measured outer readiness watchdogs are functional guards, not latency evidence.
+
+
 ## Visible send completion precedes durable acceptance (PR3319, 2026-11-01)
 
 The deferred-Enter preservation check observed the second in-memory user row,

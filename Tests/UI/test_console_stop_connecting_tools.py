@@ -36,6 +36,7 @@ lands where the live ones did.
 from __future__ import annotations
 
 import asyncio
+import sys
 import threading
 
 import pytest
@@ -56,12 +57,15 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_preparation_reads import run_preparation_read
 from tldw_chatbook.Chat.console_send_diagnostics import SendDiagnostic
-from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 FOLLOW_UP = "A follow-up after Stop"
 REPLY = "received intent reply"
+# Real Windows admission took 48.296s before the first provider failure in
+# qualification. This bounds whole-turn readiness, not Stop responsiveness;
+# cancellation, settlement, paint and product timeouts retain their bounds.
+TURN_READY_SECONDS = 60 if sys.platform == "win32" else 20
 #: Failure signatures of the wedge: the runtime turn and the accepted-turn
 #: settlement that ended in an exception instead of a Stop.
 FAILURE_LOGS = (
@@ -161,7 +165,7 @@ async def test_stop_while_connecting_tools_lets_the_next_send_reach_the_provider
             monkeypatch.setattr(case.runtime, "_finish_custodied_turn", record_outcome)
 
             _send(case, "enter")
-            assert await _until(held.is_set, 20)
+            assert await _until(held.is_set, TURN_READY_SECONDS)
             # The live precondition: the row names the window, Stop is offered,
             # and the provider has not been called.
             assert await _until(lambda: "Connecting tools" in _painted(case.host), 10)
@@ -172,39 +176,59 @@ async def test_stop_while_connecting_tools_lets_the_next_send_reach_the_provider
             recovery = case.store.dispatch_recovery_for_session(session_id)
             assert recovery is not None
             assert recovery.in_flight is (window != "composing tools")
+            preparation = case.store.preparation_for_session(session_id)
+            assert preparation is not None
+            assert recovery.preparation_id == preparation.preparation_id
             assert case.provider_calls == []
 
             # While the row's elapsed time ticks, a repaint's preparation read
             # of this session can be in flight when Stop lands. Stop used to
             # cancel that read and return early, leaving the run unmarked as a
             # user Stop (no transcript record), so hold one in flight here.
-            read_released = threading.Event()
+            read_started, read_released = threading.Event(), threading.Event()
+
+            def hold_read():
+                read_started.set()
+                return read_released.wait(30)
+
             read = asyncio.ensure_future(
                 run_preparation_read(
-                    lambda: read_released.wait(30),
+                    hold_read,
                     creator=controller,
                     session_id=session_id,
                     reads=controller._preparation_reads,
                     require_current=lambda: None,
                 )
             )
-            assert await _until(lambda: controller._preparation_reads, 5)
+            assert await _until(read_started.is_set, 5)
+            (unrelated_read,) = [
+                handle
+                for handle in controller._preparation_reads
+                if handle.task is read and handle.session_id == session_id
+            ]
 
-            # Hold the turn's last await (its send diagnostic's monitor close)
-            # once, so a repeated Stop lands after the reply settled the first
-            # one but before the turn's runtime task returned. Live, a press
-            # there cancelled the finished turn's intake custody and failed it.
-            tail_armed, in_tail = threading.Event(), threading.Event()
-            tail_released = threading.Event()
-            close_monitor = UIResponsivenessMonitor.close
+            # The UI supplies an app-owned monitor, so monitor.close is no
+            # longer a turn await. Hold the actual queue tail after its real
+            # settlement, while the accepted turn still has runtime custody.
+            tail_armed, in_tail = asyncio.Event(), asyncio.Event()
+            tail_released = asyncio.Event()
+            tail_tasks = []
+            queue = controller.prompt_queue_coordinator
+            after_turn = queue._after_turn
 
-            def hold_tail(monitor):
-                if tail_armed.is_set() and not in_tail.is_set():
+            async def hold_tail(owner_id, result):
+                outcome = await after_turn(owner_id, result)
+                if (
+                    owner_id == session_id
+                    and tail_armed.is_set()
+                    and not in_tail.is_set()
+                ):
+                    tail_tasks.append(asyncio.current_task())
                     in_tail.set()
-                    tail_released.wait(10)
-                return close_monitor(monitor)
+                    await tail_released.wait()
+                return outcome
 
-            monkeypatch.setattr(UIResponsivenessMonitor, "close", hold_tail)
+            monkeypatch.setattr(queue, "_after_turn", hold_tail)
             stop_requested = controller._active_cancel_events[session_id]
             tail_armed.set()
             try:
@@ -218,6 +242,21 @@ async def test_stop_while_connecting_tools_lets_the_next_send_reach_the_provider
             )
             try:
                 assert await _until(in_tail.is_set, 10)
+                (custody,) = [
+                    row
+                    for row in case.runtime._turn_custody.values()
+                    if row.session_id == session_id
+                ]
+                assert custody.inputs.durable_accepted
+                assert custody.task is tail_tasks[0]
+                assert not custody.task.done()
+                assert outcomes == []
+                assert (
+                    controller.run_state_for(session_id).status
+                    is ConsoleRunStatus.STOPPED
+                )
+                assert case.store.dispatch_recovery_for_session(session_id) is None
+                assert case.store.preparation_for_session(session_id) is None
                 for _ in range(3):  # and again, as the live repro did
                     _key(case.host, "ctrl+g", "\x07")
                     await asyncio.sleep(0.05)
@@ -250,6 +289,7 @@ async def test_stop_while_connecting_tools_lets_the_next_send_reach_the_provider
             )
             assert case.store.dispatch_recovery_for_session(session_id) is None
             assert case.store.preparation_for_session(session_id) is None
+            assert case.store.preparation_by_id(preparation.preparation_id) is None
             assert case.provider_calls == []
 
             # AC2: the next send in the same tab reaches the provider.
@@ -262,7 +302,9 @@ async def test_stop_while_connecting_tools_lets_the_next_send_reach_the_provider
                 lambda: case.store.session_draft(session_id) == FOLLOW_UP, 5
             )
             _send(case, "enter")
-            assert await _until(lambda: len(case.provider_calls) == 1, 20)
+            assert await _until(
+                lambda: len(case.provider_calls) == 1, TURN_READY_SECONDS
+            )
             assert await _until(lambda: REPLY in _painted(case.host), 20)
             assert await _until(lambda: len(outcomes) == 2, 20)
             assert outcomes == ["returned", "returned"]
@@ -277,6 +319,7 @@ async def test_stop_while_connecting_tools_lets_the_next_send_reach_the_provider
             # The repaint's read was not Stop's to cancel: it finished itself.
             assert read_cancel_requests == 0
             assert read_outcome is True
+            assert unrelated_read not in controller._preparation_reads
     finally:
         logger.remove(sink)
     # AC1: nothing logged the Stop as a failure.
@@ -345,7 +388,8 @@ async def test_stop_while_a_retry_connects_tools_frees_the_tab(monkeypatch, wind
 
         _send(case, "enter")
         assert await _until(
-            lambda: [row.status for row in assistant_rows()] == ["failed"], 20
+            lambda: [row.status for row in assistant_rows()] == ["failed"],
+            TURN_READY_SECONDS,
         ), [(row.status, row.content[:80]) for row in assistant_rows()]
         assert await _until(turn_ended, 15)
         (failed,) = assistant_rows()
@@ -394,13 +438,11 @@ async def test_stop_while_a_retry_connects_tools_frees_the_tab(monkeypatch, wind
         retry_button = f"#console-message-action-retry-{failed.id}"
         assert await _until(lambda: bool(case.console.query(retry_button)), 10)
         case.console.query_one(retry_button, Button).press()
-        assert await _until(held.is_set, 20)
+        assert await _until(held.is_set, TURN_READY_SECONDS)
         if window != "composing tools":
             # The prepared row names the window; an unprepared one still
             # reads as the failure being retried.
-            assert await _until(
-                lambda: "Connecting tools" in _painted(case.host), 10
-            )
+            assert await _until(lambda: "Connecting tools" in _painted(case.host), 10)
         stop = case.console.query_one("#console-stop-generation", Button)
         assert await _until(
             lambda: stop.styles.display == "block" and not stop.disabled, 10
@@ -430,6 +472,8 @@ async def test_stop_while_a_retry_connects_tools_frees_the_tab(monkeypatch, wind
             (message.role.value, message.content) for message in messages
         ]
         assert not controller._replies_in_pre_provider_setup
+        assert case.store.dispatch_recovery_for_session(session_id) is None
+        assert case.store.preparation_for_session(session_id) is None
         assert case.provider_calls == []
 
         # AC2: the next send in the same tab reaches the provider.
@@ -440,10 +484,15 @@ async def test_stop_while_a_retry_connects_tools_frees_the_tab(monkeypatch, wind
             lambda: case.store.session_draft(session_id) == FOLLOW_UP, 5
         )
         _send(case, "enter")
-        assert await _until(lambda: len(case.provider_calls) == 1, 20), [
-            note.message for note in case.host._notifications
-        ]
+        assert await _until(
+            lambda: len(case.provider_calls) == 1, TURN_READY_SECONDS
+        ), [note.message for note in case.host._notifications]
         assert await _until(lambda: REPLY in _painted(case.host), 20)
+        assert await _until(turn_ended, 15)
+        assert assistant_rows()[-1].content == REPLY
+        assert assistant_rows()[-1].status == "complete"
+        assert controller.run_state_for(session_id).status is ConsoleRunStatus.COMPLETED
+        assert case.runtime.recoveries_for_session(session_id) == ()
         assert not [
             note.message
             for note in case.host._notifications
