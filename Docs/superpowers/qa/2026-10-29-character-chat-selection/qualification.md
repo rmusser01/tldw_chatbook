@@ -136,3 +136,7 @@ Close the browser terminal and stop the helper after the check.
 
 ADR required: no. Existing ADR-006/095 and the TASK-15120 workspace ownership
 ruling apply; no schema, permissions, or provider-ownership contract was added.
+
+## Current backlog integration
+
+The 2026-11-01 integrated candidate and the later user-authorized CI/review policy are recorded in [PR3306 integration](../2026-11-01-pr3306-backlog-integration.md). Earlier run and merge-policy statements above remain historical evidence.

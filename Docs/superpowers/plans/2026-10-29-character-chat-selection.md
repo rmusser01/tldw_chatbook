@@ -87,3 +87,12 @@ armed so the queue manages further ordinary updates. Rearming resets its place.
 Qodo could not review because its workspace has no credits. The user authorized
 the requested independent review to replace Qodo for PR #3306; required CI and
 review-thread resolution still apply.
+
+## 2026-11-01 backlog integration
+
+ADR required: no. Existing ADR-006/095 govern the provider/model ownership; this is integration of the approved repair.
+
+1. Rebase onto dev 621b8f1550a9f5a93b36c7a1b5676d75d5e1b793, preserving dev production behavior and all 1253 census entries; append five character prompt nodes.
+2. Resolve the duplicate task ID by provenance: older character TASK-37600 remains; younger SSE task moves to TASK-38328 with current references updated. Historical PR3298 integration records remain historical receipts, not current ownership claims.
+3. Run focused character/prompt/model-picker and CI/census checks with private profiles and frozen source hashes; inspect scoped lint relative to dev.
+4. Obtain fresh independent review via requesting-code-review, then publish and merge under the user-authorized hosted-CI waiver. Draft PRs remain excluded.
