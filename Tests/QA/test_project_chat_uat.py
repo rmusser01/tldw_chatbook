@@ -448,7 +448,16 @@ async def test_project_chat_uat(
 
                         def listing_approval():
                             capture_progress()
-                            return list(console.query(".approval-row"))
+                            rows = list(console.query(".approval-row"))
+                            return (
+                                rows
+                                if rows
+                                and all(
+                                    row.is_mounted and row.query(".approval-row-header")
+                                    for row in rows
+                                )
+                                else None
+                            )
 
                         rows = await wait_for(
                             pilot,

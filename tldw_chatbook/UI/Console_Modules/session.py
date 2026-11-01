@@ -5679,27 +5679,28 @@ class ConsoleSessionController:
         save_text = live_text
         typed_suffix = ""
         resident_draft_changed = False
-        if snapshot is not None and snapshot[0] == visible_session_id:
-            snap_text, snap_serial = snapshot[1], snapshot[2]
-            if composer.edit_serial != snap_serial and live_text.startswith(snap_text):
-                # User typed during the settle window: the old session keeps
-                # what it actually had at the keypress; the new typing rides
-                # into the new session below. (Non-append edits — e.g.
-                # backspacing into the old draft — fall back to today's
-                # save-the-live-text semantics.)
-                save_text = snap_text
-                typed_suffix = live_text[len(snap_text) :]
-            known_revision = self._console_visible_draft_revision
-            if live_text.startswith(snap_text) and known_revision is not None:
-                current = store.session_input_snapshot(visible_session_id)
-                if current.draft_revision != known_revision:
-                    save_text = current.draft
-                    resident_draft_changed = True
-        if visible_session_id is not None:
-            try:
+        try:
+            if snapshot is not None and snapshot[0] == visible_session_id:
+                snap_text, snap_serial = snapshot[1], snapshot[2]
+                has_prefix = live_text.startswith(snap_text)
+                if composer.edit_serial != snap_serial and has_prefix:
+                    # User typed during the settle window: the old session keeps
+                    # what it actually had at the keypress; the new typing rides
+                    # into the new session below. (Non-append edits — e.g.
+                    # backspacing into the old draft — fall back to today's
+                    # save-the-live-text semantics.)
+                    save_text = snap_text
+                    typed_suffix = live_text[len(snap_text) :]
+                known_revision = self._console_visible_draft_revision
+                if has_prefix and known_revision is not None:
+                    current = store.session_input_snapshot(visible_session_id)
+                    if current.draft_revision != known_revision:
+                        save_text, resident_draft_changed = current.draft, True
+            if visible_session_id is not None:
                 store.set_session_draft(visible_session_id, save_text)
-            except KeyError:
-                pass
+        except KeyError:
+            resident_draft_changed = True
+        if visible_session_id is not None:
             # TASK-1281: this composer is about to start showing a DIFFERENT
             # session's draft -- bank its undo/redo history under the
             # session it actually belongs to before the swap below discards

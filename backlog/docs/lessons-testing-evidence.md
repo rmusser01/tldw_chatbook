@@ -37,6 +37,24 @@ accepted or uncertain attempt. The final focused checks also found that FAILED
 was published before the transcript replaced its Waiting row: visible-copy
 tests must wait for the actual painted text, not a fixed delay after model state.
 
+## An optional old-record read needs the same absence boundary as its write (TASK-38268, 2026-11-01)
+
+**Incident.** PR#3342's rules journey timed out opening `/rules`, then reported
+an unknown-session worker failure. The stack read an old visible chat's revision
+after the journey had deliberately closed it; the later draft write already
+tolerated that absence. Runtime disposal was not what removed that chat. Two
+real-state regressions reproduced the exact lookup failure, while live-revision
+and undo controls pinned the ownership behavior. Extending only the old-record
+boundary also kept closed undo history from being banked again. A profiled run
+failed earlier at a close guard, so its valid metadata did not diagnose the
+original phenotype.
+
+**What to do.** Trace the first relevant failing operation to its actual owner.
+Keep optional old-state reads and writes consistent, retain strict current-state
+checks, and prove draft/undo attribution with real state. Check the full failure
+location before treating a diagnostic run as the original reproduction.
+
+
 ## A finished sync can still leave its replay owning the next manual tick (TASK-38268, 2026-10-31)
 
 **Incident.** Qualifying PR#3342's restored pressed-send acceptance marker made

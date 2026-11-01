@@ -248,6 +248,8 @@ class ConsoleImageController:
         self, messages: Any
     ) -> dict[str, ConsoleImageRowSpec]:
         """Build image-row payloads for prepared, visible image messages."""
+        if not messages:
+            return {}
         state, cache = self._ensure_console_image_view()
         default_mode = self._console_image_default_mode
         specs, recovered_ids = self._recovered_console_image_specs(

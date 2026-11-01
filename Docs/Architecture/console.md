@@ -139,6 +139,10 @@ Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech control
 
 Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). Streamed transcript and background-run activity are projected by `_sync_native_console_chat_ui`, including its `set_interval(0.2 s)` poll; the timer deliberately does not stop while any session still has an in-flight run. Session switches call `UI/Console_Modules/session.py::_bind_composer_to_active_session()` before the first await: they save the outgoing draft, load the selected chat's draft, and update the active-tab highlight and title immediately. The shared tab/switcher activation path also focuses the composer before awaiting; background switches preserve keyboard focus.
 
+A deferred draft swap can retain a snapshot of a chat that has since closed. `session.py::_sync_console_session_draft()` treats that old record as optional across its snapshot read and draft write, and keeps its discarded undo history out of the bank. Reads of the active chat remain strict. A live old chat still keeps any newer resident revision; only the existing edit-serial and prefix rules carry switch-window typing into the selected chat (TASK-38268).
+
+Stock context-presentation callbacks share each exact finite read with their controller and bound runtime so session close waits for native retirement. The captured nullable runtime must remain bound to the same controller/store, and disposal or existing admission/close fences refuse further stock reads. Attaching or rebinding a runtime during the first probe rejects the stale result before lineage work. Custom and explicit action readers retain their existing contracts (ADR-230, TASK-38268).
+
 Character-picker creation and character/persona Start Chat handoffs align the
 workspace registry with the selected conversation through
 `ConsoleWorkspaceController._set_active_workspace_for_console_session` before
