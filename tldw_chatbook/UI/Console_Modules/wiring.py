@@ -404,6 +404,12 @@ def receive_console_visible_intent(
             or pending.row.content != draft
         ):
             return None
+    # TASK-33620.1 AC#7: this path never reaches ``send_refusal_copy``, so it
+    # asks the emergency stop itself; a held send takes the refusing path.
+    from .emergency_stop_hold import received_send_held
+
+    if received_send_held(screen):
+        return None
     callbacks = getattr(screen, "_console_received_live_adapters", ())
     if not callbacks or any(
         getattr(target, name, None) is not original

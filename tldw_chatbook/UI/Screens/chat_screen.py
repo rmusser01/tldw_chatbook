@@ -357,6 +357,7 @@ from ...Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from ...Chat.console_display_state import (
+    CONSOLE_EMERGENCY_STOP_SEND_REASON,
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
     CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID,
@@ -609,6 +610,7 @@ from ...Widgets.Console.console_status_chips import (
     ConsoleModelChip,
     ConsoleAssistantChip,
     ConsoleCostChip,
+    ConsoleEmergencyStopChip,
     ConsoleRunChip,
     ConsoleScopeChip,
     ConsoleSourcesChip,
@@ -10655,6 +10657,7 @@ class ChatScreen(BaseAppScreen):
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
             system_prompt_set=bool(getattr(settings, "system_prompt", None)),
+            emergency_stop_held=bool(self._console_emergency_stop_copy),
         )
 
     def _sync_console_cost_chip(self) -> None:
@@ -10957,6 +10960,14 @@ class ChatScreen(BaseAppScreen):
         """Open the Inspector rail at the run inspector's tool rows (DS-06)."""
         event.stop()
         self._reveal_console_inspector_rail()
+
+    @on(ConsoleEmergencyStopChip.ClearRequested)
+    async def _console_emergency_stop_cleared(
+        self, event: ConsoleEmergencyStopChip.ClearRequested
+    ) -> None:
+        """The status strip's Clear lifts the emergency stop (TASK-33620.1)."""
+        event.stop()
+        await run_controls.clear_emergency_stop(self)
 
     @on(ConsoleRunChip.OpenRequested)
     async def _console_run_chip_activated(
@@ -13935,6 +13946,7 @@ class ChatScreen(BaseAppScreen):
             has_messages=self._message._active_console_transcript_has_messages(),
             guidance_dismissed=self._console_guidance_dismissed,
             local_server_found=self._console_detected_local_server is not None,
+            held_copy=self._console_emergency_stop_copy,  # TASK-33620.1
         )
 
     def _dismiss_console_guidance(self) -> None:
@@ -17109,7 +17121,9 @@ class ChatScreen(BaseAppScreen):
                 session_id,
                 token,
                 projection_key,
-                getattr(self, "_console_send_ack", None) is not None,
+                # The pending row, not the ack object: a release repaints (33620.1).
+                (ack := getattr(self, "_console_send_ack", None))
+                and ack.pending_row_id(session_id),
                 run_activity,
                 delete_arm,
                 # Existing finite context publication must reopen a quiet
@@ -18119,6 +18133,8 @@ class ChatScreen(BaseAppScreen):
 
     def _console_send_blocked_reason(self) -> str:
         """Return a user-facing reason if Console send cannot safely run."""
+        if run_controls.emergency_stop_still_held(self):  # TASK-33620.1: re-read
+            return self._console_emergency_stop_copy
         conversation_id = self._current_console_conversation_id()
         if conversation_id in getattr(
             self.app_instance, "_conversation_archive_inflight", ()
@@ -18519,7 +18535,9 @@ class ChatScreen(BaseAppScreen):
             REWIND_COMMAND_HANDLER_ID: self._console_command_rewind,
             STEER_COMMAND_HANDLER_ID: self._console_command_steer,
             REDIRECT_COMMAND_HANDLER_ID: self._console_command_redirect,
-            EMERGENCY_STOP_COMMAND_HANDLER_ID: self._console_command_emergency_stop,
+            EMERGENCY_STOP_COMMAND_HANDLER_ID: partial(
+                run_controls.emergency_stop_command, self
+            ),
             STOP_COMMAND_HANDLER_ID: partial(run_controls.stop_command, self),
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
             GOAL_COMMAND_HANDLER_ID: self._console_command_goal,
@@ -19110,35 +19128,6 @@ class ChatScreen(BaseAppScreen):
         # one habitual extra Enter would redirect the run twice.
         self._clear_console_composer_draft()
         self.app_instance.notify("Redirect sent — correcting the running turn.")
-        return True
-
-    async def _console_command_emergency_stop(self, parse: CommandParse) -> bool:
-        """`/emergency-stop [clear|<reason>]`: the global stop (TASK-26004).
-
-        Holds all NEW agent runs and scheduled dispatches; in-flight work is
-        untouched, and the state survives a restart. `clear`/`off`/`resume`
-        lifts it. A stopped state is reported plainly on the next send/dispatch.
-        """
-        from tldw_chatbook.emergency_stop import (
-            clear_emergency_stop,
-            default_emergency_stop_path,
-            set_emergency_stop,
-        )
-
-        arg = (parse.args or "").strip()
-        path = default_emergency_stop_path()
-        if arg.lower() in {"clear", "off", "resume"}:
-            clear_emergency_stop(path)
-            self._clear_console_composer_draft()
-            self.app_instance.notify("Emergency stop cleared — new work may start.")
-            return True
-        set_emergency_stop(path, reason=arg)
-        self._clear_console_composer_draft()
-        self.app_instance.notify(
-            "Emergency stop ACTIVE — new runs and scheduled dispatches are held. "
-            "Run /emergency-stop clear to resume.",
-            severity="warning",
-        )
         return True
 
     async def _console_command_rewind(self, parse: CommandParse) -> bool:
@@ -21127,6 +21116,10 @@ class ChatScreen(BaseAppScreen):
     #: and this programme has shipped one fixture AttributeError per wave.
     _console_popup_synced_draft: str | None = None
 
+    #: TASK-33620.1: the emergency stop's copy while it holds new runs, else
+    #: "" (`Console_Modules/emergency_stop_hold.py` is its only writer).
+    _console_emergency_stop_copy: str = ""
+
     #: Completion context the popup was Escape-dismissed in, or None when
     #: the trigger is armed (TASK-24416). A CLASS attribute for the same
     #: fixture reason as `_console_popup_synced_draft` above. Sticky within
@@ -21518,10 +21511,17 @@ class ChatScreen(BaseAppScreen):
         send_blocked = send_blocked or image_edit_active
         setup_blocked_reason = self._console_setup_blocked_reason()
         attachment_block = run_controls.sync_attachment_block(self)  # TASK-33620.2
+        # TASK-33620.1: an active emergency stop holds Send (and Queue).
+        held_reason = (
+            CONSOLE_EMERGENCY_STOP_SEND_REASON
+            if self._console_emergency_stop_copy
+            else ""
+        )
         send_blocked = (
             send_blocked
             or bool(setup_blocked_reason)
             or attachment_block is not None
+            or bool(held_reason)
         )
 
         composer.sync_action_state(
@@ -21534,7 +21534,8 @@ class ChatScreen(BaseAppScreen):
             dispatch_recovery_blocked=dispatch_recovery_blocked,
             setup_blocked_reason=setup_blocked_reason,
             attachment_block=attachment_block,
-            queue_blocked_reason=(
+            queue_blocked_reason=held_reason
+            or (
                 queue_presentation.send_tooltip
                 if queue_presentation is not None
                 and not queue_presentation.send_enabled
@@ -22927,6 +22928,7 @@ class ChatScreen(BaseAppScreen):
                 exclusive=True,
             )
         )
+        run_controls.schedule_emergency_stop_refresh(self)  # TASK-33620.1
         # task-17652: a Settings change to the status-row position must land
         # on this cached screen without a recompose.
         apply_status_chips_position(self)

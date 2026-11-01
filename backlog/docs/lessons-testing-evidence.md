@@ -394,6 +394,12 @@ created. Expect `load_settings()` to merge the shipped value back in anyway
 
 **What to do.** Before trusting a Console send test for anything the composer or the transcript shows, check which path it takes: `receive_console_visible_intent` returns `None` for the acknowledged path. Drive the stock path for live-facing claims. When the defect is a race the live app loses, hold an awaited step inside the window until the condition the defect needs is laid out, not for a fixed time, and count base-build reds over several runs before calling it deterministic.
 
+## The common Console send harness never takes the received-intent path (TASK-33620.1, 2026-10-29)
+
+**Incident.** The triage said an emergency-stop send "is refused" because `send_refusal_copy` checks the stop. Live on origin/dev 38c9d2edcf the send reached the provider and got a reply: Enter takes the received-intent fast path (PR #3023), which never calls `send_refusal_copy`. The first regression test, built on `_console_app` (`_configure_native_ready_console`), passed on dev: its injected config makes `capture_console_received_configuration_preparation` return `None`, so every Enter falls back to the dispatch path, where the gate works. Only `_received_console_case(..., durable=True)` (Tests/UI/test_console_received_intent_feedback.py) reproduced the live bypass; its non-durable mode failed earlier, on the conversation database.
+
+**What to do.** For anything that must gate or observe a Console send, check which path the harness's Enter takes (trace `receive_console_visible_intent`'s return) and test the received-intent path with the durable received case. Count provider calls, not refusal copy: a refusal can appear on one path while the other path sends.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
@@ -23650,3 +23656,7 @@ re-run that file before comparing it.
 ## Current acknowledgement ownership qualifies the historical send split (PR3310, 2026-11-01)
 
 The older TASK-33620.15.26 measurements above used a stock route that bypassed acknowledgement. Current dev acknowledges stock sends before received-intent custody. During PR3310 integration, unconditional scheduling marked a refused edited draft while another turn still prepared; six scheduling controls reproduced that incorrect owner. Marking only the capture whose `ack.begin` succeeds fixes the owner without clearing an earlier capture's mark. Two mounted composer controls also reproduced truncation under Queue full and chainless run hold: only the canonical Preparing reason may retain an acknowledged capture's height. The historical route split is not a current routing contract.
+
+## Observe the projection being asserted (PR3311, 2026-11-01)
+
+The persisted emergency-stop test saw the correct Held header and chip but immediately read the old Ready empty-body text. `ConsoleTranscript.sync_empty_state` schedules `refresh_messages` with `call_later`; header readiness did not certify the row's reconciliation. Waiting for the actual empty-body projection made the unchanged content assertions pass. Separately, the post-Clear send took 8.844 seconds to complete in its successful focused run; its former short projection poll expired during native preparation. The completion test retains exactly-one-provider-call and expected-reply assertions with a bounded completion wait. This proves functional completion, not a latency target, and does not explain an earlier durable-commit RuntimeError.

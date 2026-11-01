@@ -764,3 +764,49 @@ def test_refused_press_never_owns_the_composer_height(activity, prior_ack):
     assert (
         marked == previous
     ), "a refused capture replaced the actual send's height owner"
+
+@pytest.mark.asyncio
+async def test_a_refused_acknowledged_enter_repaints_its_refusal(
+    tmp_path, monkeypatch
+):
+    """TASK-33620.1: a dispatch refusal must not leave "Sending…" painted.
+
+    The transcript tick gate keyed the acknowledgement on the object existing,
+    so releasing a refused send's row changed nothing it compared; with no run
+    ticking, an idle Console kept painting "Sending…" and never painted the
+    refusal row the dispatch had stored. Any dispatch refusal shows it (here
+    the archive-in-progress reason; live, the emergency stop's).
+    """
+    from textual.widgets import Static
+
+    from Tests.UI.test_console_visible_turn_attention import (
+        _console_app,
+        _reach_console,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    refusal = "Archive change in progress. Your draft is preserved."
+    app, gateway = _console_app(tmp_path)
+    async with app.run_test(size=(160, 45), notifications=True) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        monkeypatch.setattr(
+            ChatScreen, "_console_send_blocked_reason", lambda _screen: refusal
+        )
+        composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.focus()
+        await pilot.pause(0.2)
+        composer.load_draft("say refused")
+        await pilot.pause(0.1)
+        await pilot.press("enter")
+
+        def painted() -> list[str]:
+            transcript = chat.query_one("#console-native-transcript")
+            return [str(widget.content) for widget in transcript.query(Static)]
+
+        for _ in range(60):
+            if any(refusal in text for text in painted()):
+                break
+            await pilot.pause(0.05)
+        assert gateway.payloads == []
+        assert any(refusal in text for text in painted()), painted()
+        assert not any("Sending…" in text for text in painted()), painted()
