@@ -40,3 +40,9 @@ The full native test discovered that HOME redirection leaves ConfigFileStorage's
 - Seven focused environment cases, scoped Ruff/format/whitespace and independent review passed. Production recovery checks/timeouts remain unchanged. Full repository suite was not run.
 - [Draft follow-up #3342](https://github.com/rmusser01/tldw_chatbook/pull/3342) remains In Progress pending 34 queued checks and a base update when preparing to merge. Original PR #3287 still has 36 queued checks. No merge/auto-merge performed.
 - The verification-record commit changes only documentation; all tested source bytes match e2ec8715e3.
+
+## Rebase and ready-for-review continuation
+
+The owner requested rebasing PR #3342 onto dev and resolving outstanding CI before leaving draft. Rebased both commits without conflicts onto dev 77718ebebc; git range-diff reports both original patches unchanged. Focused native environment tests: 7 passed. The earlier three-platform results above remain historical evidence for the pre-rebase source; current-head CI must qualify the integrated tree.
+
+Keep the PR in draft while reviewing the normal pull_request CI runs and available review threads. Retire only superseded runs for this PR if their always-run final gate holds its concurrency slot; never dispatch the required check by hand. No merge or auto-merge is authorized. Live final CI results will be recorded in the PR description so recording them does not create another source head.
