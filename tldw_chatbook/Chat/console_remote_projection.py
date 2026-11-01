@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from .console_runtime import ConsoleRuntime
 
 PAGE_BYTES = 64 * 1024
+LATEST_MESSAGE_BYTES = 8 * 1024
+LATEST_MESSAGE_CHARS = 2000
 MAX_CLIENTS = 64
 
 
@@ -166,6 +168,13 @@ class ConsoleRemoteProjection:
                     session.id,
                     session.incarnation_id,
                     session.title,
+                    session.workspace_id,
+                    session.updated_at,
+                    getattr(controller, "_active_assistant_message_ids", {}).get(
+                        session.id
+                    )
+                    if controller
+                    else None,
                     store.display_projection_revision(session.id),
                     store.session_fingerprint(session.id),
                     tuple(getattr(session, key) for key in REVISION_FIELDS),
@@ -177,7 +186,16 @@ class ConsoleRemoteProjection:
                     else (),
                     self.runtime.remote_project_decisions(session.id),
                     tuple(
-                        (handle.handle_id, handle.run_id, handle.status)
+                        (
+                            handle.handle_id,
+                            handle.run_id,
+                            handle.status,
+                            getattr(handle, "queued_steering", 0),
+                            getattr(handle, "undelivered_steering", 0),
+                            str(getattr(handle, "task", ""))[:200],
+                            str(getattr(handle, "result", ""))[:1000],
+                            str(getattr(handle, "error", ""))[:1000],
+                        )
                         for handle in self.runtime.agent_bridge.fleet_snapshot(
                             session.persisted_conversation_id
                         )
@@ -187,6 +205,8 @@ class ConsoleRemoteProjection:
                     else (),
                 )
             )
+        registry = self._workspace_registry()
+        tokens.append(getattr(registry, "mutation_generation", None))
         return hashlib.sha256(_encoded(tokens)).hexdigest()
 
     def poll_changes(self) -> int | None:
@@ -214,6 +234,39 @@ class ConsoleRemoteProjection:
                 self._answerable_clients.pop(target, None)
                 self._publish_round_answerability(target, False)
 
+    def _workspace_registry(self):
+        # Read only already-wired services; a lazy app getter can construct stores.
+        ready = vars(self.runtime.app)
+        return ready.get("workspace_registry_service") or ready.get(
+            "_workspace_registry_service"
+        )
+
+    def _chat_metadata(self, workspace_id, last_modified) -> dict:
+        from tldw_chatbook.Canvas.limits import validate_opaque_identifier
+        from tldw_chatbook.Workspaces.registry_service import (
+            WorkspaceRegistryServiceError,
+        )
+
+        workspace = workspace_id if workspace_id not in (None, "global") else None
+        if workspace is not None:
+            workspace = validate_opaque_identifier(workspace, field_name="workspace ID")
+        name = None
+        registry = self._workspace_registry()
+        if workspace is not None and registry is not None:
+            try:
+                record = registry.get_workspace(workspace)
+                name = str(record.name)[:160] if record is not None else None
+            except (ValueError, RuntimeError, WorkspaceRegistryServiceError):
+                pass  # Missing/unreadable names remain unavailable, never guessed.
+        return {
+            "scope_type": "workspace" if workspace is not None else "global",
+            "workspace_id": workspace,
+            "workspace_name": name,
+            "last_modified": str(last_modified)[:64]
+            if last_modified is not None
+            else None,
+        }
+
     def _discovery_rows(self, window: int) -> tuple[list, int | None]:
         rows = self._rows(None) if window == 0 else []
         store = self.runtime.chat_store
@@ -235,6 +288,9 @@ class ConsoleRemoteProjection:
                     "conversation_id": row["id"],
                     "title": str(row["title"])[:160],
                     "live": False,
+                    **self._chat_metadata(
+                        row.get("workspace_id"), row.get("last_modified")
+                    ),
                 },
             )
             for row in saved["items"]
@@ -271,7 +327,17 @@ class ConsoleRemoteProjection:
                         scope,
                         conversation_id=session.persisted_conversation_id,
                         title=str(session.title)[:160],
+                        pending_decision_count=min(
+                            100,
+                            len(
+                                controller._interrupt_host.remote_rounds(session.id)
+                                if controller
+                                else ()
+                            )
+                            + len(runtime.remote_project_decisions(session.id)),
+                        ),
                         live=True,
+                        **self._chat_metadata(session.workspace_id, session.updated_at),
                         status=getattr(status, "value", status),
                         run_id=controller._current_primary_run_id(session.id)
                         if controller
@@ -287,6 +353,59 @@ class ConsoleRemoteProjection:
             )
             if target is None:
                 continue
+            bridge = runtime.agent_bridge
+            if bridge is not None and session.persisted_conversation_id:
+                for handle in bridge.fleet_snapshot(session.persisted_conversation_id):
+                    rows.append(
+                        (
+                            "fleet",
+                            dict(
+                                scope,
+                                handle_id=handle.handle_id,
+                                run_id=handle.run_id,
+                                status=handle.status,
+                                live=handle.status
+                                not in {
+                                    "done",
+                                    "error",
+                                    "stuck",
+                                    "cancelled",
+                                    "superseded",
+                                },
+                                agent=str(getattr(handle, "agent", None) or "Worker")[
+                                    :160
+                                ],
+                                task=str(getattr(handle, "task", ""))[:200],
+                                activity=str(
+                                    getattr(handle, "error", "")
+                                    or getattr(handle, "result", "")
+                                )[:1000],
+                                queued_steering=max(
+                                    0,
+                                    min(1000000, getattr(handle, "queued_steering", 0)),
+                                ),
+                                undelivered_steering=max(
+                                    0,
+                                    min(
+                                        1000000,
+                                        getattr(handle, "undelivered_steering", 0),
+                                    ),
+                                ),
+                                started_at=getattr(handle, "started_at", None),
+                                finished_at=getattr(handle, "finished_at", None),
+                            ),
+                        )
+                    )
+            if controller is not None:
+                for row in controller._interrupt_host.remote_rounds(session.id):
+                    rows.append(("decisions", dict(scope, **row)))
+            for row in runtime.remote_project_decisions(session.id):
+                rows.append(("decisions", dict(scope, **row)))
+            recovery = store.dispatch_recovery_for_presentation(session.id)
+            if recovery is not None:
+                rows.append(
+                    ("recoveries", dict(scope, pending=True, action="open_terminal"))
+                )
             for message in store.read_only_messages_for_session(session.id):
                 if (
                     message.role not in {"user", "assistant", "tool"}
@@ -306,31 +425,39 @@ class ConsoleRemoteProjection:
                         ),
                     )
                 )
-            bridge = runtime.agent_bridge
-            if bridge is not None and session.persisted_conversation_id:
-                for handle in bridge.fleet_snapshot(session.persisted_conversation_id):
-                    rows.append(
-                        (
-                            "fleet",
-                            dict(
-                                scope,
-                                handle_id=handle.handle_id,
-                                run_id=handle.run_id,
-                                status=handle.status,
-                            ),
-                        )
-                    )
-            if controller is not None:
-                for row in controller._interrupt_host.remote_rounds(session.id):
-                    rows.append(("decisions", dict(scope, **row)))
-            for row in runtime.remote_project_decisions(session.id):
-                rows.append(("decisions", dict(scope, **row)))
-            recovery = store.dispatch_recovery_for_presentation(session.id)
-            if recovery is not None:
-                rows.append(
-                    ("recoveries", dict(scope, pending=True, action="open_terminal"))
-                )
         return rows
+
+    def _latest_message(self, rows: list, target: ConsoleTarget) -> dict | None:
+        messages = [row for section, row in rows if section == "messages"]
+        if not messages:
+            return None
+        active = getattr(
+            self.runtime.chat_controller, "_active_assistant_message_ids", {}
+        ).get(target.session_id)
+        original = next(
+            (
+                row
+                for row in messages
+                if row["message_id"] == active and row["role"] == "assistant"
+            ),
+            messages[-1],
+        )
+        content = original["content"]
+        preview = dict(
+            original, content="", offset=len(content), total_chars=len(content)
+        )
+        if len(_encoded(preview)) > LATEST_MESSAGE_BYTES:
+            return None
+        low, high = 0, min(LATEST_MESSAGE_CHARS, len(content))
+        while low < high:
+            length = (low + high + 1) // 2
+            preview.update(content=content[-length:], offset=len(content) - length)
+            if len(_encoded(preview)) <= LATEST_MESSAGE_BYTES:
+                low = length
+            else:
+                high = length - 1
+        preview.update(content=content[-low:] if low else "", offset=len(content) - low)
+        return preview
 
     def _receipt_fields(self, cursor: str | None) -> dict:
         receipts = self.runtime._remote_receipts
@@ -349,6 +476,16 @@ class ConsoleRemoteProjection:
         else:
             result["next_receipt_cursor"] = page.next_cursor
         return result
+
+    @staticmethod
+    def _continue_receipts(page: dict, receipt_cursor: str | None) -> None:
+        # A keyset end remains resumable while native content is still paging.
+        if page["next_cursor"] is not None and page["next_receipt_cursor"] is None:
+            page["next_receipt_cursor"] = (
+                page["command_receipts"][-1]["command_id"]
+                if page["command_receipts"]
+                else receipt_cursor
+            )
 
     def _complete_capture(self, page: dict, token: str) -> dict:
         if self._native_token() != token:
@@ -384,7 +521,7 @@ class ConsoleRemoteProjection:
             )
         ).decode()
 
-    def _saved_snapshot(self, target, cursor, boundary, receipt_fields):
+    def _saved_snapshot(self, target, cursor, boundary, receipt_fields, receipt_cursor):
         """Continue canonical history after native metadata; never hydrate to read."""
         _store, _controller, session = self._require_target(target)
         service = getattr(self.runtime.app, "local_chat_conversation_service", None)
@@ -460,18 +597,23 @@ class ConsoleRemoteProjection:
                 char_start += message["returned_chars"]
             else:
                 offset, char_start = offset + 1, 0
-            if char_start or offset < saved["message_total"]:
-                page["next_cursor"] = base64.urlsafe_b64encode(
-                    _encoded(
-                        {
-                            "saved": True,
-                            "scope": scope_revision,
-                            "offset": offset,
-                            "char_start": char_start,
-                            "revision": revision,
-                        }
-                    )
-                ).decode()
+        if (
+            char_start
+            or offset < saved["message_total"]
+            or page["next_receipt_cursor"] is not None
+        ):
+            page["next_cursor"] = base64.urlsafe_b64encode(
+                _encoded(
+                    {
+                        "saved": True,
+                        "scope": scope_revision,
+                        "offset": offset,
+                        "char_start": char_start,
+                        "revision": revision,
+                    }
+                )
+            ).decode()
+        self._continue_receipts(page, receipt_cursor)
         self._require_target(target)
         return page
 
@@ -503,7 +645,9 @@ class ConsoleRemoteProjection:
             except (ValueError, TypeError) as error:
                 raise ValueError("Invalid Console page cursor.") from error
             if isinstance(candidate, dict) and "saved" in candidate:
-                saved = self._saved_snapshot(target, cursor, boundary, receipt_fields)
+                saved = self._saved_snapshot(
+                    target, cursor, boundary, receipt_fields, receipt_cursor
+                )
                 if saved is not None:
                     return self._complete_capture(saved, token)
                 cursor, cursor_reset = None, True
@@ -569,6 +713,8 @@ class ConsoleRemoteProjection:
             decisions=[],
             recoveries=[],
         )
+        if target is not None:
+            page["latest_message"] = self._latest_message(rows, target)
         count = 0
         while index < len(rows) and count < limit:
             section, original = rows[index]
@@ -623,5 +769,17 @@ class ConsoleRemoteProjection:
             self._require_target(target)
             if page["next_cursor"] is None:
                 page["next_cursor"] = self._saved_cursor(target)
+        if page["next_cursor"] is None and page["next_receipt_cursor"] is not None:
+            page["next_cursor"] = base64.urlsafe_b64encode(
+                _encoded(
+                    {
+                        "revision": revision,
+                        "index": index,
+                        "offset": offset,
+                        "window": window,
+                    }
+                )
+            ).decode()
+        self._continue_receipts(page, receipt_cursor)
         # Reading a page is not an acknowledgement of an entire paginated snapshot.
         return self._complete_capture(page, token)

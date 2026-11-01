@@ -1301,3 +1301,65 @@ async def test_obsolete_mutations_require_reload_without_service_call(tmp_path, 
         assert response.status == 409
         assert await response.json() == {"error":"reload_required"}
         assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_worker_read_routes_preserve_auth_scope_bounds_and_absence(
+    tmp_path, mobile_surface_gate
+):
+    from types import SimpleNamespace
+
+    calls = []
+
+    def workers(conversation, **coordinates):
+        calls.append(("headers", conversation, coordinates))
+        return {
+            "items": [{"id": "child", "task": "Task", "status": "done"}],
+            "next_cursor": None,
+        }
+
+    def result(conversation, run, **coordinates):
+        calls.append(("result", conversation, run, coordinates))
+        return (
+            None
+            if run == "missing"
+            else {
+                "run_id": run,
+                "text": "😺 result",
+                "available": True,
+                "has_more": False,
+            }
+        )
+
+    service = SimpleNamespace(workers_page=workers, worker_result=result)
+    async with _logged_in_client(tmp_path, service=service) as client:
+        client.session.cookie_jar.clear()
+        denied = await client.get("/api/v1/mobile/conversations/chat/workers")
+        assert denied.status == 401 and not calls
+    async with _logged_in_client(tmp_path, service=service) as client:
+        headers = await client.get("/api/v1/mobile/conversations/chat/workers")
+        assert headers.status == 200 and headers.headers["Cache-Control"] == "no-store"
+        response = await client.get(
+            "/api/v1/mobile/conversations/chat/workers/child?char_start=2&max_chars=2000"
+        )
+        assert response.status == 200 and (await response.json())["text"] == "😺 result"
+        assert calls[-1] == (
+            "result",
+            "chat",
+            "child",
+            {"char_start": 2, "max_chars": 2000},
+        )
+        for path in (
+            "workers?cursor=" + "x" * 1025,
+            "workers?unknown=1",
+            "workers/child?max_chars=2001",
+            "workers/child?char_start=-1",
+        ):
+            count = len(calls)
+            assert (
+                await client.get("/api/v1/mobile/conversations/chat/" + path)
+            ).status == 400
+            assert len(calls) == count
+        assert (
+            await client.get("/api/v1/mobile/conversations/chat/workers/missing")
+        ).status == 404

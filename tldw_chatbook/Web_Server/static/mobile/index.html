@@ -20,8 +20,8 @@
     <button type="button" id="back-button" class="header-button" hidden>Back</button>
     <strong class="brand">Chatbook</strong>
     <nav class="header-actions">
-      <button type="button" id="approvals-button" class="header-button" aria-label="Approvals">
-        Approvals <span id="approvals-badge" class="badge" hidden>0</span>
+      <button type="button" id="approvals-button" class="header-button" aria-label="Pending decisions">
+        Decisions <span id="approvals-badge" class="badge" hidden>0</span>
       </button>
       <a href="/" class="header-link">Open terminal</a>
       <a href="/auth/devices" class="header-link">Sign out</a>
@@ -29,37 +29,58 @@
   </header>
 
   <main id="app-main">
+    <p id="connection-state" class="connection-state" role="status" aria-live="polite">Connecting…</p>
     <p id="status-line" class="status-line" role="status" aria-live="polite" hidden></p>
 
-    <section id="view-list" class="view" aria-label="Conversations">
-      <div class="list-actions">
-        <button type="button" id="new-chat-button" class="primary-button">+ New chat</button>
+    <section id="view-chats" class="view" aria-label="Chats">
+      <div class="list-actions"><h1>Chats</h1>
+        <button type="button" id="new-chat-button" class="primary-button">New chat</button>
       </div>
-      <form id="new-chat-form" class="new-chat-form" hidden>
-        <input type="text" id="new-chat-title" maxlength="120" autocomplete="off"
-               placeholder="Title for the new chat" aria-label="New chat title">
-        <button type="submit" class="primary-button">Create</button>
-      </form>
-      <ul id="session-list" class="session-list" aria-label="Your conversations"></ul>
-      <p id="sessions-empty" class="empty-note" hidden>No conversations yet — start one.</p>
+      <p class="detail-meta">Shared Console · new chats use Global</p>
+      <ul id="chat-list" class="session-list" aria-label="Shared chats"></ul>
+      <p id="sessions-empty" class="empty-note" hidden>No chats yet. Create a chat to begin.</p>
     </section>
 
-    <section id="view-chat" class="view" aria-label="Conversation" hidden>
-      <h2 id="chat-title" class="chat-title"></h2>
-      <ul id="transcript" class="transcript" aria-label="Messages"></ul>
-      <p id="chat-empty" class="empty-note" hidden>No messages yet.</p>
+    <section id="view-chat" class="view" aria-label="Chat" hidden>
+      <div class="chat-heading"><h2 id="chat-title" class="chat-title"></h2>
+        <button type="button" id="agents-button" class="header-button" aria-expanded="false">Agents</button>
+      </div>
+      <section id="agent-panel" class="agent-panel" aria-label="Agents" hidden>
+        <ul id="agent-list" class="entry-list"></ul>
+        <h3>Worker history</h3>
+        <ul id="worker-history" class="entry-list"></ul>
+        <p id="worker-history-state" class="detail-meta"></p>
+        <button type="button" id="workers-more" class="load-more-button" hidden>Load more workers</button>
+      </section>
+      <section id="worker-detail" class="worker-detail" aria-label="Worker activity" hidden>
+        <p id="worker-activity" class="detail-meta"></p>
+        <pre id="worker-result" class="reading-content"></pre>
+        <button type="button" id="worker-result-more" class="load-more-button" hidden>Load more result</button>
+      </section>
+      <section id="latest-output" class="latest-output" aria-label="Latest output excerpt" hidden>
+        <p id="latest-output-label" class="detail-meta"></p>
+        <pre id="latest-output-content"></pre>
+      </section>
+      <ul id="chat-transcript" class="transcript" aria-label="Messages" tabindex="0"></ul>
+      <section id="chat-decisions" class="decision-region" aria-label="Pending decisions" aria-live="polite"></section>
       <form id="composer" class="composer" autocomplete="off">
-        <label for="composer-input" class="visually-hidden">Message</label>
-        <textarea id="composer-input" rows="1" maxlength="32768"
-                  placeholder="Message Chatbook"></textarea>
-        <button type="submit" id="send-button" class="primary-button">Send</button>
-        <button type="button" id="stop-button" class="danger-button" hidden>Stop</button>
+        <label for="chat-draft" id="target-label">Choose a chat</label>
+        <p id="target-state" class="detail-meta"></p>
+        <textarea id="chat-draft" rows="2" maxlength="32768" placeholder="Message this chat"></textarea>
+        <div class="command-actions">
+          <button type="submit" id="send-command" class="primary-button" disabled>Send</button>
+          <button type="button" id="steer-command" class="header-button" disabled>Steer</button>
+          <button type="button" id="redirect-command" class="header-button" disabled>Redirect</button>
+          <button type="button" id="stop-command" class="danger-button" disabled>Stop</button>
+        </div>
+        <p id="command-status" class="detail-meta" role="status" aria-live="polite"></p>
       </form>
     </section>
 
-    <section id="view-approvals" class="view" aria-label="Approvals inbox" hidden>
+    <section id="view-approvals" class="view" aria-label="Decisions" hidden>
+      <h1>Decisions</h1>
       <ul id="approvals-list" class="approvals-list"></ul>
-      <p id="approvals-empty" class="empty-note" hidden>No pending approvals.</p>
+      <p id="approvals-empty" class="empty-note">Open a chat to review its current decisions.</p>
     </section>
 
     <section id="view-library" class="view" aria-label="Library" hidden>

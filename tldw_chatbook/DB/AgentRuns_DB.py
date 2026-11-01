@@ -3113,6 +3113,63 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def read_subagent_result_page(
+        self,
+        conversation_id: str,
+        run_id: str,
+        *,
+        char_start: int = 0,
+        max_chars: int = 2000,
+    ) -> dict | None:
+        """Read only one conversation-bound child's scalar result window.
+
+        Args:
+            conversation_id: Canonical conversation owning this child.
+            run_id: Exact subagent run to inspect.
+            char_start: Unicode code-point offset into its result.
+            max_chars: Window size, at most 2000 code points.
+
+        Returns:
+            Bounded inert result and continuation facts, or None for another scope.
+
+        Raises:
+            ValueError: Invalid identifiers or window coordinates.
+        """
+        from tldw_chatbook.Canvas.limits import validate_opaque_identifier
+
+        validate_opaque_identifier(conversation_id)
+        validate_opaque_identifier(run_id)
+        if (
+            type(char_start) is not int
+            or not 0 <= char_start <= 100000000
+            or type(max_chars) is not int
+            or not 1 <= max_chars <= 2000
+        ):
+            raise ValueError("Invalid worker result window.")
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT id, status, updated_at, typeof(result) = 'text' AS available, "
+                "CASE WHEN typeof(result) = 'text' THEN length(result) END AS total_chars, "
+                "CASE WHEN typeof(result) = 'text' THEN substr(result, ?, ?) END AS text "
+                "FROM agent_runs WHERE id = ? AND conversation_id = ? AND agent_kind = 'subagent'",
+                (char_start + 1, max_chars, run_id, conversation_id),
+            ).fetchone()
+        if row is None:
+            return None
+        text = row["text"] if row["available"] else ""
+        following = char_start + len(text)
+        has_more = bool(row["available"] and following < row["total_chars"])
+        return {
+            "run_id": row["id"],
+            "status": str(row["status"])[:64],
+            "updated_at": str(row["updated_at"])[:64],
+            "available": bool(row["available"]),
+            "text": text,
+            "char_start": char_start,
+            "total_chars": row["total_chars"],
+            "next_offset": following if has_more else None,
+            "has_more": has_more,
+        }
 
     def list_subagent_run_headers(
         self,

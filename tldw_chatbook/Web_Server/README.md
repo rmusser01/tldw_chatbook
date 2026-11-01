@@ -218,11 +218,14 @@ command ticket and submits once. `GET /console/snapshot` discovers live identiti
 `GET /commands/{command_id}` observes uncertain outcomes. These paths are
 relative to `/api/v1/mobile`. Old create/send/cancel/decide requests and stale
 protocols return `reload_required`; they cannot silently run old browser mutations.
-The page's migration to these canonical controls is a separate UI change.
+The phone page opens on Chats and uses these canonical controls.
 
 GET sessions/history, notes and media use canonical native read-only services,
 without creating DBs, migrating schemas, starting a child or selecting a terminal
-tab. History is bounded and paginated. Notes and media remain read-only; their
+tab. `GET /conversations/{id}/workers` reads at most 20 native history headers
+with an explicit keyset continuation; `/workers/{run_id}` reads only the selected
+conversation-bound child result in windows of at most 2000 Unicode code points.
+Finished history never grants live controls, even when its recorded status lags. History is bounded and paginated. Notes and media remain read-only; their
 bodies render as inert plain text. No notes/media create, edit, ingest or delete
 route is exposed. Missing/incompatible stores refuse rather than creating them.
 
@@ -240,6 +243,47 @@ consolidation operator flow; API reads never migrate it. The native App retains
 execution ownership, normal hooks, source checks and permission decisions. There is
 no service worker or offline execution. The manifest/icons still support a phone
 browser's add-to-home-screen feature.
+
+The Chats view merges saved/live identities, labels Global separately from a named
+Default workspace, and shows latest activity plus textual availability. Selecting
+a chat or worker only changes this page. Main-agent Send, Steer, Redirect and Stop
+carry the confirmed chat incarnation and applicable run/turn; worker guidance and
+Stop carry the exact handle and run. Supported approvals/questions use the native
+choices, while unsupported reviews retain an Open terminal link.
+
+Drafts stay in page memory per owner/chat/incarnation and, for workers, handle/run.
+Only acceptance of the exact submitted draft revision clears it. Preparing is not
+acceptance; queued guidance does not confirm consumption; Stop requested does not
+confirm physical exit. Lost responses retain the command ID for receipt queries.
+Reconnect refreshes snapshots and queries without bootstrap, reticket or replay.
+Uncertain/disconnected state pauses controls and keeps drafts. Fresh admitted
+native target metadata can restore exact controls while the page honestly shows
+loading history; bulk transcript completion is independent of target confirmation.
+Both projection and receipt pagination must finish before history acknowledgement,
+and their existing end cursors support retries without replaying bodies. While
+older history loads, a separate latest-output excerpt remains visible: at most
+2000 Unicode code points and 8 KiB serialized, from the same admitted native
+message visibility. It prefers the current native assistant even when tool rows
+follow it. This explicit content window is absent from discovery and disappears
+only when coherent chronological history contains that exact window. Reload/closing the
+page has no draft-durability promise; no browser storage or offline queue is used.
+
+Browser equivalents of the native design language reuse the existing semantic
+palette and single-column layout, alongside the unchanged Library:
+
+| Native semantic pattern | Browser equivalent |
+| --- | --- |
+| Action rest / hover | Existing surface/accent variables; hover changes brightness only for enabled controls |
+| Non-obscuring focus | Two-pixel external `--focus` outline; keyboard-visible on buttons, links, disclosure, fields and transcript |
+| Disabled | `--disabled-bg` and readable `--disabled-text`, full opacity; explicit connection/target reason |
+| Status / attention | Text labels and polite live regions; last confirmed update independent of transport state |
+| Messages / tool activity | Inert text nodes, wrapping bodies and native disclosure with bounded scroll area |
+| Navigation / composer | Labelled Back, touch targets of at least 44 CSS pixels, safe-area insets and visual-viewport sizing |
+
+The transcript owns scrolling, so long output and a reduced keyboard viewport keep
+the composer reachable. On macOS Safari/WebKit, Option-Tab reaches all controls
+when the system's ordinary Tab preference skips buttons. Browser-engine checks
+are separate from physical iPhone/Safari, Android/Chrome and VPN qualification.
 
 ## Binary Distribution
 

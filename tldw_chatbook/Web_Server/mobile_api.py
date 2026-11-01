@@ -138,6 +138,14 @@ def build_mobile_routes(server: Any) -> list:
             partial(handle_messages, server),
             name="mobile_messages",
         ),
+        web.get(
+            "/api/v1/mobile/conversations/{sid}/workers",
+            partial(handle_workers, server),
+        ),
+        web.get(
+            "/api/v1/mobile/conversations/{sid}/workers/{run_id}",
+            partial(handle_worker_result, server),
+        ),
         web.post(
             "/api/v1/mobile/conversations/{sid}/messages",
             partial(handle_send, server),
@@ -494,6 +502,73 @@ async def handle_messages(server: Any, request) -> Any:
     except ValueError:
         return _error(400, "invalid_cursor")
     except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
+
+
+async def handle_workers(server, request):
+    """Read a bounded native history header page; never start execution."""
+    from aiohttp import web
+
+    from tldw_chatbook.Canvas.limits import validate_opaque_identifier
+
+    try:
+        validate_opaque_identifier(request.match_info["sid"])
+        if set(request.query) - {"cursor"}:
+            raise ValueError("Invalid worker history query.")
+        cursor = request.query.get("cursor")
+        if cursor is not None and len(cursor) > 1024:
+            raise ValueError("Invalid worker history cursor.")
+        result = await _read_service(
+            server, "workers_page", request.match_info["sid"], cursor=cursor
+        )
+        return web.json_response(result, headers=_NO_STORE)
+    except KeyError:
+        return _error(404, "unknown_session")
+    except (ValueError, TypeError):
+        return _error(400, "invalid_cursor")
+    except Exception as error:  # noqa: BLE001 - bounded read failure, never alternate execution.
+        return await _command_error(error)
+
+
+async def handle_worker_result(server, request):
+    """Read one explicitly selected conversation-bound child's result window."""
+    from aiohttp import web
+
+    from tldw_chatbook.Canvas.limits import validate_opaque_identifier
+
+    try:
+        for field in ("sid", "run_id"):
+            validate_opaque_identifier(request.match_info[field])
+        if set(request.query) - {"char_start", "max_chars"}:
+            raise ValueError("Invalid worker result query.")
+        coordinates = {}
+        for key, default, minimum, maximum in (
+            ("char_start", "0", 0, 100000000),
+            ("max_chars", "2000", 1, 2000),
+        ):
+            raw = request.query.get(key, default)
+            if (
+                not raw.isascii()
+                or not raw.isdigit()
+                or not minimum <= int(raw) <= maximum
+            ):
+                raise ValueError("Invalid worker result window.")
+            coordinates[key] = int(raw)
+        result = await _read_service(
+            server,
+            "worker_result",
+            request.match_info["sid"],
+            request.match_info["run_id"],
+            **coordinates,
+        )
+        if result is None:
+            return _error(404, "unknown_worker")
+        return web.json_response(result, headers=_NO_STORE)
+    except KeyError:
+        return _error(404, "unknown_session")
+    except (ValueError, TypeError):
+        return _error(400, "invalid_cursor")
+    except Exception as error:  # noqa: BLE001 - bounded read failure, never alternate execution.
         return await _command_error(error)
 
 

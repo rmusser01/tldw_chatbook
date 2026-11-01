@@ -410,3 +410,127 @@ async def test_event_stream_pins_exact_child_across_successor_discovery(replacem
         await stream.aclose()
         await service.shutdown()
     assert calls == [("child-A", "register"), ("child-A", "disconnect")]
+
+
+def test_worker_reads_use_canonical_nonstarting_owners_and_bounded_keyset_pages(
+    tmp_path,
+):
+    from Tests.agent_runs_owner import owned_agent_runs_db
+
+    core = CharactersRAGDB(str(tmp_path / "worker-chat.db"), "worker-reader")
+    conversation = core.add_conversation({"title": "Worker history"})
+    runs = owned_agent_runs_db(tmp_path / "worker-runs.db", client_id="worker-reader")
+    children = [
+        runs.create_run(
+            conversation_id=conversation, agent_kind="subagent", task="😺" * 1000
+        )
+        for _ in range(22)
+    ]
+    runs.set_status(children[-1], "done", result="FINISHED-RESULT😺" * 300)
+    service = CanonicalMobileReads(
+        core.db_path, tmp_path / "absent-media.db", runs.db_path
+    )
+    try:
+        first = service.workers_page(conversation)
+        assert 0 < len(first["items"]) <= 20 and first["next_cursor"]
+        assert len(json.dumps(first).encode()) <= 65536
+        assert "FINISHED-RESULT" not in json.dumps(first)
+        second = service.workers_page(conversation, cursor=first["next_cursor"])
+        assert len(first["items"]) + len(second["items"]) == 22
+        assert len({row["id"] for row in first["items"] + second["items"]}) == 22
+        result = service.worker_result(conversation, children[-1])
+        assert len(result["text"]) <= 2000 and result["has_more"]
+        assert service.worker_result(conversation, "unknown") is None
+        with core.transaction() as connection:
+            connection.execute(
+                "UPDATE conversations SET deleted = 1 WHERE id = ?", (conversation,)
+            )
+        with pytest.raises(KeyError):
+            service.worker_result(conversation, children[-1])
+        assert not (tmp_path / "absent-media.db").exists()
+    finally:
+        service.close()
+        core.close_connection()
+        runs.close()
+
+
+def test_worker_reads_do_not_create_missing_run_store(tmp_path):
+    core = CharactersRAGDB(str(tmp_path / "worker-chat.db"), "worker-reader")
+    conversation = core.add_conversation({"title": "Worker history"})
+    run_path = tmp_path / "absent-runs.db"
+    service = CanonicalMobileReads(core.db_path, tmp_path / "absent-media.db", run_path)
+    try:
+        with pytest.raises((OSError, sqlite3.Error)):
+            service.workers_page(conversation)
+        assert not run_path.exists()
+    finally:
+        service.close()
+        core.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_same_pair_retry_and_two_readers_preserve_boundary():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Web_Server.mobile_service import MobileChatService
+    from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
+
+    buffer = ConsoleEventBuffer()
+    buffer.publish("console.changed", {})
+
+    class Broker:
+        def __init__(self):
+            self.fail_once = False
+            self.acknowledgements = []
+
+        def console_events(self, _):
+            return buffer
+
+        async def request(self, child, method, payload, **_):
+            request = payload["request"]
+            if method == "console.events.request":
+                self.acknowledgements.append(request)
+                return SimpleNamespace(payload={})
+            if request["cursor"] == "native-next" and self.fail_once:
+                self.fail_once = False
+                raise TimeoutError("lost read response")
+            return SimpleNamespace(
+                payload={
+                    "snapshot": {
+                        "sequence": 11,
+                        "reset_required": False,
+                        "next_cursor": "native-next"
+                        if request["cursor"] is None
+                        else None,
+                        "next_receipt_cursor": "receipt-next"
+                        if request["receipt_cursor"] is None
+                        else None,
+                    }
+                }
+            )
+
+    broker = Broker()
+    service = MobileChatService(
+        hosts=None,
+        storage_identity="canonical",
+        broker=broker,
+        readers=SimpleNamespace(close=lambda: None),
+        require_cutover=lambda: None,
+    )
+
+    async def owner(**_):
+        return "child"
+
+    service._owner = owner
+    first = await service.snapshot()
+    assert first["next_cursor"] and not broker.acknowledgements
+    broker.fail_once = True
+    with pytest.raises(TimeoutError):
+        await service.snapshot(cursor="native-next", receipt_cursor="receipt-next")
+    for _reader in ("phone-a", "phone-b"):
+        final = await service.snapshot(
+            cursor="native-next", receipt_cursor="receipt-next"
+        )
+        assert not final["reset_required"] and final["transport_sequence"] == 1
+    assert len(broker.acknowledgements) == 2
+    assert len(service._snapshot_boundaries) == 1

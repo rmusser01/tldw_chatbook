@@ -1,460 +1,538 @@
-// Chatbook mobile companion — /m (ADR-234 Phase 1b; reading surface
-// Phase 2b).
-//
-// Vanilla, dependency-free client over the /api/v1/mobile REST table and
-// the /api/v1/mobile/stream WebSocket. Every dynamic string is rendered
-// via textContent/createElement — never innerHTML — so wire text is always
-// inert. Wire shapes match the Task 4/5 contracts exactly; unknown error
-// codes and frame types are shown/ignored, never fatal. The Phase-2b
-// Library tab (notes + media) is read-only and refreshes on open only —
-// it hooks into none of the polling/visibility logic below.
+// Shared Console phone view (ADR-244). Dynamic wire text is always inert.
 "use strict";
-
 (() => {
   const API_BASE = "/api/v1/mobile";
-  const STREAM_PATH = "/api/v1/mobile/stream";
-  const CSRF_HEADER = "X-Chatbook-CSRF";
-  const SYNC_INTERVAL_MS = 12000; // cross-surface completion sync (spec 4.4)
-  const RECONNECT_BACKOFF_MS = [1000, 2000, 5000, 15000];
-  const CLOSE_AUTH_EXPIRED = 4401;
-  const DRAFT_PREFIX = "chatbook-mobile-draft:";
-
-  const csrfMeta = document.querySelector('meta[name="chatbook-csrf"]');
-  const csrfToken = csrfMeta ? csrfMeta.content : "";
-
+  // Native approval_review.APPROVAL_OPTIONS labels; values travel unchanged.
+  const APPROVAL_LABELS = {approve_once: "Once", approve_session: "This session", allow_matching: "Always · these args", always_allow: "Always", deny: "Deny"};
   const $ = (id) => document.getElementById(id);
+  const csrfToken = document.querySelector('meta[name="chatbook-csrf"]').content;
   const els = {
-    views: {
-      list: $("view-list"),
-      chat: $("view-chat"),
-      approvals: $("view-approvals"),
-      library: $("view-library"),
-      note: $("view-note"),
-      item: $("view-item"),
-    },
-    backButton: $("back-button"),
-    statusLine: $("status-line"),
-    sessionList: $("session-list"),
-    sessionsEmpty: $("sessions-empty"),
-    newChatButton: $("new-chat-button"),
-    newChatForm: $("new-chat-form"),
-    newChatTitle: $("new-chat-title"),
-    chatTitle: $("chat-title"),
-    transcript: $("transcript"),
-    chatEmpty: $("chat-empty"),
-    composer: $("composer"),
-    composerInput: $("composer-input"),
-    sendButton: $("send-button"),
-    stopButton: $("stop-button"),
-    approvalsButton: $("approvals-button"),
-    approvalsBadge: $("approvals-badge"),
-    approvalsList: $("approvals-list"),
-    approvalsEmpty: $("approvals-empty"),
-    tabBar: $("tab-bar"),
-    tabChats: $("tab-chats"),
-    tabLibrary: $("tab-library"),
-    libraryNotesButton: $("library-notes-button"),
-    libraryMediaButton: $("library-media-button"),
-    notesList: $("notes-list"),
-    notesEmpty: $("notes-empty"),
-    notesMoreButton: $("notes-more-button"),
-    mediaList: $("media-list"),
-    mediaEmpty: $("media-empty"),
-    mediaMoreButton: $("media-more-button"),
-    noteTitle: $("note-title"),
-    noteMeta: $("note-meta"),
-    noteContent: $("note-content"),
-    itemTitle: $("item-title"),
-    itemMeta: $("item-meta"),
-    itemTranscripts: $("item-transcripts"),
+    views: {chats: $("view-chats"), chat: $("view-chat"), approvals: $("view-approvals"),
+      library: $("view-library"), note: $("view-note"), item: $("view-item")},
+    backButton: $("back-button"), tabBar: $("tab-bar"), tabChats: $("tab-chats"), tabLibrary: $("tab-library"),
+    statusLine: $("status-line"), sessionList: $("chat-list"), sessionsEmpty: $("sessions-empty"),
+    chatTitle: $("chat-title"), transcript: $("chat-transcript"), draft: $("chat-draft"),
+    targetLabel: $("target-label"), targetState: $("target-state"), connection: $("connection-state"),
+    send: $("send-command"), steer: $("steer-command"), redirect: $("redirect-command"), stop: $("stop-command"),
+    commandStatus: $("command-status"), agents: $("agent-list"), decisions: $("chat-decisions"),
+    approvalsBadge: $("approvals-badge"), approvalsList: $("approvals-list"), approvalsEmpty: $("approvals-empty"),
+    libraryNotesButton: $("library-notes-button"), libraryMediaButton: $("library-media-button"),
+    notesList: $("notes-list"), notesEmpty: $("notes-empty"), notesMoreButton: $("notes-more-button"),
+    mediaList: $("media-list"), mediaEmpty: $("media-empty"), mediaMoreButton: $("media-more-button"),
+    noteTitle: $("note-title"), noteMeta: $("note-meta"), noteContent: $("note-content"),
+    itemTitle: $("item-title"), itemMeta: $("item-meta"), itemTranscripts: $("item-transcripts"),
   };
-
   const state = {
-    sessions: [],
-    projectionUnavailable: false,
-    openSessionId: null,
-    messages: [], // wire messages of the open session, in order
-    messageIds: new Set(),
-    cursor: null,
-    rowsById: new Map(), // message id -> rendered <li>
-    pendingUserTexts: [], // optimistic drafts awaiting their real wire row
-    activeRuns: new Set(), // session ids with a run in flight
-    approvals: [],
-    ws: null,
-    wsAttempt: 0,
-    statusTimer: 0,
-    activeTab: "list", // bottom-tab root: "list" (Chats) | "library"
-    librarySection: "notes", // library sub-list: "notes" | "media"
-    notesPage: 0, // last loaded notes page (0 = nothing loaded)
-    notesHasMore: false,
-    mediaPage: 0,
-    mediaHasMore: false,
+    selectedTarget: null, drafts: new Map(), outstandingCommands: new Map(), connectionState: "connecting",
+    lastConfirmedUpdate: null, chats: [], chat: null, snapshot: null, ws: null, wsAttempt: 0,
+    activeTab: "chats", view: "chats", available: false, hostAvailable: false, refreshing: false, refreshAgain: false,
+    selectionRevision: 0, confirmationRevision: 0, targetConfirmed: false, targetMissing: false, historyLoading: false, renderedDecisions: [], hostBusy: false, history: null, readWorker: null, workerHistory: [], workerCursor: null, workerConversation: null, workerReading: false, workerResultOffset: null, workerResultRevision: null,
+    librarySection: "notes", notesPage: 0, notesHasMore: false, mediaPage: 0, mediaHasMore: false,
   };
-
-  // --- API helper — {"error": code} bodies become thrown codes            ---
-
-  function sessionUrl(sessionId, suffix, query) {
-    return (
-      API_BASE +
-      "/conversations/" +
-      encodeURIComponent(sessionId) +
-      suffix +
-      (query || "")
-    );
+  const targetFields = ["server_epoch", "console_id", "session_id", "incarnation_id", "turn_id", "run_id", "handle_id", "round_id"];
+  function targetOf(row, work = false) {
+    const target = {};
+    for (const field of targetFields) {
+      if (row[field] != null && (work || !["turn_id", "run_id", "handle_id", "round_id"].includes(field))) target[field] = row[field];
+    }
+    return target;
   }
-
+  function draftKey(target) {
+    return JSON.stringify([target.server_epoch, target.console_id, target.session_id, target.incarnation_id,
+      target.handle_id || null, target.handle_id ? target.run_id : null]);
+  }
+  function draftFor(target) {
+    const key = draftKey(target);
+    if (!state.drafts.has(key)) state.drafts.set(key, {text: "", revision: 0});
+    return state.drafts.get(key);
+  }
+  function captureSubmission(target, draft, expectedRevisions) {
+    return Object.freeze({key: draftKey(target), revision: draft.revision, text: draft.text,
+      target: Object.freeze({...target}), expected_revisions: Object.freeze({...expectedRevisions})});
+  }
+  function clearAcceptedDraft(submission) {
+    const current = state.drafts.get(submission.key);
+    if (current && current.revision === submission.revision && current.text === submission.text) {
+      state.drafts.set(submission.key, {text: "", revision: current.revision + 1});
+      if (state.selectedTarget && draftKey(state.selectedTarget) === submission.key) els.draft.value = "";
+    }
+  }
   async function api(method, path, body) {
-    const init = {
-      method,
-      credentials: "same-origin",
-      headers: { [CSRF_HEADER]: csrfToken },
-    };
+    const init = {method, credentials: "same-origin", headers: {"X-Chatbook-CSRF": csrfToken}};
     if (body !== undefined) {
       init.headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(body);
     }
-    let response;
-    try {
-      response = await fetch(path, init);
-    } catch (networkError) {
-      throw "network_error";
-    }
-    let data = null;
-    try {
-      data = await response.json();
-    } catch (parseError) {
-      data = null;
-    }
-    if (!response.ok) {
-      const code = data && typeof data.error === "string" ? data.error : null;
-      throw code || "http_" + response.status;
-    }
+    const response = await fetch(path, init);
+    if (response.status === 401) { location.assign("/auth/login"); throw "auth_required"; }
+    const data = await response.json();
+    if (!response.ok) throw data.error || "http_" + response.status;
     return data;
   }
-
   function showError(code) {
-    els.statusLine.textContent =
-      (state.projectionUnavailable ? "Live updates unavailable. " : "") +
-      "Error: " + String(code);
+    els.statusLine.textContent = "Unable to complete: " + String(code) + ". Refresh state or open terminal.";
     els.statusLine.hidden = false;
-    clearTimeout(state.statusTimer);
-    state.statusTimer = setTimeout(() => {
-      if (!state.projectionUnavailable) els.statusLine.hidden = true;
-    }, 6000);
   }
-
-  // --- Views                                                              ---
-
-  // The two bottom-tab roots: every other view (chat, approvals, note,
-  // item) is a detail reached from one of them and returns via Back.
-  const TAB_ROOTS = new Set(["list", "library"]);
-
+  function node(tag, text, className) {
+    const el = document.createElement(tag);
+    if (text != null) el.textContent = String(text);
+    if (className) el.className = className;
+    return el;
+  }
+  function button(label, action, className = "header-button") {
+    const el = node("button", label, className);
+    el.type = "button";
+    el.addEventListener("click", action);
+    return el;
+  }
   function showView(name) {
-    for (const [key, section] of Object.entries(els.views)) {
-      section.hidden = key !== name;
+    state.view = name;
+    for (const [key, section] of Object.entries(els.views)) section.hidden = key !== name;
+    const root = name === "chats" || name === "library";
+    els.backButton.hidden = root;
+    els.tabBar.hidden = !root;
+    for (const [tab, el] of [["chats", els.tabChats], ["library", els.tabLibrary]]) {
+      el.classList.toggle("tab-active", state.activeTab === tab);
+      if (state.activeTab === tab) el.setAttribute("aria-current", "page");
+      else el.removeAttribute("aria-current");
     }
-    const atRoot = TAB_ROOTS.has(name);
-    els.backButton.hidden = atRoot;
-    els.tabBar.hidden = !atRoot;
-    const chatsActive = state.activeTab === "list";
-    els.tabChats.classList.toggle("tab-active", chatsActive);
-    els.tabLibrary.classList.toggle("tab-active", !chatsActive);
-    if (chatsActive) {
-      els.tabChats.setAttribute("aria-current", "page");
-      els.tabLibrary.removeAttribute("aria-current");
-    } else {
-      els.tabChats.removeAttribute("aria-current");
-      els.tabLibrary.setAttribute("aria-current", "page");
-    }
+    publishAnswerability();
   }
-
-  // --- Session list                                                       ---
-
-  async function refreshSessions() {
-    let data;
-    try {
-      data = await api("GET", API_BASE + "/conversations");
-    } catch (code) {
-      showError(code);
-      return;
-    }
-    // The conversations route answers the paginated envelope
-    // {"items", "page", "has_more"} like the reading routes; the session
-    // list takes items and ignores the pagination fields.
-    state.sessions = Array.isArray(data.items) ? data.items : [];
-    renderSessionList();
-  }
-
-  function renderSessionList() {
-    els.sessionList.replaceChildren();
-    for (const session of state.sessions) {
-      const row = document.createElement("li");
-      row.dataset.sessionId = String(session.id);
-      const title = document.createElement("span");
-      title.className = "session-title";
-      title.textContent = session.title || "Untitled chat";
-      row.append(title);
-      if (session.has_folder_tools) {
-        const badge = document.createElement("span");
-        badge.className = "folder-badge";
-        badge.textContent = "folder tools";
-        row.append(badge);
-      }
-      row.addEventListener("click", () => openSession(String(session.id)));
-      els.sessionList.append(row);
-    }
-    els.sessionsEmpty.hidden = state.sessions.length > 0;
-  }
-
-  async function createSession(title) {
-    let data;
-    try {
-      data = await api("POST", API_BASE + "/conversations", {
-        title: title || undefined,
-      });
-    } catch (code) {
-      showError(code);
-      return;
-    }
-    els.newChatForm.hidden = true;
-    els.newChatTitle.value = "";
-    await refreshSessions();
-    if (data && data.session && data.session.id) {
-      openSession(String(data.session.id));
-    }
-  }
-
-  // --- Transcript                                                         ---
-
-  function toolNameOf(msg) {
-    // Compact tool rows come from what the wire actually carries (verified
-    // live: role "tool" rows whose content holds the call, e.g. "⚙ fs_list")
-    // or optional tool metadata if a future wire adds it — never invented.
-    if (typeof msg.tool_name === "string" && msg.tool_name) return msg.tool_name;
-    if (msg.tool && typeof msg.tool.name === "string" && msg.tool.name) {
-      return msg.tool.name;
-    }
-    if (msg.role === "tool" && typeof msg.content === "string") {
-      return msg.content.replace(/^[⚙]\s*/, "").trim() || null;
-    }
-    return null;
-  }
-
-  function renderMessage(msg) {
-    const li = document.createElement("li");
-    const toolName = toolNameOf(msg);
-    if (toolName) {
-      li.className = "role-tool";
-      li.textContent = "tool: " + toolName;
-    } else {
-      const role = typeof msg.role === "string" ? msg.role : "assistant";
-      li.className = "role-" + (role === "user" ? "user" : "assistant");
-      li.textContent = typeof msg.content === "string" ? msg.content : "";
-      if (typeof msg.status === "string") {
-        li.classList.add("status-" + msg.status.replace(/[^a-z_]/g, ""));
-      }
-    }
-    state.rowsById.set(msg.id, li);
-    return li;
-  }
-
-  function appendMessage(msg) {
-    if (state.messageIds.has(msg.id)) {
-      resyncTruncatedRow(msg);
-      return;
-    }
-    // Reconcile an optimistic user bubble with its real wire row (the
-    // non-blocking send persists the row a tick after its 202).
-    if (msg.role === "user" && state.pendingUserTexts[0] === msg.content) {
-      state.pendingUserTexts.shift();
-      const optimistic = els.transcript.querySelector("li[data-optimistic]");
-      if (optimistic) optimistic.remove();
-    }
-    state.messageIds.add(msg.id);
-    state.messages.push(msg);
-    els.transcript.append(renderMessage(msg));
-    els.chatEmpty.hidden = true;
-    scrollTranscript();
-  }
-
-  // Mid-stream reconnect resync (#3128 minor 5): a dropped stream can
-  // leave the last bubble rendered from deltas that stopped early, and
-  // the resync then re-delivers that KNOWN id with the full persisted
-  // content. When the incoming content is LONGER than what is rendered,
-  // update the stored message and the row's text in place — textContent
-  // only, exactly like the live-delta path; a shorter or equal
-  // re-delivery (an edit elsewhere) changes nothing here.
-  function resyncTruncatedRow(msg) {
-    const known = state.messages.find((message) => message.id === msg.id);
-    if (!known) return;
-    const content = typeof msg.content === "string" ? msg.content : "";
-    const knownContent =
-      typeof known.content === "string" ? known.content : "";
-    if (content.length <= knownContent.length) return;
-    known.content = msg.content;
-    const row = state.rowsById.get(msg.id);
-    if (!row) return;
-    const toolName = toolNameOf(msg);
-    row.textContent = toolName ? "tool: " + toolName : content;
-    scrollTranscript();
-  }
-
-  function appendOptimisticUser(text) {
-    const li = document.createElement("li");
-    li.className = "role-user";
-    li.dataset.optimistic = "1";
-    li.textContent = text;
-    state.pendingUserTexts.push(text);
-    els.transcript.append(li);
-    els.chatEmpty.hidden = true;
-    scrollTranscript();
-  }
-
-  function dropOptimisticUsers() {
-    state.pendingUserTexts = [];
-    for (const row of els.transcript.querySelectorAll("li[data-optimistic]")) {
-      row.remove();
-    }
-  }
-
-  function scrollTranscript() {
-    const region = els.transcript; // the transcript is the scroll container
-    region.scrollTop = region.scrollHeight;
-  }
-
-  function mergeMessages(incoming) {
-    for (const msg of incoming) appendMessage(msg);
-    if (incoming.length > 0) {
-      state.cursor = incoming[incoming.length - 1].id;
-    }
-  }
-
-  async function loadTranscript(sessionId) {
-    let data;
-    try {
-      data = await api("GET", sessionUrl(sessionId, "/messages"));
-    } catch (code) {
-      showError(code);
-      return;
-    }
-    state.messages = [];
-    state.messageIds = new Set();
-    state.rowsById = new Map();
-    state.pendingUserTexts = [];
-    els.transcript.replaceChildren();
-    mergeMessages(Array.isArray(data.messages) ? data.messages : []);
-    state.cursor = data.cursor || state.cursor;
-    els.chatEmpty.hidden = state.messages.length > 0;
-    scrollTranscript();
-  }
-
-  async function syncOpenSession() {
-    const sessionId = state.openSessionId;
-    if (!sessionId) return;
-    const query = state.cursor
-      ? "?after=" + encodeURIComponent(state.cursor)
-      : "";
-    let data;
-    try {
-      data = await api("GET", sessionUrl(sessionId, "/messages", query));
-    } catch (code) {
-      if (code !== "invalid_cursor") showError(code);
-      return; // a vanished cursor falls back to the next full load
-    }
-    mergeMessages(Array.isArray(data.messages) ? data.messages : []);
-    if (data.cursor) state.cursor = data.cursor;
-  }
-
-  function openSession(sessionId) {
-    state.openSessionId = sessionId;
-    state.cursor = null;
-    els.chatTitle.textContent =
-      (state.sessions.find((s) => String(s.id) === sessionId) || {}).title ||
-      "Chat";
-    restoreDraft(sessionId);
-    updateComposerState();
-    showView("chat");
-    loadTranscript(sessionId);
-  }
-
-  // --- Composer                                                           ---
-
-  function draftKey(sessionId) {
-    return DRAFT_PREFIX + sessionId;
-  }
-
-  function saveDraft() {
-    const sessionId = state.openSessionId;
-    if (!sessionId) return;
-    const text = els.composerInput.value;
-    if (text) sessionStorage.setItem(draftKey(sessionId), text);
-    else sessionStorage.removeItem(draftKey(sessionId));
-  }
-
-  function restoreDraft(sessionId) {
-    els.composerInput.value = sessionStorage.getItem(draftKey(sessionId)) || "";
-    autoGrow();
-  }
-
-  function autoGrow() {
-    const input = els.composerInput;
-    input.style.height = "auto";
-    input.style.height = Math.min(input.scrollHeight, 160) + "px";
-  }
-
-  function updateComposerState() {
-    const runActive =
-      state.openSessionId && state.activeRuns.has(state.openSessionId);
-    els.sendButton.disabled = Boolean(runActive);
-    els.stopButton.hidden = !runActive;
-  }
-
-  async function sendDraft() {
-    const sessionId = state.openSessionId;
-    const text = els.composerInput.value.trim();
-    if (!sessionId || !text || state.activeRuns.has(sessionId)) return;
-    try {
-      await api("POST", sessionUrl(sessionId, "/messages"), { text });
-    } catch (code) {
-      showError(code);
-      return;
-    }
-    els.composerInput.value = "";
-    sessionStorage.removeItem(draftKey(sessionId));
-    autoGrow();
-    // The 202 returns before the turn runs (non-blocking send): show the
-    // user bubble now; the real row reconciles it on the next sync.
-    appendOptimisticUser(text);
-    await syncOpenSession();
-  }
-
-  async function stopRun() {
-    const sessionId = state.openSessionId;
-    if (!sessionId) return;
-    try {
-      await api("POST", sessionUrl(sessionId, "/cancel"));
-    } catch (code) {
-      showError(code);
-    }
-  }
-
-  // --- Library (Phase 2b, read-only)                                      ---
-
-  // Notes + media browsing over the four reading GETs. Refresh happens on
-  // open only (tab/section entry, Back); nothing here joins the polling,
-  // visibility, or stream logic above. All rendering is textContent-only.
-
   function showTab(tab) {
+    state.selectionRevision++; state.targetConfirmed = false; state.historyLoading = false;
     state.activeTab = tab;
-    if (tab === "library") {
-      showView("library");
-      showLibrarySection(state.librarySection === "media" ? "media" : "notes");
-    } else {
-      showView("list");
-      refreshSessions();
+    showView(tab);
+    if (tab === "library") showLibrarySection(state.librarySection);
+    else refresh();
+  }
+  function workspaceLabel(row) {
+    return row.scope_type === "global" ? "Global" : row.workspace_name || "Workspace name unavailable";
+  }
+  function statusLabel(row) {
+    if (!row.live || !state.hostAvailable) return "Unavailable";
+    if (row.pending_decision_count) return "Waiting · decision";
+    const status = String(row.status || "idle");
+    if (["complete", "completed", "finished", "stopped", "cancelled", "failed", "error"].includes(status)) return "Finished · " + status;
+    if (status === "blocked" || status.includes("wait") || status.includes("approval")) return "Waiting · " + status;
+    if (status === "idle") return "Ready";
+    return status === "preparing" ? "Preparing" : "Running · " + status;
+  }
+  function renderChats() {
+    const existing = new Map([...els.sessionList.children].map(li => [li.firstChild.dataset.sessionId, li]));
+    for (const [index, row] of state.chats.entries()) {
+      const key = String(row.session_id || row.conversation_id || row.id);
+      let li = existing.get(key);
+      if (!li) {
+        li = node("li");
+        const open = button("", () => {}, "chat-row"); open.dataset.sessionId = key;
+        open.append(node("strong"), node("span", "", "detail-meta"), node("span", "", "detail-meta"), node("span", "", "attention"));
+        li.append(open);
+      }
+      existing.delete(key);
+      const open = li.firstChild;
+      open.onclick = () => openChat(row);
+      const values = [row.title || "Untitled chat", workspaceLabel(row) + " · " + statusLabel(row),
+        "Latest activity: " + (row.last_modified || "unavailable"), "Needs a decision · " + (row.pending_decision_count || 0)];
+      for (const [position, text] of values.entries()) {
+        if (open.children[position].textContent !== text) open.children[position].textContent = text;
+      }
+      open.lastChild.hidden = !row.pending_decision_count;
+      if (els.sessionList.children[index] !== li) els.sessionList.insertBefore(li, els.sessionList.children[index] || null);
+    }
+    for (const li of existing.values()) li.remove();
+    els.sessionsEmpty.hidden = state.chats.length > 0;
+  }
+  async function snapshot(target, onPage) {
+    const aggregate = {latest_message: null, chats: [], messages: [], fleet: [], decisions: [], recoveries: [], command_receipts: []};
+    let cursor = null, receiptCursor = null, initialReset = false;
+    for (let pages = 0; pages < 500; pages++) {
+      const query = new URLSearchParams({protocol_version: "1", limit: "100"});
+      if (target) query.set("target", JSON.stringify(target));
+      if (cursor) query.set("cursor", cursor);
+      if (receiptCursor) query.set("receipt_cursor", receiptCursor);
+      const page = await api("GET", API_BASE + "/console/snapshot?" + query);
+      if (pages && ((page.reset_required && !initialReset) || page.sequence !== aggregate.sequence || page.server_epoch !== aggregate.server_epoch || page.console_id !== aggregate.console_id)) throw "snapshot_changed";
+      if (!pages) initialReset = Boolean(page.reset_required);
+      if (pages && page.chats?.some(row => aggregate.chats.some(prior =>
+        (row.session_id || row.conversation_id) === (prior.session_id || prior.conversation_id)))) throw "snapshot_changed";
+      for (const section of ["chats", "messages", "fleet", "decisions", "recoveries", "command_receipts"]) {
+        aggregate[section].push(...(page[section] || []));
+      }
+      Object.assign(aggregate, {server_epoch: page.server_epoch, console_id: page.console_id, sequence: page.sequence, execution_admitted: page.execution_admitted});
+      aggregate.latest_message = page.latest_message || null;
+      if (onPage) onPage(aggregate, page);
+      cursor = page.next_cursor; receiptCursor = page.next_receipt_cursor;
+      if (!cursor && !receiptCursor) return aggregate;
+    }
+    throw "snapshot_limit";
+  }
+  function applySnapshot(data) {
+    state.snapshot = data;
+    for (const receipt of data.command_receipts) applyReceipt(receipt);
+    const selected = state.selectedTarget;
+    if (data.server_epoch !== selected.server_epoch || data.console_id !== selected.console_id) { state.available = false; state.targetConfirmed = false; state.targetMissing = true; return; }
+    const row = data.chats.find(row => row.live && draftKey(targetOf(row)) === draftKey({...selected, handle_id: null}));
+    const worker = selected.handle_id && data.fleet.find(row => row.handle_id === selected.handle_id && row.run_id === selected.run_id);
+    state.available = Boolean(row && (!selected.handle_id || worker));
+    state.targetMissing = !state.available;
+    if (row) state.chat = row;
+    // A replacement owner never inherits an old draft or silently changes its target.
+    if (state.available) state.selectedTarget = selected.handle_id ? targetOf(worker, true) : targetOf(row, true);
+    renderChat();
+  }
+  function confirmTarget(data, page, selection, confirmation, socket) {
+    if (selection !== state.selectionRevision || confirmation !== state.confirmationRevision || socket !== state.ws || socket?.readyState !== WebSocket.OPEN || page.execution_admitted !== true || !state.selectedTarget) return;
+    const selected = state.selectedTarget;
+    if (data.server_epoch !== selected.server_epoch || data.console_id !== selected.console_id) return;
+    const row = data.chats.find(row => row.live && draftKey(targetOf(row)) === draftKey({...selected, handle_id: null}));
+    const revisions = row?.expected_revisions;
+    if (!row || !revisions || !["settings_revision", "generation_settings_revision", "context_policy_revision", "identity_revision", "conversation_binding_revision"].every(key => Number.isInteger(revisions[key]) && revisions[key] >= 0)) return;
+    const worker = selected.handle_id && data.fleet.find(row => row.handle_id === selected.handle_id && row.run_id === selected.run_id && row.live !== false);
+    if (selected.handle_id && !worker) { state.chat = row; state.snapshot = data; renderChat(); return; }
+    state.targetMissing = false;
+    state.chat = row; state.snapshot = data; state.hostAvailable = true; state.available = true; state.targetConfirmed = true;
+    state.selectedTarget = selected.handle_id ? targetOf(worker, true) : targetOf(row, true);
+    for (const receipt of data.command_receipts) applyReceipt(receipt);
+    state.historyLoading = Boolean(page.next_cursor || page.next_receipt_cursor);
+    state.lastConfirmedUpdate = new Date().toLocaleTimeString();
+    renderChat(); setConnection("connected");
+  }
+  async function refresh() {
+    if (state.refreshing) { state.refreshAgain = true; return; }
+    state.refreshing = true;
+    const selection = state.selectionRevision, confirmation = state.confirmationRevision, socket = state.ws;
+    try {
+      const list = await snapshot(null);
+      if (selection !== state.selectionRevision) return;
+      state.hostAvailable = list.execution_admitted === true; state.available = true;
+      state.chats = list.chats;
+      for (const receipt of list.command_receipts) applyReceipt(receipt);
+      if (state.selectedTarget && state.view === "chat") {
+        const current = list.chats.find(row => row.live && draftKey(targetOf(row)) === draftKey({...state.selectedTarget, handle_id: null}));
+        if (current) {
+          state.historyLoading = true;
+          const detail = await snapshot(targetOf(current), (data, page) => confirmTarget(data, page, selection, confirmation, socket));
+          if (selection !== state.selectionRevision || confirmation !== state.confirmationRevision || socket !== state.ws) return;
+          state.historyLoading = false; applySnapshot(detail);
+        } else { state.available = false; state.targetConfirmed = false; state.targetMissing = true; state.historyLoading = false; renderChat(); }
+      }
+      await queryOutstanding();
+      if (selection !== state.selectionRevision) return;
+      state.lastConfirmedUpdate = new Date().toLocaleTimeString();
+      setConnection(state.ws?.readyState === WebSocket.OPEN ? "connected" : "disconnected");
+      els.statusLine.hidden = true;
+    } catch (error) {
+      if (error === "snapshot_changed" && state.targetConfirmed && confirmation === state.confirmationRevision && socket === state.ws && socket?.readyState === WebSocket.OPEN) {
+        state.historyLoading = true; setConnection("connected");
+        state.refreshAgain = false; setTimeout(refresh, 1000); return;
+      }
+      state.hostAvailable = false; state.available = false;
+      setConnection("uncertain");
+      if (!state.chats.length) {
+        try {
+          const saved = await api("GET", API_BASE + "/conversations");
+          state.chats = (saved.items || []).map(row => ({...row, conversation_id: row.id, live: false}));
+        } catch (readError) { showError(readError); }
+      }
+      if (error !== "console_unavailable") showError(error);
+    } finally {
+      state.refreshing = false;
+      renderChats(); renderDecisions(); updateControls();
+      if (state.refreshAgain) { state.refreshAgain = false; refresh(); }
     }
   }
-
+  function setConnection(value) {
+    if (value !== "connected") { state.targetConfirmed = false; state.targetMissing = false; state.confirmationRevision++; }
+    state.connectionState = value;
+    els.connection.textContent = (value === "connected" ? "Connected" : value === "connecting" ? "Connecting…" : value === "uncertain" ? "State uncertain · controls paused" : "Disconnected · draft kept") +
+      (state.historyLoading && value === "connected" ? " · loading history" : "") + (state.lastConfirmedUpdate ? " · confirmed " + state.lastConfirmedUpdate : " · no confirmed update");
+    updateControls(); publishAnswerability(); renderLatest();
+  }
+  function chooseTarget(target) {
+    state.selectionRevision++;
+    state.selectedTarget = Object.freeze({...target}); state.targetConfirmed = false; state.targetMissing = false;
+    els.transcript.replaceChildren(); renderLatest();
+    state.history = null; state.readWorker = null;
+    if (state.workerConversation !== state.chat?.conversation_id) {
+      $("worker-history").replaceChildren(); $("worker-history-state").textContent = "Loading worker history…"; $("workers-more").hidden = true;
+    }
+    if (!$("agent-panel").hidden) loadWorkers(true);
+    $("worker-detail").hidden = true; els.transcript.hidden = false;
+    els.draft.value = draftFor(target).text;
+    state.available = false;
+    showView("chat"); updateControls();
+    refresh();
+  }
+  async function openChat(row) {
+    if (row.live) { state.chat = row; chooseTarget(targetOf(row, true)); return; }
+    // Saved history remains readable even when execution has no live owner.
+    state.selectionRevision++;
+    const selection = state.selectionRevision;
+    state.selectedTarget = null; state.available = false; state.chat = row; state.snapshot = null;
+    state.history = row; state.readWorker = null; $("worker-detail").hidden = true; els.transcript.hidden = false; els.draft.value = ""; showView("chat"); renderChat();
+    try {
+      const messages = [];
+      let offset = 0, charStart = 0, revision = null;
+      for (let page = 0; page < 500; page++) {
+        const query = new URLSearchParams({message_offset: offset, message_limit: 1, max_chars: 2000, char_start: charStart});
+        const history = await api("GET", API_BASE + "/conversations/" + encodeURIComponent(row.conversation_id) + "/messages?" + query);
+        if (selection !== state.selectionRevision) return;
+        const currentRevision = history.version + ":" + history.message_epoch;
+        if (revision !== null && revision !== currentRevision) throw "history_changed";
+        revision = currentRevision;
+        const message = history.messages[0];
+        if (!message) break;
+        messages.push({...message, message_id: message.id, role: message.sender, content: message.text, offset: charStart});
+        if (message.has_more) charStart += message.returned_chars;
+        else { offset++; charStart = 0; }
+        if (!charStart && offset >= history.message_total) { renderMessages(messages); return; }
+      }
+      if (messages.length) throw "history_limit";
+      renderMessages(messages);
+    } catch (error) { showError(error); }
+  }
+  async function hostCommand(action, payload) {
+    if (state.hostBusy || !navigator.onLine || (state.lastConfirmedUpdate && state.connectionState !== "connected")) return;
+    state.hostBusy = true; updateControls();
+    try {
+      const {host} = await api("POST", API_BASE + "/console/host", {protocol_version: 1});
+      const receipt = await submit(action, host, payload);
+      await refresh();
+      if (receipt && ["applied", "accepted"].includes(receipt.state)) {
+        const row = state.chats.find(row => row.session_id === receipt.native_id);
+        if (row) { state.chat = row; chooseTarget(targetOf(row, true)); }
+      }
+    } catch (error) { showError(error); }
+    finally { state.hostBusy = false; updateControls(); }
+  }
+  function renderMessages(messages) {
+    const combined = new Map();
+    for (const message of messages) {
+      const current = combined.get(message.message_id) || {...message, content: ""};
+      // Server offsets count Unicode code points; UTF-16 JS indices would corrupt emoji chunks.
+      const points = Array.from(current.content);
+      if ((message.offset || 0) > points.length) throw "message_gap";
+      current.content = points.slice(0, message.offset || 0).join("") + (message.content || "");
+      combined.set(message.message_id, current);
+    }
+    const opened = new Set([...els.transcript.querySelectorAll("details[open]")].map(el => el.dataset.messageId));
+    const atBottom = els.transcript.scrollHeight - els.transcript.scrollTop - els.transcript.clientHeight < 40;
+    const position = els.transcript.scrollTop;
+    state.renderedBodies = combined;
+    els.transcript.replaceChildren();
+    for (const message of combined.values()) {
+      const row = node("li", null, "role-" + (message.role === "user" ? "user" : message.role === "tool" ? "tool" : "assistant"));
+      row.dataset.messageId = message.message_id;
+      if (message.role === "tool") {
+        const details = node("details"); details.dataset.messageId = message.message_id; details.open = opened.has(message.message_id);
+        details.append(node("summary", "Tool activity"), node("pre", message.content, "tool-content")); row.append(details);
+      } else row.append(node("span", message.role === "user" ? "You" : "Assistant", "message-role"), node("div", message.content, "message-body"));
+      els.transcript.append(row);
+    }
+    if (!combined.size) els.transcript.append(node("li", "No messages yet.", "empty-note"));
+    els.transcript.scrollTop = atBottom ? els.transcript.scrollHeight : position;
+  }
+  function renderLatest() {
+    const excerpt = state.snapshot?.latest_message, target = state.selectedTarget;
+    let shown = Boolean(state.targetConfirmed && target && !target.handle_id && !state.readWorker && excerpt &&
+      ["server_epoch", "console_id", "session_id", "incarnation_id"].every(key => excerpt[key] === target[key]));
+    if (shown && !state.historyLoading) {
+      const body = state.renderedBodies?.get(excerpt.message_id)?.content;
+      if (body !== undefined && Array.from(body).slice(excerpt.offset, excerpt.offset + Array.from(excerpt.content).length).join("") === excerpt.content) shown = false;
+    }
+    $("latest-output").hidden = !shown;
+    if (!shown) return;
+    $("latest-output-label").textContent = "Latest output excerpt · " + excerpt.role + " · history loading";
+    if ($("latest-output-content").textContent !== excerpt.content) {
+      $("latest-output-content").textContent = excerpt.content;
+      $("latest-output").scrollTop = $("latest-output").scrollHeight;
+    }
+  }
+  function renderChat() {
+    const chat = state.chat;
+    els.chatTitle.textContent = chat?.title || "Chat unavailable";
+    if (state.snapshot && state.selectedTarget) renderMessages(state.snapshot.messages);
+    else els.transcript.replaceChildren();
+    const items = [];
+    if (chat?.live) items.push({key: "main", label: "Main agent · " + statusLabel(chat), action: () => chooseTarget(targetOf(chat, true))});
+    for (const worker of state.snapshot?.fleet || []) {
+      if (items.some(item => item.key === worker.handle_id)) continue;
+      items.push({key: worker.handle_id, runId: worker.run_id, label: "Worker " + worker.handle_id + " · " + worker.status,
+        action: () => worker.live === false ? openWorker({id: worker.run_id, task: worker.task, status: worker.status}) : chooseTarget(targetOf(worker, true))});
+    }
+    const existing = new Map([...els.agents.children].map(li => [li.firstChild.dataset.agentKey, li]));
+    for (const [index, item] of items.entries()) {
+      let li = existing.get(item.key);
+      if (!li) { li = node("li"); const control = node("button", "", "header-button"); control.type = "button"; control.dataset.agentKey = item.key; li.append(control); }
+      existing.delete(item.key);
+      const control = li.firstChild;
+      if (control.textContent !== item.label) control.textContent = item.label;
+      if (control.dataset.runId !== (item.runId || "")) control.dataset.runId = item.runId || "";
+      control.onclick = item.action;
+      if (els.agents.children[index] !== li) els.agents.insertBefore(li, els.agents.children[index] || null);
+    }
+    for (const li of existing.values()) li.remove();
+    renderDecisions(); updateControls(); renderLatest();
+  }
+  function setDisabled(control, value) {
+    const disabled = Boolean(value);
+    if (control.disabled !== disabled) control.disabled = disabled;
+  }
+  function updateControls() {
+    const target = state.selectedTarget;
+    const worker = Boolean(target?.handle_id);
+    const unknown = [...state.outstandingCommands.values()].some(row => row.receipt?.state === "outcome_unknown" || row.unknown);
+    const liveWorker = target?.handle_id && state.snapshot?.fleet.find(row => row.handle_id === target.handle_id && row.run_id === target.run_id);
+    if (unknown) els.connection.textContent = "State uncertain · unresolved command outcome · open terminal" + (state.lastConfirmedUpdate ? " · confirmed " + state.lastConfirmedUpdate : "");
+    const ready = state.connectionState === "connected" && state.targetConfirmed && state.available && target && !unknown && (!target.handle_id || liveWorker?.live !== false);
+    const draft = target ? draftFor(target) : {text: "", revision: 0};
+    const pending = [...state.outstandingCommands.values()].some(row => row.submission && row.submission.key === (target && draftKey(target)) && row.submission.revision === draft.revision && !["accepted", "queued", "applied", "refused", "expired"].includes(row.receipt?.state));
+    setDisabled(els.send, !ready || !draft.text.trim() || pending);
+    const sendLabel = worker ? "Send guidance" : "Send";
+    if (els.send.textContent !== sendLabel) els.send.textContent = sendLabel;
+    els.steer.hidden = worker; els.redirect.hidden = worker;
+    setDisabled(els.steer, !ready || !target?.run_id || !draft.text.trim() || pending);
+    setDisabled(els.redirect, els.steer.disabled);
+    setDisabled(els.stop, !ready || !(target?.run_id || target?.turn_id));
+    setDisabled($("new-chat-button"), unknown || state.hostBusy || !navigator.onLine || (state.lastConfirmedUpdate && state.connectionState !== "connected"));
+    setDisabled(els.draft, !target);
+    $("composer").classList.toggle("readonly", Boolean(state.readWorker || state.history));
+    els.targetLabel.textContent = state.readWorker ? (state.chat?.title || "Chat") + " · Worker " + state.readWorker.id + " · History (read only)" : state.history ? "Saved history · " + (state.chat?.title || "Chat") : target ?
+      (state.chat?.title || "Chat") + " · " + (worker ? "Worker " + target.handle_id + " · run " + target.run_id : "Main agent") : "Choose a chat";
+    els.targetState.textContent = state.readWorker ? "Recorded status: " + state.readWorker.status + ". Historical records do not grant live controls." : state.history ? "Read-only history. Open this saved chat to control its native agent." :
+      state.targetMissing && target ? "Original target unavailable · draft retained here. Choose a current chat explicitly." : !state.targetConfirmed && target ? "Target not confirmed · controls paused." : state.chat ? statusLabel(state.chat) : "";
+    if (liveWorker) {
+      $("worker-detail").hidden = false; $("worker-detail").classList.add("live-activity");
+      $("worker-activity").textContent = (liveWorker.agent || "Worker") + " · " + (liveWorker.task || "Activity unavailable") + " · queued guidance: " + (liveWorker.queued_steering ?? "unavailable") + " · undelivered: " + (liveWorker.undelivered_steering ?? "unavailable");
+      $("worker-result").textContent = liveWorker.activity || "No result published yet.";
+      $("worker-result-more").hidden = true;
+    }
+    if (state.history && !state.readWorker) {
+      const open = button("Open saved chat", () => hostCommand("open", {conversation_id: state.history.conversation_id}));
+      open.disabled = unknown || state.hostBusy || !navigator.onLine || (state.lastConfirmedUpdate && state.connectionState !== "connected");
+      els.targetState.append(open);
+    }
+    const relevant = [...state.outstandingCommands.values()].filter(row => target && row.receipt?.target?.session_id === target.session_id && (row.receipt.target.handle_id || null) === (target.handle_id || null));
+    els.commandStatus.textContent = relevant.map(row => receiptLabel(row.receipt, row.unknown)).join(" · ");
+    for (const control of els.decisions.querySelectorAll("button, select, input, textarea")) setDisabled(control, !ready || state.view !== "chat");
+  }
+  function receiptLabel(receipt, unknown) {
+    if (unknown) return "Response lost · checking command ID; no replay";
+    if (!receipt) return "Submitting…";
+    const action = receipt.action.replaceAll("_", " ");
+    if (receipt.state === "pending") return action + ": Preparing · not accepted yet";
+    if (receipt.action.includes("stop") && receipt.state === "accepted") return "Stop requested · physical exit not confirmed";
+    if (receipt.state === "queued") return action + ": queued · consumption not confirmed";
+    if (receipt.state === "outcome_unknown") return action + ": outcome unknown · open terminal";
+    return action + ": " + receipt.state + (receipt.reason ? " · " + receipt.reason : "");
+  }
+  function applyReceipt(receipt) {
+    const prior = state.outstandingCommands.get(receipt.command_id) || {};
+    // Preparing cannot retract a later native acceptance already observed on another request.
+    if (receipt.state === "pending" && prior.receipt && prior.receipt.state !== "pending") return;
+    prior.receipt = receipt; prior.unknown = false;
+    state.outstandingCommands.set(receipt.command_id, prior);
+    if (prior.submission && ["accepted", "queued", "applied"].includes(receipt.state)) clearAcceptedDraft(prior.submission);
+    updateControls();
+  }
+  async function submit(action, target, payload, submission) {
+    const ticket = await api("POST", API_BASE + "/commands/tickets", {protocol_version: 1, action, target, payload});
+    // Retain ID before the effect request. A lost ACK can only query this ID.
+    state.outstandingCommands.set(ticket.command_id, {submission, unknown: false});
+    updateControls();
+    try {
+      const receipt = await api("POST", API_BASE + "/commands", {protocol_version: 1, ticket: ticket.ticket, payload});
+      applyReceipt(receipt); return receipt;
+    } catch (error) {
+      state.outstandingCommands.get(ticket.command_id).unknown = true;
+      setConnection("uncertain"); await queryOutstanding(); showError(error); return null;
+    }
+  }
+  async function queryOutstanding() {
+    for (const [id, command] of state.outstandingCommands) {
+      if (!command.unknown && ["applied", "refused", "expired"].includes(command.receipt?.state)) continue;
+      try { applyReceipt(await api("GET", API_BASE + "/commands/" + encodeURIComponent(id))); }
+      catch (error) { command.unknown = true; updateControls(); }
+    }
+  }
+  const submitting = new Set();
+  async function command(action) {
+    const target = state.selectedTarget;
+    const control = action === "send" ? els.send : action === "steer" ? els.steer : action === "redirect" ? els.redirect : els.stop;
+    if (!target || control.disabled) return;
+    const submission = captureSubmission(target, draftFor(target), state.chat.expected_revisions);
+    const key = submission.key + ":" + submission.revision + ":" + action;
+    if (submitting.has(key)) return;
+    submitting.add(key);
+    try {
+      const nativeAction = target.handle_id ? action === "stop" ? "subagent_stop" : "subagent_guidance" : action;
+      const payload = action === "stop" ? {} : action === "send" && !target.handle_id ?
+        {text: submission.text, expected_revisions: submission.expected_revisions} : {text: submission.text};
+      await submit(nativeAction, submission.target, payload, action === "stop" ? null : submission);
+    } catch (error) { showError(error); }
+    finally { submitting.delete(key); updateControls(); }
+  }
+  function publishAnswerability() {
+    if (state.ws?.readyState !== WebSocket.OPEN) return;
+    const answerable = !state.readWorker && state.view === "chat" && state.targetConfirmed && state.available && state.connectionState === "connected" && ![...state.outstandingCommands.values()].some(row => row.unknown || row.receipt?.state === "outcome_unknown");
+    for (const target of state.renderedDecisions) state.ws.send(JSON.stringify({type: "answerable", protocol_version: 1, target, answerable}));
+  }
+  function renderDecisions() {
+    const rows = state.snapshot?.decisions || [];
+    const signature = JSON.stringify([state.chat && targetOf(state.chat), rows.map(({answerable, ...round}) => round), state.snapshot?.recoveries, state.chats.map(row => [row.session_id, row.pending_decision_count])]);
+    if (state.decisionSignature === signature) { publishAnswerability(); return; }
+    state.decisionSignature = signature;
+    // Withdraw old claims before replacing controls or changing the target.
+    if (state.ws?.readyState === WebSocket.OPEN) for (const target of state.renderedDecisions) state.ws.send(JSON.stringify({type: "answerable", protocol_version: 1, target, answerable: false}));
+    state.renderedDecisions = [];
+    els.decisions.replaceChildren(); els.approvalsList.replaceChildren();
+    const count = state.chats.reduce((total, row) => total + (row.pending_decision_count || 0), 0);
+    els.approvalsBadge.hidden = !count; els.approvalsBadge.textContent = String(count);
+    for (const row of state.chats.filter(row => row.pending_decision_count && row.session_id !== state.chat?.session_id)) {
+      const overview = node("li"); overview.append(button((row.title || "Chat") + " · " + row.pending_decision_count + " pending decisions", () => openChat(row))); els.approvalsList.append(overview);
+    }
+    for (const round of rows) {
+      const target = {...targetOf(state.chat), run_id: round.run_id, round_id: round.round_id};
+      const card = node("details", null, "decision"); card.open = true;
+      card.append(node("summary", "Decision · " + round.kind));
+      const overview = node("li"); overview.append(button((state.chat?.title || "Chat") + " · " + round.kind, () => showView("chat"))); els.approvalsList.append(overview);
+      const supported = round.supported && ["approval", "question"].includes(round.kind);
+      if (!supported) { card.append(node("p", round.reason || "This review requires the terminal.")); const link = node("a", "Open terminal"); link.href = "/"; card.append(link); }
+      else {
+        const answers = [];
+        for (const call of round.calls || []) {
+          const label = node("label", call.llm_name || call.tool_name || "Tool");
+          const select = node("select"); select.setAttribute("aria-label", "Decision for " + label.textContent);
+          for (const option of call.options || []) { const el = node("option", APPROVAL_LABELS[option] || option); el.value = option; select.append(el); }
+          label.append(select); card.append(label, node("pre", call.arguments_summary || "", "approval-args"));
+          answers.push({call, select});
+        }
+        for (const question of round.questions || []) {
+          const fieldset = node("fieldset"); fieldset.append(node("legend", question.question));
+          const options = [];
+          for (const option of question.options) {
+            const label = node("label", option.label + (option.description ? " · " + option.description : ""));
+            const input = node("input"); input.type = question.multiSelect ? "checkbox" : "radio"; input.name = round.round_id + ":" + answers.length; input.value = option.label; label.prepend(input); fieldset.append(label); options.push(input);
+          }
+          const text = node("textarea"); text.setAttribute("aria-label", "Additional answer for " + question.question); text.maxLength = 500;
+          fieldset.append(text); card.append(fieldset); answers.push({question, options, text});
+        }
+        const decide = button("Submit decision", async () => {
+          if (decide.disabled) return;
+          const answer = round.kind === "approval" ? {decisions: Object.fromEntries(answers.map(({call, select}) => [call.call_id || call.llm_name, select.value]))} :
+            {answers: answers.map(({question, options, text}) => ({question: question.question, selected: options.filter(input => input.checked).map(input => input.value), other_text: text.value || null, unanswered: false}))};
+          decide.disabled = true;
+          try { await submit("decision", target, {kind: round.kind, answer}); await refresh(); }
+          catch (error) { showError(error); }
+        }, "primary-button");
+        card.append(decide); state.renderedDecisions.push(target);
+      }
+      els.decisions.append(card);
+    }
+    for (const _recovery of state.snapshot?.recoveries || []) { const p = node("p", "Unsent turn needs attention. "); const link = node("a", "Open terminal"); link.href = "/"; p.append(link); els.decisions.append(p); }
+    els.approvalsEmpty.hidden = els.approvalsList.children.length > 0;
+    publishAnswerability();
+  }
   function showLibrarySection(section) {
     state.librarySection = section;
     const notes = section === "notes";
@@ -625,321 +703,111 @@
     }
   }
 
-  // --- Approvals                                                          ---
-
-  async function refreshApprovals() {
-    if (state.projectionUnavailable) return;
-    let data;
-    try {
-      data = await api("GET", API_BASE + "/approvals");
-    } catch (code) {
-      showError(code);
-      return;
+  async function loadWorkers(reset) {
+    const conversation = state.chat?.conversation_id;
+    if (!conversation) { $("worker-history-state").textContent = "No saved worker history for this chat yet."; return; }
+    if (state.workerReading) return;
+    state.workerReading = true;
+    if (reset || state.workerConversation !== conversation) {
+      state.workerConversation = conversation; state.workerHistory = []; state.workerCursor = null;
     }
-    if (state.projectionUnavailable) return;
-    state.approvals = Array.isArray(data.approvals) ? data.approvals : [];
-    renderApprovals();
-  }
-
-  function renderApprovals() {
-    els.approvalsList.replaceChildren();
-    for (const round of state.approvals) renderApprovalCard(round);
-    els.approvalsEmpty.hidden = state.approvals.length > 0;
-    els.approvalsBadge.hidden = state.approvals.length === 0;
-    els.approvalsBadge.textContent = String(state.approvals.length);
-  }
-
-  function prettyArgs(arguments_) {
     try {
-      return JSON.stringify(arguments_, null, 2);
-    } catch (stringifyError) {
-      return String(arguments_);
-    }
-  }
-
-  function renderApprovalCard(round) {
-    const card = document.createElement("li");
-    // ADR-236: tag which surface owns the round — desktop-relayed (from a
-    // served terminal session) or phone-initiated. The wire's surface
-    // value only picks between fixed labels; anything else renders the RAW
-    // value (explicit, never guessed), and it never becomes markup.
-    const surface = document.createElement("span");
-    surface.className = "approval-surface";
-    surface.textContent =
-      round.surface === "mobile"
-        ? "phone"
-        : round.surface === "desktop"
-          ? "desktop"
-          : String(round.surface);
-    card.append(surface);
-    const calls = Array.isArray(round.calls) ? round.calls : [];
-    for (const call of calls) {
-      const block = document.createElement("div");
-      block.className = "approval-call";
-      const name = document.createElement("p");
-      name.className = "approval-name";
-      name.textContent = "tool: " + (call.llm_name || "unknown tool");
-      const args = document.createElement("pre");
-      args.className = "approval-args";
-      args.textContent = prettyArgs(call.arguments);
-      const options = document.createElement("div");
-      options.className = "approval-options";
-      for (const option of call.options || []) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className =
-          "option-button" + (option === "deny" ? " option-deny" : "");
-        button.textContent = String(option);
-        button.addEventListener("click", () =>
-          decide(round, call, String(option), card)
-        );
-        options.append(button);
+      const data = await api("GET", API_BASE + "/conversations/" + encodeURIComponent(conversation) + "/workers" + (state.workerCursor ? "?cursor=" + encodeURIComponent(state.workerCursor) : ""));
+      if (state.chat?.conversation_id !== conversation) return;
+      state.workerHistory.push(...data.items); state.workerCursor = data.next_cursor;
+      $("worker-history").replaceChildren();
+      for (const worker of state.workerHistory) {
+        const li = node("li"); li.append(button((worker.task || "Worker " + worker.id) + " · recorded " + worker.status, () => openWorker(worker))); $("worker-history").append(li);
       }
-      block.append(name, args, options);
-      card.append(block);
-    }
-    if (!calls.length) {
-      const empty = document.createElement("p");
-      empty.className = "approval-note";
-      empty.textContent = "Approval round with no calls.";
-      card.append(empty);
-    }
-    els.approvalsList.append(card);
+      $("worker-history-state").textContent = state.workerHistory.length ? "History is read only." : "No saved worker history.";
+      $("workers-more").hidden = !state.workerCursor;
+    } catch (error) { $("worker-history-state").textContent = "Worker history unavailable. Open terminal for details."; }
+    finally { state.workerReading = false; if (state.chat?.conversation_id !== conversation && !$("agent-panel").hidden) loadWorkers(true); }
   }
-
-  async function decide(round, call, option, card) {
-    const callId = typeof call.call_id === "string" ? call.call_id : "";
-    const body = { decisions: { [callId]: option } };
-    // ADR-236: desktop rounds carry the owning child's id; sending it
-    // addresses exactly that child even when two children collide on the
-    // same child-local round_id. Phone rounds (no child_id) stay
-    // unaddressed and keep the server's deterministic fallback routing.
-    if (typeof round.child_id === "string" && round.child_id) {
-      body.child_id = round.child_id;
-    }
-    let result;
+  function openWorker(worker) {
+    state.selectionRevision++; state.selectedTarget = null; state.available = false;
+    $("worker-detail").classList.remove("live-activity");
+    $("latest-output").hidden = true;
+    state.readWorker = worker; state.history = null; state.workerResultOffset = 0; state.workerResultRevision = null;
+    els.draft.value = ""; els.transcript.hidden = true; $("worker-detail").hidden = false;
+    $("worker-activity").textContent = worker.task || "Historical worker result";
+    $("worker-result").textContent = "Loading result…";
+    $("worker-result-more").hidden = true;
+    showView("chat"); updateControls(); loadWorkerResult(true);
+  }
+  async function loadWorkerResult(reset) {
+    const worker = state.readWorker, conversation = state.chat?.conversation_id;
+    const selection = state.selectionRevision;
+    if (!worker || !conversation) return;
+    $("worker-result-more").disabled = true;
     try {
-      result = await api(
-        "POST",
-        API_BASE + "/approvals/" + encodeURIComponent(String(round.round_id)),
-        body
-      );
-    } catch (code) {
-      showError(code);
-      return;
-    }
-    if (result && result.ok) {
-      card.remove();
-      await refreshApprovals();
-    } else {
-      const note = document.createElement("p");
-      note.className = "approval-note";
-      note.textContent = "Decision not delivered — the round may have expired.";
-      card.append(note);
-    }
+      const result = await api("GET", API_BASE + "/conversations/" + encodeURIComponent(conversation) + "/workers/" + encodeURIComponent(worker.id) + "?char_start=" + state.workerResultOffset + "&max_chars=2000");
+      if (selection !== state.selectionRevision) return;
+      const revision = JSON.stringify([result.updated_at, result.total_chars, result.status]);
+      if (!reset && state.workerResultRevision !== revision) throw "result_changed";
+      state.workerResultRevision = revision;
+      $("worker-result").textContent = !result.available ? "Result unavailable. Open terminal for details." : (reset ? "" : $("worker-result").textContent) + result.text;
+      state.workerResultOffset = result.next_offset;
+      $("worker-result-more").hidden = !result.has_more;
+    } catch (error) {
+      if (selection !== state.selectionRevision) return;
+      $("worker-result").textContent = "Result unavailable or changed. Select this worker again or open terminal.";
+      $("worker-result-more").hidden = true;
+    } finally { $("worker-result-more").disabled = false; }
   }
-
-  // --- Live stream                                                        ---
-
-  function streamUrl() {
-    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-    return scheme + "//" + location.host + STREAM_PATH;
-  }
-
   function connectStream() {
-    const socket = new WebSocket(streamUrl(), ["chatbook-v1", "csrf." + csrfToken]);
+    const socket = new WebSocket((location.protocol === "https:" ? "wss:" : "ws:") + "//" + location.host + API_BASE + "/stream", ["chatbook-v1", "csrf." + csrfToken]);
     state.ws = socket;
-    socket.addEventListener("message", (frame) => {
-      let event;
-      try {
-        event = JSON.parse(frame.data);
-      } catch (parseError) {
-        return;
-      }
-      if (event && event.type === "ping") {
-        socket.send(JSON.stringify({ type: "pong" }));
-        return;
-      }
-      handleEvent(event || {});
-    });
-    socket.addEventListener("open", () => {
-      state.wsAttempt = 0;
-      syncOpenSession(); // resync past anything missed while offline
-      refreshApprovals();
-    });
-    socket.addEventListener("close", (close) => {
+    socket.addEventListener("open", () => { state.wsAttempt = 0; setConnection("connecting"); refresh(); });
+    socket.addEventListener("message", frame => {
       if (state.ws !== socket) return;
-      state.ws = null;
-      if (close.code === CLOSE_AUTH_EXPIRED) {
-        saveDraft();
-        location.assign("/auth/login");
-        return;
-      }
-      const delay = RECONNECT_BACKOFF_MS[
-        Math.min(state.wsAttempt, RECONNECT_BACKOFF_MS.length - 1)
-      ];
-      state.wsAttempt += 1;
+      let event; try { event = JSON.parse(frame.data); } catch (_) { return; }
+      if (event.type === "ping") { socket.send(JSON.stringify({type: "pong"})); return; }
+      if (["console.changed", "reset"].includes(event.type)) { setConnection("uncertain"); refresh(); }
+    });
+    socket.addEventListener("close", event => {
+      if (state.ws !== socket) return;
+      state.ws = null; state.hostAvailable = false; setConnection("disconnected"); renderChats();
+      if (event.code === 4401) { location.assign("/auth/login"); return; }
+      const delay = [1000, 2000, 5000, 15000][Math.min(state.wsAttempt++, 3)];
       setTimeout(connectStream, delay);
     });
-    socket.addEventListener("error", () => {
-      socket.close(); // the close handler owns the backoff/redirect policy
-    });
+    socket.addEventListener("error", () => socket.close());
   }
-
-  function ensureStreamingAssistant(messageId) {
-    const existing = state.messages.find((m) => m.id === messageId);
-    if (existing) return existing;
-    const placeholder = {
-      id: messageId,
-      role: "assistant",
-      content: "",
-      status: "streaming",
-      created_at: null,
-    };
-    appendMessage(placeholder);
-    return placeholder;
-  }
-
-  function setMessageRowClass(message) {
-    const row = state.rowsById.get(message.id);
-    if (row) {
-      row.className =
-        "role-assistant status-" +
-        String(message.status).replace(/[^a-z_]/g, "");
-    }
-  }
-
-  function handleEvent(event) {
-    const sessionId = typeof event.session_id === "string" ? event.session_id : "";
-    const payload = event.payload || {};
-    switch (event.type) {
-      case "reset":
-        state.projectionUnavailable = true;
-        state.approvals = [];
-        renderApprovals();
-        clearTimeout(state.statusTimer);
-        els.statusLine.textContent = payload.child_id
-          ? "Console updates unavailable. Current approvals cannot be verified."
-          : "Live updates unavailable. Refresh this page to reload current state.";
-        els.statusLine.hidden = false;
-        break;
-      case "run_started":
-        state.activeRuns.add(sessionId);
-        if (sessionId === state.openSessionId) updateComposerState();
-        break;
-      case "delta": {
-        if (sessionId !== state.openSessionId) break; // live-render only the open chat
-        const message = ensureStreamingAssistant(String(payload.message_id));
-        const current = typeof message.content === "string" ? message.content : "";
-        const offset = Number(payload.offset) || 0;
-        const text = typeof payload.text === "string" ? payload.text : "";
-        message.content =
-          offset <= current.length
-            ? current.slice(0, offset) + text
-            : current + text;
-        const row = state.rowsById.get(message.id);
-        if (row) row.textContent = message.content;
-        scrollTranscript();
-        break;
-      }
-      case "message_done": {
-        if (sessionId !== state.openSessionId) break;
-        const message = state.messages.find(
-          (m) => m.id === String(payload.message_id)
-        );
-        if (message) {
-          message.status = payload.status || "complete";
-          setMessageRowClass(message);
-        }
-        break;
-      }
-      case "run_completed":
-      case "run_failed":
-        state.activeRuns.delete(sessionId);
-        if (sessionId === state.openSessionId) updateComposerState();
-        if (
-          event.type === "run_failed" &&
-          payload.status === "send_refused" &&
-          sessionId === state.openSessionId
-        ) {
-          // The engine refused the turn after its 202 (nothing persisted):
-          // drop the optimistic bubble and surface the refusal.
-          dropOptimisticUsers();
-          showError("send_refused");
-        }
-        syncOpenSession(); // cross-surface completions land via this resync
-        break;
-      case "approval_requested":
-        refreshApprovals();
-        break;
-      case "run_status":
-        // ADR-236 desktop relay: a served terminal session's run
-        // transition. Resync the open chat when the event is for it, and
-        // always refresh the approvals inbox — a desktop run ending
-        // clears its pending rounds there.
-        if (sessionId === state.openSessionId) syncOpenSession();
-        refreshApprovals();
-        break;
-      case "session_updated":
-        refreshSessions();
-        break;
-      default:
-        break; // unknown frame types are ignored, never fatal
-    }
-  }
-
-  // --- Boot                                                               ---
-
-  function wireUi() {
-    els.backButton.addEventListener("click", () => {
-      state.openSessionId = null;
-      showTab(state.activeTab); // Back returns to the active tab's root
-    });
-    els.tabChats.addEventListener("click", () => showTab("list"));
-    els.tabLibrary.addEventListener("click", () => showTab("library"));
-    els.libraryNotesButton.addEventListener("click", () =>
-      showLibrarySection("notes")
-    );
-    els.libraryMediaButton.addEventListener("click", () =>
-      showLibrarySection("media")
-    );
-    els.notesMoreButton.addEventListener("click", () => loadNotes(false));
-    els.mediaMoreButton.addEventListener("click", () => loadMedia(false));
-    els.newChatButton.addEventListener("click", () => {
-      els.newChatForm.hidden = !els.newChatForm.hidden;
-      if (!els.newChatForm.hidden) els.newChatTitle.focus();
-    });
-    els.newChatForm.addEventListener("submit", (submit) => {
-      submit.preventDefault();
-      createSession(els.newChatTitle.value.trim());
-    });
-    els.approvalsButton.addEventListener("click", () => {
-      showView("approvals");
-      refreshApprovals();
-    });
-    els.composer.addEventListener("submit", (submit) => {
-      submit.preventDefault();
-      sendDraft();
-    });
-    els.stopButton.addEventListener("click", stopRun);
-    els.composerInput.addEventListener("input", () => {
-      autoGrow();
-      saveDraft();
-    });
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState !== "visible") return;
-      refreshSessions();
-      syncOpenSession();
-      refreshApprovals();
-    });
-    window.setInterval(() => {
-      if (document.visibilityState === "visible") syncOpenSession();
-    }, SYNC_INTERVAL_MS);
-  }
-
-  wireUi();
-  showView("list");
-  refreshSessions();
-  refreshApprovals();
-  connectStream();
+  els.backButton.addEventListener("click", () => {
+    if (!$("agent-panel").hidden) { $("agent-panel").hidden = true; $("agents-button").setAttribute("aria-expanded", "false"); return; }
+    showTab(state.activeTab);
+  });
+  els.tabChats.addEventListener("click", () => showTab("chats"));
+  els.tabLibrary.addEventListener("click", () => showTab("library"));
+  els.libraryNotesButton.addEventListener("click", () => showLibrarySection("notes"));
+  els.libraryMediaButton.addEventListener("click", () => showLibrarySection("media"));
+  els.notesMoreButton.addEventListener("click", () => loadNotes(false));
+  els.mediaMoreButton.addEventListener("click", () => loadMedia(false));
+  $("new-chat-button").addEventListener("click", () => hostCommand("create", {workspace_id: "global"}));
+  $("approvals-button").addEventListener("click", () => showView("approvals"));
+  $("agents-button").addEventListener("click", () => {
+    $("agent-panel").hidden = !$("agent-panel").hidden;
+    $("agents-button").setAttribute("aria-expanded", String(!$("agent-panel").hidden));
+    if (!$("agent-panel").hidden) loadWorkers(true);
+  });
+  $("composer").addEventListener("submit", event => { event.preventDefault(); command("send"); });
+  els.steer.addEventListener("click", () => command("steer"));
+  els.redirect.addEventListener("click", () => command("redirect"));
+  els.stop.addEventListener("click", () => command("stop"));
+  $("workers-more").addEventListener("click", () => loadWorkers(false));
+  $("worker-result-more").addEventListener("click", () => loadWorkerResult(false));
+  els.draft.addEventListener("input", () => {
+    if (!state.selectedTarget) return;
+    const draft = draftFor(state.selectedTarget);
+    state.drafts.set(draftKey(state.selectedTarget), {text: els.draft.value, revision: draft.revision + 1}); updateControls();
+  });
+  window.addEventListener("offline", () => setConnection("disconnected"));
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
+  // visualViewport tracks the keyboard's visible area without scrolling the whole page.
+  function fitViewport() { document.body.style.height = (window.visualViewport?.height || window.innerHeight) + "px"; }
+  window.visualViewport?.addEventListener("resize", fitViewport);
+  window.addEventListener("resize", fitViewport); fitViewport();
+  window.setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 12000);
+  showView("chats"); refresh(); connectStream();
 })();

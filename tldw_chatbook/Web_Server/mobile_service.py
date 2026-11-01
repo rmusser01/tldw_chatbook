@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -122,6 +123,87 @@ class CanonicalMobileReads:
             if row["sender"] in {"user", "assistant", "tool"}
         ]
         return _wire_safe(result)
+
+    def _require_conversation(self, conversation_id):
+        from tldw_chatbook.Canvas.limits import validate_opaque_identifier
+
+        validate_opaque_identifier(conversation_id)
+        if (
+            self._core()
+            .execute_query(
+                "SELECT id FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            )
+            .fetchone()
+            is None
+        ):
+            raise KeyError(conversation_id)
+
+    def workers_page(self, conversation_id: str, *, cursor: str | None = None) -> dict:
+        """Read bounded history headers through an existing canonical owner."""
+        self._require_conversation(conversation_id)
+        before = None
+        if cursor is not None:
+            before = json.loads(cursor)
+            if (
+                type(before) is not list
+                or len(before) != 2
+                or not all(
+                    isinstance(value, str) and 0 < len(value) <= 256 for value in before
+                )
+            ):
+                raise ValueError("Invalid worker history cursor.")
+            before = tuple(before)
+        database = AgentRunsDB.open_read_only(self.run_path)
+        try:
+            rows = database.list_subagent_run_headers(
+                conversation_id, before=before, limit=21
+            )
+        finally:
+            database.close()
+        self._require_conversation(conversation_id)
+        from tldw_chatbook.Canvas.limits import validate_opaque_identifier
+
+        items = [
+            {
+                "id": validate_opaque_identifier(row["id"]),
+                "task": str(row["task"] or "")[:200],
+                "status": str(row["status"])[:32],
+                "created_at": str(row["created_at"])[:64],
+                "updated_at": str(row["updated_at"])[:64],
+            }
+            for row in rows[:20]
+        ]
+        while len(json.dumps(items).encode("utf-8")) > 60 * 1024:
+            items.pop()
+        return {
+            "items": items,
+            "next_cursor": json.dumps(
+                [rows[len(items) - 1]["created_at"], rows[len(items) - 1]["id"]]
+            )
+            if len(rows) > len(items)
+            else None,
+        }
+
+    def worker_result(
+        self,
+        conversation_id: str,
+        run_id: str,
+        *,
+        char_start: int = 0,
+        max_chars: int = 2000,
+    ) -> dict | None:
+        """Read an explicitly selected child result without opening a writer."""
+        self._require_conversation(conversation_id)
+        database = AgentRunsDB.open_read_only(self.run_path)
+        try:
+            result = database.read_subagent_result_page(
+                conversation_id, run_id, char_start=char_start, max_chars=max_chars
+            )
+        finally:
+            database.close()
+        self._require_conversation(conversation_id)
+        return result
 
     def query_command(self, command_id):
         database = AgentRunsDB.open_read_only(self.run_path)
@@ -273,6 +355,12 @@ class MobileChatService:
     def sessions_page(self, **kwargs):
         return self.readers.sessions_page(**kwargs)
 
+    def workers_page(self, conversation_id, **kwargs):
+        return self.readers.workers_page(conversation_id, **kwargs)
+
+    def worker_result(self, conversation_id, run_id, **kwargs):
+        return self.readers.worker_result(conversation_id, run_id, **kwargs)
+
     async def session_messages(self, conversation_id, **kwargs):
         from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 
@@ -338,7 +426,7 @@ class MobileChatService:
         before = buffer.read(0).sequence
         scope = target.model_dump_json() if target else None
         prior = (
-            self._snapshot_boundaries.pop(
+            self._snapshot_boundaries.get(
                 (child_id, scope, cursor, receipt_cursor), None
             )
             if cursor or receipt_cursor

@@ -215,9 +215,7 @@ async def test_mobile_page_serves_required_metadata(tmp_path) -> None:
         ' viewport-fit=cover">' in body
     )
     assert '<link rel="manifest" href="/static/mobile/manifest.webmanifest">' in body
-    csrf_match = re.search(
-        r'<meta name="chatbook-csrf" content="([^"]+)">', body
-    )
+    csrf_match = re.search(r'<meta name="chatbook-csrf" content="([^"]+)">', body)
     assert csrf_match is not None
 
 
@@ -227,9 +225,7 @@ async def test_mobile_page_csrf_matches_the_session_token(tmp_path) -> None:
         page = await client.get("/m")
         assert page.status == 200
         body = await page.text()
-        csrf_match = re.search(
-            r'<meta name="chatbook-csrf" content="([^"]+)">', body
-        )
+        csrf_match = re.search(r'<meta name="chatbook-csrf" content="([^"]+)">', body)
         assert csrf_match is not None
         assert csrf_match.group(1) == await _devices_csrf(client)
 
@@ -256,9 +252,7 @@ async def test_mobile_manifest_is_served_with_manifest_content_type(
     async with _logged_in_client(tmp_path) as client:
         response = await client.get("/static/mobile/manifest.webmanifest")
         assert response.status == 200
-        assert response.headers["Content-Type"].startswith(
-            "application/manifest+json"
-        )
+        assert response.headers["Content-Type"].startswith("application/manifest+json")
         assert response.headers["Cache-Control"] == "public, max-age=3600"
         manifest = json.loads(await response.text())
 
@@ -444,112 +438,38 @@ async def test_mobile_app_js_carries_the_library_surface(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mobile_app_js_reads_the_conversations_envelope(tmp_path) -> None:
-    """Task-2 (#3128 minor 7): the session list reads the conversations
-    route's paginated ``{"items", "page", "has_more"}`` envelope — the
-    caller takes ``items`` and ignores the pagination fields. Grep-style
-    pin over the served client, like the library-surface markers.
-    """
+async def test_mobile_client_uses_shared_console_protocol(tmp_path) -> None:
+    """Pins only the delivered contract; browser tests exercise its behavior."""
     async with _logged_in_client(tmp_path) as client:
         response = await client.get("/static/mobile/app.js")
-        assert response.status == 200
         js = await response.text()
-
-    assert '"/conversations"' in js
-    # The session-list caller specifically (the library callers also read
-    # ``data.items``; this fragment pins the sessions assignment).
-    assert "state.sessions = Array.isArray(data.items)" in js
-
-
-@pytest.mark.asyncio
-async def test_mobile_app_js_tags_approval_surfaces_and_handles_run_status(
-    tmp_path,
-) -> None:
-    """ADR-236 phone markers: each approval card carries a desktop/phone
-    surface tag, and desktop ``run_status`` events resync the open chat
-    plus the approvals inbox. Grep-style pinning over the served client.
-    """
-    async with _logged_in_client(tmp_path) as client:
-        response = await client.get("/static/mobile/app.js")
-        assert response.status == 200
-        js = await response.text()
-
-    # The surface tag: one badge class, rendered from the wire's surface
-    # field, labelling desktop-relayed rounds "desktop" and phone ones
-    # "phone" (wire text reaches only textContent, never a class name).
-    # Task 3 (#3128 minor 2c fallback): "phone" is reserved for
-    # surface === "mobile" — any other value renders the RAW surface text,
-    # so an unknown future surface is labelled explicitly, never guessed.
-    assert "approval-surface" in js
-    assert '=== "desktop"' in js
-    assert '=== "mobile"' in js
-    assert '"desktop"' in js and '"phone"' in js
-    assert "String(round.surface)" in js
-
-    # run_status handling: the desktop relay's completion pushes ride the
-    # existing event envelope; the case block must resync the open chat
-    # and refresh the approvals inbox.
-    case_index = js.index('case "run_status":')
-    block = js[case_index : js.index("break;", case_index)]
-    assert "syncOpenSession()" in block
-    assert "refreshApprovals()" in block
-
-
-@pytest.mark.asyncio
-async def test_mobile_app_js_decide_posts_carry_the_rounds_child_id(
-    tmp_path,
-) -> None:
-    """PR-#3142 minor: the approval card's decide POST includes its
-    round's ``child_id`` when present — exact addressing for desktop
-    rounds whose child-local round_id collides across children (ADR-236).
-    Grep-style pinning over the served client."""
-    async with _logged_in_client(tmp_path) as client:
-        response = await client.get("/static/mobile/app.js")
-        assert response.status == 200
-        js = await response.text()
-
-    # The decide body is built before the POST and gains child_id only
-    # for a non-empty string off the round — phone rounds (no child_id)
-    # stay unaddressed and keep the service's fallback routing.
-    assert 'typeof round.child_id === "string"' in js
-    assert "body.child_id = round.child_id;" in js
-
-
-@pytest.mark.asyncio
-async def test_mobile_app_js_resyncs_truncated_bubbles_and_reconnects_past_1011(
-    tmp_path,
-) -> None:
-    """Task 3 (#3128 minors 5 + 7): reconnect-resync updates streamed rows,
-    and the close policy backs off for every non-4401 code (1011 included).
-
-    JS-logic execution is not possible here (the JS-marker pattern this
-    file's suite uses): the resync is pinned by its fragments — the
-    known-id branch of the merge must route into a resync helper gated on
-    "incoming content is LONGER than what is rendered", updating the row
-    via textContent only, exactly like the live-delta path. The 1011 half
-    pins that the close handler special-cases ONLY the auth-expired
-    redirect and reconnects with backoff otherwise — so the server's
-    shutdown/engine-error close (1011) reads as a transport failure.
-    """
-    async with _logged_in_client(tmp_path) as client:
-        response = await client.get("/static/mobile/app.js")
-        assert response.status == 200
-        js = await response.text()
-
-    # Truncated-bubble resync: the known-id skip routes into the resync…
-    assert "resyncTruncatedRow(msg);" in js
-    # …gated on the incoming content being strictly longer than the
-    # rendered copy (a shorter/equal re-delivery changes nothing)…
-    assert "content.length <= knownContent.length" in js
-    # …and the row update itself is textContent-only (the tool-row
-    # variant re-derives its prefix exactly like renderMessage).
-    assert 'row.textContent = toolName ? "tool: " + toolName : content' in js
-
-    # Close policy: only the auth-expired code redirects; everything else
-    # — the server's 1011 shutdown/engine close included — reconnects on
-    # the backoff ladder.
-    assert "close.code === CLOSE_AUTH_EXPIRED" in js
-    assert "setTimeout(connectStream, delay)" in js
+        html = await (await client.get("/m")).text()
+    for marker in (
+        "/console/snapshot?",
+        "/commands/tickets",
+        "/commands",
+        "captureSubmission",
+        "clearAcceptedDraft",
+        "applySnapshot",
+    ):
+        assert marker in js
+    for marker in (
+        "view-chats",
+        "chat-list",
+        "chat-transcript",
+        "agent-list",
+        "target-label",
+        "chat-draft",
+        "send-command",
+        "stop-command",
+        "connection-state",
+    ):
+        assert f'id="{marker}"' in html
+    assert "localStorage" not in js
+    assert "serviceWorker" not in js
+    assert ".innerHTML" not in js
+    assert 'API_BASE + "/approvals"' not in js
+    assert "title: title" not in js
 
 
 @pytest.mark.asyncio

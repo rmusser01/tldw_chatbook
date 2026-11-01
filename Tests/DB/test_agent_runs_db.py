@@ -2262,3 +2262,55 @@ def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_pa
                 assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         finally:
             database.close()
+
+
+def test_mobile_worker_result_is_scoped_bounded_and_inert_on_read_only_owner(db):
+    child = db.create_run(
+        conversation_id="mobile-chat", agent_kind="subagent", task="task"
+    )
+    primary = db.create_run(conversation_id="mobile-chat", agent_kind="primary")
+    other = db.create_run(conversation_id="other-chat", agent_kind="subagent")
+    body = "<script>inert</script>😺" * 1000
+    db.set_status(child, "done", result=body)
+    db.set_status(other, "done", result="OTHER-CONVERSATION-SECRET")
+    with db.connection() as connection:
+        connection.execute(
+            "UPDATE agent_runs SET steps = ?, budget = ? WHERE id = ?",
+            ("NOT-JSON-PRIVATE-STEPS", "PRIVATE-BUDGET", child),
+        )
+    reader = AgentRunsDB.open_read_only(db.db_path)
+    try:
+        offset, pieces = 0, []
+        while True:
+            page = reader.read_subagent_result_page(
+                "mobile-chat", child, char_start=offset
+            )
+            assert page["available"] and len(page["text"]) <= 2000
+            assert "PRIVATE" not in str(page)
+            pieces.append(page["text"])
+            if not page["has_more"]:
+                break
+            offset = page["next_offset"]
+        assert "".join(pieces) == body
+        assert reader.read_subagent_result_page("mobile-chat", primary) is None
+        assert reader.read_subagent_result_page("mobile-chat", other) is None
+        assert reader.read_subagent_result_page("mobile-chat", "missing") is None
+        with reader.connection() as connection, pytest.raises(sqlite3.OperationalError):
+            connection.execute("UPDATE agent_runs SET result = 'write refused'")
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize(
+    "coordinates",
+    [{"char_start": -1}, {"char_start": True}, {"max_chars": 2001}, {"max_chars": 0}],
+)
+def test_mobile_worker_result_refuses_invalid_window(db, coordinates):
+    with pytest.raises(ValueError):
+        db.read_subagent_result_page("chat", "child", **coordinates)
+
+
+def test_mobile_worker_result_missing_body_is_unavailable(db):
+    child = db.create_run(conversation_id="chat", agent_kind="subagent")
+    page = db.read_subagent_result_page("chat", child)
+    assert not page["available"] and page["text"] == "" and not page["has_more"]

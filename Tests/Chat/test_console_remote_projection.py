@@ -513,7 +513,12 @@ def test_quarantined_generation_never_exposes_buffered_text(remote_case):
     original = store._message_or_raise(message.id)
     original.generation_projection_quarantined = True
     store._stream_chunks_by_message[message.id] = ["QUARANTINED-SECRET"]
-    assert "QUARANTINED-SECRET" not in json.dumps(projection.snapshot(target))
+    projection.runtime.chat_controller._active_assistant_message_ids[
+        target.session_id
+    ] = message.id
+    page = projection.snapshot(target)
+    assert "QUARANTINED-SECRET" not in json.dumps(page)
+    assert page["latest_message"] is None
 
 
 @pytest.mark.asyncio
@@ -653,3 +658,321 @@ def test_native_rename_during_capture_cannot_acknowledge_stale_metadata(
     assert current["chats"][0]["title"] == "Renamed during capture"
     projection.acknowledge_snapshot(current["sequence"])
     assert not projection.subscribe(current["sequence"]).reset_required
+
+
+def test_chat_metadata_distinguishes_global_and_named_default_without_lazy_registry(
+    remote_case, monkeypatch
+):
+    projection, _host, target = remote_case
+    store = projection.runtime.chat_store
+    session = store._session_or_raise(target.session_id)
+    assert projection.snapshot(None)["chats"][0]["scope_type"] == "global"
+    assert projection.snapshot(None)["chats"][0]["workspace_id"] is None
+    session.workspace_id = "workspace-default"
+    before = projection.poll_changes()
+    calls = []
+    registry = SimpleNamespace(mutation_generation=1)
+    registry.get_workspace = lambda key: (
+        calls.append(key) or SimpleNamespace(name="Default")
+    )
+    projection.runtime.app.workspace_registry_service = registry
+    row = projection.snapshot(None)["chats"][0]
+    assert row["scope_type"] == "workspace"
+    assert row["workspace_id"] == "workspace-default"
+    assert row["workspace_name"] == "Default"
+    assert row["last_modified"] == session.updated_at
+    assert calls and set(calls) == {"workspace-default"}
+    assert projection.poll_changes() > before
+    registry.mutation_generation += 1
+    assert projection.poll_changes() is not None
+    session.updated_at = "2026-11-01T12:00:00Z"
+    assert projection.poll_changes() is not None
+    del projection.runtime.app.workspace_registry_service
+    # A descriptor/lazy app getter must never be touched by projection reads.
+    monkeypatch.setattr(
+        type(projection.runtime.app),
+        "workspace_registry_service",
+        property(lambda _: pytest.fail("lazy registry construction")),
+        raising=False,
+    )
+    assert projection.snapshot(None)["chats"][0]["workspace_name"] is None
+
+
+def test_saved_discovery_metadata_is_bounded_and_uses_only_ready_registry(remote_case):
+    projection, _host, _target = remote_case
+    app = projection.runtime.app
+    app.local_chat_conversation_service = SimpleNamespace(
+        list_library_conversations=lambda **_: {
+            "items": [
+                {
+                    "id": "saved-chat",
+                    "title": "Long title" * 100,
+                    "workspace_id": "named-workspace",
+                    "last_modified": "t" * 1000,
+                    "automatic_instructions": "EXCLUDED",
+                }
+            ],
+            "total": 1,
+        }
+    )
+    app._workspace_registry_service = SimpleNamespace(
+        mutation_generation=0,
+        get_workspace=lambda _: SimpleNamespace(name="Workspace" * 1000),
+    )
+    snapshot = projection.snapshot(None)
+    row = next(row for row in snapshot["chats"] if not row["live"])
+    assert len(row["title"]) == len(row["workspace_name"]) == 160
+    assert len(row["last_modified"]) == 64
+    assert "EXCLUDED" not in json.dumps(snapshot)
+    assert len(json.dumps(snapshot).encode()) <= 65536
+
+
+def test_discovery_attention_counts_supported_and_unsupported_without_answerability(
+    remote_round,
+):
+    projection, host, target = remote_round
+    projection.runtime._project_dispatch_decisions["review"] = SimpleNamespace(
+        session_id=target.session_id, decision_id="review", completed=threading.Event()
+    )
+    row = next(
+        row
+        for row in projection.snapshot(None)["chats"]
+        if row["session_id"] == target.session_id
+    )
+    assert row["pending_decision_count"] == 2
+    assert not host.remote_rounds(target.session_id)[0]["answerable"]
+    assert "calls" not in row and "questions" not in row
+
+
+def test_fleet_display_is_bounded_pure_and_invalidates_queued_guidance(remote_case):
+    projection, _host, target = remote_case
+    session = projection.runtime.chat_store._session_or_raise(target.session_id)
+    session.persisted_conversation_id = "saved-chat"
+    handle = SimpleNamespace(
+        handle_id="worker",
+        run_id="child-run",
+        status="running",
+        agent="Reader",
+        task="😺" * 1000,
+        result="result" * 1000,
+        error="",
+        queued_steering=2,
+        undelivered_steering=0,
+        started_at=1.0,
+        finished_at=None,
+    )
+    projection.runtime._agent_bridge = SimpleNamespace(
+        fleet_snapshot=lambda _: [handle]
+    )
+    page = projection.snapshot(target)
+    worker = page["fleet"][0]
+    assert worker["live"] and worker["queued_steering"] == 2
+    assert len(worker["task"]) == 200 and len(worker["activity"]) == 1000
+    projection.poll_changes()
+    handle.queued_steering = 0
+    assert projection.poll_changes() is not None
+    handle.status = "done"
+    assert not projection.snapshot(target)["fleet"][0]["live"]
+    assert len(json.dumps(page).encode()) <= 65536
+
+
+def _pending_receipt_pages(projection, target, count):
+    from tldw_chatbook.DB.console_command_receipts import (
+        ConsoleCommandReceipt,
+        ConsoleReceiptPage,
+    )
+
+    items = tuple(
+        ConsoleCommandReceipt(
+            command_id=f"pending-{index:03}",
+            server_epoch=target.server_epoch,
+            console_id=target.console_id,
+            action="send",
+            target=target,
+            payload_fingerprint="a" * 64,
+            state="pending",
+            issued_ns=1,
+            expires_ns=2,
+        )
+        for index in range(count)
+    )
+
+    def page(*, cursor, limit):
+        remaining = [
+            item for item in items if cursor is None or item.command_id > cursor
+        ]
+        return ConsoleReceiptPage(
+            tuple(remaining[:limit]),
+            remaining[limit - 1].command_id if len(remaining) > limit else None,
+        )
+
+    projection.runtime._remote_receipts = SimpleNamespace(
+        repository=SimpleNamespace(list_unresolved=page)
+    )
+    return items
+
+
+@pytest.mark.parametrize(("body_size", "receipt_count"), [(70000, 41), (140000, 21)])
+def test_unequal_native_pages_finish_once_without_early_ack(
+    remote_case, body_size, receipt_count
+):
+    projection, _host, target = remote_case
+    body = "x" * body_size
+    projection.runtime.chat_store.append_message(
+        target.session_id, role="assistant", content=body
+    )
+    expected = _pending_receipt_pages(projection, target, receipt_count)
+    boundary = projection.events.publish("console.changed", {"reset_required": True})
+    cursor = receipt_cursor = None
+    pieces, receipts = [], []
+    for count in range(5):
+        page = projection.snapshot(
+            target, cursor=cursor, receipt_cursor=receipt_cursor, limit=100
+        )
+        assert len(json.dumps(page).encode()) <= 65536
+        pieces.extend(row["content"] for row in page["messages"])
+        receipts.extend(row["command_id"] for row in page["command_receipts"])
+        cursor, receipt_cursor = page["next_cursor"], page["next_receipt_cursor"]
+        projection.acknowledge_snapshot(boundary)
+        if cursor is None and receipt_cursor is None:
+            break
+        assert projection.subscribe(boundary).reset_required
+    assert count + 1 == 3
+    assert "".join(pieces) == body
+    assert receipts == [item.command_id for item in expected]
+    assert not projection.subscribe(boundary).reset_required
+
+
+def test_completed_native_cursor_still_resets_after_content_changes(remote_case):
+    projection, _host, target = remote_case
+    message = projection.runtime.chat_store.append_message(
+        target.session_id, role="assistant", content="before"
+    )
+    _pending_receipt_pages(projection, target, 41)
+    first = projection.snapshot(target)
+    assert first["next_cursor"] and first["next_receipt_cursor"]
+    projection.runtime.chat_store.update_message_content(message.id, "after")
+    current = projection.snapshot(
+        target, cursor=first["next_cursor"], receipt_cursor=first["next_receipt_cursor"]
+    )
+    assert current["reset_required"]
+    assert current["messages"][0]["content"] == "after"
+
+
+def test_saved_history_eof_waits_for_receipts_and_resets_on_epoch_change(
+    remote_case, tmp_path
+):
+    from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    projection, _host, target = remote_case
+    database = CharactersRAGDB(tmp_path / "eof-history.sqlite", "saved-eof")
+    try:
+        service = ChatConversationService(database)
+        conversation = service.create_conversation(title="Saved EOF")
+        message = database.add_message(
+            {
+                "conversation_id": conversation,
+                "sender": "assistant",
+                "content": "saved 😺 result",
+            }
+        )
+        projection.runtime.app.local_chat_conversation_service = service
+        projection.runtime.chat_store._session_or_raise(
+            target.session_id
+        ).persisted_conversation_id = conversation
+        _pending_receipt_pages(projection, target, 41)
+        first = projection.snapshot(target)
+        second = projection.snapshot(
+            target,
+            cursor=first["next_cursor"],
+            receipt_cursor=first["next_receipt_cursor"],
+        )
+        assert second["messages"][0]["content"] == "saved 😺 result"
+        assert second["next_cursor"] and second["next_receipt_cursor"]
+        final = projection.snapshot(
+            target,
+            cursor=second["next_cursor"],
+            receipt_cursor=second["next_receipt_cursor"],
+        )
+        assert (
+            not final["messages"]
+            and final["next_cursor"] is final["next_receipt_cursor"] is None
+        )
+        database.update_message(
+            message, {"content": "new saved result"}, expected_version=1
+        )
+        reset = projection.snapshot(
+            target,
+            cursor=second["next_cursor"],
+            receipt_cursor=second["next_receipt_cursor"],
+        )
+        assert reset["reset_required"] and reset["chats"]
+    finally:
+        database.close_connection()
+
+
+def test_current_control_metadata_precedes_bulk_transcript(remote_case):
+    projection, _host, target = remote_case
+    session = projection.runtime.chat_store._session_or_raise(target.session_id)
+    session.persisted_conversation_id = "saved-chat"
+    projection.runtime.chat_store.append_message(
+        target.session_id, role="assistant", content="bulk" * 100000
+    )
+    projection.runtime._agent_bridge = SimpleNamespace(
+        fleet_snapshot=lambda _: [
+            SimpleNamespace(handle_id="child", run_id="run-child", status="running")
+        ]
+    )
+    projection.runtime._project_dispatch_decisions["review"] = SimpleNamespace(
+        session_id=target.session_id, decision_id="review", completed=threading.Event()
+    )
+    first = projection.snapshot(target, limit=3)
+    assert first["chats"] and first["fleet"] and first["decisions"]
+    assert not first["messages"]
+
+
+def test_current_native_reply_visible_while_older_history_is_changing(remote_case):
+    projection, _host, target = remote_case
+    store = projection.runtime.chat_store
+    older = store.append_message(
+        target.session_id, role="user", content="old history " * 20000
+    )
+    prefix = '<img src=x onerror="alert(1)">😺' * 4000
+    current = store.append_message(target.session_id, role="assistant", content=prefix)
+    store.append_message(target.session_id, role="tool", content="Later tool activity")
+    projection.runtime.chat_controller._active_assistant_message_ids[
+        target.session_id
+    ] = current.id
+    _pending_receipt_pages(projection, target, 41)
+    cursor = receipt_cursor = None
+    for tick in range(1, 5):
+        content = prefix + f"current reply tick {tick}"
+        store.update_message_content(current.id, content)
+        page = projection.snapshot(
+            target, cursor=cursor, receipt_cursor=receipt_cursor, limit=100
+        )
+        excerpt = page["latest_message"]
+        assert excerpt["message_id"] == current.id and excerpt["role"] == "assistant"
+        assert excerpt["content"].endswith(f"current reply tick {tick}")
+        assert content[excerpt["offset"] :] == excerpt["content"]
+        assert len(excerpt["content"]) <= 2000
+        assert len(json.dumps(excerpt, sort_keys=True).encode()) <= 8192
+        assert len(json.dumps(page).encode()) <= 65536
+        assert page["chats"] and page["next_cursor"]
+        cursor, receipt_cursor = page["next_cursor"], page["next_receipt_cursor"]
+    assert "latest_message" not in projection.snapshot(None)
+    # Once stable, the chronological body still reads exactly once and in full.
+    cursor = receipt_cursor = None
+    bodies = {}
+    for _ in range(30):
+        page = projection.snapshot(
+            target, cursor=cursor, receipt_cursor=receipt_cursor, limit=100
+        )
+        for message in page["messages"]:
+            bodies.setdefault(message["message_id"], []).append(message["content"])
+        cursor, receipt_cursor = page["next_cursor"], page["next_receipt_cursor"]
+        if cursor is None and receipt_cursor is None:
+            break
+    assert "".join(bodies[older.id]) == "old history " * 20000
+    assert "".join(bodies[current.id]) == content

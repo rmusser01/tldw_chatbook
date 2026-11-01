@@ -2485,3 +2485,75 @@ Staged saved-observer registration and producer terminal outcome/reservation
 removal share the existing preparation RLock. Record terminal failure even before
 an observer Future exists; deliver callbacks after releasing that lock. No native
 I/O, await or cross-loop blocking wait belongs in the atomic handoff.
+
+### Task10 bounded chat metadata (R149; 2026-11-01)
+
+The approved Chats view needs workspace and latest activity even for unsaved live
+sessions. Its existing native projection supplies bounded `scope_type`,
+`workspace_id`, `workspace_name` and `last_modified`; canonical saved-list metadata
+remains bounded and read-only. Workspace names come only from the already-wired
+native registry read service, with truthful unavailable fallback. Global and the
+named Default workspace remain distinct. This adds no database owner, read-side
+bootstrap/migration/reconciliation/write, automatic instruction body, execution
+authority or protocol mode. Display changes participate in existing projection
+invalidation and retain byte/cursor/reset limits. Task10 includes the small
+projection producer/test change as well as its phone consumer.
+
+### Task10 attention and finished-worker reads (R150; 2026-11-01)
+
+Chat discovery includes a bounded pending-decision count from existing retained
+owners, including unsupported pending decisions. Counts never claim answerability
+and never require fetching every chat transcript. Live fleet display remains on
+its pure native snapshot seam; only current live handle/run identities permit
+commands. Finished history is readable through explicit canonical read-only
+header and selected-result GETs under the existing mobile route family. Header
+pages use the native keyset reader with explicit continuation. A selected result
+is bound to its conversation and subagent run and returned in code-point pages of
+at most 2000 characters, without loading steps, configuration, prompts, budgets or
+arbitrary metadata. It uses the same ordinary read-only AgentRunsDB/finite-worker
+boundary as receipt queries, requires the canonical conversation, starts no host
+or work and adds no schema, owner, service or execution authority. Missing/removed
+bodies remain unavailable. These bodies are explicit content reads, not discovery
+metadata. Existing auth, byte bounds and imported-authority holds remain intact.
+
+### Task10 independent snapshot completion (R151; 2026-11-01)
+
+Transcript and unresolved-receipt pagination are independent within one bounded
+capture. A completed component retains a valid end-position cursor while the
+other continues, using existing native revision/saved-epoch or receipt keyset
+semantics. Following the exact cursor pair yields no repeated body and finishes
+without cycling both collections. Only both-complete yields two null next cursors
+and acknowledgement. Stale content still resets; captured child/profile/target
+and native-versus-parent sequence boundaries remain intact. Existing bounded
+parent continuation state supports same-pair retries and two readers without one
+consuming the other's state. Current chat/fleet/decision/recovery metadata precedes
+bulk transcript content. This is a producer/consumer completion correction, not a
+new registry, owner, query mode, protocol version or execution permission.
+
+### Task10 live confirmation and history backfill (R152; 2026-11-01)
+
+Current native target metadata and bulk history completion serve different roles.
+Disconnect/reset disables mutation and invalidates target confirmation. A fresh
+native first page may confirm the exact host/session/incarnation, current run/turn,
+admitted published owner and revisions before the entire transcript is read.
+Receipt-dependent reconciliation, immutable commands, duplicate suppression and
+stale-draft ownership remain enforced. Stop/correction can then remain responsive
+during long or changing history backfill, shown as connected/loading history.
+Native tickets/commands still revalidate current facts; a metadata row grants no
+new permission. The independent two-component history acknowledgement rule is
+unchanged. No new service, owner, server mode or protocol authority is added.
+
+### Task10 current output during changing history (R153; 2026-11-01)
+
+A target-scoped snapshot includes a bounded `latest_message` content window for
+current-output visibility while chronological history backfills. It prefers the
+existing native active-assistant anchor if that message passes the same normal
+visibility/role/quarantine/publication checks; otherwise it selects the latest
+eligible message. This is explicit content, never chat-discovery metadata. Its
+ID/role/status/code-point offset and tail occupy at most2000 code points and8KiB
+serialized, inside the existing64KiB frame and receipt/metadata packing budget.
+The client labels the excerpt as partial, keeps it inert and target-bound, and
+removes the separate preview only after coherent history includes that exact
+window. It does not invent a complete transcript or duplicate output. Existing
+history cursor order/epoch/reset rules remain; no capture cache, owner, service,
+protocol mode or execution permission is added.
