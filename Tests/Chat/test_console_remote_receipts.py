@@ -802,3 +802,49 @@ async def test_new_effect_crossing_expiry_inside_claim_is_refused(
     with pytest.raises(ExpiredConsoleCommand):
         await owner.submit(ticket.token, {})
     assert commands.calls == 0
+
+
+async def test_prior_owner_unknown_discovery_preserves_current_native_decision(
+    receipt_owner, remote_round
+):
+    old, commands, _advance = receipt_owner
+    commands.result = {"state": "pending"}
+    pending = old.issue("send", target(), {})
+    assert (await old.submit(pending.token, {})).state == "pending"
+    projection, host, exact = remote_round
+    successor = ConsoleRemoteReceipts(
+        projection._commands, old.repository, projection.host_identity
+    )
+    projection.runtime._remote_receipts = successor
+    discovered = projection.snapshot(None)["command_receipts"]
+    assert len(discovered) == 1
+    assert discovered[0]["command_id"] == pending.command_id
+    assert discovered[0]["state"] == "outcome_unknown"
+    assert discovered[0]["target"] == target().model_dump()
+    assert commands.calls == 1
+    projection.register_client("current-phone")
+    with pytest.raises(ValueError):
+        projection.set_answerable(
+            "current-phone",
+            exact.model_copy(update={"server_epoch": "epoch-a"}),
+            answerable=True,
+        )
+    projection.set_answerable("current-phone", exact, answerable=True)
+    assert any(
+        row["answerable"] and row["round_id"] == exact.round_id
+        for row in host.remote_rounds(exact.session_id)
+    )
+    current = successor.issue(
+        "decision",
+        exact,
+        {"kind": "approval", "answer": {"decisions": {"write_file": "deny"}}},
+    )
+    result = await successor.submit(
+        current.token,
+        {"kind": "approval", "answer": {"decisions": {"write_file": "deny"}}},
+    )
+    assert result.state in {"accepted", "applied"}
+    assert successor.query(pending.command_id).state == "outcome_unknown"
+    assert commands.calls == 1
+    with pytest.raises(ValueError):
+        await successor.submit(pending.token, {})

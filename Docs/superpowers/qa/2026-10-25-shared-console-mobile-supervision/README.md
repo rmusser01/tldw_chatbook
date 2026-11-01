@@ -280,3 +280,33 @@ minor findings. FIX1 evidence is appended to the local implementation report and
 recorded in `task-11-fix1-final-manifest.json`. Scoped rereview approved all four
 Important findings with no new findings at commit `2356c7ae94c1`; final whole-feature
 review remains pending. Physical phone/VPN remains **UNVERIFIED**.
+
+
+## Final whole-feature correction
+
+Unresolved command outcomes now affect their original owner/chat/incarnation and
+applicable run, worker or decision round. They remain visible with their original
+identity for review and continue to query the original ID. A missing response and
+missing receipt retain the original action/target; neither grants permission to
+repeat it. Independently confirmed unrelated work remains controllable. Exact
+current Stop stays available under the existing native idempotent contract;
+disconnect, reset, stale targets and unadmitted state still revoke controls.
+Create/Open also recheck uncertainty against the actual host returned by bootstrap.
+
+Predecessor receipts are explicitly historical, including reused worker handles
+and main-run receipts viewed beneath a worker. The late unrelated-receipt negative
+now awaits both successful response delivery and rendered client processing before
+checking selection/draft. These close the current WF-M01/WF-M02 (earlier T10-F05/
+T11-R05) gaps without changing the historical qualification of their older epochs.
+
+Final whole-feature cover passes90 portable Chromium/WebKit cases,2 integrated
+native old-owner receipt/projection cases and1 actual TLS transport-loss journey
+in one source-frozen93-case epoch. The earlier4-case epoch separately covers three
+native exact Stop controls under receipt pressure plus the transport journey;
+counts overlap and are not summed. Full-file Ruff/formatter on both changed Python
+files, native AST, JavaScript syntax and diff check pass without exclusions.
+New report/manifest: whole-feature-fix-implementer-report.md and
+whole-feature-fix-final-manifest.json in the existing local SDD directory. Earlier
+reports/manifests remain frozen. Scoped rereview is pending; Evals R06 and original
+warning/third-Create origin limits remain disclosed. Physical phone/VPN remains
+**UNVERIFIED**. No full repository test sweep was run.

@@ -946,7 +946,7 @@ async def test_fresh_snapshot_reconciles_unresolved_receipts_and_unknown_disable
         "unresolved command outcome"
     )
     await expect(case.page.locator("#send-command")).to_be_disabled()
-    await expect(case.page.locator("#stop-command")).to_be_disabled()
+    await expect(case.page.locator("#stop-command")).to_be_enabled()
     await expect(case.page.locator("#chat-draft")).to_have_value("new unsent draft")
     assert not case.commands
     assert len(case.service.tickets) == 1
@@ -1597,6 +1597,28 @@ async def test_host_selection_waits_for_exact_original_receipt_and_current_row(
             == len(case.service.tickets)
             == (2 if outcome == "newer-action" else 1)
         )
+        await asyncio.wait_for(unrelated_delivered.wait(), 5)
+        # Rendering this exact ID proves processing after the successful response.
+        await expect(case.page.locator("#command-status")).to_contain_text(
+            "unrelated-command"
+        )
+        if outcome == "navigation":
+            await expect(case.page.locator("#chat-title")).to_have_text("Research")
+            await expect(case.page.locator("#chat-draft")).to_have_value(
+                "KEEP_EXPLICIT_CHAT_A_DRAFT"
+            )
+        elif outcome in {
+            "delayed",
+            "lost-response",
+            "older-owner",
+            "bootstrap-owner",
+            "newer-action",
+        }:
+            await expect(case.page.locator("#chat-title")).to_have_text(
+                "Newer explicit chat" if outcome == "newer-action" else "Planning"
+            )
+        else:
+            await expect(case.page.locator("#chat-draft")).to_be_disabled()
         assert case.commands[0]["command_id"] == "command-0"
         assert case.commands[0]["payload"] == {"workspace_id": "global"}
         if outcome == "lost-response":
@@ -1705,3 +1727,293 @@ async def test_retired_answerability_reset_does_not_starve_current_metadata(
         args[1].session_id == "chat-b" for args in true_claims("new-target-round")
     )
     assert len(service.commands) == 1
+
+
+def _whole_review_approval(service, sid="chat-a", round_id="current-round"):
+    return dict(
+        service.row(sid),
+        kind="approval",
+        round_id=round_id,
+        supported=True,
+        calls=[
+            {
+                "call_id": "read",
+                "llm_name": "character_search",
+                "options": ["approve_once", "deny"],
+                "arguments_summary": "query",
+            }
+        ],
+    )
+
+
+@pytest.mark.parametrize("prior_kind", ["owner", "round"])
+async def test_historical_unknown_does_not_block_current_stop_or_decision(
+    mobile_browser_case,
+    prior_kind,
+):
+    case = mobile_browser_case
+    service, page = case.service, case.page
+    service.body = "Current body"
+    old = ConsoleTarget(
+        server_epoch="prior-owner",
+        console_id="prior-console",
+        session_id="chat-a",
+        incarnation_id="prior-incarnation",
+        run_id="prior-run",
+    )
+    if prior_kind == "round":
+        old = ConsoleTarget(
+            server_epoch="epoch",
+            console_id="console",
+            session_id="chat-a",
+            incarnation_id="inc-a",
+            run_id="run-chat-a",
+            round_id="prior-round",
+        )
+    service.receipts["prior-command"] = ConsoleCommandReceipt(
+        command_id="prior-command",
+        server_epoch=old.server_epoch,
+        console_id=old.console_id,
+        action="decision" if prior_kind == "round" else "send",
+        target=old,
+        payload_fingerprint="a" * 64,
+        state="outcome_unknown",
+        issued_ns=1,
+        expires_ns=2,
+    )
+    service.decisions = [_whole_review_approval(service)]
+    await page.reload()
+    await case.open_chat("chat-a")
+    await expect(page.locator("#command-status")).to_contain_text(
+        "Historical command prior-command"
+    )
+    await expect(page.locator("#command-status")).to_contain_text(
+        "prior-owner" if prior_kind == "owner" else "prior-round"
+    )
+    await expect(page.locator("#command-status")).to_contain_text("outcome unknown")
+    await expect(page.locator("#stop-command")).to_be_enabled()
+    await expect(
+        page.get_by_role("button", name="Submit decision", exact=True)
+    ).to_be_enabled()
+    await page.locator("#chat-draft").fill("independent current draft")
+    await expect(page.locator("#send-command")).to_be_enabled()
+    await expect(page.locator("#new-chat-button")).to_be_enabled()
+    async with asyncio.timeout(5):
+        while not any(
+            call[0] == "answerable"
+            and call[1][1].round_id == "current-round"
+            and call[1][-1]
+            for call in service.calls
+        ):
+            await asyncio.sleep(0.01)
+    assert not service.tickets and not case.commands
+    service.release.set()
+    await page.locator("#stop-command").click()
+    await expect(page.locator("#command-status")).to_contain_text("Stop requested")
+    await page.get_by_role("button", name="Submit decision", exact=True).click()
+    async with asyncio.timeout(5):
+        while len(case.commands) < 2:
+            await asyncio.sleep(0.01)
+    assert [row["action"] for row in case.commands] == ["stop", "decision"]
+    assert all(row["target"].server_epoch == "epoch" for row in case.commands)
+    assert all(row["command_id"] != "prior-command" for row in service.tickets)
+    await expect(page.locator("#command-status")).to_contain_text(
+        "Historical command prior-command"
+    )
+
+
+@pytest.mark.parametrize("action", ["stop", "decision"])
+async def test_receiptless_unknown_keeps_original_target_across_navigation(
+    mobile_browser_case, action
+):
+    case = mobile_browser_case
+    service, page = case.service, case.page
+    service.body = "Current body"
+    service.decisions = [_whole_review_approval(service)]
+    original_snapshot = service.snapshot
+
+    async def no_receipt(*args, **kwargs):
+        data = await original_snapshot(*args, **kwargs)
+        data["command_receipts"] = []
+        return data
+
+    service.snapshot = no_receipt
+    effect_lost, query_lost = asyncio.Event(), asyncio.Event()
+
+    async def lose_effect(route):
+        response = await route.fetch()
+        assert response.status == 202
+        await route.abort("failed")
+        effect_lost.set()
+
+    async def lose_query(route):
+        await route.abort("failed")
+        query_lost.set()
+
+    await page.route("**/api/v1/mobile/commands", lose_effect)
+    await page.route("**/api/v1/mobile/commands/command-*", lose_query)
+    service.release.set()
+    await case.open_chat("chat-a")
+    await page.locator("#chat-draft").fill("keep original draft")
+    await (
+        page.locator("#stop-command")
+        if action == "stop"
+        else page.get_by_role("button", name="Submit decision", exact=True)
+    ).click()
+    await asyncio.wait_for(effect_lost.wait(), 5)
+    await asyncio.wait_for(query_lost.wait(), 5)
+    await expect(page.locator("#command-status")).to_contain_text("Response lost")
+    await page.locator("#back-button").click()
+    await case.open_chat("chat-b")
+    await page.locator("#chat-draft").fill("independent B draft")
+    await expect(page.locator("#send-command")).to_be_enabled()
+    await expect(page.locator("#stop-command")).to_be_enabled()
+    await expect(page.locator("#command-status")).to_contain_text(
+        "Historical command command-0"
+    )
+    await expect(page.locator("#command-status")).to_contain_text("chat-a")
+    await expect(page.locator("#command-status")).to_contain_text("run-chat-a")
+    await page.locator("#back-button").click()
+    await page.locator('#chat-list button[data-session-id="chat-a"]').click()
+    await expect(page.locator("#target-state")).not_to_contain_text(
+        "Target not confirmed"
+    )
+    await expect(page.locator("#chat-draft")).to_have_value("keep original draft")
+    await expect(page.locator("#stop-command")).to_be_enabled()
+    if action == "stop":
+        await expect(page.locator("#send-command")).to_be_disabled()
+    else:
+        await expect(
+            page.get_by_role("button", name="Submit decision", exact=True)
+        ).to_be_disabled()
+    assert len(case.commands) == len(service.tickets) == 1
+    assert case.commands[0]["action"] == action
+    assert case.commands[0]["target"].session_id == "chat-a"
+    assert case.commands[0]["target"].round_id == (
+        "current-round" if action == "decision" else None
+    )
+
+
+@pytest.mark.parametrize(
+    "predecessor",
+    ["owner", "incarnation", "main-run", "worker-run", "main-while-worker"],
+)
+async def test_predecessor_receipt_is_explicitly_historical(
+    mobile_browser_case, predecessor
+):
+    case = mobile_browser_case
+    service, page = case.service, case.page
+    service.body = "Current body"
+    identity = {
+        key: service.row("chat-a")[key]
+        for key in (
+            "server_epoch",
+            "console_id",
+            "session_id",
+            "incarnation_id",
+            "run_id",
+            "turn_id",
+        )
+    }
+    if predecessor == "owner":
+        identity["server_epoch"] = "old-owner"
+    elif predecessor == "incarnation":
+        identity["incarnation_id"] = "old-incarnation"
+    elif predecessor == "main-run":
+        identity["run_id"] = "old-main-run"
+    elif predecessor == "worker-run":
+        identity.update(handle_id="worker-a", run_id="old-worker-run", turn_id=None)
+    else:
+        service.decisions = [_whole_review_approval(service)]
+    target = ConsoleTarget(**identity)
+    receipt = ConsoleCommandReceipt(
+        command_id="predecessor-command",
+        server_epoch=target.server_epoch,
+        console_id=target.console_id,
+        action="subagent_guidance" if predecessor == "worker-run" else "steer",
+        target=target,
+        payload_fingerprint="a" * 64,
+        state="queued",
+        issued_ns=1,
+        expires_ns=2,
+    )
+    service.receipts[receipt.command_id] = receipt
+    original_snapshot = service.snapshot
+
+    async def with_receipt(*args, **kwargs):
+        data = await original_snapshot(*args, **kwargs)
+        data["command_receipts"] = [receipt.public()]
+        return data
+
+    service.snapshot = with_receipt
+    await case.open_chat("chat-a")
+    if predecessor in {"worker-run", "main-while-worker"}:
+        await page.locator("#agents-button").click()
+        await page.get_by_role(
+            "button", name="Worker worker-a · running", exact=True
+        ).click()
+        await expect(page.locator("#target-label")).to_contain_text("worker-run")
+    await expect(page.locator("#command-status")).to_contain_text(
+        "Historical command predecessor-command"
+    )
+    await expect(page.locator("#command-status")).to_contain_text(
+        "run-chat-a" if predecessor == "main-while-worker" else "old-"
+    )
+    await expect(page.locator("#command-status")).not_to_have_text(
+        "steer: queued · consumption not confirmed"
+    )
+    await expect(page.locator("#stop-command")).to_be_enabled()
+    assert not case.commands
+
+
+@pytest.mark.parametrize("owner_relation", ["current", "prior", "bootstrap"])
+async def test_unknown_host_command_is_bound_to_bootstrapped_owner(
+    mobile_browser_case, owner_relation
+):
+    case = mobile_browser_case
+    service, page = case.service, case.page
+    owner = (
+        "epoch"
+        if owner_relation == "current"
+        else "prior-owner"
+        if owner_relation == "prior"
+        else "replacement-owner"
+    )
+    target = ConsoleHostIdentity(server_epoch=owner, console_id="console")
+    service.receipts["unknown-create"] = ConsoleCommandReceipt(
+        command_id="unknown-create",
+        server_epoch=owner,
+        console_id="console",
+        action="create",
+        target=target,
+        payload_fingerprint="a" * 64,
+        state="outcome_unknown",
+        issued_ns=1,
+        expires_ns=2,
+    )
+    await page.reload()
+    await case.open_chat("chat-a")
+    await expect(page.locator("#stop-command")).to_be_enabled()
+    await expect(page.locator("#command-status")).to_contain_text("unknown-create")
+    if owner_relation == "current":
+        await expect(page.locator("#new-chat-button")).to_be_disabled()
+    else:
+        await expect(page.locator("#new-chat-button")).to_be_enabled()
+        if owner_relation == "bootstrap":
+            await page.locator("#back-button").click()
+
+            async def replacement_host():
+                service.calls.append(("bootstrap", None))
+                return target
+
+            service.bootstrap_host = replacement_host
+            service.release.set()
+            await page.locator("#new-chat-button").click()
+            async with asyncio.timeout(5):
+                while not any(call[0] == "bootstrap" for call in service.calls):
+                    await asyncio.sleep(0.01)
+            await expect(page.locator("#status-line")).to_contain_text(
+                "unresolved_host_command"
+            )
+            await expect(page.locator("#new-chat-button")).to_be_disabled()
+    assert not service.tickets and not case.commands

@@ -23,7 +23,7 @@
     itemTitle: $("item-title"), itemMeta: $("item-meta"), itemTranscripts: $("item-transcripts"),
   };
   const state = {
-    selectedTarget: null, drafts: new Map(), outstandingCommands: new Map(), hostSelectionCommand: null, hostActionGeneration: 0, connectionState: "connecting",
+    selectedTarget: null, drafts: new Map(), outstandingCommands: new Map(), hostSelectionCommand: null, hostActionGeneration: 0, hostIdentity: null, connectionState: "connecting",
     lastConfirmedUpdate: null, chats: [], chat: null, snapshot: null, ws: null, wsAttempt: 0,
     activeTab: "chats", view: "chats", available: false, hostAvailable: false, ownerAvailable: false, refreshing: false, refreshAgain: false,
     selectionRevision: 0, confirmationRevision: 0, targetConfirmed: false, targetMissing: false, historyLoading: false, renderedDecisions: [], answerabilitySent: null, hostBusy: false, history: null, readWorker: null, workerHistory: [], workerCursor: null, workerConversation: null, workerReading: false, workerResultOffset: null, workerResultRevision: null,
@@ -211,6 +211,7 @@
       const hostActionGeneration = state.hostActionGeneration;
       const list = await snapshot(null);
       if (selection !== state.selectionRevision) return;
+      state.hostIdentity = Object.freeze({server_epoch: list.server_epoch, console_id: list.console_id});
       state.ownerAvailable = true; state.hostAvailable = list.execution_admitted === true; state.available = true;
       state.chats = list.chats;
       if (state.ownerAvailable) { state.savedPage = 0; state.savedHasMore = false; }
@@ -344,12 +345,14 @@
     return true;
   }
   async function hostCommand(action, payload) {
-    if (state.hostBusy || !navigator.onLine || (state.lastConfirmedUpdate && state.connectionState !== "connected")) return;
+    if (blockedFor(state.hostIdentity) || state.hostBusy || !navigator.onLine || (state.lastConfirmedUpdate && state.connectionState !== "connected")) return;
     const revision = state.selectionRevision;
     state.hostSelectionCommand = null;
     state.hostBusy = true; updateControls();
     try {
       const {host} = await api("POST", API_BASE + "/console/host", {protocol_version: 1});
+      state.hostIdentity = Object.freeze({...host});
+      if (blockedFor(host)) throw "unresolved_host_command";
       await submit(action, host, payload, null, {revision, action, server_epoch: host.server_epoch, console_id: host.console_id});
       await refresh();
     } catch (error) { showError(error); }
@@ -428,23 +431,46 @@
     const disabled = Boolean(value);
     if (control.disabled !== disabled) control.disabled = disabled;
   }
+  function commandMatches(row, target) {
+    const bound = row.binding?.target;
+    if (!bound || !target) return false;
+    if (!["server_epoch", "console_id", "session_id", "incarnation_id", "handle_id"].every(key => (bound[key] ?? null) === (target[key] ?? null))) return false;
+    if (bound.run_id != null && bound.run_id !== target.run_id) return false;
+    // Native decision targets carry the run/round, rather than a chat turn.
+    if (bound.turn_id != null && !target.round_id && bound.turn_id !== target.turn_id) return false;
+    return bound.round_id == null || bound.round_id === target.round_id;
+  }
+  function blockedFor(target) {
+    return [...state.outstandingCommands.values()].some(row => commandMatches(row, target) &&
+      (row.unknown || !row.receipt || ["pending", "outcome_unknown"].includes(row.receipt.state)));
+  }
+  function commandReviewLabel(id, row, target) {
+    const current = commandMatches(row, target) || (target && !target.handle_id && row.binding?.action === "decision" &&
+      state.renderedDecisions.some(round => draftKey(round) === draftKey(target) && commandMatches(row, round)));
+    const label = receiptLabel(row.receipt, row.unknown);
+    if (current) return label;
+    const binding = row.binding;
+    const identity = targetFields.filter(key => binding?.target[key] != null).map(key => key + "=" + binding.target[key]).join(", ");
+    return "Historical command " + id + " (" + (binding?.action || "command") + "; " + identity + "): " + label;
+  }
   function updateControls() {
     const target = state.selectedTarget;
     const worker = Boolean(target?.handle_id);
-    const unknown = [...state.outstandingCommands.values()].some(row => row.receipt?.state === "outcome_unknown" || row.unknown);
+    const unknown = [...state.outstandingCommands.values()].some(row => commandMatches(row, target) && (row.receipt?.state === "outcome_unknown" || row.unknown));
+    const blocked = blockedFor(target);
     const liveWorker = target?.handle_id && state.snapshot?.fleet.find(row => row.handle_id === target.handle_id && row.run_id === target.run_id);
     if (unknown) els.connection.textContent = "State uncertain · unresolved command outcome · open terminal" + (state.lastConfirmedUpdate ? " · confirmed " + state.lastConfirmedUpdate : "");
-    const ready = state.connectionState === "connected" && state.targetConfirmed && state.available && target && !unknown && (!target.handle_id || liveWorker?.live !== false);
+    const ready = state.connectionState === "connected" && state.targetConfirmed && state.available && target && (!target.handle_id || liveWorker?.live !== false);
     const draft = target ? draftFor(target) : {text: "", revision: 0};
-    const pending = [...state.outstandingCommands.values()].some(row => row.submission && row.submission.key === (target && draftKey(target)) && row.submission.revision === draft.revision && !["accepted", "queued", "applied", "refused", "expired"].includes(row.receipt?.state));
-    setDisabled(els.send, !ready || !draft.text.trim() || pending);
+    const pending = [...state.outstandingCommands.values()].some(row => commandMatches(row, target) && row.submission && row.submission.key === (target && draftKey(target)) && row.submission.revision === draft.revision && !["accepted", "queued", "applied", "refused", "expired"].includes(row.receipt?.state));
+    setDisabled(els.send, !ready || blocked || !draft.text.trim() || pending);
     const sendLabel = worker ? "Send guidance" : "Send";
     if (els.send.textContent !== sendLabel) els.send.textContent = sendLabel;
     els.steer.hidden = worker; els.redirect.hidden = worker;
-    setDisabled(els.steer, !ready || !target?.run_id || !draft.text.trim() || pending);
+    setDisabled(els.steer, !ready || blocked || !target?.run_id || !draft.text.trim() || pending);
     setDisabled(els.redirect, els.steer.disabled);
     setDisabled(els.stop, !ready || !(target?.run_id || target?.turn_id));
-    setDisabled($("new-chat-button"), unknown || state.hostBusy || !navigator.onLine || (state.lastConfirmedUpdate && state.connectionState !== "connected"));
+    setDisabled($("new-chat-button"), blockedFor(state.hostIdentity) || state.hostBusy || !navigator.onLine || (state.lastConfirmedUpdate && state.connectionState !== "connected"));
     setDisabled(els.draft, !target);
     $("composer").classList.toggle("readonly", Boolean(state.readWorker || state.history));
     els.targetLabel.textContent = state.readWorker ? (state.chat?.title || "Chat") + " · Worker " + state.readWorker.id + " · History (read only)" : state.history ? "Saved history · " + (state.chat?.title || "Chat") : target ?
@@ -459,12 +485,13 @@
     }
     if (state.history && !state.readWorker) {
       const open = button("Open saved chat", () => hostCommand("open", {conversation_id: state.history.conversation_id}));
-      open.disabled = unknown || state.hostBusy || !navigator.onLine || (state.lastConfirmedUpdate && state.connectionState !== "connected");
+      open.disabled = blockedFor(state.hostIdentity) || state.hostBusy || !navigator.onLine || (state.lastConfirmedUpdate && state.connectionState !== "connected");
       els.targetState.append(open);
     }
-    const relevant = [...state.outstandingCommands.values()].filter(row => target && row.receipt?.target?.session_id === target.session_id && (row.receipt.target.handle_id || null) === (target.handle_id || null));
-    els.commandStatus.textContent = relevant.map(row => receiptLabel(row.receipt, row.unknown)).join(" · ");
-    for (const control of els.decisions.querySelectorAll("button, select, input, textarea")) setDisabled(control, !ready || state.view !== "chat");
+    els.commandStatus.textContent = [...state.outstandingCommands].map(([id, row]) => commandReviewLabel(id, row, target)).join(" · ");
+    for (const card of els.decisions.children) {
+      for (const control of card.querySelectorAll("button, select, input, textarea")) setDisabled(control, !ready || state.view !== "chat" || blockedFor(card.commandTarget));
+    }
   }
   function receiptLabel(receipt, unknown) {
     if (unknown) return "Response lost · checking command ID; no replay";
@@ -480,6 +507,7 @@
     const prior = state.outstandingCommands.get(receipt.command_id) || {};
     // Preparing cannot retract a later native acceptance already observed on another request.
     if (receipt.state === "pending" && prior.receipt && prior.receipt.state !== "pending") return;
+    prior.binding ||= Object.freeze({action: receipt.action, target: Object.freeze({...receipt.target})});
     prior.receipt = receipt; prior.unknown = false;
     state.outstandingCommands.set(receipt.command_id, prior);
     if (prior.submission && ["accepted", "queued", "applied"].includes(receipt.state)) clearAcceptedDraft(prior.submission);
@@ -488,7 +516,7 @@
   async function submit(action, target, payload, submission, hostSelection = null) {
     const ticket = await api("POST", API_BASE + "/commands/tickets", {protocol_version: 1, action, target, payload});
     // Retain ID before the effect request. A lost ACK can only query this ID.
-    state.outstandingCommands.set(ticket.command_id, {submission, unknown: false, hostSelection});
+    state.outstandingCommands.set(ticket.command_id, {binding: Object.freeze({action, target: Object.freeze({...target})}), submission, unknown: false, hostSelection});
     if (hostSelection && hostSelection.revision === state.selectionRevision) {
       hostSelection.generation = ++state.hostActionGeneration;
       state.hostSelectionCommand = ticket.command_id;
@@ -528,12 +556,13 @@
   }
   function publishAnswerability() {
     if (state.ws?.readyState !== WebSocket.OPEN) return;
-    const answerable = !state.readWorker && state.view === "chat" && state.targetConfirmed && state.available && state.connectionState === "connected" && ![...state.outstandingCommands.values()].some(row => row.unknown || row.receipt?.state === "outcome_unknown");
-    const signature = JSON.stringify([state.renderedDecisions, answerable]);
+    const ready = !state.readWorker && state.view === "chat" && state.targetConfirmed && state.available && state.connectionState === "connected";
+    const claims = state.renderedDecisions.map(target => ({target, answerable: ready && !blockedFor(target)}));
+    const signature = JSON.stringify(claims);
     // A stale-round reset must not provoke another identical rejected withdrawal.
     if (state.answerabilitySent?.socket === state.ws && state.answerabilitySent.signature === signature) return;
     state.answerabilitySent = {socket: state.ws, signature};
-    for (const target of state.renderedDecisions) state.ws.send(JSON.stringify({type: "answerable", protocol_version: 1, target, answerable}));
+    for (const claim of claims) state.ws.send(JSON.stringify({type: "answerable", protocol_version: 1, ...claim}));
   }
   function renderDecisions() {
     const rows = state.snapshot?.decisions || [];
@@ -552,7 +581,7 @@
     }
     for (const round of rows) {
       const target = {...targetOf(state.chat), run_id: round.run_id, round_id: round.round_id};
-      const card = node("details", null, "decision"); card.open = true;
+      const card = node("details", null, "decision"); card.open = true; card.commandTarget = Object.freeze({...target});
       card.append(node("summary", "Decision · " + round.kind));
       const overview = node("li"); overview.append(button((state.chat?.title || "Chat") + " · " + round.kind, () => showView("chat"))); els.approvalsList.append(overview);
       const supported = round.supported && ["approval", "question"].includes(round.kind);
