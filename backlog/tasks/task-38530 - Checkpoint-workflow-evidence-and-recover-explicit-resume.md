@@ -1,7 +1,7 @@
 ---
 id: TASK-38530
 title: Checkpoint workflow evidence and recover explicit resume
-status: In Progress
+status: Done
 created_date: 2026-11-01 17:31
 dependencies:
 - TASK-38524
@@ -18,7 +18,7 @@ documentation:
 - backlog/decisions/285-native-phased-agent-workflows.md
 assignee:
 - '@codex'
-updated_date: 2026-11-01 21:41
+updated_date: 2026-11-01 22:40
 ---
 
 ## Description
@@ -29,9 +29,9 @@ Deliver implementation slice 7 of the accepted native shared-worktree workflow d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Required handoffs/checkpoints persist independently of optional logs and remain protected from pruning while active or uncertain.
-- [ ] #2 Exact manifests/verifier identities, typed process results and current binding/target evidence govern phase advancement and final review.
-- [ ] #3 One startup recovery audit retains uncertain charges and requires explicit Resume; quality review never clears cleanup uncertainty or authorizes replay.
+- [x] #1 Required handoffs/checkpoints persist independently of optional logs and remain protected from pruning while active or uncertain.
+- [x] #2 Exact manifests/verifier identities, typed process results and current binding/target evidence govern phase advancement and final review.
+- [x] #3 One startup recovery audit retains uncertain charges and requires explicit Resume; quality review never clears cleanup uncertainty or authorizes replay.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -52,19 +52,19 @@ Reason: Implements accepted typed-evidence/recovery contract using existing nati
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented native required verifier capture, original launch/failure/drain custody, atomic FULL checkpoint settlement and conservative explicit recovery under ADR-285. Schema v27 adds immutable checkpoint sidecars and inert Resume identities while preserving historical v25/v26 canonical bytes. File inputs remain permission-respecting references; same-phase consumers require fresh native producer handoffs. Completed-phase quality review is separate from upcoming approval and unknown execution closure.
+Implemented bounded native workflow evidence/checkpoint service using existing AgentRunsDB, Goal manifests, raw execution and physical owners. Approved executable wrappers bind exact arguments/source/shell/cwd; required sanitized output captures before optional-log truncation and requires real EOF/cleanup. Original native receipts, including failed launches, plus actual owner drain govern one FULL result/evidence/retirement/accounting commit. Literal inputs remain references; same-phase handoffs require fresh authoritative results. Historical v25/v26 JSON bytes/catalogs remain readable through v27 migration. Separate quality/recovery and passive explicit Resume retain unknown charges/protection; the existing single startup audit projects clean quiescence versus uncertain execution.
 
-Targeted verification: 189 workflow tests passed; named Goal/raw/schema/backup selection had 225 passed, 1 Windows-only skip and 1 documented profile-source refusal, whose exact supported-profile diagnostic passed. Final evidence/recovery/freshness selection passed 33 tests. Scoped lint has no new diagnostics; unrelated work/index preserved. Full evidence, commands, inherited qualification limits and exact coordinator handoff are in `.superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-7-report.md`. Service Resume remains inert: the later coordinator must freshly prepare actual provider/tools/permissions and new remaining-task phase custody. AC/status deliberately remain pending independent review.
+Independent review found unused no-run payload capacity and a missing native readiness regression. Both passed scoped re-review after a six-path fix: only conclusively unused slots are tombstoned in the closure transaction; actual launched/published/unknown evidence stays protected. Genuine native RUN_DONE without approved process evidence persists missing and blocks quality/dependent approval. Final fix selection51 passed with real SQLite rollback proof; earlier189 workflow,225 regression passes/1Windows skip/1original raw source-profile refusal, exact qualified rerun1 pass are separate overlapping selections. Final prior behavioral33 passed. Scoped lint has no new diagnostics; original index/unrelated recorded hashes preserved.
 
-Review fix round 1: positively closed no-run tasks now release unused payload capacity in the original FULL transaction, retaining archive-valid claim/reservation tombstones. Real published siblings and uncertain/durable-row failures retain their capacity and consumed charges. Added actual native RUN_DONE/unrelated-command coverage proving missing approved-verifier evidence blocks both completed quality and dependent-phase approval. Focused RED reproduced three leaks; focused GREEN passed 6 tests; final affected service/retention/recovery/archive selection passed 51, including injected SQLite closure rollback. No added lint diagnostics; unrelated files/index preserved. Status/AC remain pending re-review.
-
-ADR: [ADR-285](../decisions/285-native-phased-agent-workflows.md); narrow producer/storage amendments are documented in the linked spec and agent-runtime architecture reference.
+ADR required: no
+ADR path: backlog/decisions/285-native-phased-agent-workflows.md
+Reason: Direct implementation with narrowly documented source-backed producer/evidence/recovery amendments. Architecture/spec/testing lesson updated. Exact API/commands/evidence in .superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-7-report.md. Commits b4c93bcb93 and38c05d602c. Task8 genuine async provider/tool revalidation, fresh remaining-phase custody and native coordinator integration remain later; Task9 UI/Task10 live/full native-sidecar profile archive qualification remain pending. Native exact SQLite sidecar archive and full-profile historical-result bundle are separate evidence levels; no full suite/live/Windows claim.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Required native evidence, atomic checkpoints and conservative one-audit recovery passed independent spec+quality gate after unused-capacity and missing-evidence test fixes. Actual execution remains disabled until the later coordinator/UI/live qualification slices.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done

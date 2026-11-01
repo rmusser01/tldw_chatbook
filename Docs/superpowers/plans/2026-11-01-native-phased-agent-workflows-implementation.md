@@ -16,7 +16,7 @@
 
 **Baseline:** finalized design commit `8f989edc9f`. Source mapping was inspected in the current dirty checkout; unrelated staged additions are not implied to be committed prerequisites. Recheck the integrated source, symbols and schema before execution.
 
-**Status:** Implementation in progress. Tasks 1–6 passed their independent review gates; Tasks 7–10 remain pending. Runtime/UI delivery is incomplete.
+**Status:** Implementation in progress. Tasks 1–7 passed their independent review gates; Tasks 8–10 remain pending. Runtime/UI delivery is incomplete.
 
 ```text
 ADR required: no
@@ -301,9 +301,9 @@ Define the `service` fixture in the new test module with the same real temporary
 
 **Consumes:** Task 1 durable state, Task 2 claims/active time, Task 3 physical claims and existing persistence/manifest/recovery services. **Produces:** `WorkflowRunService(db, persistence)` with `call(operation, *args, **kwargs)` finite DB offload; `get(workflow_id) -> WorkflowSnapshot`; `checkpoint_task(result: WorkflowTaskResult, *, drained: bool) -> WorkflowSnapshot`; `prepare_decision(workflow_id, *, phase_id) -> WorkflowDecision`; `resume(workflow_id, *, expected_control_revision, command_id) -> WorkflowSnapshot`; `project_recovery(audit)`. `WorkflowDecision` captures `workflow_id`, `revision_id`, `phase_id`, `control_revision`, `predecessor_digest` and `input_manifest`. Quality-review and execution-recovery decisions have separate tagged types; one cannot clear the other.
 
-- [ ] **1. Add failing real-file/SQLite tests:** exact output/verifier/argument digests, stale inputs after review opens, missing/oversize mandatory data, wrong native run ownership, same-result idempotency and changed-result conflict. Turn native logs off or force truncation; reopen a fresh DB/process and require complete authoritative handoffs.
-- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Agents/test_workflow_run_service.py Tests/DB/test_workflow_evidence_retention.py Tests/Chat/test_workflow_recovery.py`.
-- [ ] **3. Adapt existing Goal evidence and lifetime patterns.** Use current bounded `capture_manifest`/freshness checks and typed process observations; do not call Goal execution, change its no-child policy or create another authority grant. Reserve/copy required results within Task 1 limits and retain active/uncertain references against pruning. Reuse `run_owned_db_call`/`operation_owned_connection` custody for the complete finite callback, including preflight work; never abandon thread-owned SQLite handles.
+- [x] **1. Add failing real-file/SQLite tests:** exact output/verifier/argument digests, stale inputs after review opens, missing/oversize mandatory data, wrong native run ownership, same-result idempotency and changed-result conflict. Turn native logs off or force truncation; reopen a fresh DB/process and require complete authoritative handoffs.
+- [x] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Agents/test_workflow_run_service.py Tests/DB/test_workflow_evidence_retention.py Tests/Chat/test_workflow_recovery.py`.
+- [x] **3. Adapt existing Goal evidence and lifetime patterns.** Use current bounded `capture_manifest`/freshness checks and typed process observations; do not call Goal execution, change its no-child policy or create another authority grant. Reserve/copy required results within Task 1 limits and retain active/uncertain references against pruning. Reuse `run_owned_db_call`/`operation_owned_connection` custody for the complete finite callback, including preflight work; never abandon thread-owned SQLite handles.
 
 ```python
 def test_model_done_is_not_a_passed_check():
@@ -316,9 +316,9 @@ def test_model_done_is_not_a_passed_check():
 ```
 
 `WorkflowCheck`, introduced with Task 1 models, records `verifier_id`, `outcome` (`passed/failed/skipped/stale/missing`), optional typed exit code, input manifest and verifier digest. Real service tests must demonstrate how model-reported done plus missing process evidence prevents phase completion; the value assertion above is only the minimum schema example.
-- [ ] **4. Settle result, checkpoint/evidence, task status and its accounting in one FULL transaction after positive physical retirement.** Reuse existing Change Review window references with consent/exclusion/attribution disclosure; do not manufacture per-task diffs or force-enable capture. Stale evidence remains history but cannot authorize a dependent phase. Failure after a known effect retains uncertainty, charges and claim protection.
-- [ ] **5. Recover only through the existing startup owner.** Feed its one audit into workflow projection. Test fresh processes at prepared, accepted, thread-start, effect and result-commit boundaries. Clean waiting becomes Resume required, unknown effects Recovery required. Revalidate captured binding, provider/tools, results, input manifests and remaining allowance; fresh Resume custody never replays uncertain work or resets counters. A recovered/imported row is inert.
-- [ ] **6. Run new cases plus** `Tests/DB/test_goal_evidence_retention.py`, `Tests/DB/test_goal_restart_process.py`, `Tests/Chat/test_goal_storage_lifetime.py`, `Tests/Chat/test_console_goal_recovery.py` and relevant exact-schema backup cases. Review private payload removal/tombstones and commit `feat: checkpoint workflow evidence and conservative resume`.
+- [x] **4. Settle result, checkpoint/evidence, task status and its accounting in one FULL transaction after positive physical retirement.** Reuse existing Change Review window references with consent/exclusion/attribution disclosure; do not manufacture per-task diffs or force-enable capture. Stale evidence remains history but cannot authorize a dependent phase. Failure after a known effect retains uncertainty, charges and claim protection.
+- [x] **5. Recover only through the existing startup owner.** Feed its one audit into workflow projection. Test fresh processes at prepared, accepted, thread-start, effect and result-commit boundaries. Clean waiting becomes Resume required, unknown effects Recovery required. Revalidate captured binding, provider/tools, results, input manifests and remaining allowance; fresh Resume custody never replays uncertain work or resets counters. A recovered/imported row is inert.
+- [x] **6. Run new cases plus** `Tests/DB/test_goal_evidence_retention.py`, `Tests/DB/test_goal_restart_process.py`, `Tests/Chat/test_goal_storage_lifetime.py`, `Tests/Chat/test_console_goal_recovery.py` and relevant exact-schema backup cases. Review private payload removal/tombstones and commit `feat: checkpoint workflow evidence and conservative resume`.
 
 <a id="task-8"></a>
 ## Task 8: Native phase scheduling and runtime-wide admission

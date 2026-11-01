@@ -5,7 +5,7 @@
 - Task: [TASK-38493](../tasks/task-38493%20-%20Design-native-phased-agent-workflows-in-a-shared-worktree.md)
 - Spec: [Shared-worktree workflow design](../../Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md)
 - Plan: [Native shared-worktree workflows](../../Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md) (implementation in progress)
-- Implementation: Tasks 1–6 independently reviewed; remaining delivery and qualification are tracked in the linked plan.
+- Implementation: Tasks 1–7 independently reviewed; remaining delivery and qualification are tracked in the linked plan.
 - Governing contracts: [project instructions](069-console-project-instruction-local-state-and-preflight.md),
   [Change Review consent](084-change-review-consent-and-asynchronous-finalization.md),
   [per-turn review ownership](089-console-per-turn-change-review-ownership.md),
