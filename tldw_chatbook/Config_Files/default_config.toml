@@ -374,6 +374,13 @@ openai_cache_key = false
 # max_goal_budget_tokens = 500000
 # max_goal_output_tokens = 8192
 # max_goal_wall_seconds = 900
+# workflow_runs_enabled = false
+# max_workflow_generations = 8
+# max_workflow_child_launches = 12
+# max_workflow_model_calls = 32
+# max_workflow_budget_tokens = 500000
+# max_workflow_output_tokens = 8192
+# max_workflow_wall_seconds = 900  # Cumulative active seconds; drained review waits excluded
 #
 # --- Sub-agent routing (ADR-344) ---
 # Default provider/model for spawned sub-agents when neither the spawn call

@@ -300,3 +300,32 @@ class WorkflowSnapshot(BaseModel):
     plans: tuple[WorkflowPlan, ...]
     results: tuple[WorkflowTaskResult, ...]
     accounting: AutomaticWorkSnapshot
+
+
+class WorkflowPhaseAttempt(WorkflowModel):
+    """Durable reference only; accepted state is never a live capability."""
+
+    id: Identity
+    workflow_id: Identity
+    revision_id: Positive | None
+    phase_id: Identity | None
+    purpose: Literal["planning", "execution"]
+    control_revision: Positive
+    command_id: Identity
+    chain_id: Identity
+    conversation_id: Identity
+    session_id: Identity
+    owner_id: Identity
+    state: Literal["prepared", "accepted", "completed", "aborted", "review_required"]
+
+
+class WorkflowTaskClaim(WorkflowTaskAttempt):
+    """Exact native claim projection; duplicate reads do not authorize a launch."""
+
+    reservation_id: Identity
+    launch_run_id: Identity
+    phase_attempt_id: Identity
+    chain_id: Identity
+    conversation_id: Identity
+    session_id: Identity
+    owner_id: Identity

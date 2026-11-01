@@ -10,6 +10,11 @@ from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
 
 
 def resolve_automatic_authorization(controller, origin, session_id, wake, goal):
+    if origin is ConsoleSubmissionOrigin.WORKFLOW_PHASE:
+        # Task 8 owns positive native dispatch; never fall through to wake/manual.
+        raise PermissionError(
+            "Workflow dispatch requires its runtime phase coordinator."
+        )
     if origin is not ConsoleSubmissionOrigin.GOAL_ITERATION:
         return controller._fleet_wake, wake
     coordinator = getattr(controller, "_goal_coordinator", None)
@@ -102,6 +107,11 @@ def capture_execution_roots(
 def submission_scope(controller, origin, session_id):
     """Manual sends pause their goal and reset inherited automatic context."""
     from contextlib import nullcontext
+
+    if origin is ConsoleSubmissionOrigin.WORKFLOW_PHASE:
+        raise PermissionError(
+            "Workflow dispatch requires its runtime phase coordinator."
+        )
 
     from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
 

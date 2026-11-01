@@ -33,6 +33,11 @@ from tldw_chatbook.Agents.automatic_work_budget import (
 from tldw_chatbook.Agents.code_review_models import ReviewBoundaryReceipt
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.workflow_models import (
+        WorkflowPhaseAttempt,
+        WorkflowPlan,
+        WorkflowTaskAttempt,
+    )
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -224,7 +229,23 @@ class AutomaticWorkLedger:
             except AutomaticWorkRefused as exc:
                 observed = self._allowance_chain(conn, chain_id)
                 root_id = observed["id"]
+                intervals = tuple(
+                    dict(row)
+                    for row in conn.execute(
+                        "SELECT i.* FROM workflow_active_intervals i JOIN workflow_runs w ON w.id=i.workflow_id WHERE w.chain_id=?",
+                        (root_id,),
+                    )
+                )
                 conn.execute("ROLLBACK TO automatic_admission")
+                for interval in intervals:
+                    conn.execute(
+                        "UPDATE workflow_active_intervals SET charged_seconds=?,observed_monotonic=? WHERE id=?",
+                        (
+                            interval["charged_seconds"],
+                            interval["observed_monotonic"],
+                            interval["id"],
+                        ),
+                    )
                 # Elapsed-time observations are not an admission. In particular,
                 # a refused first call in a replacement process must keep its
                 # anchor so a retry cannot gain unattended time.
@@ -273,6 +294,10 @@ class AutomaticWorkLedger:
         """Read immutable goal origin from the canonical allowance root."""
         with self._db.connection() as conn:
             root = self._allowance_chain(conn, chain_id)["id"]
+            if conn.execute(
+                "SELECT 1 FROM workflow_runs WHERE chain_id=?", (root,)
+            ).fetchone():
+                return "workflow_phase"
             return "goal_iteration" if conn.execute(
                 "SELECT 1 FROM goal_runs WHERE chain_id=?", (root,)
             ).fetchone() else "fleet_wake"
@@ -313,7 +338,27 @@ class AutomaticWorkLedger:
             raise AutomaticWorkRefused("clock_reversed")
         if effective.wall_seconds == 0:
             raise AutomaticWorkRefused("wall_budget")
-        if snapshot.started_at is not None:
+        workflow = conn.execute(
+            "SELECT id FROM workflow_runs WHERE chain_id=?", (chain_id,)
+        ).fetchone()
+        if workflow is not None:
+            self._workflow_enabled()
+            for resource, ceiling in effective.resources().items():
+                if ceiling == 0:
+                    raise AutomaticWorkRefused(f"{resource}_budget")
+            if effective.output_tokens == 0:
+                raise AutomaticWorkRefused("output_tokens_budget")
+            if conn.execute(
+                "SELECT 1 FROM workflow_phase_attempts p JOIN workflow_runs w ON w.id=p.workflow_id JOIN automatic_wake_attempts a ON a.id=p.native_attempt_id WHERE w.id=? AND a.state='accepted' AND (p.control_revision!=w.control_revision OR w.status IN ('paused','stopped','closed','removed','completed','recovery_required'))",
+                (workflow["id"],),
+            ).fetchone():
+                raise AutomaticWorkRefused("workflow_authority_changed")
+            if (
+                self._workflow_active_seconds(conn, workflow["id"], observe=True)
+                >= effective.wall_seconds
+            ):
+                raise AutomaticWorkRefused("wall_budget")
+        elif snapshot.started_at is not None:
             started_monotonic = chain["started_monotonic"]
             if chain["clock_owner_id"] != _CLOCK_OWNER_ID:
                 # Re-anchor an unambiguous recovered chain to this process,
@@ -352,6 +397,33 @@ class AutomaticWorkLedger:
     def _start_automatic(self, conn: sqlite3.Connection, chain_id: str) -> None:
         chain = self._allowance_chain(conn, chain_id)
         chain_id = chain["id"]
+        workflow = conn.execute(
+            "SELECT id FROM workflow_runs WHERE chain_id=?", (chain_id,)
+        ).fetchone()
+        if workflow is not None:
+            if not conn.execute(
+                "SELECT 1 FROM workflow_active_intervals WHERE workflow_id=? AND ended_at IS NULL",
+                (workflow["id"],),
+            ).fetchone():
+                owner = conn.execute(
+                    "SELECT owner_id FROM automatic_work_runtime_owner WHERE singleton=1"
+                ).fetchone()
+                if owner is None:
+                    raise AutomaticWorkRefused("runtime_owner_missing")
+                now, mono = self._wall_clock(), self._monotonic_clock()
+                conn.execute(
+                    "INSERT INTO workflow_active_intervals (id,workflow_id,owner_id,started_at,clock_owner_id,started_monotonic,observed_monotonic) VALUES (?,?,?,?,?,?,?)",
+                    (
+                        uuid4().hex,
+                        workflow["id"],
+                        owner["owner_id"],
+                        now,
+                        _CLOCK_OWNER_ID,
+                        mono,
+                        mono,
+                    ),
+                )
+            return
         if chain["started_at"] is None:
             limits = AutomaticWorkLimits(**json.loads(chain["limits_json"]))
             now = self._wall_clock()
@@ -1104,6 +1176,19 @@ class AutomaticWorkLedger:
             ):
                 raise ValueError("goal attempt link mismatch")
 
+        if kind == "workflow_phase":
+            link = conn.execute(
+                "SELECT w.chain_id,w.conversation_id FROM workflow_phase_attempts p JOIN workflow_runs w ON w.id=p.workflow_id WHERE p.native_attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if (
+                link is None
+                or link["chain_id"] != row["chain_id"]
+                or link["conversation_id"] != row["conversation_id"]
+                or json.loads(row["run_ids_json"]) != []
+                or json.loads(row["message_ids_json"]) != []
+            ):
+                raise ValueError("workflow attempt link mismatch")
         return row
     def _attempt_view(self, row: sqlite3.Row) -> AutomaticWakeAttempt:
         return AutomaticWakeAttempt(
@@ -1542,6 +1627,21 @@ class AutomaticWorkLedger:
                     (current_owner_id, current_owner_id, current_owner_id),
                 )
             }
+            # An open workflow interval is unsettled even if its logical run rows ended.
+            intervals = conn.execute(
+                "SELECT i.*,w.chain_id,c.limits_json FROM workflow_active_intervals i JOIN workflow_runs w ON w.id=i.workflow_id JOIN automatic_work_chains c ON c.id=w.chain_id WHERE i.ended_at IS NULL AND (i.owner_id!=? OR i.clock_owner_id IS NOT ?)",
+                (current_owner_id, _CLOCK_OWNER_ID),
+            ).fetchall()
+            for interval in intervals:
+                chains.add(interval["chain_id"])
+                # Recovery cannot invent a historical drain timestamp.
+                ceiling = AutomaticWorkLimits(
+                    **json.loads(interval["limits_json"])
+                ).wall_seconds
+                conn.execute(
+                    "UPDATE workflow_active_intervals SET charged_seconds=MAX(charged_seconds,?) WHERE id=?",
+                    (ceiling, interval["id"]),
+                )
             # Temporary progress IDs are deliberately process-local. After
             # restart a completed attempt's empty ID list cannot prove which
             # saved reports it already woke; retain a review fence on its chain.
@@ -1572,6 +1672,13 @@ class AutomaticWorkLedger:
             )
             conn.executemany(
                 "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
+                [(chain_id,) for chain_id in chains],
+            )
+            conn.execute(
+                "UPDATE workflow_phase_attempts SET status='uncertain',retirement='unknown' WHERE native_attempt_id IN (SELECT id FROM automatic_wake_attempts WHERE attempt_kind='workflow_phase' AND state='review_required')"
+            )
+            conn.executemany(
+                "UPDATE workflow_runs SET status='recovery_required',control_revision=control_revision+1 WHERE chain_id=? AND status NOT IN ('removed','closed','completed')",
                 [(chain_id,) for chain_id in chains],
             )
             goals = tuple(
@@ -1828,6 +1935,10 @@ class AutomaticWorkLedger:
                 ).fetchone()
                 if link is None or link[0] != receipt.boundary_id:
                     raise AutomaticWorkRefused("review_boundary_unavailable")
+            if kind == "workflow_phase":
+                self._workflow_current(conn, attempt_id, owner_id)
+                if limits.output_tokens == 0:
+                    raise AutomaticWorkRefused("output_tokens_budget")
             if kind == "goal_iteration":
                 goal = conn.execute(
                     "SELECT g.status, g.request_json FROM goal_runs g JOIN goal_iterations i ON i.goal_id=g.id WHERE i.attempt_id=?",
@@ -1873,6 +1984,478 @@ class AutomaticWorkLedger:
                     "UPDATE goal_iterations SET status='accepted', revision=revision+1 WHERE attempt_id=?",
                     (attempt_id,),
                 )
+            if kind == "workflow_phase":
+                conn.execute(
+                    "UPDATE workflow_phase_attempts SET status='accepted' WHERE native_attempt_id=?",
+                    (attempt_id,),
+                )
             self._start_automatic(conn, chain_id)
         self._transition_review_boundary(attempt_id, owner_id, "accepted")
         return True
+
+    def read_workflow_attempt(
+        self, attempt_id: str, *, owner_id: str
+    ) -> WorkflowPhaseAttempt:
+        """Read a durable reference, never reconstruct live dispatch custody."""
+        from tldw_chatbook.Agents.workflow_models import WorkflowPhaseAttempt
+
+        with self._db.connection() as conn:
+            native = self._attempt(conn, attempt_id, owner_id, "workflow_phase")
+            phase = conn.execute(
+                "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            return WorkflowPhaseAttempt(
+                id=attempt_id,
+                workflow_id=phase["workflow_id"],
+                revision_id=phase["plan_revision"],
+                phase_id=phase["phase_id"],
+                purpose=phase["purpose"],
+                control_revision=phase["control_revision"],
+                command_id=phase["command_id"],
+                chain_id=native["chain_id"],
+                conversation_id=native["conversation_id"],
+                session_id=native["session_id"],
+                owner_id=native["owner_id"],
+                state=native["state"],
+            )
+
+    @staticmethod
+    def _workflow_enabled() -> None:
+        from tldw_chatbook.Agents.run_log import _setting
+        from tldw_chatbook.config import coerce_bool_setting
+
+        if not coerce_bool_setting(_setting("workflow_runs_enabled", False), False):
+            raise AutomaticWorkRefused("workflow_runs_disabled")
+
+    def _workflow_current(self, conn, attempt_id, owner_id, *, accepted=False):
+        self._check_runtime_owner(conn, owner_id)
+        if (
+            conn.execute(
+                "SELECT 1 FROM automatic_work_runtime_owner WHERE singleton=1 AND owner_id=?",
+                (owner_id,),
+            ).fetchone()
+            is None
+        ):
+            raise AutomaticWorkRefused("runtime_owner_missing")
+        native = self._attempt(conn, attempt_id, owner_id, "workflow_phase")
+        phase = conn.execute(
+            "SELECT p.*,w.control_revision AS current_revision,w.status AS workflow_status "
+            "FROM workflow_phase_attempts p JOIN workflow_runs w ON w.id=p.workflow_id "
+            "WHERE p.native_attempt_id=?",
+            (attempt_id,),
+        ).fetchone()
+        if phase["control_revision"] != phase["current_revision"] or phase[
+            "workflow_status"
+        ] in {
+            "stopped",
+            "closed",
+            "removed",
+            "completed",
+            "recovery_required",
+            "paused",
+        }:
+            raise AutomaticWorkRefused("workflow_authority_changed")
+        if accepted and native["state"] != "accepted":
+            raise AutomaticWorkRefused("acceptance_required")
+        self._workflow_enabled()
+        return native, phase
+
+    def prepare_workflow_phase(
+        self,
+        workflow_id: str,
+        *,
+        revision_id: int,
+        phase_id: str,
+        owner_id: str,
+        session_id: str,
+        command_id: str,
+    ) -> WorkflowPhaseAttempt:
+        """Reserve one execution phase and all mandatory task result capacity."""
+        if type(revision_id) is not int or not 0 < revision_id < 2**63:
+            raise ValueError("invalid workflow revision")
+        _identity(phase_id)
+        return self._prepare_workflow(
+            workflow_id,
+            revision_id=revision_id,
+            phase_id=phase_id,
+            purpose="execution",
+            owner_id=owner_id,
+            session_id=session_id,
+            command_id=command_id,
+        )
+
+    def prepare_workflow_planning(
+        self,
+        workflow_id: str,
+        *,
+        owner_id: str,
+        session_id: str,
+        command_id: str,
+        revision_id: int | None = None,
+    ) -> WorkflowPhaseAttempt:
+        """Reserve read-only planning against the current immutable request/base plan."""
+        if revision_id is not None and (
+            type(revision_id) is not int or not 0 < revision_id < 2**63
+        ):
+            raise ValueError("invalid workflow revision")
+        return self._prepare_workflow(
+            workflow_id,
+            revision_id=revision_id,
+            phase_id=None,
+            purpose="planning",
+            owner_id=owner_id,
+            session_id=session_id,
+            command_id=command_id,
+        )
+
+    def _prepare_workflow(
+        self,
+        workflow_id,
+        *,
+        revision_id,
+        phase_id,
+        purpose,
+        owner_id,
+        session_id,
+        command_id,
+    ):
+        from tldw_chatbook.Agents.workflow_models import RECORD_BYTES
+
+        for value in (workflow_id, owner_id, session_id, command_id):
+            _identity(value)
+        store = self._db.workflow_runs
+        with self._db.connection() as conn:
+            chain_id = store._row(conn, workflow_id)["chain_id"]
+        with self._admission_transaction(chain_id) as conn:
+            self._check_runtime_owner(conn, owner_id)
+            row = store._row(conn, workflow_id)
+            prior = conn.execute(
+                "SELECT p.*,a.owner_id,a.session_id FROM workflow_phase_attempts p "
+                "JOIN automatic_wake_attempts a ON a.id=p.native_attempt_id WHERE p.command_id=?",
+                (command_id,),
+            ).fetchone()
+            if prior:
+                if tuple(
+                    prior[key]
+                    for key in (
+                        "workflow_id",
+                        "plan_revision",
+                        "phase_id",
+                        "purpose",
+                        "owner_id",
+                        "session_id",
+                    )
+                ) != (
+                    workflow_id,
+                    revision_id,
+                    phase_id,
+                    purpose,
+                    owner_id,
+                    session_id,
+                ):
+                    raise ValueError("workflow_command_conflict")
+                attempt_id = prior["native_attempt_id"]
+            else:
+                self._workflow_enabled()
+                if row["status"] not in {
+                    "awaiting_plan",
+                    "awaiting_approval",
+                    "awaiting_resume",
+                }:
+                    raise AutomaticWorkRefused("workflow_not_ready")
+                latest = conn.execute(
+                    "SELECT MAX(revision) FROM workflow_plan_revisions WHERE workflow_id=?",
+                    (workflow_id,),
+                ).fetchone()[0]
+                if revision_id != latest:
+                    raise AutomaticWorkRefused("workflow_revision_changed")
+                tasks = []
+                if purpose == "execution":
+                    tasks = conn.execute(
+                        "SELECT task_id FROM workflow_tasks WHERE workflow_id=? AND plan_revision=? AND phase_id=? ORDER BY ordinal",
+                        (workflow_id, revision_id, phase_id),
+                    ).fetchall()
+                    if not tasks:
+                        raise ValueError("unknown_workflow_phase")
+                    if conn.execute(
+                        "SELECT 1 FROM workflow_phase_attempts WHERE workflow_id=? AND plan_revision=? AND phase_id=? AND native_attempt_id IS NOT NULL",
+                        (workflow_id, revision_id, phase_id),
+                    ).fetchone():
+                        raise AutomaticWorkRefused("workflow_phase_already_attempted")
+                limits = AutomaticWorkLimits.from_settings("workflow_phase")
+                if limits.output_tokens == 0:
+                    raise AutomaticWorkRefused("output_tokens_budget")
+                self._check_admission(
+                    conn, chain_id, kind="generation", amount=1, limits=limits
+                )
+                if self._target_active(conn, row["conversation_id"]):
+                    raise AutomaticWorkRefused("conversation_wake_active")
+                store._capacity(conn, workflow_id, RECORD_BYTES * (len(tasks) or 1))
+                attempt_id, reservation_id, phase_key = (
+                    uuid4().hex,
+                    uuid4().hex,
+                    uuid4().hex,
+                )
+                now = self._wall_clock()
+                conn.execute(
+                    "INSERT INTO automatic_work_reservations (id,chain_id,owner_id,kind,amount,state,created_at,updated_at) VALUES (?,?,?,'generation',1,'reserved',?,?)",
+                    (reservation_id, chain_id, owner_id, now, now),
+                )
+                conn.execute(
+                    "INSERT INTO automatic_wake_attempts (id,chain_id,conversation_id,session_id,owner_id,generation_reservation_id,run_ids_json,state,created_at,attempt_kind) VALUES (?,?,?,?,?,?,'[]','prepared',?,'workflow_phase')",
+                    (
+                        attempt_id,
+                        chain_id,
+                        row["conversation_id"],
+                        session_id,
+                        owner_id,
+                        reservation_id,
+                        now,
+                    ),
+                )
+                ordinal = conn.execute(
+                    "SELECT COALESCE(MAX(ordinal),0)+1 FROM workflow_phase_attempts WHERE workflow_id=?",
+                    (workflow_id,),
+                ).fetchone()[0]
+                conn.execute(
+                    "INSERT INTO workflow_phase_attempts (id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,purpose,command_id,control_revision,result_bytes) VALUES (?,?,?,?,?,?,'prepared',?,?,?,?)",
+                    (
+                        phase_key,
+                        workflow_id,
+                        revision_id,
+                        phase_id,
+                        ordinal,
+                        attempt_id,
+                        purpose,
+                        command_id,
+                        row["control_revision"],
+                        RECORD_BYTES if purpose == "planning" else 0,
+                    ),
+                )
+                for task in tasks:
+                    task_key = uuid4().hex
+                    task_ordinal = conn.execute(
+                        "SELECT COALESCE(MAX(ordinal),0)+1 FROM workflow_task_attempts WHERE workflow_id=? AND plan_revision=? AND task_id=?",
+                        (workflow_id, revision_id, task["task_id"]),
+                    ).fetchone()[0]
+                    conn.execute(
+                        "INSERT INTO workflow_task_attempts (id,workflow_id,plan_revision,phase_id,task_id,ordinal,status) VALUES (?,?,?,?,?,?,'prepared')",
+                        (
+                            task_key,
+                            workflow_id,
+                            revision_id,
+                            phase_id,
+                            task["task_id"],
+                            task_ordinal,
+                        ),
+                    )
+                    conn.execute(
+                        "INSERT INTO workflow_task_claims (task_attempt_id,phase_attempt_id,launch_run_id) VALUES (?,?,?)",
+                        (task_key, phase_key, uuid4().hex),
+                    )
+                    conn.execute(
+                        "INSERT INTO workflow_payload_reservations VALUES (?,?,?,'reserved')",
+                        (task_key, workflow_id, RECORD_BYTES),
+                    )
+        return self.read_workflow_attempt(attempt_id, owner_id=owner_id)
+
+    def accept_workflow_phase(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Commit acceptance once under FULL durability, before any billable work."""
+        return self._accept_attempt(
+            attempt_id,
+            owner_id=owner_id,
+            limits=AutomaticWorkLimits.from_settings("workflow_phase"),
+            kind="workflow_phase",
+        )
+
+    def claim_workflow_task(
+        self, attempt_id: str, *, task_id: str, owner_id: str
+    ) -> WorkflowTaskAttempt:
+        """Consume one launch once; an existing claim is lookup-only on redelivery."""
+        from tldw_chatbook.Agents.workflow_models import WorkflowTaskClaim
+
+        _identity(task_id)
+        attempt = self.read_workflow_attempt(attempt_id, owner_id=owner_id)
+        with self._admission_transaction(attempt.chain_id) as conn:
+            _, phase = self._workflow_current(conn, attempt_id, owner_id, accepted=True)
+            if phase["purpose"] != "execution":
+                raise AutomaticWorkRefused("planning_has_no_tasks")
+            row = conn.execute(
+                "SELECT t.*,c.child_reservation_id,c.launch_run_id FROM workflow_task_attempts t JOIN workflow_task_claims c ON c.task_attempt_id=t.id WHERE c.phase_attempt_id=? AND t.task_id=?",
+                (phase["id"], task_id),
+            ).fetchone()
+            if not row:
+                raise ValueError("unknown_workflow_task")
+            if row["child_reservation_id"] is None:
+                self._check_admission(
+                    conn,
+                    attempt.chain_id,
+                    kind="child_launch",
+                    amount=1,
+                    limits=AutomaticWorkLimits.from_settings("workflow_phase"),
+                )
+                reservation_id, now = uuid4().hex, self._wall_clock()
+                conn.execute(
+                    "INSERT INTO automatic_work_reservations (id,chain_id,owner_id,kind,amount,state,created_at,updated_at) VALUES (?,?,?,'child_launch',1,'reserved',?,?)",
+                    (reservation_id, attempt.chain_id, owner_id, now, now),
+                )
+                conn.execute(
+                    "UPDATE workflow_task_claims SET child_reservation_id=? WHERE task_attempt_id=?",
+                    (reservation_id, row["id"]),
+                )
+                conn.execute(
+                    "UPDATE workflow_task_attempts SET status='accepted' WHERE id=?",
+                    (row["id"],),
+                )
+            values = dict(
+                conn.execute(
+                    "SELECT * FROM workflow_task_attempts WHERE id=?", (row["id"],)
+                ).fetchone()
+            )
+            return WorkflowTaskClaim(
+                **values,
+                reservation_id=row["child_reservation_id"] or reservation_id,
+                launch_run_id=row["launch_run_id"],
+                phase_attempt_id=attempt_id,
+                chain_id=attempt.chain_id,
+                conversation_id=attempt.conversation_id,
+                session_id=attempt.session_id,
+                owner_id=owner_id,
+            )
+
+    def _workflow_active_seconds(self, conn, workflow_id, *, observe=False):
+        """Union intervals are serialized per workflow, never per task."""
+        total = 0.0
+        now, mono = self._wall_clock(), self._monotonic_clock()
+        for row in conn.execute(
+            "SELECT * FROM workflow_active_intervals WHERE workflow_id=?",
+            (workflow_id,),
+        ):
+            charged = row["charged_seconds"]
+            if row["ended_at"] is None:
+                if (
+                    row["clock_owner_id"] != _CLOCK_OWNER_ID
+                    or row["started_monotonic"] is None
+                    or row["observed_monotonic"] is None
+                    or not all(
+                        math.isfinite(v)
+                        for v in (
+                            now,
+                            mono,
+                            row["started_monotonic"],
+                            row["observed_monotonic"],
+                        )
+                    )
+                ):
+                    raise AutomaticWorkRefused("clock_unknown")
+                if now < row["started_at"] or mono < row["observed_monotonic"]:
+                    raise AutomaticWorkRefused("clock_reversed")
+                charged = max(
+                    charged, now - row["started_at"], mono - row["started_monotonic"]
+                )
+                if observe:
+                    conn.execute(
+                        "UPDATE workflow_active_intervals SET charged_seconds=?,observed_monotonic=? WHERE id=?",
+                        (charged, mono, row["id"]),
+                    )
+            total += charged
+        return total
+
+    def workflow_active_seconds(self, workflow_id: str) -> float:
+        """Read cumulative charge; foreign open intervals refuse rather than reset."""
+        with self._db.connection() as conn:
+            return self._workflow_active_seconds(conn, workflow_id)
+
+    def settle_workflow_phase(
+        self,
+        attempt_id: str,
+        *,
+        owner_id: str,
+        drained: bool,
+        plan: WorkflowPlan | None = None,
+    ) -> bool:
+        """Close only after the owner proves physical drain and required durable results.
+
+        The app-owned coordinator supplies its physical-drain observation. Logical
+        completion, permission waits and user acknowledgments are not observations.
+        """
+        if type(drained) is not bool:
+            raise ValueError("invalid drain observation")
+        attempt = self.read_workflow_attempt(attempt_id, owner_id=owner_id)
+        with self.transaction() as conn:
+            self._check_runtime_owner(conn, owner_id)
+            native = self._attempt(conn, attempt_id, owner_id, "workflow_phase")
+            if native["state"] != "accepted":
+                return False
+            if not drained:
+                return False
+            phase = conn.execute(
+                "SELECT * FROM workflow_phase_attempts WHERE native_attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            unsettled = conn.execute(
+                "SELECT 1 FROM workflow_task_claims c JOIN workflow_task_attempts t ON t.id=c.task_attempt_id LEFT JOIN workflow_results r ON r.attempt_id=t.id WHERE c.phase_attempt_id=? AND (c.child_reservation_id IS NULL OR t.retirement!='drained' OR t.status NOT IN ('completed','failed') OR r.attempt_id IS NULL) LIMIT 1",
+                (phase["id"],),
+            ).fetchone()
+            if (
+                unsettled
+                or conn.execute(
+                    "SELECT 1 FROM automatic_work_reservations WHERE chain_id=? AND (state IN ('reserved','uncertain') OR (kind='tokens' AND state='committed')) LIMIT 1",
+                    (attempt.chain_id,),
+                ).fetchone()
+            ):
+                raise AutomaticWorkRefused("workflow_not_settled")
+            if phase["purpose"] == "planning":
+                if plan is None:
+                    raise AutomaticWorkRefused("planning_result_missing")
+            elif plan is not None:
+                raise ValueError("execution phase cannot publish a plan")
+            self._workflow_active_seconds(conn, attempt.workflow_id, observe=True)
+            conn.execute(
+                "UPDATE workflow_active_intervals SET ended_at=? WHERE workflow_id=? AND ended_at IS NULL",
+                (self._wall_clock(), attempt.workflow_id),
+            )
+            conn.execute(
+                "UPDATE automatic_wake_attempts SET state='completed',completed_at=? WHERE id=?",
+                (self._wall_clock(), attempt_id),
+            )
+            conn.execute(
+                "UPDATE workflow_phase_attempts SET status='completed',retirement='drained',result_bytes=0 WHERE id=?",
+                (phase["id"],),
+            )
+            if phase["purpose"] == "planning":
+                self._db.workflow_runs._save_plan(
+                    conn,
+                    attempt.workflow_id,
+                    plan,
+                    expected_control_revision=phase["control_revision"],
+                )
+        return True
+
+    def bind_workflow_task_run(
+        self, attempt_id: str, *, task_id: str, run_id: str, owner_id: str
+    ) -> None:
+        """Attach the native run to an already claimed launch, exactly once."""
+        from tldw_chatbook.Agents.workflow_models import WorkflowTaskAttempt
+
+        _identity(task_id)
+        _identity(run_id)
+        with self.transaction() as conn:
+            _, phase = self._workflow_current(conn, attempt_id, owner_id, accepted=True)
+            row = conn.execute(
+                "SELECT t.*,c.launch_run_id FROM workflow_task_attempts t JOIN workflow_task_claims c ON c.task_attempt_id=t.id WHERE c.phase_attempt_id=? AND t.task_id=? AND c.child_reservation_id IS NOT NULL",
+                (phase["id"], task_id),
+            ).fetchone()
+            if row is None:
+                raise AutomaticWorkRefused("task_claim_required")
+            if row["run_id"] not in (None, run_id) or row["launch_run_id"] != run_id:
+                raise ValueError("workflow_run_conflict")
+            values = dict(row)
+            values.pop("launch_run_id")
+            values["run_id"] = run_id
+            self._db.workflow_runs._ownership(conn, WorkflowTaskAttempt(**values))
+            conn.execute(
+                "UPDATE workflow_task_attempts SET run_id=? WHERE id=?",
+                (run_id, row["id"]),
+            )

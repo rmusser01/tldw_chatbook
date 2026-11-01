@@ -72,6 +72,13 @@ class WorkflowRunsStore:
                 + (" AND workflow_id=?" if owner else ""),
                 (owner,) if owner else (),
             ).fetchone()[0]
+            # Planning needs private result capacity before its first provider call.
+            if conn.execute("SELECT 1 FROM schema_version WHERE version=26").fetchone():
+                total += conn.execute(
+                    "SELECT COALESCE(SUM(result_bytes),0) FROM workflow_phase_attempts"
+                    + (" WHERE workflow_id=?" if owner else ""),
+                    (owner,) if owner else (),
+                ).fetchone()[0]
             return total
 
         if (
@@ -251,41 +258,50 @@ class WorkflowRunsStore:
         self, workflow_id: str, plan: WorkflowPlan, *, expected_control_revision: int
     ) -> WorkflowSnapshot:
         """Append immutable structural rows; a saved plan grants no phase approval."""
+        with self.db.automatic_work.transaction() as conn:
+            return self._save_plan(
+                conn,
+                workflow_id,
+                plan,
+                expected_control_revision=expected_control_revision,
+            )
+
+    def _save_plan(self, conn, workflow_id, plan, *, expected_control_revision):
+        """Share publication with atomic planning settlement; callers own FULL commit."""
         if type(plan) is not WorkflowPlan:
             raise TypeError("plan must be WorkflowPlan")
         plan = WorkflowPlan.model_validate_json(plan.canonical_json())
         payload = plan.canonical_json()
-        with self.db.automatic_work.transaction() as conn:
-            row = self._row(conn, workflow_id)
-            if plan.request != WorkflowRequest.model_validate_json(row["request_json"]):
-                raise ValueError("plan_request_conflict")
-            if self._active(conn, workflow_id):
-                raise ValueError("workflow_has_active_evidence")
-            self._cas(conn, workflow_id, expected_control_revision, "awaiting_approval")
-            revision = conn.execute(
-                "SELECT COALESCE(MAX(revision),0)+1 FROM workflow_plan_revisions WHERE workflow_id=?",
-                (workflow_id,),
-            ).fetchone()[0]
-            self._capacity(conn, workflow_id, len(payload.encode()))
+        row = self._row(conn, workflow_id)
+        if plan.request != WorkflowRequest.model_validate_json(row["request_json"]):
+            raise ValueError("plan_request_conflict")
+        if self._active(conn, workflow_id):
+            raise ValueError("workflow_has_active_evidence")
+        self._cas(conn, workflow_id, expected_control_revision, "awaiting_approval")
+        revision = conn.execute(
+            "SELECT COALESCE(MAX(revision),0)+1 FROM workflow_plan_revisions WHERE workflow_id=?",
+            (workflow_id,),
+        ).fetchone()[0]
+        self._capacity(conn, workflow_id, len(payload.encode()))
+        conn.execute(
+            "INSERT INTO workflow_plan_revisions VALUES (?,?,?,?)",
+            (workflow_id, revision, _hash(payload), payload),
+        )
+        for ordinal, phase in enumerate(plan.phases, 1):
             conn.execute(
-                "INSERT INTO workflow_plan_revisions VALUES (?,?,?,?)",
-                (workflow_id, revision, _hash(payload), payload),
+                "INSERT INTO workflow_phases VALUES (?,?,?,?)",
+                (workflow_id, revision, phase.id, ordinal),
             )
-            for ordinal, phase in enumerate(plan.phases, 1):
+            for task_ordinal, task in enumerate(phase.tasks, 1):
                 conn.execute(
-                    "INSERT INTO workflow_phases VALUES (?,?,?,?)",
-                    (workflow_id, revision, phase.id, ordinal),
+                    "INSERT INTO workflow_tasks VALUES (?,?,?,?,?)",
+                    (workflow_id, revision, phase.id, task.id, task_ordinal),
                 )
-                for task_ordinal, task in enumerate(phase.tasks, 1):
-                    conn.execute(
-                        "INSERT INTO workflow_tasks VALUES (?,?,?,?,?)",
-                        (workflow_id, revision, phase.id, task.id, task_ordinal),
-                    )
-            conn.execute(
-                "UPDATE workflow_runs SET progress_cursor=progress_cursor+1 WHERE id=?",
-                (workflow_id,),
-            )
-            return self._snapshot(conn, self._row(conn, workflow_id))
+        conn.execute(
+            "UPDATE workflow_runs SET progress_cursor=progress_cursor+1 WHERE id=?",
+            (workflow_id,),
+        )
+        return self._snapshot(conn, self._row(conn, workflow_id))
 
     def set_status(
         self,

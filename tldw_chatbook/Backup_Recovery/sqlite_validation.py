@@ -249,6 +249,28 @@ class _Restrictions:
             and second in {"type", "name", "tbl_name", "sql"}
         ):
             return sqlite3.SQLITE_OK
+        if (
+            self.migrating
+            and self.migration_owner == "db.agent_runs"
+            and source is None
+        ):
+            if (
+                database == "temp"
+                and first == "sqlite_temp_master"
+                and (
+                    action == sqlite3.SQLITE_READ
+                    and second in {"type", "name", "sql", "tbl_name"}
+                    or action == sqlite3.SQLITE_UPDATE
+                    and second in {"sql", "tbl_name"}
+                )
+            ):
+                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_ALTER_TABLE and (first, second, database) == (
+                "main",
+                "automatic_wake_attempts",
+                "old_attempt_kind",
+            ):
+                return sqlite3.SQLITE_OK
         if database not in (None, "main"):
             return sqlite3.SQLITE_DENY
         if action in (
@@ -298,6 +320,12 @@ class _Restrictions:
                     allowed |= {"json_valid", "json_type", "json_extract", "json_set"}
                 if self.migration_owner == "db.dreams":
                     allowed |= {"sqlite_rename_table", "sqlite_rename_column"}
+                if self.migration_owner == "db.agent_runs":
+                    allowed |= {
+                        "sqlite_rename_table",
+                        "sqlite_rename_column",
+                        "sqlite_drop_column",
+                    }
                 if self.migration_owner == "db.evals":
                     allowed.add("sqlite_drop_column")
                 # ADR-224 v78->v79: normalization UPDATEs (julianday/strftime),
@@ -747,6 +775,45 @@ class _Restrictions:
             ):
                 return sqlite3.SQLITE_OK
             if self.migration_owner == "db.agent_runs":
+                allowed_workflow_admission = source is None and (
+                    database == "main"
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first in {"workflow_phase_attempts", "workflow_task_claims"}
+                        or action == sqlite3.SQLITE_DROP_TABLE
+                        and first == "workflow_phase_attempts_v25"
+                        or action == sqlite3.SQLITE_INSERT
+                        and first in {"workflow_phase_attempts", "sqlite_master"}
+                        or action == sqlite3.SQLITE_DELETE
+                        and first in {"workflow_phase_attempts_v25", "sqlite_master"}
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_sequence"
+                        and second == "name"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "automatic_wake_attempts"
+                        and second == "attempt_kind"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                        or action
+                        in {sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_REINDEX}
+                        and first
+                        in {
+                            "idx_workflow_open_interval",
+                            "idx_workflow_task_phase",
+                            "sqlite_autoindex_workflow_phase_attempts_4",
+                            "sqlite_autoindex_workflow_task_claims_1",
+                            "sqlite_autoindex_workflow_task_claims_2",
+                            "sqlite_autoindex_workflow_task_claims_3",
+                        }
+                    )
+                    or action == sqlite3.SQLITE_ALTER_TABLE
+                    and first == "main"
+                    and second
+                    in {"workflow_phase_attempts", "workflow_active_intervals"}
+                )
+                if allowed_workflow_admission:
+                    return sqlite3.SQLITE_OK
                 from tldw_chatbook.DB.recovery_goal_schema import GOAL_AUTO_INDEXES, GOAL_TABLES
                 from tldw_chatbook.DB.recovery_review_boundary_schema import (
                     REVIEW_BOUNDARY_AUTO_INDEXES,

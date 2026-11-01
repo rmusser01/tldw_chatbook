@@ -2631,6 +2631,8 @@ class ToolCatalogRegistry:
             from .automatic_work_runtime import current_automatic_work
 
             automatic = current_automatic_work()
+            if automatic is not None and automatic.workflow is not None:
+                automatic.check()
             if automatic is not None and automatic.goal is not None:
                 automatic.check()
                 if tool_id not in automatic.goal.goal.request.tool_scope.catalog_tools:

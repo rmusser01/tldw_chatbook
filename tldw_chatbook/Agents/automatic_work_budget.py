@@ -77,10 +77,20 @@ class AutomaticWorkLimits:
         """Snapshot finite agent limits with environment precedence and defaults."""
         from .run_log import _setting
 
-        if attempt_kind not in {"fleet_wake", "goal_iteration"}:
+        if attempt_kind not in {"fleet_wake", "goal_iteration", "workflow_phase"}:
             raise ValueError("unknown automatic attempt kind")
-        defaults = cls(child_launches=0) if attempt_kind == "goal_iteration" else cls()
-        prefix = "max_goal" if attempt_kind == "goal_iteration" else "max_autowake"
+        defaults = (
+            cls(generations=8, child_launches=12)
+            if attempt_kind == "workflow_phase"
+            else cls(child_launches=0)
+            if attempt_kind == "goal_iteration"
+            else cls()
+        )
+        prefix = {
+            "goal_iteration": "max_goal",
+            "workflow_phase": "max_workflow",
+            "fleet_wake": "max_autowake",
+        }[attempt_kind]
         values = {}
         for field in fields(defaults):
             default = getattr(defaults, field.name)

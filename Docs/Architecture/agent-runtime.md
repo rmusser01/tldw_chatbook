@@ -301,3 +301,28 @@ scripted journeys do not close those gates.
 ### Capture-only native continuation acknowledgment (ADR337)
 
 `LoopDeps.acknowledge_provider_continuation` is optional and runs only after the existing projected persistence callback returns successfully. It receives the exact original/projected event pair and, for a finished call, its capped model-facing result. The Console adapter retains only current-batch projection provenance. The callback does not replace persistence, signing, transitions or tool-side-effect barriers; a failed or missing acknowledgment issues no usable trace custody. Ordinary and Capture Off callers leave it unset. Managed envelopes remain the store finalizer's responsibility, and raw event bodies never enter generic event serialization or provider kwargs through this seam.
+
+## Native workflow admission (ADR-285)
+
+`AutomaticWorkLimits.from_settings("workflow_phase")` uses independent `[agents]`
+ceilings: eight accepted phases (including planning), twelve task launches,
+32 model calls, 500000 budget tokens, 8192 output tokens per call and 900 cumulative
+active seconds. `workflow_runs_enabled` defaults false. Canonical Settings exposes
+these through Console behavior drafts and atomic Save/Revert. Zero refuses admission;
+saved ceilings intersect live settings without replenishing counters.
+
+`Chat/console_workflow_runs.py::_accept_workflow_phase` validates native owner,
+session, conversation, database and recovered-content activation, then issues
+private custody only to the caller that wins FULL acceptance. Stored IDs never
+reconstruct custody. `AutomaticWorkContext` and the final tool registry invocation
+recheck that custody/control revision. `ConsoleSubmissionOrigin.WORKFLOW_PHASE` is
+recognized but deliberately refuses controller submission until the runtime phase
+coordinator is integrated; it never falls through to manual or fleet policy.
+
+`claim_workflow_task` returns a stable `reservation_id` and `launch_run_id`.
+The native AgentService launch must pass the reservation as
+`automatic_child_reservation` and the run identity as `requested_run_id` (or bind
+the same precreated run). Its existing commit is the exactly-once launch fence.
+`bind_workflow_task_run` records that exact native run; repeated claims are lookups,
+not permission to launch again. The native scheduling/physical-owner integration
+is a subsequent slice; these APIs do not create another scheduler or executor.

@@ -70,10 +70,13 @@ class AutomaticWorkContext:
     chain_id: str
     owner_id: str
     attempt_id: str
-    attempt_kind: Literal["wake", "chat_start", "goal_iteration"] = "wake"
+    attempt_kind: Literal["wake", "chat_start", "goal_iteration", "workflow_phase"] = (
+        "wake"
+    )
     goal: GoalIterationAuthorization | None = field(
         default=None, repr=False, compare=False
     )
+    workflow: object | None = field(default=None, repr=False, compare=False)
     _accepted: threading.Event = field(
         default_factory=threading.Event, init=False, repr=False, compare=False
     )
@@ -98,6 +101,7 @@ class AutomaticWorkContext:
             "wake": self.ledger.read_attempt,
             "chat_start": self.ledger.read_chat_start_attempt,
             "goal_iteration": self.ledger.read_goal_attempt,
+            "workflow_phase": self.ledger.read_workflow_attempt,
         }
         if self.attempt_kind not in readers:
             raise AutomaticWorkRefused("acceptance_required")
@@ -106,7 +110,7 @@ class AutomaticWorkContext:
     def _accepted_states(self):
         return (
             {"accepted"}
-            if self.attempt_kind == "goal_iteration"
+            if self.attempt_kind in {"goal_iteration", "workflow_phase"}
             else {"accepted", "completed"}
         )
 
@@ -118,6 +122,17 @@ class AutomaticWorkContext:
     @_owned_goal_call
     def mark_accepted(self) -> None:
         """Latch acceptance only after the required durable fence succeeded."""
+        if self.attempt_kind == "workflow_phase":
+            from tldw_chatbook.Chat.console_workflow_runs import (
+                WorkflowPhaseAuthorization,
+            )
+
+            if (
+                type(self.workflow) is not WorkflowPhaseAuthorization
+                or self.workflow.context is not self
+            ):
+                raise AutomaticWorkRefused("acceptance_required")
+            self.workflow.check()
         attempt = self._read_attempt()
         if (
             attempt.chain_id != self.chain_id
@@ -133,22 +148,49 @@ class AutomaticWorkContext:
 
         if not self._accepted.is_set():
             raise AutomaticWorkRefused("acceptance_required")
+        if self.attempt_kind == "workflow_phase":
+            from tldw_chatbook.Chat.console_workflow_runs import (
+                WorkflowPhaseAuthorization,
+            )
+
+            if (
+                type(self.workflow) is not WorkflowPhaseAuthorization
+                or self.workflow.context is not self
+            ):
+                raise AutomaticWorkRefused("acceptance_required")
+            self.workflow.check()
         attempt = self._read_attempt()
         if (
             attempt.chain_id != self.chain_id
             or attempt.state not in self._accepted_states()
         ):
             raise AutomaticWorkRefused("review_required")
-        is_goal = self.policy_kind() == "goal_iteration"
-        setting = "goal_runs_enabled" if is_goal else "autowake_enabled"
-        reason = "goal_runs_disabled" if is_goal else "autowake_disabled"
-        if not coerce_autowake_enabled(_setting(setting, not is_goal)):
+        policy = self.policy_kind()
+        is_goal = policy == "goal_iteration"
+        is_workflow = policy == "workflow_phase"
+        setting = (
+            "workflow_runs_enabled"
+            if is_workflow
+            else "goal_runs_enabled"
+            if is_goal
+            else "autowake_enabled"
+        )
+        reason = (
+            "workflow_runs_disabled"
+            if is_workflow
+            else "goal_runs_disabled"
+            if is_goal
+            else "autowake_disabled"
+        )
+        if not coerce_autowake_enabled(
+            _setting(setting, not (is_goal or is_workflow))
+        ):
             self.ledger.pause(self.chain_id, reason)
             raise AutomaticWorkRefused(reason)
         if self.goal is not None:
             self.goal.check_binding()
         limits = AutomaticWorkLimits.from_settings(self.policy_kind())
-        if is_goal and limits.output_tokens <= 0:
+        if (is_goal or is_workflow) and limits.output_tokens <= 0:
             self.ledger.pause(self.chain_id, "output_tokens_budget")
             raise AutomaticWorkRefused("output_tokens_budget")
         return self.ledger.check_active(

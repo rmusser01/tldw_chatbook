@@ -92,10 +92,16 @@ class ConsoleSubmissionOrigin(str, Enum):
     AGENT_WAKE = "agent_wake"
     AGENT_CHAT_START = "agent_chat_start"
     GOAL_ITERATION = "goal_iteration"
+    WORKFLOW_PHASE = "workflow_phase"
 
     @property
     def automatic(self) -> bool:
-        return self in {self.AGENT_WAKE, self.AGENT_CHAT_START, self.GOAL_ITERATION}
+        return self in {
+            self.AGENT_WAKE,
+            self.AGENT_CHAT_START,
+            self.GOAL_ITERATION,
+            self.WORKFLOW_PHASE,
+        }
 
 
 @dataclass(frozen=True, slots=True)

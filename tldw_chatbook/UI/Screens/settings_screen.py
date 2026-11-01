@@ -7980,12 +7980,16 @@ class SettingsScreen(BaseAppScreen):
             "thinking_budget_tokens": self._loaded_console_default_thinking_budget_tokens(),
         }
         from .settings_goal_policy import GOAL_SETTING_DEFAULTS
+        from .settings_workflow_policy import WORKFLOW_SETTING_DEFAULTS
 
         agents = self._app_config_mapping().get("agents", {})
         values.update(
             {
                 key: agents.get(key, default)
-                for key, default in GOAL_SETTING_DEFAULTS.items()
+                for key, default in {
+                    **GOAL_SETTING_DEFAULTS,
+                    **WORKFLOW_SETTING_DEFAULTS,
+                }.items()
             }
         )
         values.update(load_context_memory_values(self._console_settings()).to_mapping())
@@ -8005,6 +8009,22 @@ class SettingsScreen(BaseAppScreen):
             value = normalize_goal_setting(key, value)
         except ValueError:
             pass  # Preserve incomplete input; Save validates the same value.
+        self._stage_console_default_value(key, value)
+        self._mark_console_behavior_settings_staged()
+
+    @on(Input.Changed, ".settings-workflow-policy")
+    @on(Checkbox.Changed, "#settings-workflow-runs-enabled")
+    def _workflow_policy_changed(self, event) -> None:
+        from .settings_workflow_policy import normalize_workflow_setting
+
+        if getattr(self, "_syncing_workflow_policy", False):
+            return
+        key = event.control.id.removeprefix("settings-").replace("-", "_")
+        value = event.value
+        try:
+            value = normalize_workflow_setting(key, value)
+        except ValueError:
+            pass  # Preserve incomplete input for Save validation.
         self._stage_console_default_value(key, value)
         self._mark_console_behavior_settings_staged()
 
@@ -19524,6 +19544,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _render_console_behavior_card(self, *, compact: bool = False) -> ComposeResult:
         from .settings_goal_policy import compose_goal_policy
+        from .settings_workflow_policy import compose_workflow_policy
 
         # Keep the displayed choices and the apply baseline on the same policy.
         self._console_capture_policy = runtime_capture_policy()
@@ -19533,6 +19554,7 @@ class SettingsScreen(BaseAppScreen):
             if compact:
                 yield Static("Console behavior", classes="destination-section")
             yield from compose_goal_policy(self)
+            yield from compose_workflow_policy(self)
             yield Static("Start here", classes="destination-section")
             yield StateCheckbox(
                 self._show_model_thinking_label(),
@@ -33893,13 +33915,26 @@ class SettingsScreen(BaseAppScreen):
 
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             from .settings_goal_policy import GOAL_SETTING_KEYS, normalize_goal_setting
+            from .settings_workflow_policy import (
+                WORKFLOW_SETTING_KEYS,
+                normalize_workflow_setting,
+            )
 
             dirty_values = {
                 key: draft.values[key]
-                for key in (*GOAL_SETTING_KEYS, *CONSOLE_BEHAVIOR_SAVE_ORDER)
+                for key in (
+                    *GOAL_SETTING_KEYS,
+                    *WORKFLOW_SETTING_KEYS,
+                    *CONSOLE_BEHAVIOR_SAVE_ORDER,
+                )
                 if key in draft.dirty_keys
             }
             try:
+                for key in WORKFLOW_SETTING_KEYS:
+                    if key in dirty_values:
+                        dirty_values[key] = normalize_workflow_setting(
+                            key, dirty_values[key]
+                        )
                 for key in GOAL_SETTING_KEYS:
                     if key in dirty_values:
                         dirty_values[key] = normalize_goal_setting(
@@ -34113,7 +34148,7 @@ class SettingsScreen(BaseAppScreen):
                 workbench_scope_fallback,
                 {
                     key: dirty_values[key]
-                    for key in GOAL_SETTING_KEYS
+                    for key in (*GOAL_SETTING_KEYS, *WORKFLOW_SETTING_KEYS)
                     if key in dirty_values
                 },
                 self._staged_save_snapshot(SettingsCategoryId.CONSOLE_BEHAVIOR),
@@ -35265,6 +35300,9 @@ class SettingsScreen(BaseAppScreen):
         from .settings_goal_policy import sync_goal_policy
 
         sync_goal_policy(self)
+        from .settings_workflow_policy import sync_workflow_policy
+
+        sync_workflow_policy(self)
         self._console_capture_policy = runtime_capture_policy()
         try:
             self.query_one(

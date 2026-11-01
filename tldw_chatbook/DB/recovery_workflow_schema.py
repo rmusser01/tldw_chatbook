@@ -113,6 +113,41 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
     previous = connection.row_factory
     connection.row_factory = sqlite3.Row
     try:
+        if (
+            connection.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+            >= 26
+        ):
+            invalid = connection.execute(
+                "SELECT 1 FROM automatic_wake_attempts a LEFT JOIN workflow_phase_attempts p ON p.native_attempt_id=a.id "
+                "WHERE a.attempt_kind='workflow_phase' AND (p.id IS NULL OR p.command_id IS NULL OR p.control_revision IS NULL) "
+                "UNION ALL SELECT 1 FROM workflow_phase_attempts p LEFT JOIN automatic_wake_attempts a ON a.id=p.native_attempt_id "
+                "WHERE p.command_id IS NOT NULL AND (a.id IS NULL OR a.attempt_kind!='workflow_phase' OR a.run_ids_json!='[]' OR a.message_ids_json!='[]') LIMIT 1"
+            ).fetchone()
+            if invalid:
+                return ("invalid_workflow_admission",)
+            invalid = connection.execute(
+                "SELECT 1 FROM workflow_task_claims c "
+                "JOIN workflow_task_attempts t ON t.id=c.task_attempt_id "
+                "JOIN workflow_phase_attempts p ON p.id=c.phase_attempt_id "
+                "JOIN workflow_runs w ON w.id=p.workflow_id "
+                "LEFT JOIN automatic_wake_attempts a ON a.id=p.native_attempt_id "
+                "LEFT JOIN automatic_work_reservations r ON r.id=c.child_reservation_id "
+                "LEFT JOIN workflow_payload_reservations result ON result.attempt_id=t.id "
+                "WHERE p.purpose!='execution' OR a.attempt_kind IS NOT 'workflow_phase' "
+                "OR t.workflow_id!=p.workflow_id OR t.plan_revision!=p.plan_revision OR t.phase_id!=p.phase_id "
+                "OR (t.run_id IS NOT NULL AND t.run_id!=c.launch_run_id) "
+                "OR result.attempt_id IS NULL OR result.workflow_id!=w.id "
+                "OR (c.child_reservation_id IS NOT NULL AND (r.id IS NULL OR r.chain_id!=w.chain_id OR r.owner_id!=a.owner_id OR r.kind!='child_launch' OR r.amount!=1)) LIMIT 1"
+            ).fetchone()
+            if invalid:
+                return ("invalid_workflow_task_claim",)
+            for interval in connection.execute(
+                "SELECT started_monotonic,observed_monotonic FROM workflow_active_intervals"
+            ):
+                if any(
+                    value is not None and not math.isfinite(value) for value in interval
+                ):
+                    return ("invalid_workflow_active_interval",)
         for row in connection.execute("SELECT * FROM workflow_runs"):
             request = WorkflowRequest.model_validate_json(row["request_json"])
             chain = connection.execute(
@@ -222,3 +257,78 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
     finally:
         connection.row_factory = previous
     return ()
+
+
+# The v25 catalog above remains frozen for existing backup recognition.
+WORKFLOW_PHASE_V26 = (
+    next(
+        sql
+        for sql in WORKFLOW_OBJECTS
+        if sql.startswith("CREATE TABLE workflow_phase_attempts ")
+    )
+    .replace(
+        "workflow_id TEXT NOT NULL,",
+        "workflow_id TEXT NOT NULL REFERENCES workflow_runs(id),",
+        1,
+    )
+    .replace("plan_revision INTEGER NOT NULL,", "plan_revision INTEGER,")
+    .replace("phase_id TEXT NOT NULL,", "phase_id TEXT,")
+    .replace(
+        "    UNIQUE(workflow_id, plan_revision, phase_id, ordinal),",
+        """    purpose TEXT NOT NULL DEFAULT 'execution' CHECK(purpose IN ('planning','execution')),
+    command_id TEXT UNIQUE,
+    control_revision INTEGER CHECK(control_revision>0),
+    result_bytes INTEGER NOT NULL DEFAULT 0 CHECK(result_bytes BETWEEN 0 AND 131072),
+    CHECK((purpose='execution' AND plan_revision IS NOT NULL AND phase_id IS NOT NULL)
+       OR (purpose='planning' AND phase_id IS NULL)),
+    UNIQUE(workflow_id, plan_revision, phase_id, ordinal),""",
+    )
+)
+WORKFLOW_TASK_CLAIMS_V26 = """CREATE TABLE workflow_task_claims (
+    task_attempt_id TEXT PRIMARY KEY REFERENCES workflow_task_attempts(id),
+    phase_attempt_id TEXT NOT NULL REFERENCES workflow_phase_attempts(id),
+    child_reservation_id TEXT UNIQUE REFERENCES automatic_work_reservations(id),
+    launch_run_id TEXT NOT NULL UNIQUE
+)"""
+WORKFLOW_INTERVAL_COLUMNS = (
+    "clock_owner_id TEXT",
+    "started_monotonic REAL",
+    "observed_monotonic REAL",
+)
+WORKFLOW_ADMISSION_INDEXES = (
+    "CREATE UNIQUE INDEX idx_workflow_open_interval ON workflow_active_intervals(workflow_id) WHERE ended_at IS NULL",
+    "CREATE INDEX idx_workflow_task_phase ON workflow_task_claims(phase_attempt_id)",
+)
+WORKFLOW_ADMISSION_MIGRATION = (
+    "ALTER TABLE automatic_wake_attempts RENAME COLUMN attempt_kind TO old_attempt_kind",
+    "ALTER TABLE automatic_wake_attempts ADD COLUMN attempt_kind TEXT NOT NULL DEFAULT 'fleet_wake' CHECK (attempt_kind IN ('fleet_wake', 'goal_iteration', 'workflow_phase'))",
+    "UPDATE automatic_wake_attempts SET attempt_kind=old_attempt_kind",
+    "ALTER TABLE automatic_wake_attempts DROP COLUMN old_attempt_kind",
+    "ALTER TABLE workflow_phase_attempts RENAME TO workflow_phase_attempts_v25",
+    WORKFLOW_PHASE_V26,
+    "INSERT INTO workflow_phase_attempts (id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement) SELECT id,workflow_id,plan_revision,phase_id,ordinal,native_attempt_id,status,retirement FROM workflow_phase_attempts_v25",
+    "DROP TABLE workflow_phase_attempts_v25",
+    WORKFLOW_TASK_CLAIMS_V26,
+    *(
+        "ALTER TABLE workflow_active_intervals ADD COLUMN " + column
+        for column in WORKFLOW_INTERVAL_COLUMNS
+    ),
+    *WORKFLOW_ADMISSION_INDEXES,
+    "INSERT INTO schema_version(version) VALUES (26)",
+)
+
+
+def workflow_admission_catalog(catalog):
+    """Derive the exact fixed migration's DDL, including SQLite ALTER quoting."""
+    with sqlite3.connect(":memory:") as conn:
+        for sql in sorted(catalog, key=lambda sql: not sql.startswith("CREATE TABLE")):
+            if not sql.startswith("CREATE TABLE sqlite_sequence"):
+                conn.execute(sql)
+        for sql in WORKFLOW_ADMISSION_MIGRATION:
+            conn.execute(sql)
+        return tuple(
+            row[0]
+            for row in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
