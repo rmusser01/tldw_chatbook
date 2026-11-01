@@ -1432,7 +1432,7 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
     request, size
 ):
     """F4 Settings owns the global gate at normal and compact sizes."""
-    config_path = _seed_active_config(
+    _seed_active_config(
         request, "[scheduling]\nbriefing_schedules_enabled = false\n"
     )
 
@@ -1458,8 +1458,27 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
         assert "Chatbook is open" in status_painted
         assert button in screen._compositor.visible_widgets
         assert "Enable scheduled briefings" in str(button.label)
-        assert await pilot.click(button)
-        await host.workers.wait_for_complete()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        detail = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+        detail.scroll_to_widget(button, animate=False, immediate=True)
+        await pilot.pause()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        # Keyboard activation follows current focus through layout updates;
+        # Pilot.click snapshots coordinates before yielding to those updates.
+        button.active_effect_duration = 0
+        button.focus()
+        await pilot.pause()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        assert button.has_focus
+        assert button in screen._compositor.visible_widgets
+        assert not button.disabled
+        await pilot.press("enter")
+        await _wait_for_settings_text(
+            screen, pilot, "Global briefing schedules: Enabled", timeout=30.0
+        )
+        status = screen.query_one("#settings-briefing-schedules-status", Static)
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        detail.scroll_to_widget(status, animate=False, immediate=True, top=True)
         await pilot.pause()
 
         status_painted = _painted_settings_widget(screen, status)
@@ -1474,8 +1493,27 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
             is True
         )
 
-        assert await pilot.click(button)
-        await host.workers.wait_for_complete()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        detail = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+        detail.scroll_to_widget(button, animate=False, immediate=True)
+        await pilot.pause()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        # Keyboard activation follows current focus through layout updates;
+        # Pilot.click snapshots coordinates before yielding to those updates.
+        button.active_effect_duration = 0
+        button.focus()
+        await pilot.pause()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        assert button.has_focus
+        assert button in screen._compositor.visible_widgets
+        assert not button.disabled
+        await pilot.press("enter")
+        await _wait_for_settings_text(
+            screen, pilot, "Global briefing schedules: Disabled", timeout=30.0
+        )
+        status = screen.query_one("#settings-briefing-schedules-status", Static)
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        detail.scroll_to_widget(status, animate=False, immediate=True, top=True)
         await pilot.pause()
 
         status_painted = _painted_settings_widget(screen, status)
@@ -2175,7 +2213,9 @@ async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(request)
         assert str(toggle.label) == "Disabled"
 
         await pilot.click("#settings-save-category")
-        await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
+        await _wait_for_settings_text(
+            screen, pilot, "Appearance defaults saved.", timeout=30.0
+        )
 
     assert config_module.get_cli_setting("appearance", "ascii_glyphs", True) is False
     assert (

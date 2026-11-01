@@ -6,7 +6,7 @@ status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-11-01 11:33
+updated_date: 2026-11-01 12:31
 labels:
 - follow-up
 - tests
@@ -127,3 +127,9 @@ The full hub run, at a load average of 145-177 on 18 CPUs, gave 450 passed and 8
 **Re-sync 2026-10-31 onto dev 57e330e735.** The only conflict was the census tail and floor, after #3224 (TASK-36380, +1) and #3227 (TASK-36382, +9) appended their blocks. Dev's census was kept, this task's 8 entries were re-appended after dev's last entry, and `MINIMUM_FILES` equals the entry count again (dev's 1173 + 8 = 1181). Outside the census, the diff is identical to before. Dev's #3286 re-pinned other rows in `test_module_size_ratchet.py` and left `settings_screen.py` unchanged; its row is still the exact measurement (35616 = dev's 35602 + this task's 14). Preflight passed; the census tests in `Tests/CI` gave 400 passed; this task's test files gave 644 passed (`-n 8`), including the whole hub file.
 
 **Files.** `tldw_chatbook/UI/Screens/settings_screen.py` (TOOLS guidance), `Tests/Architecture/test_module_size_ratchet.py`, `Tests/UI/test_settings_configuration_hub.py`, `Tests/UI/test_settings_model_discovery_journeys.py`, `Tests/UI/test_settings_endpoint_probe.py`, `Tests/Chat/test_local_server_discovery.py`, `Tests/UI/app_factory.py` (docstring), `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py`, `backlog/docs/lessons-testing-evidence.md`.
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+2026-11-01 final integration onto dev3e55f1f3: preserved current-dev stronger assertions, exact census prefix and all source profile/JSON/DNS repairs. The234-case focused run had229 passes and5 failures; affected reruns pass all59 discovery tests, appearance persistence and both schedule viewports, with all other passing definitions unchanged. Census83 passed. Production remains the14-line Tools guidance entry. Final keyboard recovery follows the real Button.Pressed and persistence path; the logging run did not prove a production mouse cause. See Docs/superpowers/qa/2026-11-01-pr3315-backlog-integration.md for receipts, earlier failures and local-only limits. No new ADR underADR126/240. Final independent commit review and publication follow; hosted CI and size limits are explicitly waived.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
