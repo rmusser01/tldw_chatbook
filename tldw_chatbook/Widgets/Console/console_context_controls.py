@@ -193,6 +193,8 @@ class ConsoleContextControlState:
     #: None when not measured.
     forecast_tokens: int | None = None
     forecast_units: int = 0
+    forecast_unavailable_reason: str = ""
+    forecast_high_context: bool = False
 
     @property
     def compaction_pause_forecast(self) -> CompactionPauseForecast | None:
@@ -204,7 +206,12 @@ class ConsoleContextControlState:
         """
         budget = self.conversation_budget_tokens
         trigger = self.compaction_trigger_tokens
-        if self.forecast_tokens is None or budget is None or trigger is None:
+        if (
+            self.forecast_tokens is None
+            or self.request_overhead_tokens is None
+            or budget is None
+            or trigger is None
+        ):
             return None
         decision = decide_compaction(
             self.resolved_policy,
@@ -486,6 +493,7 @@ def build_console_context_control_state(
     conversation_tokens: int | None = None,
     request_overhead_tokens: int | None = None,
     provider_input_cap_tokens: int | None = None,
+    provider_output_cap_tokens: int | None = None,
     safety_margin_tokens: int | None = None,
     busy: bool = False,
     status_message: str = "",
@@ -494,6 +502,7 @@ def build_console_context_control_state(
     accounting: "ConsoleRequestTokenAccounting | None" = None,
     forecast_tokens: int | None = None,
     forecast_units: int = 0,
+    forecast_unavailable_reason: str = "",
 ) -> ConsoleContextControlState:
     """Build a UI snapshot from the current estimate and owned policy values.
 
@@ -508,6 +517,8 @@ def build_console_context_control_state(
         context_window_tokens=estimate.token_limit,
         requested_response_tokens=settings.max_tokens,
         context_window_verified=estimate.token_limit_verified is not False,
+        provider_input_cap_tokens=provider_input_cap_tokens,
+        provider_output_cap_tokens=provider_output_cap_tokens,
     )
     response_max = request_capacity.effective_response_tokens
     if safety_margin_tokens is None:
@@ -589,6 +600,7 @@ def build_console_context_control_state(
         ),
         forecast_tokens=forecast_tokens,
         forecast_units=forecast_units,
+        forecast_unavailable_reason=forecast_unavailable_reason,
     )
 
 
@@ -672,9 +684,20 @@ def build_console_context_cost_state(
         context_part = f"{COMPACTION_PAUSE_FORECAST_COPY} · {context_part}"
         compact_part = f"Pauses to compact · {compact_part}"
         compaction_line += (
-            " Next send pauses for compaction approval: "
+            " Estimated next send pauses for compaction approval: "
             f"~{format_context_tokens(forecast.used_tokens)} of "
             f"{format_context_tokens(forecast.budget_tokens)} conversation tokens."
+        )
+    elif context.forecast_unavailable_reason:
+        advisory = (
+            "High context · forecast unavailable"
+            if context.forecast_high_context
+            else "Compaction forecast unavailable"
+        )
+        context_part = f"{advisory} · {context_part}"
+        compact_part = f"{'High context · ' if context.forecast_high_context else ''}Forecast unavailable · {compact_part}"
+        compaction_line += (
+            f" Compaction forecast unavailable: {context.forecast_unavailable_reason}"
         )
     return replace(
         cost,

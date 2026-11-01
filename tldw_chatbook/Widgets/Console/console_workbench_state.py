@@ -36,6 +36,7 @@ def build_console_workbench_state(
     readiness_word: str = "",
     blocked_turn: str = "",
     compaction_pause_expected: bool = False,
+    compaction_forecast_unavailable: bool = False,
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
@@ -187,9 +188,14 @@ def build_console_workbench_state(
                 )
                 if held
                 else (
-                    "Blocked" if blocked_turn else
-                    COMPACTION_PAUSE_FORECAST_COPY
+                    "Blocked"
+                    if blocked_turn
+                    else COMPACTION_PAUSE_FORECAST_COPY
                     if compaction_pause_expected and readiness_word and not blocker
+                    else "Compaction forecast unavailable"
+                    if compaction_forecast_unavailable
+                    and readiness_word
+                    and not blocker
                     else readiness_word
                 )
             ),

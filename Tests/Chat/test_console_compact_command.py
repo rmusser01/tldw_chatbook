@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 
+from tldw_chatbook.UI.Console_Modules.command_handoff import CommandOrigin
+
 from tldw_chatbook.Chat.console_command_grammar import (
     CONSOLE_ACTION_COMMAND_HANDLER_ID,
     CONSOLE_ACTION_COMMANDS,
@@ -77,6 +79,10 @@ class _Screen:
         self.rows: list[tuple[str, str | None]] = []
         self.toasts: list[str] = []
         self.synced = 0
+        self._console_visible_draft_session_id = "session-1"
+
+    def _ensure_console_chat_store(self):
+        return self.controller.store
 
     def _ensure_console_chat_controller(self) -> _Controller:
         return self.controller
@@ -97,7 +103,12 @@ def test_the_compact_command_runs_compact_now_and_reports_in_its_chat() -> None:
     from tldw_chatbook.UI.Console_Modules.compact_command import run_compact_command
 
     screen = _Screen(_Controller((True, "Conversation memory updated.")))
-    assert asyncio.run(run_compact_command(screen)) is True
+    assert (
+        asyncio.run(
+            run_compact_command(screen, origin=CommandOrigin(screen, "session-1"))
+        )
+        is True
+    )
 
     assert screen.controller.calls == ["session-1"]
     assert screen.rows == [("Conversation memory updated.", "session-1")]
@@ -110,7 +121,12 @@ def test_a_refused_compaction_says_why_in_its_chat() -> None:
 
     refusal = "There are not enough older complete turns to compact yet."
     screen = _Screen(_Controller((False, refusal)))
-    assert asyncio.run(run_compact_command(screen)) is False
+    assert (
+        asyncio.run(
+            run_compact_command(screen, origin=CommandOrigin(screen, "session-1"))
+        )
+        is False
+    )
 
     assert screen.rows == [(refusal, "session-1")]
 
@@ -130,7 +146,12 @@ def test_a_compaction_that_raises_is_logged_by_type_and_reported() -> None:
     logged: list[str] = []
     sink = logger.add(lambda message: logged.append(str(message)), level="WARNING")
     try:
-        assert asyncio.run(run_compact_command(screen)) is False
+        assert (
+            asyncio.run(
+                run_compact_command(screen, origin=CommandOrigin(screen, "session-1"))
+            )
+            is False
+        )
     finally:
         logger.remove(sink)
 

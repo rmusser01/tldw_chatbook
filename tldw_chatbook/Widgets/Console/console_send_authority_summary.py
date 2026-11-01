@@ -182,6 +182,8 @@ def project_console_send_authority(
         # most misleading thing this line can say.
         reason = str(state.run_failure_reason or "").strip()
         run = f"Failed — {reason}" if reason else "Failed"
+    elif state.compaction_forecast_unavailable:
+        run = "Forecast unavailable"
     else:
         run = "Ready"
 

@@ -18463,7 +18463,8 @@ class ConsoleChatController:
         from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
 
         if refusal := await refuse_at_ask_trigger(
-            self, session_id, resolution, provider_messages, "retried"
+            self, session_id, resolution, provider_messages, "retried",
+            turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: no new attempt to fail
         prefill = self._pinned_prefill_for_session(session_id)
@@ -18652,7 +18653,8 @@ class ConsoleChatController:
         from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
 
         if refusal := await refuse_at_ask_trigger(
-            self, session_id, resolution, provider_messages, "continued"
+            self, session_id, resolution, provider_messages, "continued",
+            turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: before commit, never Failed
         assistant = self.store.append_message(
@@ -18803,7 +18805,8 @@ class ConsoleChatController:
         from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
 
         if refusal := await refuse_at_ask_trigger(
-            self, session_id, resolution, provider_messages, "regenerated"
+            self, session_id, resolution, provider_messages, "regenerated",
+            turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: before the sibling, never Failed
         prefill = self._pinned_prefill_for_session(session_id)
@@ -19897,7 +19900,8 @@ class ConsoleChatController:
         from tldw_chatbook.Chat.console_compaction_gate import refuse_at_ask_trigger
 
         if refusal := await refuse_at_ask_trigger(
-            self, session_id, resolution, provider_messages, "resent"
+            self, session_id, resolution, provider_messages, "resent",
+            turn_skill_bindings=skill_bindings,
         ):
             return refusal  # TASK-33621.4: before the sibling, never Failed
         prefill = self._pinned_prefill_for_session(session_id)

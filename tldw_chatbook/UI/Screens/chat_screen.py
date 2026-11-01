@@ -6039,9 +6039,15 @@ class ChatScreen(BaseAppScreen):
 
     def action_compact_console_context(self) -> None:
         """`/compact` and the palette entry: Compact now (TASK-33621.4)."""
-        from ..Console_Modules.compact_command import run_compact_command
+        from ..Console_Modules.compact_command import (
+            capture_compact_origin,
+            run_compact_command,
+        )
 
-        self.run_worker(run_compact_command(self), group="console-compact")
+        self.run_worker(
+            run_compact_command(self, origin=capture_compact_origin(self)),
+            group="console-compact",
+        )
 
     def action_open_console_new_endpoint(self) -> None:
         """Open the endpoint-template creation flow on top of session settings.
@@ -13139,6 +13145,7 @@ class ChatScreen(BaseAppScreen):
             ),
             run_blocked_reason=blocked_turn_reason(run_controller),
             compaction_pause_expected=self._context_spend.compaction_pause_expected(),
+            compaction_forecast_unavailable=self._context_spend.compaction_forecast_unavailable(),
             provider_label=settings_readiness.provider_display_name or "Provider",
             model_label=model,
             provider_ready=provider_ready,
@@ -13818,6 +13825,7 @@ class ChatScreen(BaseAppScreen):
             else build_console_readiness_presentation(readiness[1]).primary_label,
             blocked_turn=blocked_turn_reason(controller),
             compaction_pause_expected=self._context_spend.compaction_pause_expected(),
+            compaction_forecast_unavailable=self._context_spend.compaction_forecast_unavailable(),
         )
 
     def _console_provider_blocker_copy(
@@ -17432,10 +17440,14 @@ class ChatScreen(BaseAppScreen):
         run_state = controller.run_state if controller is not None else None
         from tldw_chatbook.UI.Console_Modules.response_rules import rule_status
 
-        if controller is not None and controller.has_pending_approval_round(session_id or ""):
+        if controller is not None and controller.has_pending_approval_round(
+            session_id or ""
+        ):
             return f"{console_pending_round_copy_for(controller, session_id or '')}."
         rules = controller.response_rules if controller is not None else None
-        rule_state = rules.state(session_id) if rules is not None and session_id else None
+        rule_state = (
+            rules.state(session_id) if rules is not None and session_id else None
+        )
         if rule_state is not None and rule_state.phase != "idle":
             return rule_status(rule_state)
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
@@ -17444,8 +17456,18 @@ class ChatScreen(BaseAppScreen):
             if self._context_spend.compaction_pause_expected():  # TASK-33621.4
                 return COMPACTION_PAUSE_RUN_COPY  # about the next send: first
             send_ack = getattr(self, "_console_send_ack", None)  # TASK-33620.5
-            acknowledgement = send_ack.run_copy(session_id) if send_ack is not None else ""
-            return acknowledgement or (rule_status(rule_state) if rule_state is not None else "")
+            acknowledgement = (
+                send_ack.run_copy(session_id) if send_ack is not None else ""
+            )
+            if acknowledgement:
+                return acknowledgement
+            if self._context_spend.compaction_forecast_unavailable() and (
+                run_state is None or run_state.status is ConsoleRunStatus.IDLE
+            ):
+                return "Forecast unavailable"
+            return acknowledgement or (
+                rule_status(rule_state) if rule_state is not None else ""
+            )
         # Every interrupt kind owns its waiting copy; approval takes priority.
         # The Inspector counts approval rounds from the same session registry.
         if controller.has_pending_approval_round(session_id or ""):

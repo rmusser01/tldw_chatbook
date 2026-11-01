@@ -179,6 +179,81 @@ async def _drive_to_hold(host, pilot, monkeypatch, adapter, adapter_calls):
     return console, controller, session, runtime, held_draft
 
 
+@pytest.mark.parametrize("route", ["slash", "palette"])
+@private_profile_test
+async def test_deferred_compact_worker_never_targets_a_later_chat(
+    request, monkeypatch, tmp_path, route
+):
+    """Admission belongs to A even when Textual starts its worker in B."""
+    from tldw_chatbook.Chat.console_command_grammar import default_console_registry
+    from tldw_chatbook.UI.Console_Modules.command_handoff import (
+        COMMAND_ORIGIN,
+        CommandOrigin,
+    )
+    from tldw_chatbook.UI.console_command_provider import ConsoleCommandProvider
+
+    app, database, host, adapter, adapter_calls = await _held_console(
+        monkeypatch, tmp_path
+    )
+    console = None
+    scheduled = []
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, controller, session, runtime, tasks = await _ask_console(
+                host, pilot, monkeypatch, adapter
+            )
+            await console._sync_native_console_chat_ui()
+            assert console._console_visible_draft_session_id == session.id
+            calls = []
+            compact = controller.compact_context_now
+
+            async def observe(session_id, **kwargs):
+                calls.append(session_id)
+                return await compact(session_id, **kwargs)
+
+            monkeypatch.setattr(controller, "compact_context_now", observe)
+            run_worker = console.run_worker
+
+            def defer(work, **kwargs):
+                if kwargs.get("group") == "console-compact":
+                    scheduled.append(work)
+                    return None
+                return run_worker(work, **kwargs)
+
+            monkeypatch.setattr(console, "run_worker", defer)
+            if route == "slash":
+                token = COMMAND_ORIGIN.set(CommandOrigin(console, session.id))
+                try:
+                    await console._dispatch_console_command(
+                        default_console_registry().parse("/compact")
+                    )
+                finally:
+                    COMMAND_ORIGIN.reset(token)
+            else:
+                entry = next(
+                    row
+                    for row in ConsoleCommandProvider._commands(None, console)
+                    if row[0] == "Console: Compact context now"
+                )
+                entry[1]()
+            assert len(scheduled) == 1
+            other = controller.store.create_session()
+            await console._sync_native_console_chat_ui()
+            before = tuple(controller.store.messages_for_session(other.id))
+            await scheduled.pop()
+            assert (
+                calls == []
+            ), "a stale command must refuse before compaction admission"
+            assert tuple(controller.store.messages_for_session(other.id)) == before
+            assert adapter_calls == []
+    finally:
+        for work in scheduled:
+            work.close()
+        if console is not None:
+            await console._console_runtime().dispose()
+        database.close()
+
+
 @pytest.mark.parametrize(
     "action", ["compact_and_send", "send_without_compacting", "cancel"]
 )
@@ -353,6 +428,9 @@ async def test_a_held_send_reads_blocked_and_after_cancel_the_pause_is_forecast(
     app, database, host, adapter, adapter_calls = await _held_console(
         monkeypatch, tmp_path
     )
+    # Select the supported static forecast using the real runtime configuration.
+    assert config_module.save_settings_to_cli_config({"console": {"agent_runtime": False}})
+    app.app_config = config_module.load_settings(force_reload=True)
     console = None
     try:
         async with host.run_test(size=(160, 45)) as pilot:
@@ -420,6 +498,9 @@ async def test_compact_action_compacts_and_the_next_send_no_longer_pauses(
     app, database, host, adapter, adapter_calls = await _held_console(
         monkeypatch, tmp_path
     )
+    # Select the supported static forecast using the real runtime configuration.
+    assert config_module.save_settings_to_cli_config({"console": {"agent_runtime": False}})
+    app.app_config = config_module.load_settings(force_reload=True)
     console = None
     try:
         async with host.run_test(size=(160, 45)) as pilot:
@@ -522,9 +603,12 @@ async def test_rewind_summarize_works_while_a_send_is_held(
             assert held.transient_user_message_id not in {
                 row.message_id for row in rows
             }
-            assert ChatScreen._console_rewind_summary_disabled_reason(
-                controller, session.id
-            ) == ""
+            assert (
+                ChatScreen._console_rewind_summary_disabled_reason(
+                    controller, session.id
+                )
+                == ""
+            )
 
             users = [
                 message

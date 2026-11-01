@@ -12,26 +12,40 @@ from typing import Any
 
 from loguru import logger
 
+from .command_handoff import COMMAND_ORIGIN, CommandOrigin, refuse_if_chat_changed
+
 #: The toast shown while the summary call runs; the row reports the outcome.
 COMPACTING_COPY = "Compacting older turns (one model call)…"
 
 
-async def run_compact_command(screen: Any) -> bool:
-    """Compact the active chat's older turns and post the outcome there.
+def capture_compact_origin(screen: Any) -> CommandOrigin | None:
+    """Capture slash origin or palette chat before scheduling its worker."""
+    origin = COMMAND_ORIGIN.get()
+    if origin is not None:
+        return origin
+    session_id = screen._ensure_console_chat_controller().store.active_session_id
+    return CommandOrigin(screen, session_id) if session_id is not None else None
+
+
+async def run_compact_command(screen: Any, *, origin: CommandOrigin | None) -> bool:
+    """Compact the admitted chat's older turns and post the outcome there.
 
     Args:
         screen: The Console screen (its controller, system-row append, sync
             and notify).
+        origin: Chat captured by the action before its worker was scheduled.
 
     Returns:
         True when conversation memory was updated.
     """
 
-    controller = screen._ensure_console_chat_controller()
-    session_id = controller.store.active_session_id
-    if session_id is None:
+    if origin is None:
         await screen._append_native_console_system_message("No chat to compact.")
         return False
+    if origin.screen is not screen or refuse_if_chat_changed("compact", origin=origin):
+        return False
+    controller = screen._ensure_console_chat_controller()
+    session_id = origin.session_id
     screen.notify(COMPACTING_COPY, markup=False)
     # Shielded like the settings button's run: leaving Console does not
     # abandon a summary call that is already billed.

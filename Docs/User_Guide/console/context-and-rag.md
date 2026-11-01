@@ -137,7 +137,7 @@ and memory:
 - **Automatic** compacts and sends without asking.
 - **Off** never compacts.
 
-You can see the pause coming. Once the chat's history is over its trigger
+For plain-provider requests with measured inputs, you can see an estimated pause coming. Once the chat's history is over its trigger
 under **Ask**, the header badge reads **Next send pauses to compact** (on
 narrow terminals the badge has no room for it), Inspect's "What happens if I
 send now?" Run line and the run chip at the start of the status strip read
@@ -145,6 +145,14 @@ send now?" Run line and the run chip at the start of the status strip read
 pauses to compact** (its tooltip gives the numbers). While a message is held,
 the badge reads **Blocked** and the Run line and run chip **Blocked —
 compaction ask**. F1 help lists the same in its **Context limit** group.
+
+The estimate includes current prompt/draft overhead and model input/output limits.
+Agent/tool-enabled chats show **Forecast unavailable**, including light chats with
+tools: tool availability can change between sends. Above the displayed estimated
+trigger, the Context chip retains a **High context · forecast unavailable**
+advisory. It does not promise that the next send will pause for compaction; the
+real next-send check still decides. Media, response prefills, unknown limits and
+unsupported memory shapes can also lack a forecast.
 
 To compact without sending, type `/compact` or choose **Console: Compact
 context now** from the command palette (Ctrl+P). Both run the same summary as

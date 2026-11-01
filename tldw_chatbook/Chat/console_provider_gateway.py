@@ -74,6 +74,7 @@ from tldw_chatbook.Chat.console_prepared_request import (
     attach_thinking_history,
     build_console_request,
     prepare_provider_request,
+    positive_token_cap,
     resolve_request_capacity,
     thaw_json,
 )
@@ -4067,11 +4068,7 @@ class ConsoleProviderGateway:
             logger.debug("console_request_capability_lookup_failed")
 
         def positive_cap(*names: str) -> int | None:
-            for name in names:
-                value = capabilities.get(name)
-                if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-                    return value
-            return None
+            return positive_token_cap(capabilities, *names)
 
         from tldw_chatbook.Utils.token_counter import resolve_context_window
 

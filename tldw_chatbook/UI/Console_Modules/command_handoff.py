@@ -157,7 +157,7 @@ def command_origin_session() -> str | None:
     return origin.session_id if origin is not None else None
 
 
-def refuse_if_chat_changed(name: str) -> bool:
+def refuse_if_chat_changed(name: str, *, origin: CommandOrigin | None = None) -> bool:
     """Stop a command whose chat is no longer the one the Console shows.
 
     A command calls this after an await and before it acts on "the active
@@ -165,12 +165,13 @@ def refuse_if_chat_changed(name: str) -> bool:
 
     Args:
         name: The command's name, for the warning.
+        origin: Explicit admission for a second deferred worker, if any.
 
     Returns:
         True -- after warning that nothing was done -- when the command must
         stop; False for a direct call, or while its own chat still shows.
     """
-    origin = COMMAND_ORIGIN.get()
+    origin = origin or COMMAND_ORIGIN.get()
     if origin is None or _shows_chat(origin):
         return False
     logger.debug("Console command /{} refused: its chat is no longer shown", name)

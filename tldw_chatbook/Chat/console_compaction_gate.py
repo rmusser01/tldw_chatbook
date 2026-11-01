@@ -35,6 +35,8 @@ async def refuse_at_ask_trigger(
     resolution: Any,
     provider_messages: Sequence[dict[str, Any]],
     action: str,
+    *,
+    turn_skill_bindings: tuple[str, ...] = (),
 ) -> Any | None:
     """Refuse this turn before commit when the Ask policy would hold it.
 
@@ -44,6 +46,7 @@ async def refuse_at_ask_trigger(
         resolution: The turn's resolved provider.
         provider_messages: The turn's assembled request.
         action: What did not happen, e.g. ``"continued"``.
+        turn_skill_bindings: Exact admitted skill identities for this request.
 
     Returns:
         The blocked result to return, or None to go on.
@@ -62,6 +65,7 @@ async def refuse_at_ask_trigger(
         resolution=resolution,
         provider_messages=list(provider_messages),
         uncommitted_user_message_id=None,
+        turn_skill_bindings=turn_skill_bindings,
     )
     if hold is None:
         return None
