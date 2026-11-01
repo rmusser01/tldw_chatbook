@@ -58,3 +58,15 @@ Reason: owner approved testing the already-executing Ubuntu 24.04 image for the 
 - [ ] Confirm current-head hosted allocation, all required checks and available review feedback before leaving draft.
 
 The runner trial passed the existing workflow-contract suite, 1,242-entry UI census and both Backlog guards. Scoped Ruff lint passes; the five assertion literals introduce no formatting drift relative to the already-unformatted baseline. Dev advanced to 2561efd658 during verification; rebase the qualified patch onto that base before publication and use current-head hosted CI for the integrated result.
+
+## Added scope: modal policy inventory repair
+
+Hosted UI shard 1 failed the complete reverse modal census after rebase: seven classes have no tier anchor or policy classification. Source audit confirms ConsoleCodeReviewModal uses uncapped 95% geometry, four plugin-shell dialogs use uncapped 90% geometry, PluginAuthorityDialog inherits the exempt masked PasswordDialog, and NewCardModal is a title-only prompt with default geometry. Preserve those existing behaviors with individual reasoned registry entries; do not blanket-skip a module or change the census.
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md; backlog/decisions/162-managed-agent-plugins.md. TASK-36382 and TASK-36522 define the inventory policy.
+Reason: test-inventory correction documenting current UI geometry; no production behavior change.
+
+- [x] Reproduce the existing reverse census failure on the current source (one failed, five passed; exact seven classes).
+- [x] Add only the seven individually justified exemptions to Tests/UI/modal_wide_tier_registry.py (+9 lines).
+- [x] Run the existing six static contracts (six passed, 62.66s), scoped Ruff/format and whitespace checks; independent review before pushing.

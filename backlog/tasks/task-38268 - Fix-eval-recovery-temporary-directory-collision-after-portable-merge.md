@@ -22,6 +22,7 @@ The merged portable bundle introduced an autouse private temporary directory tha
 - [x] #2 The targeted eval-recovery workflow and remaining PR checks are verified or their unresolved results are explicitly recorded.
 - [x] #3 Windows recovery tests and their child processes use owned APPDATA and LOCALAPPDATA sandboxes so ambient installed pet state cannot enter a test backup.
 - [ ] #4 The required workflow executes its unchanged gate on the owner-approved Ubuntu 24.04 runner and current-head verification is resolved before leaving draft.
+- [x] #5 All seven newly inventoried modal classes have individually justified policy classifications, and the existing complete reverse census passes without changing production geometry or weakening its coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -35,6 +36,7 @@ Reason: owner-approved explicit Linux runner selection for the required workflow
 3. Update only existing Derived Artifacts runner assertions, observe them fail against the floating label, then pin all nine workflow jobs to ubuntu-24.04 and verify them.
 4. Preserve test selectors, shard counts/parallelism, dependencies, permissions, timeout budgets and fail-closed aggregation; run the existing workflow-contract tests and relevant static guards.
 5. Push the qualified change, retire only this PR's superseded runs, and inspect all current-head CI/review feedback before marking ready. No merge or auto-merge.
+6. Repair the hosted UI modal-registry failure under existing ADR-150/161/162 and TASK-36382/36522 policy: reproduce the reverse census, record seven individually verified existing-geometry exemptions, and run its existing static contracts plus scoped lint. No production layout or census changes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -51,5 +53,12 @@ Changed test files: Tests/Backup_Recovery/conftest.py and test_profile_launch_en
 Follow-up: https://github.com/rmusser01/tldw_chatbook/pull/3342. The initial draft had 34 queued checks and was behind dev; the owner subsequently requested its rebase and qualification before leaving draft. Both patches were rebased unchanged onto dev 77718ebebc with no conflicts, and all seven focused native environment tests passed. Keep In Progress pending current-head CI and review; final live results are maintained in the PR description. No merge or auto-merge was requested or performed. Historical source qualification above is retained and is not a claim for the newly integrated runtime.
 
 Owner-approved runner trial (existing ADR-103 amendment): pin all nine Derived Artifacts runs-on declarations to ubuntu-24.04 and update only five existing runner assertions. RED: seven intended label mismatches, 82 passed. GREEN: both existing workflow-contract files, 150 passed in 186.59s. Complete parsed workflow is identical apart from labels; all 1,242 UI entries, 32 shards, parallelism, dependencies, permissions, timeouts and fail-closed aggregation are preserved. UI census and Backlog guards pass; independent focused review clean. Ruff lint passes, and the literal edits preserve the pre-existing formatter debt. Dev advanced to 2561efd658 during qualification; publish the rebased patch and keep draft until current-head hosted verification resolves. The explicit-label scheduling result remains unproven.
+
+
+Hosted qualification at 56a934ad44: recovery passed on Ubuntu (85, 176.60s), macOS (85, 260.43s) and Windows (84 plus one FIFO skip, 556.58s). Scoped local contracts/environment: 157 passed; four guards pass with the integrated 1,243-entry UI census.
+
+A full local native run had 79 passed, four capability skips, one 90-second child timeout and one enrollment setup timeout. Enrollment passed in isolation; full-app capture also hit its existing 30-second watchdog. A timing-only observer run completed backup/restore/reopen in 163.21s, capture 21.375s, without changing the 30/90 deadlines or any guard. Native frame samples show filesystem validation/flush work, and the real host pet-state fingerprint is unchanged. Preserve this local timing limitation; the clean hosted Windows control passed unchanged tests.
+
+The required workflow exposed stale modal policy inventory (UI shard 1: one failed, 153 passed). Added seven individually verified exemptions documenting existing geometry: the 95%-width code-review reader, four 90%-width plugin-shell classes, inherited masked PasswordDialog, and title-only NewCardModal. Production layout and full reverse census are unchanged. Existing six static contracts failed for exactly those seven classes before the edit and now pass (62.66s); scoped Ruff, format and whitespace checks pass. Independent review found no issues. No new ADR: existing ADR-150 design language, ADR-161 component patterns, and ADR-162 plugin geometry apply. Changes: Tests/UI/modal_wide_tier_registry.py; plan/task records. Integrate newly advanced dev before qualifying the final head.
 
 <!-- SECTION:NOTES:END -->
