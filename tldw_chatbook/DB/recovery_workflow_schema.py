@@ -130,6 +130,15 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
                 "payload_hash"
             ] or json.loads(chain["limits_json"]) != asdict(request.policy):
                 return ("invalid_workflow_payload",)
+            try:
+                WorkflowRunsStore._required_results(
+                    connection,
+                    row["id"],
+                    status=row["status"],
+                    chain_id=row["chain_id"],
+                )
+            except ValueError:
+                return ("invalid_workflow_required_result",)
             WorkflowRunsStore._capacity(connection, row["id"], 0)
             plans = list(
                 connection.execute(
@@ -191,7 +200,7 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
         if invalid:
             return ("invalid_workflow_required_result",)
         for row in connection.execute(
-            "SELECT r.*,a.run_id,p.bytes FROM workflow_results r JOIN workflow_task_attempts a ON a.id=r.attempt_id JOIN workflow_payload_reservations p ON p.attempt_id=r.attempt_id"
+            "SELECT r.*,a.run_id,a.status AS attempt_status,p.bytes FROM workflow_results r JOIN workflow_task_attempts a ON a.id=r.attempt_id JOIN workflow_payload_reservations p ON p.attempt_id=r.attempt_id"
         ):
             result = WorkflowTaskResult.model_validate_json(row["payload_json"])
             if (
@@ -200,6 +209,7 @@ def validate_workflow_rows(connection: sqlite3.Connection) -> tuple[str, ...]:
                 or hashlib.sha256(row["payload_json"].encode()).hexdigest()
                 != row["payload_hash"]
                 or len(row["payload_json"].encode()) > row["bytes"]
+                or row["attempt_status"] not in {result.status, "closed"}
             ):
                 return ("invalid_workflow_result_ownership",)
         for row in connection.execute(

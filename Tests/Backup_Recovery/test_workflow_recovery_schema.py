@@ -150,6 +150,8 @@ def test_settled_removed_payload_tombstones_remain_valid_archive(tmp_path):
         db.workflow_runs.remove_payloads(
             snap.id, expected_control_revision=stopped.control_revision
         )
+        removed = db.workflow_runs.get(snap.id)
+        assert removed.status == "removed" and removed.results == ()
     assert validate_candidate(owner(), path, Event(), migrate=False) == ()
 
 
@@ -243,3 +245,91 @@ def test_complete_backup_restore_and_rebackup_preserve_private_workflow_results(
     (tmp_path / "workflow-rebackup.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
     assert (restored / "home" / "second.tldw-backup.zip").is_file()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "lost_completed_pair",
+        "lost_failed_pair",
+        "lost_uncertain_pair",
+        "active_tombstone",
+        "removed_undrained",
+        "removed_reserved",
+        "removed_missing_tombstone",
+        "removed_uncertain_chain",
+    ],
+)
+def test_archive_rejects_attempt_required_history_loss_without_rewrite(
+    tmp_path, damage
+):
+    path = tmp_path / "required-history.db"
+    with closing(AgentRunsDB(path)) as db:
+        snap, a, _ = saved_result(db, tmp_path)
+        with db.connection() as conn:
+            conn.execute("DELETE FROM workflow_results WHERE attempt_id=?", (a.id,))
+            if damage.startswith("lost_") or damage == "removed_missing_tombstone":
+                conn.execute(
+                    "DELETE FROM workflow_payload_reservations WHERE attempt_id=?",
+                    (a.id,),
+                )
+            else:
+                conn.execute(
+                    "UPDATE workflow_payload_reservations SET state=? WHERE attempt_id=?",
+                    ("reserved" if damage == "removed_reserved" else "removed", a.id),
+                )
+            if damage.startswith("lost_"):
+                conn.execute(
+                    "UPDATE workflow_task_attempts SET status=? WHERE id=?",
+                    (damage.split("_")[1], a.id),
+                )
+            if damage.startswith("removed_"):
+                conn.execute(
+                    "UPDATE workflow_runs SET status='removed' WHERE id=?", (snap.id,)
+                )
+                if damage != "removed_undrained":
+                    conn.execute(
+                        "UPDATE workflow_task_attempts SET retirement='drained' WHERE id=?",
+                        (a.id,),
+                    )
+            if damage == "removed_uncertain_chain":
+                conn.execute(
+                    "UPDATE automatic_work_chains SET status='review_required' WHERE id=?",
+                    (snap.chain_id,),
+                )
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    before = path.read_bytes()
+    assert validate_candidate(owner(), path, Event(), migrate=False) == (
+        "invalid_workflow_required_result",
+    )
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("reserved", [False, True])
+def test_prepared_no_result_archive_remains_valid(tmp_path, reserved):
+    path = tmp_path / "prepared.db"
+    with closing(AgentRunsDB(path)) as db:
+        snap = planned(db, tmp_path)
+        a = attempt(db, snap)
+        if reserved:
+            db.workflow_runs.reserve_result(snap.id, a.id)
+    before = path.read_bytes()
+    assert validate_candidate(owner(), path, Event(), migrate=False) == ()
+    assert path.read_bytes() == before
+
+
+def test_archive_refuses_disagreeing_attempt_and_result_outcomes(tmp_path):
+    path = tmp_path / "outcome-mismatch.db"
+    with closing(AgentRunsDB(path)) as db:
+        _, a, _ = saved_result(db, tmp_path)
+        with db.connection() as conn:
+            conn.execute(
+                "UPDATE workflow_task_attempts SET status='completed' WHERE id=?",
+                (a.id,),
+            )
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    before = path.read_bytes()
+    assert validate_candidate(owner(), path, Event(), migrate=False) == (
+        "invalid_workflow_result_ownership",
+    )
+    assert path.read_bytes() == before

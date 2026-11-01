@@ -363,3 +363,86 @@ def test_snapshot_refuses_tampered_structural_plan_rows(tmp_path):
             conn.execute("UPDATE workflow_tasks SET task_id='foreign'")
         with pytest.raises(ValueError, match="ownership"):
             db.workflow_runs.get(snap.id)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "lost_completed_pair",
+        "lost_failed_pair",
+        "lost_uncertain_pair",
+        "active_tombstone",
+        "removed_undrained",
+        "removed_reserved",
+        "removed_missing_tombstone",
+        "removed_uncertain_chain",
+    ],
+)
+def test_snapshot_rejects_missing_required_history_from_attempts(tmp_path, damage):
+    from Tests.Backup_Recovery.test_workflow_recovery_schema import saved_result
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    with closing(AgentRunsDB(tmp_path / "runs.db")) as db:
+        snap, a, _ = saved_result(db, tmp_path)
+        with db.connection() as conn:
+            conn.execute("DELETE FROM workflow_results WHERE attempt_id=?", (a.id,))
+            if damage.startswith("lost_") or damage == "removed_missing_tombstone":
+                conn.execute(
+                    "DELETE FROM workflow_payload_reservations WHERE attempt_id=?",
+                    (a.id,),
+                )
+            else:
+                conn.execute(
+                    "UPDATE workflow_payload_reservations SET state=? WHERE attempt_id=?",
+                    ("reserved" if damage == "removed_reserved" else "removed", a.id),
+                )
+            if damage.startswith("lost_"):
+                conn.execute(
+                    "UPDATE workflow_task_attempts SET status=? WHERE id=?",
+                    (damage.split("_")[1], a.id),
+                )
+            if damage.startswith("removed_"):
+                conn.execute(
+                    "UPDATE workflow_runs SET status='removed' WHERE id=?", (snap.id,)
+                )
+                if damage != "removed_undrained":
+                    conn.execute(
+                        "UPDATE workflow_task_attempts SET retirement='drained' WHERE id=?",
+                        (a.id,),
+                    )
+            if damage == "removed_uncertain_chain":
+                conn.execute(
+                    "UPDATE automatic_work_chains SET status='review_required' WHERE id=?",
+                    (snap.chain_id,),
+                )
+            assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        with pytest.raises(ValueError, match="workflow_required_result_missing"):
+            db.workflow_runs.get(snap.id)
+
+
+@pytest.mark.parametrize("reserved", [False, True])
+def test_prepared_attempt_without_result_remains_readable(tmp_path, reserved):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    with closing(AgentRunsDB(tmp_path / "runs.db")) as db:
+        snap = planned(db, tmp_path)
+        a = attempt(db, snap)
+        if reserved:
+            db.workflow_runs.reserve_result(snap.id, a.id)
+        saved = db.workflow_runs.get(snap.id)
+        assert saved.status == "awaiting_approval" and saved.results == ()
+
+
+def test_snapshot_refuses_disagreeing_attempt_and_result_outcomes(tmp_path):
+    from Tests.Backup_Recovery.test_workflow_recovery_schema import saved_result
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    with closing(AgentRunsDB(tmp_path / "runs.db")) as db:
+        snap, a, _ = saved_result(db, tmp_path)
+        with db.connection() as conn:
+            conn.execute(
+                "UPDATE workflow_task_attempts SET status='completed' WHERE id=?",
+                (a.id,),
+            )
+        with pytest.raises(ValueError, match="invalid_workflow_result_ownership"):
+            db.workflow_runs.get(snap.id)

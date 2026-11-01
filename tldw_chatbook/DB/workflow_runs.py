@@ -154,11 +154,9 @@ class WorkflowRunsStore:
                 raise ValueError("invalid_workflow_plan")
             self._plan_rows(conn, row["id"], revision, plan)
             plans.append(plan)
-        if conn.execute(
-            "SELECT 1 FROM workflow_payload_reservations p LEFT JOIN workflow_results r ON r.attempt_id=p.attempt_id WHERE p.workflow_id=? AND p.state='published' AND r.attempt_id IS NULL LIMIT 1",
-            (row["id"],),
-        ).fetchone():
-            raise ValueError("workflow_required_result_missing")
+        self._required_results(
+            conn, row["id"], status=row["status"], chain_id=row["chain_id"]
+        )
         results = tuple(
             self._read_result(conn, row["id"], r[0])
             for r in conn.execute(
@@ -471,7 +469,7 @@ class WorkflowRunsStore:
 
     def _read_result(self, conn, workflow_id, attempt_id):
         row = conn.execute(
-            "SELECT r.*,a.run_id,p.bytes,p.state FROM workflow_results r JOIN workflow_task_attempts a ON a.id=r.attempt_id AND a.workflow_id=r.workflow_id JOIN workflow_payload_reservations p ON p.attempt_id=r.attempt_id AND p.workflow_id=r.workflow_id WHERE r.workflow_id=? AND r.attempt_id=?",
+            "SELECT r.*,a.run_id,a.status AS attempt_status,p.bytes,p.state FROM workflow_results r JOIN workflow_task_attempts a ON a.id=r.attempt_id AND a.workflow_id=r.workflow_id JOIN workflow_payload_reservations p ON p.attempt_id=r.attempt_id AND p.workflow_id=r.workflow_id WHERE r.workflow_id=? AND r.attempt_id=?",
             (workflow_id, attempt_id),
         ).fetchone()
         if not row:
@@ -482,6 +480,7 @@ class WorkflowRunsStore:
             != (workflow_id, attempt_id, row["run_id"])
             or _hash(row["payload_json"]) != row["payload_hash"]
             or row["state"] != "published"
+            or row["attempt_status"] not in {result.status, "closed"}
             or len(row["payload_json"].encode()) > row["bytes"]
         ):
             raise ValueError("invalid_workflow_result_ownership")
@@ -505,6 +504,57 @@ class WorkflowRunsStore:
             ).fetchone()
             is not None
         )
+
+    @staticmethod
+    def _required_results(
+        conn, workflow_id: str, *, status: str, chain_id: str
+    ) -> None:
+        """Check from attempts so absent pairs cannot masquerade as empty history."""
+        removed = status == "removed"
+        if removed and (
+            WorkflowRunsStore._active(conn, workflow_id)
+            or conn.execute(
+                "SELECT 1 FROM automatic_work_chains WHERE id=? AND status='review_required' "
+                "UNION ALL SELECT 1 FROM automatic_work_reservations r JOIN automatic_work_chains c ON c.id=r.chain_id "
+                "WHERE (c.id=? OR c.allowance_root_chain_id=?) AND r.state='uncertain' LIMIT 1",
+                (chain_id, chain_id, chain_id),
+            ).fetchone()
+        ):
+            raise ValueError("workflow_required_result_missing")
+        for row in conn.execute(
+            "SELECT a.status,a.run_id,p.workflow_id AS reservation_owner,p.state AS reservation_state,"
+            "r.workflow_id AS result_owner,r.attempt_id AS result_id FROM workflow_task_attempts a "
+            "LEFT JOIN workflow_payload_reservations p ON p.attempt_id=a.id "
+            "LEFT JOIN workflow_results r ON r.attempt_id=a.id WHERE a.workflow_id=?",
+            (workflow_id,),
+        ):
+            state = row["reservation_state"]
+            result = row["result_id"] is not None
+            required = row["status"] in {"completed", "failed", "uncertain"} or (
+                row["status"] == "closed" and row["run_id"] is not None
+            )
+            if any(
+                owner not in (None, workflow_id)
+                for owner in (row["reservation_owner"], row["result_owner"])
+            ):
+                raise ValueError("workflow_required_result_missing")
+            if removed:
+                invalid = (
+                    result
+                    or state not in (None, "removed")
+                    or (required and state is None)
+                )
+            elif state == "published":
+                invalid = not result or not required
+            else:
+                invalid = (
+                    state == "removed"
+                    or result
+                    or required
+                    or (row["status"] == "accepted" and state is None)
+                )
+            if invalid:
+                raise ValueError("workflow_required_result_missing")
 
     def remove_payloads(
         self, workflow_id: str, *, expected_control_revision: int
