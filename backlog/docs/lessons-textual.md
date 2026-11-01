@@ -2360,3 +2360,40 @@ assertions like `"Session summary" in svg` fail on fully-rendered text.
 **Card modals: fixed width. Screenshot asserts: normalize `&#160;`/`\xa0`
 to spaces first, and pair any screen-popped assertion with a render
 assertion so it cannot pass vacuously.**
+
+---
+
+## A widget method named `_detach` silently replaces Textual's own, and closed widgets stay "attached" (TASK-37960, 2026-10-29)
+
+**Incident.** The Console's conversation- and workspace-row action menus named
+their memoized removal helper `_detach`. Textual already has a
+`MessagePump._detach` (it sets `_parent = None`), and
+`Widget._message_loop_exit` calls it at the end of every removal. The menus'
+version returned their `AwaitRemove` instead. So a closed menu left the DOM
+but kept its parent. Their registries (`*_action_menus_on_screen`, which skip
+`parent is None`) went on reporting it as open, and ChatScreen's Esc
+"dismissed" the ghost instead of returning focus to the composer. The ghost
+lasted for as long as anything referenced the menu: a young object went away
+at the next collection, a long-lived one at the next full GC. That is why
+nobody saw it. The tests that opened and closed these menus dropped their
+references, and live use usually outlived the ghost. It surfaced only when a
+test held its `menu` variable across an Esc (TASK-33622.3's fold test). The
+Personas widgets had already been bitten once: `personas_character_dictionaries.py`
+names its handler `_detach_pressed` with a comment saying why. `MeetingsScreen`
+still defines `_detach` (TASK-37622).
+
+**What to do.** Before giving a widget or screen a private `_name`, check that
+Textual does not already use it (`grep -rn "def _name" .venv/lib/python3.12/site-packages/textual/`).
+`_detach` and `_close_messages` (on `MessagePump`) and `_refresh_styles`
+(on `Widget`) are all called by Textual itself. A registry that decides "still open"
+from `parent is None` depends on `_detach` running. A test of a dismissal
+path should hold a reference to the dismissed widget and assert
+`widget.parent is None`, because dropping the reference lets GC hide this
+class of bug.
+
+
+## A focus cue can exist in its renderable but be cropped after Terminal release (PR3299, 2026-10-31)
+
+The PR3299 review repair suppressed the composer's Escape cue while Terminal owned Escape and repainted it on capture/release. With a draft exactly one row wide, leaving the composer removed its reserved caret row. Release restored a two-row draft-plus-cue renderable into the remaining93x1 surface; asserting only `renderable.plain` missed the cropped hint. The mounted RED r-7915a649 inspected `render_line` strips within the widget's actual content height and reproduced the missing paint. Refreshing measured draft geometry on cue ownership changes fixed both release and Terminal-to-Help transitions; cursor ticks keep their layout-free path. Those controls and the existing ordinary focus-height test passed in r-68903920. Check both content and available painted rows when a cue can return without its widget regaining focus.
+
+The same current-dev integration retained a newer U report shortcut but initially scoped only the incoming Y shortcut to transcript mode. A mounted prose-first U case reproduced report dispatch from Help. The fix applies the existing ADR031 ownership rule to both actions and moves U's footer/F1 hints with its scope. During a rebase, compare newly added base bindings against the branch's interaction contract as well as preserving their action implementations.

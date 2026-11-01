@@ -450,6 +450,8 @@ async def test_terminal_uses_painted_center_geometry_without_overflow(
     manager.finalize_shutdown()
 
 
+# The app factory reads the real collection-bound config source.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_terminal_rail_focus_capture_release_tab_and_return(
     tmp_path: Path,

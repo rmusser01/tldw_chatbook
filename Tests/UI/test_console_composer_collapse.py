@@ -1,6 +1,7 @@
 """Mounted regressions for the collapsible Console composer."""
 
 import inspect
+import time
 from itertools import pairwise
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -630,11 +631,28 @@ async def test_collapsed_escape_action_is_dynamic_and_setup_controls_are_inert(
             assert composer.collapsed is True
 
 
+# The app factory reads the real collection-bound config source.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expanded_escape_clears_transcript_selection_before_focus_fallback():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
+        # Composer mount precedes worker-owned attach/resume, which can still
+        # replace the session. Seed only after that work and its focus restore.
+        deadline = time.monotonic() + 30.0
+        while (
+            not console._console_attach_reconciled
+            or console._console_attach_resume_in_progress
+            or any(
+                timer._callback == console._restore_console_workbench_focus
+                and timer._task is not None
+                and not timer._task.done()
+                for timer in list(console._timers)
+            )
+        ):
+            assert time.monotonic() < deadline, "Console attach/resume never settled"
+            await pilot.pause(0.05)
         store = console._ensure_console_chat_store()
         message = store.append_message(
             store.active_session_id,
@@ -642,10 +660,18 @@ async def test_expanded_escape_clears_transcript_selection_before_focus_fallback
             content="selected answer",
         )
         await console._sync_native_console_chat_ui()
+        # A broad sync may coalesce and return False. Direct idle mutations
+        # use the real transcript publication path, bypassing only its cache.
+        await console._sync_native_console_transcript(force=True)
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        # The row lands on a later tick, and select_message ignores an id the
+        # transcript does not hold yet. Esc then had nothing to clear, which
+        # since TASK-33622.4 returns to the composer instead.
+        await _wait_for_selector(console, pilot, f"#console-message-{message.id}")
         transcript.select_message(message.id)
         transcript.focus()
         await pilot.pause()
+        assert transcript.selected_message_id == message.id
 
         await pilot.press("escape")
         await pilot.pause()
@@ -691,7 +717,13 @@ async def test_collapsed_stop_routes_native_run_control_without_expanding():
         console._stop_console_generation_from_visible_action = stop_run
 
         composer.query_one("#console-collapsed-stop-generation", Button).press()
-        await pilot.pause()
+        # Bounded wait, not one pause: under load the press could still be
+        # queued after a single pause (on dev too; more often with this
+        # branch's focus work as the collapse moves focus to the transcript).
+        for _ in range(40):
+            if stop_run.await_count:
+                break
+            await pilot.pause(0.05)
 
         stop_run.assert_awaited_once_with()
         assert composer.collapsed is True

@@ -464,7 +464,8 @@ _BUDGETS: dict[str, int] = {
     # branch's delta only: dev ed7481a30c already measures 8,821 against the
     # old 8,353, and that overrun is not this task's to absorb, so the row
     # stays red until it is decomposed or re-pinned by its owner.
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8549,
+    # PR3299, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8584,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
@@ -648,7 +649,8 @@ _BUDGETS: dict[str, int] = {
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7047,
+    # PR3299, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7139,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
     # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.

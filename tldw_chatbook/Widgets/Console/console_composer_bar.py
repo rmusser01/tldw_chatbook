@@ -600,6 +600,9 @@ class ConsoleComposerBar(Horizontal):
     INTERACTION_STYLED_DESCENDANTS = ("#console-command-visible-text",)
     DEFAULT_STATUS = "No active Console session."
     DRAFT_PLACEHOLDER = "Ask, command, or paste task..."
+    #: TASK-33622.3 AC#4: the draft area's cue while focus is elsewhere.
+    FOCUS_CUE = "Esc to type"
+    FOCUS_CUE_STYLE = "bold"
     PASTE_COLLAPSE_THRESHOLD = DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD
     PASTE_COLLAPSE_ENABLED = True
     MIN_DRAFT_ROWS = 1
@@ -3913,6 +3916,7 @@ class ConsoleComposerBar(Horizontal):
             draft,
             width,
             self.draft_has_focus,
+            self._fitting_focus_cue(draft, width),
             self._segments_initialized,
             self._cursor_index,
             self._cursor_display_index() if self._segments_initialized else None,
@@ -3952,12 +3956,19 @@ class ConsoleComposerBar(Horizontal):
 
     def _build_visible_draft_renderable(self, draft: str, width: int) -> Text:
         """Build the Text renderable for the current draft/placeholder state."""
+        cue = self._fitting_focus_cue(draft, width)
         if draft:
             focused = self.draft_has_focus
+            style_ranges = self._display_draft_style_ranges()
+            if cue:
+                # Render-only, like the ghost suffix, and measured into the
+                # row count (`_refresh_visible_draft`), so it is never cropped.
+                cue_range = (len(draft), len(draft) + len(cue), self.FOCUS_CUE_STYLE)
+                style_ranges = [*style_ranges, cue_range]
             return self._draft_renderable(
-                draft,
+                draft + cue,
                 width=width,
-                style_ranges=self._display_draft_style_ranges(),
+                style_ranges=style_ranges,
                 focused=focused,
                 cursor_visible=getattr(self, "_cursor_visible", True),
                 cursor_index=(
@@ -3972,13 +3983,91 @@ class ConsoleComposerBar(Horizontal):
                 # through the history revision in the memo key.
                 ghost_suffix=self._ghost_suffix() if focused else "",
             )
+        if cue:
+            # Cue first: the placeholder row clips at its right edge.
+            return Text.assemble(
+                (f"{self.FOCUS_CUE} · ", self.FOCUS_CUE_STYLE),
+                (self.DRAFT_PLACEHOLDER, "bright_black"),
+            )
         return self._placeholder_renderable(width=width)
+
+    def _focus_cue_suffix(self) -> str:
+        """Return the draft's focus cue while focus is outside the composer.
+
+        TASK-33622.3 AC#4: typing does not reliably reach a composer whose
+        focus is elsewhere (a focused transcript takes letters as commands,
+        a text field keeps them), so the draft area says how to get back.
+        Empty while focus is anywhere in the composer (a focused composer
+        button already types into the draft), while collapsed, and while the
+        composer cannot take focus (the first-run setup card). A capturing
+        Terminal keeps Escape, so it must not advertise this route either.
+
+        Returns:
+            `` · Esc to type`` (appended to a draft; the placeholder leads
+            with the cue instead), or ``""``.
+        """
+        if self._collapsed or not self.can_focus:
+            return ""
+        try:
+            if self.has_focus_within:
+                return ""
+            focused = self.screen.focused
+            if (
+                getattr(focused, "id", None) == "console-terminal-viewport"
+                and focused.input_focused
+            ):
+                return ""
+        except NoScreen:
+            return ""
+        return f" · {self.FOCUS_CUE}"
+
+    def _fitting_focus_cue(self, draft: str, width: int) -> str:
+        """Return `_focus_cue_suffix` unless it would grow the draft by a row.
+
+        The cue rides on the draft's last row; where it would wrap onto a row
+        the focused draft does not use, it is left off, so focus leaving the
+        composer never resizes the bar. Measures only while the cue shows
+        (focus elsewhere), never on a blink tick.
+        """
+        cue = self._focus_cue_suffix()
+        if cue and draft:
+            rows = self._visible_draft_row_count
+            if rows(draft + cue, width) > rows(
+                draft, width, reserve_trailing_cell=True
+            ):
+                return ""
+        return cue
+
+    def set_draft_focusable(self, focusable: bool) -> None:
+        """Set whether the draft can take focus, repainting its focus cue.
+
+        Args:
+            focusable: False while the first-run setup card blocks typing.
+        """
+        if self.can_focus == focusable:
+            return
+        self.can_focus = focusable
+        if self.is_mounted:
+            self._refresh_visible_draft()
+
+    def _sync_focus_cue(self) -> None:
+        """Refresh cue content and measured height when its ownership changes."""
+        focused = self.screen.focused
+        if getattr(focused, "id", None) == "console-terminal-viewport":
+            # The viewport owns this reactive; watch deduplicates the callback.
+            # Keep Terminal lazy: ordinary composer focus needs no Terminal import.
+            self.watch(
+                focused, "input_focused", self._refresh_visible_draft, init=False
+            )
+        # A full draft can lose its reserved caret row during Terminal capture.
+        # Returning the cue must measure that row again so it is not cropped.
+        self._refresh_visible_draft()
 
     def _render_visible_draft_only(self) -> None:
         """Re-render the visible-draft Static without recomputing composer height.
 
-        Used by the cursor blink tick (its only caller), which must stay cheap
-        and must not trigger a layout recompute on every blink phase.
+        Used by cursor ticks, which must stay cheap and must not trigger a
+        layout recompute on each blink phase.
 
         TASK-21692: ``Static.update`` defaults to ``layout=True``, so this
         method used to arm a full screen layout pass ~2x/second for as long
@@ -4030,7 +4119,9 @@ class ConsoleComposerBar(Horizontal):
             # composer, not only on the draft (which alone PAINTS the caret),
             # so Tab onto a composer button never resizes the bar.
             row_count = self._visible_draft_row_count(
-                draft, width, reserve_trailing_cell=self.has_focus_within
+                f"{draft}{self._fitting_focus_cue(draft, width)}" if draft else draft,
+                width,
+                reserve_trailing_cell=self.has_focus_within,
             )
             renderable = self._current_visible_draft_renderable(draft, width)
             self.query_one("#console-command-visible-text", Static).update(renderable)
@@ -4094,6 +4185,7 @@ class ConsoleComposerBar(Horizontal):
         )
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
+        self.watch(self.screen, "focused", self._sync_focus_cue)
         self._sync_interaction_classes()
         self._sync_improvement_recovery()
         self._sync_current_action_state()

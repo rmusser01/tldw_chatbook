@@ -286,6 +286,12 @@ the hosted runner's extra invocation was not stack-traced.
 
 **What to do.** When you add a target to either `console-p0-gate` step, add the same token at the same position to that step's `INHERITED` list (precedent: 2f999bd989), then run all of `Tests/CI/test_response_rules_critical_gate.py` and `Tests/CI/test_console_p0_regression_gate.py`. Follow the job's own rule: gate a fast file whole and a slow file by the node ids that pin the fix.
 
+## A fallback after a guarded handler undoes the guard's refusals, and only a mounted case sees it (TASK-33622.3, 2026-10-29)
+
+**Incident.** TASK-33622.3's type-to-compose (a printable key on a non-text Console control moves focus to the draft) was written before TASK-33620.15.17's arrival claim merged, then rebased so it runs right after `claim_arrival_key` in `ChatScreen.on_key`. The claim refuses on purpose while the setup card is about to block, even before the card's first sync has made the draft unfocusable, and when the restore aims at another pane. Every arrival test stayed green on the rebased head for that refusal, because it is pinned only by a unit test that calls `claim_arrival_key` alone; the fallback behind it would have typed the same key into the draft anyway. Two other mounted pins went red instead, for the opposite reason: they asserted the old rule that a letter typed on the Home button (after the window) or on the status line (TASK-34720's sentence case) stays there.
+
+**What to do.** When you add a handler after an existing guarded one, list the guard's refusals and make the new handler defer to each (here: no type-to-compose while the arrival window is open), and test the new handler in each refusal state; a test of the guard alone cannot see the handler behind it. When a ruling changes where keys go, grep the mounted tests for keystrokes on non-text controls and rewrite the pins that encode the old rule to assert the new one, citing the ruling; do not delete them.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
@@ -377,6 +383,8 @@ setting native_tools alone does not override provider capability policy.
 **Incident.** PR #3282's Linux UI shard passed 175 cases but stopped a stale-readiness-proof regression at its assumption that the composer was still mount-blocked. Delayed product work had already enabled its valid connection. Explicitly selecting that ready connection reproduced the old assertion. Establishing readiness before injecting expiry fixed the case while preserving its own helper-task sync checks. An in-memory early-return mutation still failed with syncs=[False], proving that an already-enabled Send button cannot make the test vacuous.
 
 **What to do.** Establish the state the regression actually needs, then assert its action's outcome. When removing a timing-dependent precondition, use a mutation to prove the remaining assertions still reject the original defect. Keep broader local failures visible instead of describing a passing target as a green file.
+
+**Recurrence (TASK-33622.4, 2026-10-29).** `test_expanded_escape_clears_transcript_selection_before_focus_fallback` selected a message in the same tick it was appended. `select_message` silently ignores an id the transcript does not hold yet, so Esc always ran with nothing selected. On dev Esc stayed on the transcript anyway, so the test passed without ever exercising the selection it was named for. TASK-33622.4 made Esc with nothing to clear return to the composer, and the test started failing 7 of 8 runs. The cause looked like a regression until a probe printed `selected=None` just before Esc. If a setup call can no-op, assert its effect (`selected_message_id == message.id`) before the action under test.
 
 
 ## Required regressions need their lane's dependency set (TASK-37143, 2026-10-27)

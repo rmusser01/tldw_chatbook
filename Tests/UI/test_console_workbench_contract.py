@@ -1947,11 +1947,10 @@ async def test_console_registers_footer_workbench_shortcuts():
             "Ctrl+K switch session | Ctrl+T new "
             # TASK-32320's Alt+C was missing here (red on dev before 33004.7).
             "tab | Alt+I inspect | Alt+A approval | Alt+C context rail | "
-            # TASK-33004.7 review: the self-evident Enter, the rarer Y and the
-            # F6-paired Shift+F6 trail, so 211x44 keeps Alt+I/Alt+A/Alt+C.
-            "Ctrl+P palette | Y trace | Enter send / queue | "
-            # TASK-35582: review reports trail, so narrow footers drop it first.
-            "Shift+F6 previous pane | U review reports | Ctrl+Q quit"
+            # Y trace belongs only to the transcript's active footer.
+            "Ctrl+P palette | Enter send / queue | "
+            # Review reports, like Trace, is advertised in transcript mode.
+            "Shift+F6 previous pane | Ctrl+Q quit"
         )
 
         await console.remove()

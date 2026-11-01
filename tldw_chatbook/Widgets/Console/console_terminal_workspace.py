@@ -9,6 +9,7 @@ from rich.style import Style
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
+from textual.reactive import reactive
 from textual.widgets import Button, Static
 
 from tldw_chatbook.Terminal.contracts import (
@@ -141,10 +142,10 @@ class TerminalViewport(Static):
     """Render immutable safe cells and own only local history/focus state."""
 
     can_focus = True
+    input_focused = reactive(True, repaint=False)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(Text(), *args, **kwargs)
-        self.input_focused = True
         self.history_offset = 0
         self.new_output_count = 0
         self.status_text = ""

@@ -660,7 +660,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # task's other new files are bootstrap_profile and run in the PR Fast Lane's
 # admission-sensitive job instead.
 # PR3295, 2026-10-31: retain all1242 dev entries plus the Tool gates node.
-MINIMUM_FILES = 1243
+# PR3299, 2026-10-31: retain all1243 dev entries and append three key-ownership nodes.
+MINIMUM_FILES = 1246
 
 
 def read_census(path: Path) -> list[str]:

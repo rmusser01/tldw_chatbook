@@ -243,7 +243,8 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 'Set up provider' opens (AC#11). Methods unchanged. 24340/737, the
     #: exact measurement, never above it.
     #: 2026-10-31, PR #3294 on dev21fe53a3: explicit user size waiver; exact24500/741.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24504, 741),
+    # PR3299, 2026-10-31: user size waiver; exact integrated measurement.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24513, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
