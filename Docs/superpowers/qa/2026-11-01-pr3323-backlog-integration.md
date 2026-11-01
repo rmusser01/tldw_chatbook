@@ -37,7 +37,7 @@ The task-private receipt export records exact test identities, source hashes, ou
 Earlier `r-9e4f0f23` had 22 passes but predates first-use/count refinements. It is historical evidence, not proof of byte-identical final modules. Final-form proofs are mapped to the later receipts above. Provider, keyring and retrieval doubles qualify their seams, not a real desktop keyring prompt or model.
 
 Final preservation selection, its six-case exact-base comparison and the corrected four-case runtime fixture rerun are complete. Counts are not added across overlapping selections.
-Independent review cleared the prior source findings (C0/I0/M0); final commit and evidence review is pending. The source snapshot's 54 file hashes were independently matched before the final fixture-only correction and task reconciliation.
+Independent `superpowers:requesting-code-review` approved commit `672c791daa1228ea5ee20916d647da245163f2ee` with C0/I0/M0 unresolved findings. The reviewer verified all 58 final snapshot files against the commit, the final fixture result, exact-base controls and retained limitations. The subsequent task-status/approval-note commit is documentation only and requires unchanged production/test hashes and a scoped diff check; the reviewer did not request another broad review. The source snapshot's 54 file hashes were independently matched before the final fixture-only correction and task reconciliation.
 
 ### Non-green preservation controls
 
