@@ -190,7 +190,7 @@ _BUDGETS: dict[str, int] = {
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
     # PR3342 retains its16-line reduction against the incoming stored row.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29307,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29294,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -653,7 +653,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_agent_bridge.py": 12092,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Agents/agent_service.py": 9715,
+    "tldw_chatbook/Agents/agent_service.py": 9714,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9541,

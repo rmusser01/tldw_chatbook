@@ -114,6 +114,7 @@ jobs:
             Tests/Performance/test_textual_css_fastpath.py \
             Tests/Performance/test_boot_css_byte_budget.py \
             Tests/Performance/test_screen_preimport_payload_budget.py \
+            Tests/Performance/test_manual_tool_import_boundary.py \
             -v --timeout=300
 
       # TASK-36390: these ran in no PR lane and went red on dev unseen. The

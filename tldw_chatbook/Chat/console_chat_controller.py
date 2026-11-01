@@ -17948,155 +17948,9 @@ class ConsoleChatController:
             True when the viewed session had an active run and it was
             stopped; False (a no-op) when it did not.
         """
-        session_id = self.store.active_session_id or ""
-        if self.response_rules is not None and self.response_rules.state(
-            session_id
-        ).phase in {"drafting", "testing", "checking"}:
-            self.response_rules.cancel(
-                session_id, "stopped" if record_user_stop else "shutdown"
-            )
-            self.prompt_queue_coordinator.pause_for_stop(session_id)
-            return True
-        runtime = getattr(self, "_hooks_v2_runtime", None)
-        library_search = self._library_search_tasks.get(session_id)  # TASK-33621.20
-        searching = library_search is not None and not library_search.done()
-        received_cancelled = bool(
-            not searching  # its send is in custody: Stop pauses only the search
-            and runtime is not None
-            and getattr(runtime, "_chat_controller", None) is self
-            and session_id
-            and runtime.cancel_received_intents(session_id)
-        )
-        received = self.store.received_turn_for_session(session_id)
-        received_stopped = received is not None and self.store.seal_received_turn(received)
-        if received_stopped:
-            self._note_controller_activity_changed(session_id)
-            self._signal_stop(session_id=session_id)
-            for task in self._submit_tasks_for_session(session_id):
-                if task is not asyncio.current_task():
-                    self._cancel_task_on_owner_loop(task)
-        review_stopped = self._interrupt_host.pending_round_count(session_id, kind="hook_review") > 0
-        review_stopped = review_stopped or received_stopped or received_cancelled
-        if review_stopped:
-            self._signal_stop(session_id=session_id)
-        from .console_pre_provider_stop import request_accepted_pre_stream_stop
+        from .console_pre_provider_stop import _controller_stop_active_run
 
-        if request_accepted_pre_stream_stop(
-            self, session_id, record_user_stop=record_user_stop
-        ):
-            return True
-        from .console_preparation_reads import preparation_tasks_for
-
-        # TASK-33621.22: an accepted run's setup owns its Stop; a read then in
-        # flight (a repaint's) is not this Stop's to cancel.
-        in_setup = self._active_assistant_message_ids.get(session_id) in (
-            self._replies_in_pre_provider_setup
-        )
-        read_tasks = () if searching or in_setup else preparation_tasks_for(
-            self._preparation_reads, session_id
-        )
-        if read_tasks:
-            self._signal_stop(session_id=session_id)
-            self.prompt_queue_coordinator.pause_for_stop(session_id)
-            for task in read_tasks:
-                if task is not asyncio.current_task():
-                    self._cancel_task_on_owner_loop(task)
-            return True
-        native_tasks = self._ordinary_native_commit_tasks(session_id)
-        if native_tasks:
-            with self._active_submit_tasks_lock:
-                for owner in self._ordinary_native_commits.values():
-                    if owner.session.id == session_id:
-                        owner.explicit_stop = True
-            self._signal_stop(session_id=session_id)
-            for task in native_tasks:
-                if task is not asyncio.current_task():
-                    task.cancel()
-            return True
-        if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
-            self._signal_stop(session_id=session_id)
-            return True
-        if searching:  # TASK-33621.20: pauses the send
-            return library_search.cancel()
-        start = self._chat_start._active.get(session_id)
-        if (
-            start is not None
-            and start.task is not None
-            and self._active_assistant_message_ids.get(session_id) is None
-        ):
-            self.prompt_queue_coordinator.pause_for_stop(session_id)
-            self._signal_stop(session_id=session_id)
-            start.task.cancel()
-            return True
-        repair_session = self._active_citation_repair_sessions.get(session_id)
-        if repair_session is not None and repair_session.selection_committed:
-            return review_stopped
-        if repair_session is not None and repair_session.phase in {
-            "checking",
-            "repair_streaming",
-        }:
-            if self._active_assistant_message_ids.get(session_id) is None:
-                return review_stopped
-            repair_session.cancel_reason = "user" if record_user_stop else "shutdown"
-            self.prompt_queue_coordinator.pause_for_stop(session_id)
-            self._signal_stop(session_id=session_id)
-            task = self._active_stream_tasks.get(session_id)
-            if task is not None and task is not asyncio.current_task():
-                task.cancel()
-            return True
-
-        if self.run_state.status is not ConsoleRunStatus.STREAMING:
-            assistant_message_id = self._active_streaming_assistant_message_id()
-            if assistant_message_id is None:
-                return review_stopped
-        else:
-            assistant_message_id = (
-                self._active_assistant_message_ids.get(session_id)
-                or self._active_streaming_assistant_message_id()
-            )
-        if assistant_message_id is None:
-            return review_stopped
-        self.prompt_queue_coordinator.pause_for_stop(session_id)
-        self._signal_stop(session_id=session_id)
-        if (
-            assistant_message_id in self._pending_dispatch_transitions
-            or assistant_message_id in self._replies_in_pre_provider_setup
-        ):
-            if record_user_stop:
-                self._deferred_user_stop_markers.add(assistant_message_id)
-            task = self._active_stream_tasks.get(session_id)
-            if task is not None and task is not asyncio.current_task():
-                task.cancel()
-            return True
-        settlement_failed = False
-        try:
-            self._mark_stream_stopped(
-                assistant_message_id,
-                visible_copy="Response stopped.",
-            )
-        except ConsoleDispatchSettlementError:
-            settlement_failed = True
-            self._restore_dispatch_recovery_after_settlement_failure(
-                session_id,
-                assistant_message_id,
-            )
-        if record_user_stop and not settlement_failed:
-            # TASK-337 AC3: an explicit transcript record — the run-state chip
-            # copy is transient and the review found nothing else marked
-            # the interruption.
-            try:
-                owner_id = self.store.session_id_for_message(assistant_message_id)
-                self.store.append_message(
-                    owner_id,
-                    role=ConsoleMessageRole.SYSTEM,
-                    content="Response stopped by user.",
-                )
-            except KeyError:
-                pass
-        task = self._active_stream_tasks.get(session_id)
-        if task is not None and task is not asyncio.current_task():
-            task.cancel()
-        return True
+        return _controller_stop_active_run(self, record_user_stop=record_user_stop)
 
     async def shutdown(self) -> None:
         """Stop and await EVERY session's active stream task before owner
@@ -28944,65 +28798,16 @@ class ConsoleChatController:
         prepare_retry: bool = False,
         retry_prepared: bool = True,
     ) -> ConsoleChatMessage:
-        """Mark a streaming assistant message stopped, tolerating an earlier stop request.
+        """Settle this exact assistant's Stop through the shared stop owner."""
+        from .console_pre_provider_stop import _controller_mark_stream_stopped
 
-        ``stop_active_run`` finalizes the message synchronously and then
-        cancels the active stream task; that task's own ``CancelledError``
-        handler in ``_stream_assistant_response`` calls this a second,
-        redundant time. ``store.mark_message_stopped`` raises ``ValueError``
-        for that redundant call because the message is no longer pending/
-        streaming -- i.e. some earlier call already finalized it -- so any
-        such error here is tolerated by simply reading back the
-        already-finalized message rather than re-raising. Before Plan-B
-        final-review Medium-2, the only reachable terminal status from this
-        path was "stopped" itself; a mid-regenerate stop now legitimately
-        settles the message at its pre-regenerate status instead (e.g.
-        "complete"), so this must tolerate any terminal status, not just
-        "stopped".
-        """
-        try:
-            owner_id = self.store.session_id_for_message(assistant_message_id)
-        except KeyError:
-            owner_id = None
-        recovery = self.store.dispatch_recovery_for_session(owner_id)
-        if (
-            recovery is not None
-            and recovery.assistant_message_id == assistant_message_id
-            and not recovery.in_flight
-            and not (
-                self.store.session_is_ephemeral(owner_id)
-                and recovery.kind is ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
-                and recovery.runtime_active
-                and not recovery.recovery_needed
-                and recovery.checkpoint is not None
-                and recovery.checkpoint.state is ConsoleDispatchCheckpointState.ACCEPTED
-            )
-        ):
-            raise ConsoleDispatchSettlementError(
-                "Dispatch terminal settlement previously failed."
-            )
-        if prepare_retry and not retry_prepared:
-            stopped = self.store.get_message(assistant_message_id)
-        else:
-            try:
-                stopped = self.store.mark_message_stopped(assistant_message_id)
-            except ValueError:
-                # Another terminal owner won the store gate first. Reading
-                # that immutable outcome is idempotent; publishing STOPPED
-                # in the controller after a durable COMPLETE/FAILED winner
-                # would create two contradictory terminal projections.
-                stopped = self.store.get_message(assistant_message_id)
-                return stopped
-        # Derive the owning session the same way `_active_stream_belongs_to_
-        # session`/`streaming_session_id` do, rather than requiring every
-        # caller to thread it through -- `assistant_message_id` is stable
-        # even once the run finishes, so this is always resolvable unless
-        # the session was closed out from under the run (in which case
-        # there is nothing left to attribute the STOPPED stamp to).
-        from .console_pre_provider_stop import publish_stopped_run
-
-        publish_stopped_run(self, assistant_message_id, owner_id, visible_copy)
-        return stopped
+        return _controller_mark_stream_stopped(
+            self,
+            assistant_message_id,
+            visible_copy=visible_copy,
+            prepare_retry=prepare_retry,
+            retry_prepared=retry_prepared,
+        )
 
     def _arm_run_hooks_stop(self, session_id: str) -> None:
         """Register one accepted turn for a single terminal hook notification."""

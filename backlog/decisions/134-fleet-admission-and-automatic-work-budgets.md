@@ -237,3 +237,37 @@ and consumed/uncertain replay fences remain authoritative. Restart cannot restor
 an ephemeral review bundle or mint a new stage grant. The original decision above
 retains its scope; the [qualification record](../../Docs/superpowers/qa/2026-10-18-multi-model-code-review/README.md)
 distinguishes deterministic checks from missing live-provider evidence.
+
+## Shared refusal model and conditional budget imports (TASK-38268, 2026-11-01)
+
+The incoming accepted-Stop helper is required on the first-send path. Warming
+it exposes a measured95-module closure against the unchanged94-module ratchet
+([ADR-097](097-boot-budget-ratchets.md)); removing required coverage or deferring
+remote-worker protocol dependencies would not preserve the runtime contract.
+
+`AutomaticWorkRefused` is also recognized by ordinary manual tool execution.
+Keep that complete body-free refusal type beside `RunTerminationReason` in the
+existing pure `Agents.agent_models` owner. `automatic_work_budget` explicitly
+re-exports the same class: existing imports, catches, reason strings and terminal
+classification retain one type identity. Old qualified exception imports remain
+resolvable; newly pickled instances naturally name the defining model module.
+No repository exception-pickle consumer is assumed.
+
+The automatic context retains its current ContextVar, acceptance latch, `_setting`
+patch point, guards, pauses and ledger ordering. Load `AutomaticWorkLimits` only
+at the existing actual automatic-use sites, after their original guards. Budget
+DTOs remain canonical in `automatic_work_budget`; internal postponed context hints
+follow the existing TYPE_CHECKING owner convention and promise no runtime hint
+resolution. Manual/common refusal-only consumers use the shared model. Mixed
+service imports load Limits only inside their existing automatic branches.
+
+This moves no ledger, budget calculation, configuration read, worker or authority
+into startup. The common pure-model declaration uses an already resident owner.
+Verify actual first-send94, unchanged boot/import/latency ceilings, same-object
+aliases in both import orders, real manual tool-worker completion, and existing
+SQLite automatic acceptance/limit/kill-switch controls. Import closure is evidence
+of loading cost, never evidence of automatic authority or budget availability.
+No limit, grant, schema, recovery policy or exception classification is changed.
+
+Implementation and qualification: [TASK-38268](../tasks/task-38268%20-%20Fix-eval-recovery-temporary-directory-collision-after-portable-merge.md)
+and its [integration plan](../../Docs/superpowers/plans/2026-10-31-eval-recovery-ci.md).

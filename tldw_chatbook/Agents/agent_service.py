@@ -116,6 +116,7 @@ from .agent_models import (
     RunOutcome,
     RunBudget,
     RunTerminationReason,
+    AutomaticWorkRefused,
     SkillFileBindings,
     SpawnAdmissionRefusal,
     SpawnAdmissionReplay,
@@ -2040,7 +2041,6 @@ def _call_with_timeout(
     cancellation is checked every slice regardless.
     """
     from .execution_capacity import CapacityRefused
-    from .automatic_work_budget import AutomaticWorkRefused
     from .automatic_work_runtime import current_automatic_work
 
     from .tool_output import bind_tool_output_sink, current_tool_output_sink
@@ -4498,8 +4498,6 @@ class AgentService:
         **kwargs: Any,
     ) -> tuple[str, RunOutcome]:
         """Keep the execution owned through its run and child-driver cleanup."""
-        from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
-
         owner = execution_owner or self.runtime_capacity.begin_execution(
             origin=self.work_origin,
             conversation_id=kwargs["conversation_id"],
@@ -4515,6 +4513,7 @@ class AgentService:
             ):
                 if automatic_work is not None:
                     automatic_work.check()
+                    from .automatic_work_budget import AutomaticWorkLimits
                     if (
                         automatic_child_reservation is not None
                         and not automatic_work.ledger.commit(
@@ -4793,7 +4792,6 @@ class AgentService:
             bound_review.check_budget_expired = lambda: (
                 self.clock() - started >= config.budget.max_wall_seconds
             )
-        from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
         from .automatic_work_runtime import current_automatic_work
 
         message_chain_id = self._work_chain_id
@@ -5304,6 +5302,7 @@ class AgentService:
             try:
                 if automatic_work is not None:
                     automatic_work.check()
+                    from .automatic_work_budget import AutomaticWorkLimits
                     reservation_id = automatic_work.ledger.reserve(
                         automatic_work.chain_id,
                         reservation_id=uuid4().hex,

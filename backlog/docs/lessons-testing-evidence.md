@@ -24100,3 +24100,17 @@ by `_ui_ready` (the Console controller, `chat_screen.py`, the widgets it
 mounts), run `Tests/Performance/test_ui_ready_module_census.py` yourself; it
 takes about 15 seconds. Its failure names the new residents. A green preflight
 says nothing about this census.
+
+
+## Counterfactual restoration must survive a failed write (TASK-38268, 2026-11-01)
+
+A Windows original-code comparison completed its two tests, then the first
+`Path.write_bytes` in its restoration finally-block returned EINVAL. The cause
+was not established. Because the loop stopped there, all eight source files
+still held the original baseline; the saved reviewed bytes existed only in the
+exiting process. Reviewed patch artifacts plus recorded formatting/docstring
+proofs reconstructed the files; atomic replacement and full hashes verified
+restoration before five core controls passed. Keep durable restoration bytes
+before a counterfactual, restore each target independently and atomically, and
+verify every hash after physical child retirement. A finally-block alone is
+not evidence that the reviewed source was restored.

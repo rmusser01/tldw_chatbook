@@ -6692,7 +6692,7 @@ class ConsoleAgentBridge:
         # raises a bare ValueError("local_skill_exists:...") on collision, so
         # the install catch is broad.
         def goal_tool_refusal(name: str) -> ToolResult | None:
-            from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+            from tldw_chatbook.Agents.agent_models import AutomaticWorkRefused
             from tldw_chatbook.Agents.automatic_work_runtime import (
                 current_automatic_work,
             )
@@ -6733,7 +6733,7 @@ class ConsoleAgentBridge:
             scope = self._skills_service
 
             def install_skill_tool(url: str) -> ToolResult:
-                from tldw_chatbook.Agents.automatic_work_budget import (
+                from tldw_chatbook.Agents.agent_models import (
                     AutomaticWorkRefused,
                 )
 
@@ -6835,7 +6835,7 @@ class ConsoleAgentBridge:
             def run_skill_script_tool(
                 skill_name: str, script_path: str, args: list[str]
             ) -> ToolResult:
-                from tldw_chatbook.Agents.automatic_work_budget import (
+                from tldw_chatbook.Agents.agent_models import (
                     AutomaticWorkRefused,
                 )
 
