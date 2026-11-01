@@ -310,6 +310,9 @@ class RecordingService:
             "version": 1,
             "message_epoch": "saved-epoch",
             "message_total": 1,
+            "message_offset": message_offset,
+            "has_more": False,
+            "next_message_offset": None,
             "messages": [
                 {
                     "id": "saved-message",
@@ -1105,3 +1108,285 @@ async def test_latest_excerpt_is_inert_scoped_and_removed_only_after_exact_full_
     # An old chat's independently delivered excerpt cannot follow local selection.
     await expect(case.page.locator("#latest-output")).to_be_hidden()
     assert not case.commands
+
+
+async def test_fix1_lost_ack_reconciles_before_endlessly_resetting_history(
+    mobile_browser_case,
+):
+    case = mobile_browser_case
+    page = case.page
+    await case.open_chat("chat-a")
+    failed_query = asyncio.Event()
+    query_ids = []
+    snapshots = []
+    original_snapshot = case.service.snapshot
+
+    async def witnessed_snapshot(**coordinates):
+        result = await original_snapshot(**coordinates)
+        snapshots.append((coordinates, result))
+        return result
+
+    case.service.snapshot = witnessed_snapshot
+
+    async def lose_response(route):
+        await route.fetch()
+        await route.abort("connectionreset")
+
+    async def query_once_fails(route):
+        query_ids.append(route.request.url.rsplit("/", 1)[-1])
+        if len(query_ids) == 1:
+            await route.fulfill(
+                status=503, json={"error": "query_temporarily_unavailable"}
+            )
+            failed_query.set()
+        else:
+            await route.continue_()
+
+    await page.route("**/api/v1/mobile/commands", lose_response)
+    await page.route("**/api/v1/mobile/commands/command-0", query_once_fails)
+    await page.locator("#chat-draft").fill("accepted but acknowledgement lost")
+    await page.locator("#send-command").click()
+    await case.release_receipt("accepted")
+    await asyncio.wait_for(failed_query.wait(), 5)
+    await expect(page.locator("#stop-command")).to_be_disabled()
+    assert case.service.receipts["command-0"].state == "accepted"
+    await page.unroute("**/api/v1/mobile/commands", lose_response)
+    case.service.changing_history = True
+    await case.service.events_queue.put(None)
+    await expect(page.locator("#connection-state")).to_contain_text("loading history")
+    await expect(page.locator("#stop-command")).to_be_enabled()
+    await expect(page.locator("#chat-draft")).to_have_value("")
+    assert query_ids == ["command-0", "command-0"]
+    assert any(coords.get("cursor") for coords, _ in snapshots)
+    assert all(not row["command_receipts"] for _, row in snapshots)
+    await page.locator("#stop-command").click()
+    await expect(page.locator("#command-status")).to_contain_text("Stop requested")
+    assert [row["action"] for row in case.commands] == ["send", "stop"]
+    assert len(case.service.tickets) == 2
+    assert case.commands[1]["target"].model_dump(exclude_none=True) == {
+        "server_epoch": "epoch",
+        "console_id": "console",
+        "session_id": "chat-a",
+        "incarnation_id": "inc-a",
+        "run_id": "run-chat-a",
+        "turn_id": "turn-chat-a",
+    }
+    assert not any(call[0] == "bootstrap" for call in case.service.calls)
+
+
+async def test_fix1_cached_live_chat_reads_saved_history_after_owner_loss(
+    mobile_browser_case,
+):
+    case = mobile_browser_case
+    page = case.page
+    await case.open_chat("chat-a")
+    await page.locator("#chat-draft").fill("original live draft kept")
+    reads = []
+    original_messages = case.service.session_messages
+
+    async def saved_messages(conversation_id, **coordinates):
+        reads.append(conversation_id)
+        assert conversation_id == "saved-chat-a"
+        return await original_messages("saved-chat", **coordinates)
+
+    case.service.session_messages = saved_messages
+    case.service.unavailable = True
+    await case.service.events_queue.put(MobileEvent("console.changed", "", {}, 2))
+    await expect(page.locator("#connection-state")).to_contain_text("State uncertain")
+    await page.locator("#back-button").click()
+    await expect(
+        page.locator('#chat-list button[data-session-id="chat-a"]')
+    ).to_contain_text("Unavailable")
+    await page.locator('#chat-list button[data-session-id="chat-a"]').click()
+    await expect(page.locator("#chat-transcript .message-body")).to_have_text(
+        case.service.body
+    )
+    await expect(page.locator("#send-command")).to_be_disabled()
+    await expect(page.get_by_role("button", name="Open saved chat")).to_be_visible()
+    assert reads and set(reads) == {"saved-chat-a"}
+    case.service.unavailable = False
+    await page.locator("#back-button").click()
+    await case.open_chat("chat-a")
+    await expect(page.locator("#chat-draft")).to_have_value("original live draft kept")
+    assert not case.commands
+    assert not any(call[0] == "bootstrap" for call in case.service.calls)
+
+
+@pytest.mark.bootstrap_profile
+async def test_fix1_canonical_sqlite_history_follows_filtered_message_pages(
+    mobile_browser_case,
+    tmp_path,
+):
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Web_Server.mobile_service import CanonicalMobileReads
+
+    case = mobile_browser_case
+    path = tmp_path / "filtered-history.sqlite"
+    core = CharactersRAGDB(path, "mobile-filtered-history")
+    conversation_id = core.add_conversation({"title": "Filtered canonical history"})
+    user_body = "visible user 😺" * 210
+    assistant_body = (
+        '<img src=x onerror="window.filteredInjected=true">visible assistant 🦊'
+    )
+    for sender, content in [
+        ("system", "HIDDEN_SYSTEM_BODY"),
+        ("user", user_body),
+        ("other", "HIDDEN_OTHER_BODY"),
+        ("assistant", assistant_body),
+    ]:
+        core.add_message(
+            {"conversation_id": conversation_id, "sender": sender, "content": content}
+        )
+    core.close()
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    canonical = CanonicalMobileReads(
+        path, tmp_path / "absent-media", tmp_path / "absent-runs"
+    )
+    coordinates_seen = []
+    responses = []
+
+    async def messages(identity, **coordinates):
+        coordinates_seen.append(
+            (coordinates["message_offset"], coordinates["char_start"])
+        )
+        result = await asyncio.to_thread(
+            canonical.session_messages, identity, **coordinates
+        )
+        responses.append(result)
+        return result
+
+    case.service.sessions_page = canonical.sessions_page
+    case.service.session_messages = messages
+    case.service.unavailable = True
+    try:
+        await case.page.reload()
+        await case.page.locator(
+            f'#chat-list button[data-session-id="{conversation_id}"]'
+        ).click()
+        await expect(case.page.locator("#chat-transcript .message-body")).to_have_text(
+            [user_body, assistant_body]
+        )
+        assert coordinates_seen == [(0, 0), (1, 0), (1, 2000), (2, 0), (3, 0)]
+        assert responses[0]["messages"] == responses[3]["messages"] == []
+        assert responses[0]["next_message_offset"] == 1
+        assert responses[3]["next_message_offset"] == 3
+        assert all("HIDDEN_" not in json.dumps(row) for row in responses)
+        assert await case.page.evaluate("window.filteredInjected") is None
+        assert not await case.page.locator("#chat-transcript img").count()
+        await expect(case.page.locator("#send-command")).to_be_disabled()
+        assert not case.commands
+        assert not any(call[0] == "bootstrap" for call in case.service.calls)
+        assert not (tmp_path / "absent-runs").exists()
+        assert not (tmp_path / "absent-media").exists()
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+    finally:
+        canonical.close()
+
+
+async def test_fix1_saved_chat_discovery_loads_an_explicit_second_page(
+    mobile_browser_case,
+):
+    case = mobile_browser_case
+    # Finish the fixture's initial live discovery before replacing its reader.
+    await expect(
+        case.page.locator('#chat-list button[data-session-id="chat-a"]')
+    ).to_be_visible()
+    pages = []
+
+    def saved_page(*, page=1, per_page=50):
+        pages.append((page, per_page))
+        assert page in {1, 2}
+        items = (
+            [
+                {
+                    "id": "recent-" + str(i),
+                    "title": "Recent " + str(i),
+                    "scope_type": "global",
+                    "workspace_id": None,
+                }
+                for i in range(50)
+            ]
+            if page == 1
+            else [
+                {
+                    "id": "saved-chat",
+                    "title": "Older saved chat",
+                    "scope_type": "global",
+                    "workspace_id": None,
+                }
+            ]
+        )
+        return {"items": items, "page": page, "has_more": page == 1}
+
+    case.service.sessions_page = saved_page
+    case.service.unavailable = True
+    await case.page.reload()
+    await expect(case.page.locator("#chat-list button")).to_have_count(50)
+    assert pages == [(1, 50)]
+    more = case.page.get_by_role("button", name="Load more saved chats")
+    await more.scroll_into_view_if_needed()
+    await more.focus()
+    await expect(more).to_be_focused()
+    bounds = await more.bounding_box()
+    assert bounds["height"] >= 44
+    assert bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 390
+    await more.press("Enter")
+    await expect(case.page.locator("#chat-list button")).to_have_count(51)
+    assert pages == [(1, 50), (2, 50)]
+    await expect(
+        case.page.get_by_role("button", name="Load more saved chats")
+    ).to_be_hidden()
+    await case.page.locator('#chat-list button[data-session-id="saved-chat"]').click()
+    await expect(case.page.locator("#chat-transcript .message-body")).to_have_text(
+        case.service.body
+    )
+    await expect(case.page.locator("#send-command")).to_be_disabled()
+    assert not case.commands
+    assert not any(call[0] == "bootstrap" for call in case.service.calls)
+
+
+@pytest.mark.parametrize("fault", ["nonadvancing_offset", "changed_epoch"])
+async def test_fix1_saved_history_refuses_invalid_or_stale_filtered_continuation(
+    mobile_browser_case,
+    fault,
+):
+    case = mobile_browser_case
+    await expect(
+        case.page.locator('#chat-list button[data-session-id="chat-a"]')
+    ).to_be_visible()
+    offsets = []
+
+    async def messages(_identity, *, message_offset=0, **_):
+        offsets.append(message_offset)
+        return {
+            "version": 1,
+            "message_epoch": "changed" if message_offset else "initial",
+            "message_total": 2,
+            "message_offset": message_offset,
+            "has_more": message_offset == 0,
+            "next_message_offset": 0 if fault == "nonadvancing_offset" else 1,
+            "messages": []
+            if message_offset == 0
+            else [
+                {
+                    "id": "visible-message",
+                    "sender": "assistant",
+                    "text": "stale visible body",
+                    "returned_chars": 18,
+                    "has_more": False,
+                }
+            ],
+        }
+
+    case.service.session_messages = messages
+    case.service.unavailable = True
+    await case.page.reload()
+    await case.page.locator('#chat-list button[data-session-id="saved-chat"]').click()
+    await expect(case.page.locator("#status-line")).to_contain_text(
+        "invalid_history_page" if fault == "nonadvancing_offset" else "history_changed"
+    )
+    assert offsets == ([0] if fault == "nonadvancing_offset" else [0, 1])
+    await expect(case.page.locator("#chat-transcript .message-body")).to_have_count(0)
+    await expect(case.page.locator("#send-command")).to_be_disabled()
+    assert not case.commands
+    assert not any(call[0] == "bootstrap" for call in case.service.calls)

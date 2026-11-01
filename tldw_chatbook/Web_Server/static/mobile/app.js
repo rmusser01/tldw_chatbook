@@ -10,7 +10,7 @@
     views: {chats: $("view-chats"), chat: $("view-chat"), approvals: $("view-approvals"),
       library: $("view-library"), note: $("view-note"), item: $("view-item")},
     backButton: $("back-button"), tabBar: $("tab-bar"), tabChats: $("tab-chats"), tabLibrary: $("tab-library"),
-    statusLine: $("status-line"), sessionList: $("chat-list"), sessionsEmpty: $("sessions-empty"),
+    statusLine: $("status-line"), sessionList: $("chat-list"), sessionsEmpty: $("sessions-empty"), savedMore: $("saved-chats-more"),
     chatTitle: $("chat-title"), transcript: $("chat-transcript"), draft: $("chat-draft"),
     targetLabel: $("target-label"), targetState: $("target-state"), connection: $("connection-state"),
     send: $("send-command"), steer: $("steer-command"), redirect: $("redirect-command"), stop: $("stop-command"),
@@ -25,8 +25,9 @@
   const state = {
     selectedTarget: null, drafts: new Map(), outstandingCommands: new Map(), connectionState: "connecting",
     lastConfirmedUpdate: null, chats: [], chat: null, snapshot: null, ws: null, wsAttempt: 0,
-    activeTab: "chats", view: "chats", available: false, hostAvailable: false, refreshing: false, refreshAgain: false,
+    activeTab: "chats", view: "chats", available: false, hostAvailable: false, ownerAvailable: false, refreshing: false, refreshAgain: false,
     selectionRevision: 0, confirmationRevision: 0, targetConfirmed: false, targetMissing: false, historyLoading: false, renderedDecisions: [], hostBusy: false, history: null, readWorker: null, workerHistory: [], workerCursor: null, workerConversation: null, workerReading: false, workerResultOffset: null, workerResultRevision: null,
+    savedPage: 0, savedHasMore: false, savedLoading: false,
     librarySection: "notes", notesPage: 0, notesHasMore: false, mediaPage: 0, mediaHasMore: false,
   };
   const targetFields = ["server_epoch", "console_id", "session_id", "incarnation_id", "turn_id", "run_id", "handle_id", "round_id"];
@@ -141,6 +142,8 @@
     }
     for (const li of existing.values()) li.remove();
     els.sessionsEmpty.hidden = state.chats.length > 0;
+    els.savedMore.hidden = state.ownerAvailable || !state.savedHasMore;
+    els.savedMore.disabled = state.savedLoading;
   }
   async function snapshot(target, onPage) {
     const aggregate = {latest_message: null, chats: [], messages: [], fleet: [], decisions: [], recoveries: [], command_receipts: []};
@@ -202,10 +205,14 @@
     state.refreshing = true;
     const selection = state.selectionRevision, confirmation = state.confirmationRevision, socket = state.ws;
     try {
+      // Retained IDs reconcile even when changing transcript pages never reach EOF.
+      await queryOutstanding();
+      if (selection !== state.selectionRevision || confirmation !== state.confirmationRevision || socket !== state.ws) return;
       const list = await snapshot(null);
       if (selection !== state.selectionRevision) return;
-      state.hostAvailable = list.execution_admitted === true; state.available = true;
+      state.ownerAvailable = true; state.hostAvailable = list.execution_admitted === true; state.available = true;
       state.chats = list.chats;
+      if (state.ownerAvailable) { state.savedPage = 0; state.savedHasMore = false; }
       for (const receipt of list.command_receipts) applyReceipt(receipt);
       if (state.selectedTarget && state.view === "chat") {
         const current = list.chats.find(row => row.live && draftKey(targetOf(row)) === draftKey({...state.selectedTarget, handle_id: null}));
@@ -216,7 +223,6 @@
           state.historyLoading = false; applySnapshot(detail);
         } else { state.available = false; state.targetConfirmed = false; state.targetMissing = true; state.historyLoading = false; renderChat(); }
       }
-      await queryOutstanding();
       if (selection !== state.selectionRevision) return;
       state.lastConfirmedUpdate = new Date().toLocaleTimeString();
       setConnection(state.ws?.readyState === WebSocket.OPEN ? "connected" : "disconnected");
@@ -226,20 +232,33 @@
         state.historyLoading = true; setConnection("connected");
         state.refreshAgain = false; setTimeout(refresh, 1000); return;
       }
-      state.hostAvailable = false; state.available = false;
+      state.ownerAvailable = false; state.hostAvailable = false; state.available = false;
       setConnection("uncertain");
-      if (!state.chats.length) {
-        try {
-          const saved = await api("GET", API_BASE + "/conversations");
-          state.chats = (saved.items || []).map(row => ({...row, conversation_id: row.id, live: false}));
-        } catch (readError) { showError(readError); }
-      }
+      if (!state.savedPage) await loadSavedChats();
       if (error !== "console_unavailable") showError(error);
     } finally {
       state.refreshing = false;
       renderChats(); renderDecisions(); updateControls();
       if (state.refreshAgain) { state.refreshAgain = false; refresh(); }
     }
+  }
+  async function loadSavedChats() {
+    if (state.savedLoading || state.ownerAvailable) return;
+    state.savedLoading = true; renderChats();
+    const page = state.savedPage + 1;
+    try {
+      const saved = await api("GET", API_BASE + "/conversations?page=" + page + "&per_page=50");
+      if (state.ownerAvailable) return;
+      if (saved.page !== page || !Array.isArray(saved.items) || typeof saved.has_more !== "boolean") throw "invalid_history_page";
+      const known = new Set(state.chats.map(row => row.conversation_id));
+      for (const row of saved.items) {
+        if (!known.has(row.id)) {
+          state.chats.push({...row, conversation_id: row.id, live: false}); known.add(row.id);
+        }
+      }
+      state.savedPage = saved.page; state.savedHasMore = saved.has_more;
+    } catch (error) { showError(error); }
+    finally { state.savedLoading = false; renderChats(); }
   }
   function setConnection(value) {
     if (value !== "connected") { state.targetConfirmed = false; state.targetMissing = false; state.confirmationRevision++; }
@@ -264,7 +283,8 @@
     refresh();
   }
   async function openChat(row) {
-    if (row.live) { state.chat = row; chooseTarget(targetOf(row, true)); return; }
+    if (row.live && state.ownerAvailable) { state.chat = row; chooseTarget(targetOf(row, true)); return; }
+    if (!row.conversation_id) { showError("console_unavailable"); return; }
     // Saved history remains readable even when execution has no live owner.
     state.selectionRevision++;
     const selection = state.selectionRevision;
@@ -281,14 +301,19 @@
         if (revision !== null && revision !== currentRevision) throw "history_changed";
         revision = currentRevision;
         const message = history.messages[0];
-        if (!message) break;
-        messages.push({...message, message_id: message.id, role: message.sender, content: message.text, offset: charStart});
-        if (message.has_more) charStart += message.returned_chars;
-        else { offset++; charStart = 0; }
-        if (!charStart && offset >= history.message_total) { renderMessages(messages); return; }
+        if (message) messages.push({...message, message_id: message.id, role: message.sender, content: message.text, offset: charStart});
+        if (message?.has_more) {
+          if (!Number.isInteger(message.returned_chars) || message.returned_chars <= 0 || message.returned_chars > 2000) throw "invalid_history_page";
+          charStart += message.returned_chars;
+        } else {
+          charStart = 0;
+          if (history.has_more === false) { renderMessages(messages); return; }
+          const next = history.next_message_offset;
+          if (history.has_more !== true || !Number.isInteger(next) || next <= offset || next >= history.message_total) throw "invalid_history_page";
+          offset = next;
+        }
       }
-      if (messages.length) throw "history_limit";
-      renderMessages(messages);
+      throw "history_limit";
     } catch (error) { showError(error); }
   }
   async function hostCommand(action, payload) {
@@ -767,7 +792,7 @@
     });
     socket.addEventListener("close", event => {
       if (state.ws !== socket) return;
-      state.ws = null; state.hostAvailable = false; setConnection("disconnected"); renderChats();
+      state.ws = null; state.ownerAvailable = false; state.hostAvailable = false; setConnection("disconnected"); renderChats();
       if (event.code === 4401) { location.assign("/auth/login"); return; }
       const delay = [1000, 2000, 5000, 15000][Math.min(state.wsAttempt++, 3)];
       setTimeout(connectStream, delay);
@@ -779,6 +804,7 @@
     showTab(state.activeTab);
   });
   els.tabChats.addEventListener("click", () => showTab("chats"));
+  els.savedMore.addEventListener("click", loadSavedChats);
   els.tabLibrary.addEventListener("click", () => showTab("library"));
   els.libraryNotesButton.addEventListener("click", () => showLibrarySection("notes"));
   els.libraryMediaButton.addEventListener("click", () => showLibrarySection("media"));
