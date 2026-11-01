@@ -13,7 +13,7 @@ references:
 - Docs/superpowers/specs/2026-10-29-ci-preflight-and-superseded-runs.md
 - backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md
 - backlog/decisions/218-in-repo-merge-queue.md
-updated_date: 2026-11-01 12:32
+updated_date: 2026-11-01 12:37
 ---
 
 ## Description
@@ -49,6 +49,7 @@ ADR required: yes; amended backlog/decisions/103-fast-pr-lane-and-required-gate-
 
 Hosted qualification remains outstanding; task stays In Progress. No full suite, actual cancellation, throughput measurement, merge, auto-merge or branch-protection change was performed. The read/cancel API is not atomic; the immediate live read narrows races without claiming an absolute guarantee. See Docs/superpowers/plans/2026-10-29-ci-preflight-and-superseded-runs.md for the exact targeted command and review ledger.
 2026-11-01 provisional integration onto PR3315 head5d7cad1c: retained32 shards and all7 application lanes. CI contracts:641 passed/2 failed, then642 passed/1 failed; failures reproduce on base and are corrected by expanding stale fixture-derived selectors to full functions and retaining the terminal-input target. Final affected contracts64 passed; all306 selectors resolve. All13 artifact guards now pass with verified complete LF Mermaid export and a two-line literal Kanban notification repair. Mounted Kanban regressions failed before the fix and both pass after it; census unchanged. See Docs/superpowers/qa/2026-11-01-pr3316-backlog-integration.md. Final confirmed-dev rebase, independent review and publication remain pending. Hosted throughput/cancellation remain unqualified under the user CI waiver. No draft, release or main actions.
+Final integration base is confirmed PR3315 merge de5dec02b104a061793504c12426987510652e57. All four rebased patches are identical. Parsed seven-lane preservation and both current-base selector checks pass (ci-final-4ae358f9). No new production change after the frozen CI/Kanban receipts. Independent final-head review and exact-lease merge follow under the existing hosted-CI waiver.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

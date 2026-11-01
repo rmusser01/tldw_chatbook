@@ -1,6 +1,6 @@
 # PR3316 local integration evidence
 
-Source: 1a536c706c42efbcc63340d603d66061fb19accc. Prepared on PR3315 integration head 5d7cad1c8598495e398cf25cd976352c8689b23a; final dev rebase and review remain pending.
+Source: 1a536c706c42efbcc63340d603d66061fb19accc. Prepared on PR3315 integration head 5d7cad1c8598495e398cf25cd976352c8689b23a; confirmed final base is dev de5dec02b104a061793504c12426987510652e57.
 
 The change retains checkout-free cleanup of obsolete same-repository PR runs and makes artifact checks precede test fan-out. Parsed comparison preserves all seven application jobs except their preflight dependency and two explicit test-selector expansions. All thirteen moved guard steps remain identical; all 32 UI shards, max-parallel 17, UAT steps, installs, timeouts and aggregate verdict conditions survive.
 
@@ -16,3 +16,7 @@ The change retains checkout-free cleanup of obsolete same-repository PR runs and
 Receipts are in the sibling pr3295-resync directory: ci-66f8deea,ci-56740ef1,ci-selector-final.xml,pr3316-all-selector-scan.json,pr3316-preservation-after-selectors.json,guards-829339ec,r-f44199da (RED),r-3de4f7d8 (GREEN). The exact-base CI comparison is in sibling pr3315-resync/pr3316-ci-base.xml. Earlier failures remain recorded; incremental reruns are not represented as one clean full run.
 
 No full-suite, hosted cancellation, throughput, or live runner-scheduling qualification is claimed. Hosted CI and size limits are waived by the user for this backlog. Draft PRs and PR #3267/#3297 are excluded. No release or main promotion is part of this session. ADR-103/218 govern the source policy; the Kanban change enforces existing literal-notification convention under ADR-237/150 without a new boundary.
+
+## Confirmed-base verification
+
+Rebased onto the actual PR3315 merge de5dec02b104a061793504c12426987510652e57. All four commits have identical patches in git range-diff; no conflict or production repair was added during rebase. Parsed comparison against that base again preserves all seven application jobs except the preflight dependency and the two documented selector expansions. Both static selector checks pass on rebased head4611fecb6a54d84d8c92d3178c948d3dc753c10b (ci-final-4ae358f9,2 passed). Other tested source/guard inputs are unchanged by this rebase; earlier focused receipts remain the evidence. Independent final-head review precedes exact-lease publication.
