@@ -15,6 +15,7 @@ $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
 $ds-text-disabled: $text-disabled;
 $ds-action-focus: $primary;
+$ds-focus-list-tint: 12%;
 $ds-focus-fg: $ds-text-primary;
 /* TASK-345: the focus background must be visibly distinct from resting
    surfaces — it previously aliased $ds-surface-raised (= $surface), which

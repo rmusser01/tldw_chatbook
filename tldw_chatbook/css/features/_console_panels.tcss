@@ -2537,7 +2537,7 @@ ConsoleInspectorDetailPane { height: $ds-height-fill; min-height: $ds-size-0; }
 /* TASK-33621.9: the global `*:focus` outline overpainted these lists' first
    and last rows, so Turn 1 looked scrolled away. Focus is the content-safe
    tint plus focus-coloured highlight (TASK-28226's cue). */
-.inspector-section-list:focus { outline: none; background: $ds-action-focus 12%; }
+.inspector-section-list:focus { outline: none; background: $ds-action-focus $ds-focus-list-tint; }
 .inspector-section-list:focus > .option-list--option-highlighted { background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline; }
 .inspector-detail-reader { width: $ds-width-fill; min-width: $ds-size-0; height: $ds-height-fill; }
 .inspector-detail-title { height: $ds-control-height-compact; text-style: $ds-text-strong; text-wrap: nowrap; text-overflow: ellipsis; }

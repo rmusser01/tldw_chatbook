@@ -49,6 +49,8 @@ source or copied token definitions are needed (TASK-32816).
 - **Focus (non-obscuring focus contract):** `$ds-focus-bg`, `$ds-focus-fg`,
   `$ds-focus-accent`, `$ds-action-focus`, `$ds-input-focus-border`,
   `$ds-input-focus-bg`, `$ds-input-focus-accent`, `$ds-control-edge`
+  (`$ds-focus-list-tint: 12%` tints a focused list behind its separately
+  highlighted option; the option retains the full focus colors and marker)
 - **Status:** `$ds-status-ready | -running | -info | -warning |
   -approval-required | -blocked | -error | -error-readable | -paused |
   -unsaved | -recovered`
