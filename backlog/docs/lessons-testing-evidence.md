@@ -376,6 +376,12 @@ files. A test that needs "an older file" must delete the key after the file is
 created. Expect `load_settings()` to merge the shipped value back in anyway
 (see the `chat_defaults.model` entry below).
 
+## After a resume, the setup modal can hold focus when the test presses Enter (TASK-33620.3, 2026-10-29)
+
+**Incident.** `test_a_saved_chat_with_an_unsafe_staged_policy_still_refuses_the_repair` in `Tests/UI/test_console_durable_commit_failure_recovery.py` resumes a saved chat with `_resume_console_workspace_conversation`, calls `_select_llamacpp_console`, loads a draft and presses Enter via `press(host, "enter", "\r")`. It passed on dev in 4.7 s. On the fix head it failed three runs out of five on a 15 s `until` timeout, and the two passes took 16-20 s. Nothing was sent: no `console_send_stage` lines, the draft still in the composer, the commit hook never called. The failure tuple's `repr(host.focused)` was `Button(id='console-setup-modal-action')`. The resume re-reads the chat's settings before the test selects llama.cpp, so the first-run setup modal briefly blocks the Console and takes focus, and the Enter landed on its button. The send never started, so the change under test (in the durable commit) could not have caused it. A sibling test with the same resume sequence happened to win the race every time.
+
+**What to do.** Before a synthetic key press that must reach the composer after a resume, a session switch or a provider change, wait until no `ConsoleSetupModal` reports `is_blocking`. Then focus the composer and wait for `host.focused` to be the composer or inside it. That file's `_enter` helper does this. When a send "does nothing" in a mounted test, put `host.focused` in the failure message before suspecting the product.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
@@ -23597,3 +23603,33 @@ the independent frozen single-case RED remains the causal omission evidence.
 The streaming-default integration's real Custom/vLLM probes found that an empty generation plus retry shared one automatic admission and discarded first-call usage. Restoring separate physical legs then exposed trace failures hidden by boundary doubles: a new actorless fallback broke tool continuation, and a same-chain retry was rejected by the final generation-settings comparison. Real SQLite/factory tests now cover usage on both calls, accepted-owner rollback recovery, tool work before/after retry, and strict rejection of every change except the verified transport True-to-False transition. A usage-view test alone cannot prove durable accounting or continuation authority.
 
 The unset Settings case also passed its assertions but repeatedly failed the three-second native retirement guard. Content-free thread stacks identified `_backfill_chachanotes_messages_fts` seeding built-in cards while a spend read awaited storage initialization. The no-save early-return path now observes that specific key leaving the existing open boot gate's pending/in-flight sets. Its focused rerun passes teardown without changing the grace period or profile guards. Do not replace this evidence with a broad quiet wait or with suppressing cleanup errors. Receipts and limits: `Docs/superpowers/qa/2026-11-01-pr3304-backlog-integration.md`.
+## A stranded-state fix is evidenced per exit, not per the exit the report named
+
+**TASK-33621.53 review, 2026-10-29.** A send moved READY -> COMMITTING and a
+failed durable commit then returned without releasing it, so the chat refused
+every later send. The fix paused that one branch, and its tests (red on dev,
+green on the fix) covered that one branch. The review read the same function
+and found 'Draft custody is unconfirmed.' returning four lines earlier, after
+the same transition, with no pause; a probe on the real controller and store
+reproduced the identical jam (next send: 'A run is already running in this
+tab.'), now TASK-33621.57. A `_block('Hook continuation is no longer
+current.')` sits right after the transition too. Before calling a "never
+stranded" fix done, list every `return` between the state transition and the
+owner that releases it, and give each one a test or a filed task.
+
+## `-p no:warnings` turns every `filterwarnings`-marked file into a collection error (TASK-33620.3, 2026-10-29)
+
+**Incident.** A dev-vs-branch comparison over 20 touched-module test files added
+`-p no:warnings` to hide the macOS `rm_rf` PytestWarning noise. Three files
+(`test_console_durable_turn_fix_round1.py`, `_round2.py`,
+`test_console_library_pause_recovery.py`) then reported `1 error in 0.6s`,
+rc=2: `'filterwarnings' not found in markers`. The repo runs with
+`--strict-markers`, and disabling the warnings plugin unregisters the
+`filterwarnings` marker, so those files never collected. Dev and the branch
+"agreed" (error on both sides), which a by-id comparison would have read as
+"no new failures" over zero executed tests.
+
+**What to do.** Run the plain command (`python -m pytest <file> -q`) and filter
+the noise out of the captured log with `grep -v`, never by disabling a plugin.
+A per-file `rc=2` or `N error in <1s` is a collection failure, not a result:
+re-run that file before comparing it.

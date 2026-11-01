@@ -636,6 +636,17 @@ of the next prompt, and **Manage** plus a state-specific action such as
 - A message Console refused to send stays on the shelf with the reason, for
   example `Not sent: Last send is blocked; resolve it first`. **Restore**
   puts it back in the composer; **Discard** drops it.
+- If a message cannot be saved to the conversation before it goes out,
+  Console sends nothing. A card in the transcript reads **Send could not be
+  saved; your message was not sent** ("Impact: The provider was not
+  contacted."), the header reads **Blocked** and the status row
+  **Run: Blocked — send not saved**; the message is also on the shelf as
+  `Not sent: Couldn't save the prepared turn…`. **Retry send** tries to save
+  and send it again; **Cancel send** or the shelf's **Restore** puts it back in
+  the composer, and **Discard** drops it. Any of them ends the failed send, so
+  the next message in that conversation goes through. The failure is never
+  shown as provider setup, and the chat is not counted as a live run when you
+  quit.
 
 Queue text is process-memory-only until its turn is accepted. It is not saved
 to conversation history, prompt history, screen snapshots, or the database.

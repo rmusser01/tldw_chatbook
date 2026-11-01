@@ -13130,7 +13130,15 @@ class ConsoleChatController:
         current_source = current.policy.source
         current_revision = current.policy.policy_revision
         first_save = (
-            frozen_source == "new_session"
+            (
+                frozen_source == "new_session"
+                or (
+                    frozen_source == "missing"
+                    and frozen.policy.auto_retrieve is ConsoleAutoRetrieve.NEVER
+                    and frozen.policy.assistant_access
+                    is ConsoleAssistantLibraryAccess.BLOCKED
+                )
+            )
             and frozen_revision is None
             and current_source == "durable"
             and current_revision == 1

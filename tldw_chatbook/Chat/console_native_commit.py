@@ -842,6 +842,10 @@ async def _controller_accept_durable_turn(
                 "Durable turn commit failed; turn refused (exception_type={})",
                 type(exc).__name__,
             )
+            if native_owner is not None:
+                native_owner.store.pause_unreserved_failed_commit(
+                    preparation.preparation_id, preparation.attempt_id
+                )
             return _source_controller.ConsoleSubmitResult(
                 False,
                 False,
@@ -995,6 +999,64 @@ async def _controller_accept_durable_turn(
         return await self.resume_durable_postcommit(preparation.preparation_id)
     finally:
         self._release_ordinary_native_commit(native_owner)
+
+
+def _store_pause_unreserved_failed_commit(
+    self: ConsoleChatStore, preparation_id: str, attempt_id: str
+) -> bool:
+    """Pause a send whose durable commit failed before its reservation.
+
+    TASK-33621.53; the body of ``ConsoleChatStore.pause_unreserved_failed_commit``.
+    The store's ``_pause_failed_durable_commit_locked`` pauses a failed commit
+    only once it holds the reservation. A failure before that -- the store's
+    preflight ("Durable identity owner changed." and its siblings) or the
+    caller's "no committed owner" check -- left the preparation COMMITTING,
+    which neither the card nor the shelf can end, so the conversation refused
+    every later send. Take the same pause, and only while nothing else owns
+    the commit: no reservation in flight, no commit recorded, and the exact
+    attempt still COMMITTING.
+
+    Args:
+        self: The store that ran the failed commit.
+        preparation_id: The failed send's preparation.
+        attempt_id: The attempt that failed; a newer attempt is left alone.
+
+    Returns:
+        True when the preparation is now PAUSED(PERSISTENCE).
+    """
+    from loguru import logger
+
+    from .console_turn_preparation import (
+        ConsolePreparationPauseKind,
+        ConsolePreparationTransition,
+        ConsoleTurnPreparationState,
+    )
+
+    with self._preparation_lock:
+        if (
+            preparation_id in self._durable_commit_in_flight
+            or preparation_id in self._durable_commit_by_preparation
+        ):
+            return False
+        current = self._preparations_by_id.get(preparation_id)
+        if current is None or current.attempt_id != attempt_id:
+            return False
+        paused = self.compare_and_set_preparation(
+            current.session_id,
+            ConsolePreparationTransition(
+                preparation_id=preparation_id,
+                expected_state=ConsoleTurnPreparationState.COMMITTING,
+                new_state=ConsoleTurnPreparationState.PAUSED,
+                pause_kind=ConsolePreparationPauseKind.PERSISTENCE,
+                new_attempt_id=None,
+            ),
+        )
+    if paused is None:
+        return False
+    logger.bind(
+        session_id=current.session_id, preparation_id=preparation_id
+    ).warning("console_durable_turn_commit_failed_before_reservation")
+    return True
 
 
 def _store_retain_native_commit_owner(self, preparation_id: str, owner: object) -> None:

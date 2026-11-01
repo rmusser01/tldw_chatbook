@@ -602,6 +602,9 @@ jobs:
             Tests/Chat/test_console_stop_silent_provider.py \
             Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_settles \
             Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_two_overlapping_opens_of_a_chat_make_one_session \
+            Tests/Chat/test_console_dispatch_recovery_relaunch.py::test_missing_policy_repair_survives_restart_and_reuses_accepted_rows \
+            Tests/Chat/test_console_dispatch_recovery_fix_round1.py::test_missing_policy_recovery_preserves_frozen_authority \
+            Tests/Chat/test_console_durable_turn_acceptance.py::test_missing_policy_repair_rolls_back_with_a_late_turn_failure \
             Tests/Chat/test_automatic_launch_recovery.py::test_chat_opened_while_the_wake_loads_its_tree_is_not_opened_twice \
             Tests/UI/test_schedules_disabled_state.py::test_enabled_recurring_reminder_shows_its_next_run_whatever_its_last_status \
             Tests/UI/test_schedules_disabled_state.py::test_rearmed_one_time_reminder_shows_its_new_run \

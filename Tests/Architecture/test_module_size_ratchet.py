@@ -185,7 +185,13 @@ _BUDGETS: dict[str, int] = {
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
     # 2026-10-31 PR3295 R1: user-waived cap; exact remembered-prompt-delta measurement.
     "tldw_chatbook/Chat/console_context_compaction.py": 4217,
-    "tldw_chatbook/Chat/console_chat_store.py": 22338,
+    # 2026-10-29 (TASK-33621.53 review follow-up, owner decision: a fix over
+    # a size ratchet raises the row): 22338 -> 22346 (+8) -- the store owns
+    # pause_unreserved_failed_commit, a thin method over its body in
+    # console_native_commit.py, so the controller no longer reads the
+    # store's private commit-owner maps.
+    # PR3309 integration 2026-11-01: user size waiver; 22361 dev + 8 = 22369.
+    "tldw_chatbook/Chat/console_chat_store.py": 22369,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
@@ -726,7 +732,11 @@ _BUDGETS: dict[str, int] = {
     # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
     # Whisper never sends an enc: key).
     "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,
-    "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
+    # 2026-10-29 (TASK-33620.3, owner decision: a fix over a size ratchet
+    # raises the row): 4263 -> 4272 (+9) -- the durable turn commit writes
+    # a legacy/imported chat's missing Library-policy row (the safe
+    # Never/Blocked default its turn ran under) instead of refusing it.
+    "tldw_chatbook/Chat/chat_persistence_service.py": 4272,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
     "tldw_chatbook/Workspaces/registry_service.py": 4304,
     "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4207,
