@@ -16,7 +16,7 @@
 
 **Baseline:** finalized design commit `8f989edc9f`. Source mapping was inspected in the current dirty checkout; unrelated staged additions are not implied to be committed prerequisites. Recheck the integrated source, symbols and schema before execution.
 
-**Status:** Implementation in progress. Tasks 1–3 passed their independent review gates; Tasks 4–10 remain pending. Runtime/UI delivery is incomplete.
+**Status:** Implementation in progress. Tasks 1–4 passed their independent review gates; Tasks 5–10 remain pending. Runtime/UI delivery is incomplete.
 
 ```text
 ADR required: no
@@ -221,9 +221,9 @@ owner.on_drained(lambda proven: activity.record_drain(claim.id, proven=proven))
 
 **Consumes:** existing `_atomic_write_target`, digest/absence validation, workspace workers. **Produces:** edit/patch mutation carries the digest of its actual read bytes into the existing atomic writer; workflow dispatch can require a non-blind precondition. No second file-writing implementation and no promise of whole-patch transactionality.
 
-- [ ] **1. Add a held-read race** that replaces bytes between edit/patch read and mutation, then prove the peer's bytes survive. Also test absent→created, disappearing targets, ledger eviction, same-agent repeated writes and multi-target partial effect reporting. Do not rely only on a sequential provider stale check.
-- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Tools/test_edit_patch_preconditions.py`.
-- [ ] **3. Carry observed bytes through the existing primitive:**
+- [x] **1. Add a held-read race** that replaces bytes between edit/patch read and mutation, then prove the peer's bytes survive. Also test absent→created, disappearing targets, ledger eviction, same-agent repeated writes and multi-target partial effect reporting. Do not rely only on a sequential provider stale check.
+- [x] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Tools/test_edit_patch_preconditions.py`.
+- [x] **3. Carry observed bytes through the existing primitive:**
 
 ```python
 import hashlib
@@ -236,9 +236,9 @@ def observed_digest(original_bytes):
 ```
 
 The example demonstrates the calculation, not a required new one-line helper. Keep it inline at the existing read/write sites. Preserve path validation, descriptor/no-follow behavior, permission errors, dry-run semantics and lock-contention classification. Workflow `fs_write` requires an actual read/absence precondition even when the bounded ledger evicts an entry; the ordinary non-workflow blind-write contract stays unchanged.
-- [ ] **4. Exercise local and remote protocol paths.** Any added host-originated precondition is validated by the closed worker schema; never allow model arguments to forge workflow authority. Distinguish pre-dispatch refusal, settled mutation and uncertain/partial effects using existing typed worker receipts. A partial multi-file patch is not automatically retried wholesale.
-- [ ] **5. Run** the new module, `Tests/Tools/test_patch_tool_impls.py`, relevant stale-write cases in `Tests/Agents/test_local_tool_provider.py`, `Tests/Agents/test_fs_read_ledger.py`, and affected `Tests/Tools/test_remote_executor_loopback.py` cases. Include platform-supported lock races without claiming advisory locks constrain arbitrary external editors.
-- [ ] **6. Review and commit** `fix: preserve observed bytes through atomic edit and patch`. Check every caller of changed functions and update worker fixtures in the same slice.
+- [x] **4. Exercise local and remote protocol paths.** Any added host-originated precondition is validated by the closed worker schema; never allow model arguments to forge workflow authority. Distinguish pre-dispatch refusal, settled mutation and uncertain/partial effects using existing typed worker receipts. A partial multi-file patch is not automatically retried wholesale.
+- [x] **5. Run** the new module, `Tests/Tools/test_patch_tool_impls.py`, relevant stale-write cases in `Tests/Agents/test_local_tool_provider.py`, `Tests/Agents/test_fs_read_ledger.py`, and affected `Tests/Tools/test_remote_executor_loopback.py` cases. Include platform-supported lock races without claiming advisory locks constrain arbitrary external editors.
+- [x] **6. Review and commit** `fix: preserve observed bytes through atomic edit and patch`. Check every caller of changed functions and update worker fixtures in the same slice.
 
 <a id="task-5"></a>
 ## Task 5: Run-bound scope at every native invocation
