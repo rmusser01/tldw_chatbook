@@ -147,8 +147,9 @@ restores the terminal without another input thread. Parent host ownership and th
 saved-conversation reservation seam are documented in [web-server.md](web-server.md).
 `ConsoleChatStore.resolve_saved_session` owns one saved-identity operation and
 physical hydration task shared by terminal, Buddy, launch, Goal and remote opens.
-Every observer shields its wait; provisional restored rows cannot appear in host
-snapshots or resolve as command targets until progress/policy readiness. Native
+Every observer shields its wait. Restored rows require completed progress/policy
+readiness AND publication/adoption before host snapshots or remote commands can
+expose them. Pure metadata reads do not adopt provisional presentation custody. Native
 failure removes only that exact unpublished row. Presentation callers carry an
 opaque creator cleanup proof through their final visibility/focus commit; a
 successful remote or other opener publishes/adopts the owner and revokes cleanup.
@@ -252,3 +253,10 @@ claims, so another phone's visible round keeps its native human-input clock
 answerable. Resolution and runtime disposal remove claims; native clock refresh
 matches the rendered round, not merely the session/kind. Task9 supplies the
 parent-generated authenticated subscription IDs and disconnect/revocation wiring.
+
+Saved first-identity observer registration and producer terminal outcome/removal
+share the existing preparation RLock. The operation records failure even before an
+observer Future is allocated; callbacks are delivered outside that critical
+section. Manual Save, durable publication/discard/retirement use the same handoff.
+Joined Character presentation carries the exact session, incarnation and durable
+binding to final publication; failed noncreator cleanup cannot remove that owner.

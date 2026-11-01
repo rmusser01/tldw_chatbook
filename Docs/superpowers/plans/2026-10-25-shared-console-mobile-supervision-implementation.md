@@ -1158,3 +1158,15 @@ The new native new_chat reservation hop does not extend approval lifetime: exact
 source/approval is rechecked after that owner-loop hop and before initial SQL. A
 Close observed there refuses and settles the exact reservation without saving;
 native postcommit source-Close still retains its already-saved draft.
+
+
+Task9 fix2 clarification: a policy-ready restored presentation remains provisional
+until publication/adoption; remote snapshot and command resolution withhold that
+unpublished target. Metadata reads do not adopt. Existing already-live first-save
+owners remain published/controllable while saved-ID observers await persistence.
+Successful joined Character presentation carries the exact current owner handle
+to final publication; failure still requires the original creator cleanup proof.
+Staged saved-observer registration and producer terminal outcome/reservation
+removal share the existing preparation RLock. Record terminal failure even before
+an observer Future exists; deliver callbacks after releasing that lock. No native
+I/O, await or cross-loop blocking wait belongs in the atomic handoff.

@@ -318,6 +318,44 @@ async def test_terminal_presentation_cleanup_preserves_adopted_native_turn(
         await asyncio.wait_for(entered.wait(), 3)
         opened = None
         try:
+            unpublished = next(
+                s
+                for s in store.sessions()
+                if s.persisted_conversation_id == case.conversation_id
+            )
+            operation = store._saved_session_operations[case.conversation_id]
+            assert operation.ready and not operation.published
+            snapshot = await case.service.snapshot()
+            assert not operation.published  # Metadata observation cannot adopt custody.
+            assert not any(
+                row.get("session_id") == unpublished.id for row in snapshot["chats"]
+            )
+            target = ConsoleTarget(
+                **host_identity.model_dump(),
+                session_id=unpublished.id,
+                incarnation_id=unpublished.incarnation_id,
+            )
+            unsafe = {
+                "text": "Must not acquire an unpublished target",
+                "expected_revisions": {
+                    key: getattr(unpublished, key)
+                    for key in (
+                        "settings_revision",
+                        "generation_settings_revision",
+                        "context_policy_revision",
+                        "identity_revision",
+                        "conversation_binding_revision",
+                    )
+                },
+            }
+            rejected_ticket = await case.service.issue_command_ticket(
+                "send", target, unsafe
+            )
+            rejected = await case.service.submit_command(
+                rejected_ticket["ticket"], unsafe
+            )
+            assert rejected.state == "refused"
+            assert not operation.published and not provider_entered.is_set()
             if shared:
                 opened = await case.app.console_runtime.open_remote_conversation(
                     case.conversation_id
@@ -726,3 +764,232 @@ async def test_durable_first_send_bridge_preserves_original_live_target(
             ):
                 await asyncio.sleep(0.01)
         assert store.active_session_id is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+@pytest.mark.parametrize("completion", ["lookup_exit", "after_future"])
+async def test_staged_save_completion_between_lookup_and_future_allocation(
+    shared_mobile_case, monkeypatch, fail, completion
+):
+    """Release the real producer at the old lookup/install gap, not after Open."""
+    import threading
+
+    from tldw_chatbook.Chat.console_launch_wake import _ensure_launch_runtime
+
+    case = shared_mobile_case
+    entered, release_writer, producer_done = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    ui_thread = threading.get_ident()
+    identities, observed = [], []
+    failure = RuntimeError("exact native first-save failure")
+    async with case.app.run_test(size=(100, 32)):
+        await case.service.bootstrap_host()
+        store = _ensure_launch_runtime(case.app).store
+        live = store.create_session(title="Native staged registration race")
+        writer = store.persistence.persist_console_conversation_with_policy
+
+        def held_writer(**kwargs):
+            identities.append(kwargs["conversation_id"])
+            result = None if fail else writer(**kwargs)
+            entered.set()
+            assert release_writer.wait(10)
+            if fail:
+                raise failure
+            return result
+
+        monkeypatch.setattr(
+            store.persistence, "persist_console_conversation_with_policy", held_writer
+        )
+
+        def save():
+            try:
+                return store.persist_session_if_needed(live.id)
+            finally:
+                producer_done.set()
+
+        saving = asyncio.create_task(asyncio.to_thread(save))
+        await asyncio.wait_for(asyncio.to_thread(entered.wait, 5), 6)
+        native_lock = store._preparation_lock
+
+        class ExitGate:
+            armed = True
+
+            def __enter__(self):
+                native_lock.acquire()
+                return self
+
+            def __exit__(self, *args):
+                native_lock.release()
+                if self.armed and threading.get_ident() == ui_thread:
+                    self.armed = False
+                    operation = store._saved_session_operations.get(identities[0])
+                    observed.append(operation)
+                    release_writer.set()
+                    assert producer_done.wait(5), (
+                        "Producer must retire after releasing the native lock"
+                    )
+
+            def __getattr__(self, name):
+                return getattr(native_lock, name)
+
+        if completion == "lookup_exit":
+            monkeypatch.setattr(store, "_preparation_lock", ExitGate())
+        opened = asyncio.create_task(
+            case.app.console_runtime.open_remote_conversation(identities[0])
+        )
+        if completion == "after_future":
+            await asyncio.sleep(0)
+            observed.append(store._saved_session_operations[identities[0]])
+            assert observed[0].future is not None
+            release_writer.set()
+        try:
+            if fail:
+                with pytest.raises(
+                    RuntimeError, match="exact native first-save failure"
+                ) as captured:
+                    await asyncio.wait_for(opened, 3)
+                assert captured.value is failure
+                with pytest.raises(
+                    RuntimeError, match="exact native first-save failure"
+                ):
+                    await saving
+                assert live.persisted_conversation_id is None
+                assert store._sessions[live.id] is live
+                assert identities[0] not in store._saved_session_operations
+            else:
+                assert await asyncio.wait_for(opened, 3) is live
+                assert await saving == identities[0]
+                assert live.id != identities[0]
+                assert len(store.sessions()) == 1
+                store.close_session(live.id)
+                reopened = await case.app.console_runtime.open_remote_conversation(
+                    identities[0]
+                )
+                assert (
+                    reopened is not live
+                    and reopened.incarnation_id != live.incarnation_id
+                )
+            assert live.id not in store._first_identity_reservations
+            assert observed and observed[0] is not None
+            if completion == "lookup_exit":
+                assert (
+                    observed[0].future is None
+                )  # Completion preceded any observer Future.
+            else:
+                assert observed[0].future.done()
+        finally:
+            release_writer.set()
+            await asyncio.gather(saving, opened, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["publish", "discard", "retire"])
+async def test_durable_staged_terminal_handoff_settles_native_observer(
+    tmp_path, terminal
+):
+    from Tests.Chat.test_console_durable_turn_acceptance import _ready_store
+    from Tests.conftest import _close_database_instance
+
+    db, _, store, preparation, acceptance = _ready_store(tmp_path, attachments=False)
+    session = store._sessions[preparation.session_id]
+    identity = store.staged_durable_turn_identity_for(preparation.preparation_id)
+    observer = asyncio.create_task(
+        store.resolve_saved_session(identity.conversation_id)
+    )
+    try:
+        await asyncio.sleep(0)
+        operation = store._saved_session_operations[identity.conversation_id]
+        assert operation.future is not None and not operation.future.done()
+        assert store.saved_session_ready(session)
+        if terminal == "discard":
+            store.discard_uncommitted_durable_preparation(preparation.preparation_id)
+            message = "First turn did not commit"
+        else:
+            commit = await asyncio.to_thread(store.commit_durable_turn, acceptance)
+            if terminal == "publish":
+                store.publish_durable_turn_identity(session.id, commit)
+                assert await asyncio.wait_for(observer, 2) is session
+            else:
+                fingerprint = store.durable_acceptance_fingerprint_for(
+                    preparation.preparation_id
+                )
+                store.retire_durable_acceptance(preparation.preparation_id, fingerprint)
+                message = "First turn retired before identity publication"
+        if terminal != "publish":
+            with pytest.raises(RuntimeError, match=message):
+                await asyncio.wait_for(observer, 2)
+            assert operation.error is not None
+            assert identity.conversation_id not in store._saved_session_operations
+            assert store._sessions[session.id] is session
+        assert session.id not in store._first_identity_reservations
+    finally:
+        await asyncio.gather(observer, return_exceptions=True)
+        await store.close_saved_session_operations()
+        _close_database_instance(db)
+        assert db.registered_connection_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_late_first_identity_completion_cannot_settle_successor(tmp_path):
+    from Tests.Chat.test_console_durable_turn_acceptance import _ready_store
+    from Tests.conftest import _close_database_instance
+
+    db, _, store, preparation, _ = _ready_store(tmp_path, attachments=False)
+    session = store._sessions[preparation.session_id]
+    old = store.staged_durable_turn_identity_for(preparation.preparation_id)
+    first = asyncio.create_task(store.resolve_saved_session(old.conversation_id))
+    second = None
+    try:
+        await asyncio.sleep(0)
+        store.discard_uncommitted_durable_preparation(preparation.preparation_id)
+        with pytest.raises(RuntimeError, match="First turn did not commit"):
+            await first
+        new = store.stage_durable_turn_identity(session.id, preparation.preparation_id)
+        assert new is not old and new.conversation_id != old.conversation_id
+        second = asyncio.create_task(store.resolve_saved_session(new.conversation_id))
+        await asyncio.sleep(0)
+        operation = store._saved_session_operations[new.conversation_id]
+        store._finish_first_saved_owner(session, old)
+        assert not second.done() and not operation.future.done()
+        assert store._first_identity_reservations[session.id][1] is new
+        store.discard_uncommitted_durable_preparation(preparation.preparation_id)
+        with pytest.raises(RuntimeError, match="First turn did not commit"):
+            await second
+    finally:
+        await asyncio.gather(
+            first, *([second] if second is not None else []), return_exceptions=True
+        )
+        await store.close_saved_session_operations()
+        _close_database_instance(db)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["incarnation_id", "persisted_conversation_id"])
+async def test_character_shared_handle_rejects_changed_owner_identity(field):
+    from tldw_chatbook.Chat.console_chat_store import (
+        ConsoleChatStore,
+        ConsoleSavedSessionCleanup,
+    )
+    from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
+
+    store = ConsoleChatStore()
+    creator = object()
+    session = store.restore_persisted_session(
+        title="Unpublished",
+        workspace_id=None,
+        persisted_conversation_id="saved-character",
+        all_nodes=[],
+        cleanup_owner=creator,
+    )
+    handle = ConsoleSavedSessionCleanup(session, creator)
+    controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
+    controller._chat_store_accessor = lambda: store
+    setattr(session, field, "replacement-identity")
+    with pytest.raises(RuntimeError, match="owner changed"):
+        controller._commit_character_conversation_activation(handle)
+    assert not await controller._rollback_character_conversation_activation(handle)
+    assert store._sessions[session.id] is session

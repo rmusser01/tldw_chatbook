@@ -6297,7 +6297,14 @@ class ConsoleWorkspaceController:
                 target.conversation_id, restore_cleanup_owner=cleanup_owner
             )
         )
-        session = store.restored_cleanup_session(cleanup_owner)
+        session = next(
+            (
+                row
+                for row in store.sessions()
+                if row.persisted_conversation_id == target.conversation_id
+            ),
+            None,
+        )
         owned = (
             ConsoleSavedSessionCleanup(session, cleanup_owner)
             if session is not None
@@ -6317,7 +6324,9 @@ class ConsoleWorkspaceController:
             except asyncio.CancelledError:
                 # The caller has not received ownership yet. Settle only this
                 # exact cold runtime synchronously, then let it restore prior UI.
-                if owned is not None:
+                if owned is not None and owned.matches(
+                    store._sessions.get(owned.session.id)
+                ):
                     store.rollback_restored_session(
                         owned.session.id,
                         expected_session=owned.session,
@@ -6342,6 +6351,8 @@ class ConsoleWorkspaceController:
         if not isinstance(owned_runtime, ConsoleSavedSessionCleanup):
             return False
         store = self._ensure_console_chat_store()
+        if not owned_runtime.matches(store._sessions.get(owned_runtime.session.id)):
+            return False
         return store.rollback_restored_session(
             owned_runtime.session.id,
             expected_session=owned_runtime.session,
@@ -6354,7 +6365,12 @@ class ConsoleWorkspaceController:
         from ...Chat.console_chat_store import ConsoleSavedSessionCleanup
 
         if isinstance(owned_runtime, ConsoleSavedSessionCleanup):
-            self._ensure_console_chat_store().publish_restored_session(
+            store = self._ensure_console_chat_store()
+            if not owned_runtime.matches(store._sessions.get(owned_runtime.session.id)):
+                raise RuntimeError(
+                    "Character conversation owner changed before publication."
+                )
+            store.publish_restored_session(
                 owned_runtime.session, cleanup_owner=owned_runtime.owner
             )
 
