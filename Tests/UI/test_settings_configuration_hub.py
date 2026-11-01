@@ -31,7 +31,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from Tests.private_profile import private_profile_test
+from Tests.private_profile import is_private_profile_child, private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
@@ -1408,19 +1408,33 @@ def _painted_settings_widget(screen, widget) -> str:
     )
 
 
+def _seed_active_config(request, text: str) -> Path:
+    """Write ``text`` to the selected profile's config file and reload it.
+
+    TASK-36381: config is bound to one profile per process (ADR-126), so a
+    test seeds the selected file; pointing TLDW_CONFIG_PATH at another file
+    makes the next config read raise ``raw_source_selection_changed``. Only
+    a private-profile child may do this: anywhere else the selected file is
+    the session's shared config.toml.
+    """
+    assert is_private_profile_child(request), "needs @private_profile_test"
+    config_path = Path(config_module.get_cli_config_path())
+    config_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    config_path.write_text(text, encoding="utf-8")
+    config_module.load_settings(force_reload=True)
+    return config_path
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(180, 50), (100, 30)])
 @private_profile_test
 async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
-    request, monkeypatch, tmp_path, size
+    request, size
 ):
     """F4 Settings owns the global gate at normal and compact sizes."""
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
-    config_path.write_text(
-        "[scheduling]\nbriefing_schedules_enabled = false\n",
-        encoding="utf-8",
+    _seed_active_config(
+        request, "[scheduling]\nbriefing_schedules_enabled = false\n"
     )
-    config_module.load_settings(force_reload=True)
 
     app = _build_test_app()
     app.apply_briefing_schedules_enabled(False)
@@ -1444,8 +1458,27 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
         assert "Chatbook is open" in status_painted
         assert button in screen._compositor.visible_widgets
         assert "Enable scheduled briefings" in str(button.label)
-        assert await pilot.click(button)
-        await host.workers.wait_for_complete()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        detail = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+        detail.scroll_to_widget(button, animate=False, immediate=True)
+        await pilot.pause()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        # Keyboard activation follows current focus through layout updates;
+        # Pilot.click snapshots coordinates before yielding to those updates.
+        button.active_effect_duration = 0
+        button.focus()
+        await pilot.pause()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        assert button.has_focus
+        assert button in screen._compositor.visible_widgets
+        assert not button.disabled
+        await pilot.press("enter")
+        await _wait_for_settings_text(
+            screen, pilot, "Global briefing schedules: Enabled", timeout=30.0
+        )
+        status = screen.query_one("#settings-briefing-schedules-status", Static)
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        detail.scroll_to_widget(status, animate=False, immediate=True, top=True)
         await pilot.pause()
 
         status_painted = _painted_settings_widget(screen, status)
@@ -1460,8 +1493,27 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
             is True
         )
 
-        assert await pilot.click(button)
-        await host.workers.wait_for_complete()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        detail = screen.query_one("#settings-detail-pane-body", VerticalScroll)
+        detail.scroll_to_widget(button, animate=False, immediate=True)
+        await pilot.pause()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        # Keyboard activation follows current focus through layout updates;
+        # Pilot.click snapshots coordinates before yielding to those updates.
+        button.active_effect_duration = 0
+        button.focus()
+        await pilot.pause()
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        assert button.has_focus
+        assert button in screen._compositor.visible_widgets
+        assert not button.disabled
+        await pilot.press("enter")
+        await _wait_for_settings_text(
+            screen, pilot, "Global briefing schedules: Disabled", timeout=30.0
+        )
+        status = screen.query_one("#settings-briefing-schedules-status", Static)
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
+        detail.scroll_to_widget(status, animate=False, immediate=True, top=True)
         await pilot.pause()
 
         status_painted = _painted_settings_widget(screen, status)
@@ -1479,15 +1531,12 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
-    request, monkeypatch, tmp_path
+    request, monkeypatch
 ):
     """A replaced config is reported as saved even when live publish fails."""
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
-    config_path.write_text(
-        "[scheduling]\nbriefing_schedules_enabled = false\n",
-        encoding="utf-8",
+    config_path = _seed_active_config(
+        request, "[scheduling]\nbriefing_schedules_enabled = false\n"
     )
-    config_module.load_settings(force_reload=True)
     assert (
         config_module.get_cli_setting("scheduling", "briefing_schedules_enabled", True)
         is False
@@ -1546,15 +1595,12 @@ async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_schedules_gate_disables_retry_after_live_apply_failure(
-    request, monkeypatch, tmp_path
+    request, monkeypatch
 ):
     """A restart-required gate cannot be inverted by a second press."""
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
-    config_path.write_text(
-        "[scheduling]\nbriefing_schedules_enabled = false\n",
-        encoding="utf-8",
+    config_path = _seed_active_config(
+        request, "[scheduling]\nbriefing_schedules_enabled = false\n"
     )
-    config_module.load_settings(force_reload=True)
 
     app = _build_test_app()
     app.apply_briefing_schedules_enabled(False)
@@ -2141,13 +2187,9 @@ async def test_settings_appearance_renders_guided_defaults_and_validates(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(
-    request, monkeypatch, tmp_path
-):
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(request):
     original = "[appearance]\nascii_glyphs = true\n"
-    config_path.write_text(original, encoding="utf-8")
-    config_module.load_settings(force_reload=True)
+    config_path = _seed_active_config(request, original)
 
     app = _build_test_app()
 
@@ -2171,7 +2213,9 @@ async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(
         assert str(toggle.label) == "Disabled"
 
         await pilot.click("#settings-save-category")
-        await _wait_for_settings_text(screen, pilot, "Appearance defaults saved.")
+        await _wait_for_settings_text(
+            screen, pilot, "Appearance defaults saved.", timeout=30.0
+        )
 
     assert config_module.get_cli_setting("appearance", "ascii_glyphs", True) is False
     assert (
@@ -2183,12 +2227,10 @@ async def test_settings_appearance_reads_ascii_glyphs_from_fresh_config(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_appearance_defaults_ascii_glyphs_off_in_fresh_config(
-    request, monkeypatch, tmp_path
+    request,
 ):
-    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     original = ""
-    config_path.write_text(original, encoding="utf-8")
-    config_module.load_settings(force_reload=True)
+    config_path = _seed_active_config(request, original)
 
     app = _build_test_app()
 
@@ -6473,6 +6515,10 @@ async def test_settings_category_search_reports_ranked_matches_and_enter_target(
             "settings-primary-search-match"
         )
         assert screen.query_one("#settings-category-overview").has_class(
+            "settings-secondary-search-match"
+        )
+        # My Profile (6c52a2b4b2) is the third: "privacy controls".
+        assert screen.query_one("#settings-category-personal-context").has_class(
             "settings-secondary-search-match"
         )
 
@@ -14463,6 +14509,9 @@ async def test_state_banner_is_pinned_outside_detail_scroll(request):
     host = DestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-library-rag")
+        # Library/RAG starts the off-thread index-status worker; let it end
+        # inside run_test so teardown can retire the app (TASK-36381).
+        await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         banner = screen.query_one("#settings-category-state-banner", Static)
         body = screen.query_one("#settings-detail-pane-body")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import errno
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -19,8 +20,28 @@ from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSTestOperation,
 )
 
-pytestmark = pytest.mark.local_server_probe
+# bootstrap_profile (TASK-36381): Tests/UI/conftest.py imports the app for
+# every node, and app.py's module-level load_settings() refuses a per-test
+# profile once config is bound to the session one (ADR-126). These tests
+# write no config, so the shared bootstrap profile is safe.
+pytestmark = [pytest.mark.local_server_probe, pytest.mark.bootstrap_profile]
 _EXPECTED_MODEL_PROBE_RESPONSE_MAX_BYTES = 8 * 1024 * 1024  # TASK-32925
+
+
+@pytest.fixture(autouse=True)
+def _public_dns(monkeypatch):
+    """Resolve every host to one public address, as Tests/Image_Generation does.
+
+    ``https://example.test`` has no DNS, so the probe's egress check
+    (TASK-32894) reported "blocked by network policy" before any request.
+    """
+    from tldw_chatbook.Utils import egress
+
+    async def _resolve_async(_host):
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(egress, "_resolve", lambda _host: ["93.184.216.34"])
+    monkeypatch.setattr(egress, "_resolve_async", _resolve_async)
 
 
 def _client(handler, *, follow_redirects: bool = False) -> httpx.AsyncClient:
@@ -607,7 +628,10 @@ async def test_probe_classifies_recursive_json_as_invalid_payload(monkeypatch) -
     def recursive_loads(body: bytes) -> object:
         raise RecursionError("secret recursive decoder detail")
 
-    monkeypatch.setattr(settings_probe_module.json, "loads", recursive_loads)
+    # Replace only this module's json, not the process-wide json.loads.
+    monkeypatch.setattr(
+        settings_probe_module, "json", SimpleNamespace(loads=recursive_loads)
+    )
 
     async with _client(
         lambda request: httpx.Response(200, content=b'{"data": []}')

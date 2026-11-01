@@ -404,7 +404,10 @@ _BUDGETS: dict[str, int] = {
     #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
     #: Keep canonical notification settings together; exact measured size,
     #: with no reflow/extraction solely to satisfy the old ceiling.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35726,
+    # 2026-10-23, TASK-36381 (owner decision 2026-10-04: "expand the limits,
+    # don't modify other code to make it fit"): Tools & MCP gets the
+    # _INSPECTOR_GUIDANCE entry it shipped without (+14).
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35740,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

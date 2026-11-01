@@ -694,7 +694,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # mounted unknown-command resize), so no existing entry changes shard:
 # 1148 + 2 = 1150.
 # PR3310, 2026-11-01: retain all1263 current-dev entries and append five reviewed nodes.
-MINIMUM_FILES = 1268
+# TASK-36381 appends 8 entries at the tail: the Settings endpoint probe
+# file, one model-discovery race node and six hub guards, all red on dev
+# while no PR lane ran them, so no existing entry changes shard.
+# The floor now equals the entry count, which also absorbs any lag in
+# dev's floor (tail entries a merge added without raising it).
+MINIMUM_FILES = 1276
 
 
 def read_census(path: Path) -> list[str]:
