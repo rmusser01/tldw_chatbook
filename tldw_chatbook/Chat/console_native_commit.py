@@ -421,6 +421,7 @@ def _controller_retain_original_native_commit_recovery(self, owner, commit=None)
         if commit is not None
         else None,
         terminal_status=_source_controller.ConsoleRunStatus.BLOCKED,
+        blocker=_source_controller.ConsoleSubmitBlocker.OWNER_CHANGED,
         preparation_id=preparation_id,
         provider_started=False,
     )
@@ -553,6 +554,7 @@ async def _controller_settle_cancelled_native_commit(self, owner, continuation):
             user_message_id=commit.user_message_id,
             assistant_message_id=commit.assistant_message_id,
             terminal_status=_source_controller.ConsoleRunStatus.BLOCKED,
+            blocker=_source_controller.ConsoleSubmitBlocker.SETTLEMENT_FAILED,
             origin=continuation.origin,
             queue_entry_id=continuation.queue_entry_id,
             committed_context_epoch=continuation.committed_context_epoch,
