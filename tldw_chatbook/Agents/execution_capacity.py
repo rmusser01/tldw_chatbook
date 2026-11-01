@@ -220,6 +220,12 @@ class ExecutionOwner:
         self._cleanup_unproven = False
         self._drain_outcome: bool | None = None
 
+    @property
+    def is_admitted(self) -> bool:
+        """Report native membership until physical retirement, granting no authority."""
+        with self.capacity._lock:
+            return self.capacity._owners.get(self.execution_id) is self
+
     @contextmanager
     def activate(self) -> Iterator[None]:
         token = _current_owner.set(self)

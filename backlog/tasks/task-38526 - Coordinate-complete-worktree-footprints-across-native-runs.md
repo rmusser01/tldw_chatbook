@@ -1,7 +1,7 @@
 ---
 id: TASK-38526
 title: Coordinate complete worktree footprints across native runs
-status: To Do
+status: In Progress
 created_date: 2026-11-01 17:30
 dependencies:
 - TASK-38524
@@ -14,6 +14,9 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md
 - backlog/decisions/285-native-phased-agent-workflows.md
+assignee:
+- '@codex'
+updated_date: 2026-11-01 19:25
 ---
 
 ## Description
@@ -29,10 +32,28 @@ Deliver implementation slice 3 of the accepted native shared-worktree workflow d
 - [ ] #3 Claims remain held until positive physical drain and conclusive durable settlement, including ordinary runs and survivors.
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: no
+ADR path: backlog/decisions/285-native-phased-agent-workflows.md
+Reason: Implements the accepted runtime-owned activity and physical-drain contract; no new ownership, execution, accounting or storage boundary.
+
+1. Resolve footprint-before-child-capacity ordering with controller; retain actual ExecutionOwner lifetimes without changing capacity accounting.
+2. Add real-path, complete-admission, opaque, refusal-unwind and held-worker/child settlement tests; capture RED before implementation.
+3. Implement pure all-or-none activity reservations with existing directory identities, positive drain plus durable settlement, and lazy ConsoleRuntime ownership.
+4. Run focused new tests, the three named existing native regressions, and targeted static checks; self-review and commit only owned paths.
+5. Leave status/AC pending independent controller review and record full interfaces, evidence and limitations in task-3-report.md.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Implemented complete, runtime-owned read/write/opaque activity reservations under ADR-285. Immutable resolver-admitted scopes reuse captured DirectoryChain metadata and target stat identities; aliases, nested roots, hardlinks and conservative casefold overlap serialize correctly. prelaunch reserves the full footprint before native capacity and unwinds only never-bound reservations; bound claims require positive native drain and durable per-owner settlement, including separate child settlement handles. ConsoleRuntime constructs its activity owner lazily under the existing capacity lifetime lock.
 
+Controller-approved interface refinements: prelaunch(...)/bind_owner(...) resolves child-capacity ordering without a phantom owner; attach_child(...) returns a child-specific settlement handle. A metadata-only ExecutionOwner.is_admitted query rejects fabricated/retired owners outside the activity lock; no capacity accounting or dispatch algorithm changed. Case-only names may serialize on case-sensitive filesystems. Actual ordinary-turn and phase wiring remains Task 8.
+
+Evidence: initial RED on missing module; targeted reparse RED (1) and fabricated/retired membership RED (5), then GREEN. Final exact activity/capacity/fleet/finalization target set: 99 passed in 4.05s using supported bootstrap_profile only on the three source-bound fleet nodes. Original unmodified invocation separately retained 84 pass/3 raw_source_selection_changed pre-body fixture failures; no guard reset or unrelated fixture mutation. New modules/tests Ruff clean, four non-runtime files formatter-clean, py_compile/diff-check pass. Existing runtime/capacity lint debt unchanged against BASE 78e297e8892061e587c7f9788d03197d61f0da98 (24/1 findings; zero introduced). Full report/evidence: .superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-3-report.md. Status/AC intentionally remain pending independent review.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

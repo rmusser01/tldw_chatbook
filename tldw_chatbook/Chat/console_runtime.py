@@ -163,6 +163,7 @@ if TYPE_CHECKING:
     )
     from tldw_chatbook.Chat.console_voice_supervisor import VoiceDispatchSupervisor
     from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
+    from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivity
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 from tldw_chatbook.Provider_Contract.thinking_blocks import normalize_thinking_history_policy
 from tldw_chatbook.config import coerce_bool_setting
@@ -1107,6 +1108,7 @@ class ConsoleRuntime:
                 mutated.
         """
         self._execution_capacity = None
+        self._worktree_activity: WorktreeActivity | None = None
         self._execution_capacity_lock = threading.RLock()
         self._app = app
         self._canvas_profile_snapshot = getattr(app, "_canvas_profile_snapshot", None)
@@ -2054,6 +2056,18 @@ class ConsoleRuntime:
 
                 self._execution_capacity = RuntimeCapacity.from_settings()
             return self._execution_capacity
+
+    @property
+    def worktree_activity(self) -> WorktreeActivity:
+        """Return this runtime's lazy complete worktree-reservation owner."""
+        with self._execution_capacity_lock:
+            if self._worktree_activity is None:
+                if self._disposed:
+                    raise RuntimeError("runtime worktree activity is disposed")
+                from tldw_chatbook.Workspaces.worktree_activity import WorktreeActivity
+
+                self._worktree_activity = WorktreeActivity()
+            return self._worktree_activity
 
     def set_agent_bridge(self, value: Any) -> None:
         """Replace the bridge and lazily bind native execution admission.
