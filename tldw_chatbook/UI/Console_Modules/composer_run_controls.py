@@ -192,10 +192,15 @@ TRANSCRIPT_KEYS_FOOTER = (
     ("", "Transcript keys · Esc to type"),
     ("j/k", "select"),
     ("Y", "trace"),
+    ("U", "review reports"),
 )
-#: Hints that name something the key does not do while the transcript has
-#: focus (there Enter shows the selected message's actions).
-_NOT_TRANSCRIPT_HINTS = (("Enter", "send / queue"), ("Y", "trace"))
+#: General hints replaced by the transcript's own actions or leading hints.
+#: Enter there shows the selected message's actions instead of sending.
+_NOT_TRANSCRIPT_HINTS = (
+    ("Enter", "send / queue"),
+    ("Y", "trace"),
+    ("U", "review reports"),
+)
 
 
 def focus_in_transcript(focused: Any) -> bool:

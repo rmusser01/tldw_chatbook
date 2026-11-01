@@ -2390,3 +2390,10 @@ from `parent is None` depends on `_detach` running. A test of a dismissal
 path should hold a reference to the dismissed widget and assert
 `widget.parent is None`, because dropping the reference lets GC hide this
 class of bug.
+
+
+## A focus cue can exist in its renderable but be cropped after Terminal release (PR3299, 2026-10-31)
+
+The PR3299 review repair suppressed the composer's Escape cue while Terminal owned Escape and repainted it on capture/release. With a draft exactly one row wide, leaving the composer removed its reserved caret row. Release restored a two-row draft-plus-cue renderable into the remaining93x1 surface; asserting only `renderable.plain` missed the cropped hint. The mounted RED r-7915a649 inspected `render_line` strips within the widget's actual content height and reproduced the missing paint. Refreshing measured draft geometry on cue ownership changes fixed both release and Terminal-to-Help transitions; cursor ticks keep their layout-free path. Those controls and the existing ordinary focus-height test passed in r-68903920. Check both content and available painted rows when a cue can return without its widget regaining focus.
+
+The same current-dev integration retained a newer U report shortcut but initially scoped only the incoming Y shortcut to transcript mode. A mounted prose-first U case reproduced report dispatch from Help. The fix applies the existing ADR031 ownership rule to both actions and moves U's footer/F1 hints with its scope. During a rebase, compare newly added base bindings against the branch's interaction contract as well as preserving their action implementations.

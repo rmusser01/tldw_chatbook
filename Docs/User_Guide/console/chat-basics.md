@@ -604,8 +604,9 @@ slot, that action.
 
 While the transcript has keyboard focus its single letters are commands,
 and the footer says so: it leads with "Transcript keys · Esc to type",
-then **j/k** select and **Y** trace. **Y** opens Trace for the chat only
-from the transcript; from anywhere else a typed **y** is just a letter, in
+then **j/k** select, **Y** trace and **U** review reports. **Y** opens Trace
+and **U** opens retained review reports for the chat only from the transcript;
+from anywhere else a typed **y** or **u** is just a letter, in
 your draft (or in the text field or Terminal that has focus). **Esc** clears
 one thing at a time — an open message menu or text selection first, then
 the selected message — and once there
@@ -856,6 +857,7 @@ Transcript:
 | Tab / Shift+Tab | Cycle through the action row |
 | c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message (r runs Retry or Resend when the row shows it instead) |
 | y | Open Trace for this chat |
+| u | Open retained review reports for this chat |
 | Esc | Clear the selection; with nothing selected, return to the composer |
 
 ## Related settings & docs

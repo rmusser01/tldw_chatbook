@@ -4051,21 +4051,23 @@ class ConsoleComposerBar(Horizontal):
             self._refresh_visible_draft()
 
     def _sync_focus_cue(self) -> None:
-        """Repaint the cue when focus or Terminal's local input mode changes."""
+        """Refresh cue content and measured height when its ownership changes."""
         focused = self.screen.focused
         if getattr(focused, "id", None) == "console-terminal-viewport":
             # The viewport owns this reactive; watch deduplicates the callback.
             # Keep Terminal lazy: ordinary composer focus needs no Terminal import.
             self.watch(
-                focused, "input_focused", self._render_visible_draft_only, init=False
+                focused, "input_focused", self._refresh_visible_draft, init=False
             )
-        self._render_visible_draft_only()
+        # A full draft can lose its reserved caret row during Terminal capture.
+        # Returning the cue must measure that row again so it is not cropped.
+        self._refresh_visible_draft()
 
     def _render_visible_draft_only(self) -> None:
         """Re-render the visible-draft Static without recomputing composer height.
 
-        Used by cursor ticks and the dimension-stable focus cue, which must
-        stay cheap and must not trigger a layout recompute on each change.
+        Used by cursor ticks, which must stay cheap and must not trigger a
+        layout recompute on each blink phase.
 
         TASK-21692: ``Static.update`` defaults to ``layout=True``, so this
         method used to arm a full screen layout pass ~2x/second for as long

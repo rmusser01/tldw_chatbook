@@ -283,9 +283,9 @@ async def test_f6_j_esc_esc_returns_to_the_composer_and_prose_types_there():
 
         await pilot.press("escape")
         await pilot.pause()
-        assert composer.draft_has_focus, (
-            f"the second Esc left focus on {console.focused!r}"
-        )
+        assert (
+            composer.draft_has_focus
+        ), f"the second Esc left focus on {console.focused!r}"
 
         await _type(pilot, "look around")
         assert composer.draft_text() == "look around"
@@ -329,9 +329,9 @@ async def test_esc_clears_text_selection_then_message_then_returns_to_composer()
 
         await pilot.press("escape")
         await pilot.pause()
-        assert composer.draft_has_focus, (
-            f"Esc with nothing left to clear left focus on {console.focused!r}"
-        )
+        assert (
+            composer.draft_has_focus
+        ), f"Esc with nothing left to clear left focus on {console.focused!r}"
 
 
 @pytest.mark.asyncio
@@ -360,9 +360,9 @@ async def test_esc_on_a_focused_message_action_clears_then_returns_to_composer()
         await pilot.press("escape")
         await pilot.pause()
         assert transcript.selected_message_id is None
-        assert console.focused is transcript, (
-            f"Esc on an action left focus on {console.focused!r}"
-        )
+        assert (
+            console.focused is transcript
+        ), f"Esc on an action left focus on {console.focused!r}"
 
         await pilot.press("escape")
         await pilot.pause()
@@ -494,6 +494,68 @@ async def test_y_from_the_transcript_still_opens_trace_and_f1_lists_it():
     # The general footer no longer advertises a key that only the
     # transcript honours (ADR-031 rule 4).
     assert ("Y", "trace") not in CONSOLE_WORKBENCH_SHORTCUTS
+
+
+@pytest.mark.asyncio
+async def test_u_on_non_text_controls_types_instead_of_opening_review_reports(
+    monkeypatch,
+):
+    """The current-dev reports binding follows the same list-mode ownership."""
+    host = _host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, composer, _ = await _mounted(host, pilot)
+        reports = []
+        monkeypatch.setattr(
+            console,
+            "action_open_code_review_reports",
+            lambda: reports.append("reports"),
+        )
+        for selector in (
+            "#console-control-help",
+            "#console-status-text",
+            "#console-terminal-open",
+        ):
+            composer.load_draft("")
+            target = console.query_one(selector)
+            target.focus()
+            await _wait_for(
+                pilot, lambda: console.focused is target, f"{selector} never focused"
+            )
+            await _type(pilot, "use this")
+            assert reports == [], f"'u' on {selector} opened review reports"
+            assert composer.draft_text() == "use this"
+            assert composer.draft_has_focus
+            assert host.screen_stack[-1] is console
+
+
+@pytest.mark.asyncio
+async def test_u_from_transcript_still_opens_review_reports_and_hints_match(
+    monkeypatch,
+):
+    """Reports retain their documented transcript key and contextual hint."""
+    host = _host()
+    async with host.run_test(size=(160, 45)) as pilot:
+        console, _composer, transcript = await _mounted(host, pilot)
+        reports = []
+        monkeypatch.setattr(
+            console,
+            "action_open_code_review_reports",
+            lambda: reports.append("reports"),
+        )
+        await _focus_transcript_with_f6(console, pilot, transcript)
+        await pilot.press("u")
+        await pilot.pause()
+        assert reports == ["reports"]
+        assert ("U", "review reports") in run_controls.TRANSCRIPT_KEYS_FOOTER
+        assert "U review reports" in _footer_text(console)
+
+        console.query_one("#console-control-help", Button).focus()
+        await pilot.pause()
+        assert ("U", "review reports") not in CONSOLE_WORKBENCH_SHORTCUTS
+        assert "U review reports" not in _footer_text(console)
+
+    transcript_keys = dict(dict(CONSOLE_WORKBENCH_SHORTCUT_GROUPS)["Transcript"])
+    assert "review reports" in transcript_keys["u"].lower()
 
 
 @pytest.mark.asyncio
@@ -718,16 +780,16 @@ async def test_a_letter_typed_in_an_open_message_menu_folds_it_and_types(kind):
         )
         await pilot.pause()
         await pilot.pause()
-        assert composer.draft_has_focus, (
-            f"closing the {kind} menu moved focus to {console.focused!r}"
-        )
+        assert (
+            composer.draft_has_focus
+        ), f"closing the {kind} menu moved focus to {console.focused!r}"
 
         await _type(pilot, "yz")
         assert composer.draft_text() == "xyz"
         assert trace == []
-        assert transcript.selection_manager.state.selection is None, (
-            "the text-selection highlight outlived its menu"
-        )
+        assert (
+            transcript.selection_manager.state.selection is None
+        ), "the text-selection highlight outlived its menu"
 
 
 def _row_menu(kind: str):
@@ -882,7 +944,9 @@ async def test_terminal_escape_ownership_keeps_the_composer_cue_truthful(
         _create_running_terminal,
         _terminal_app,
     )
-    from tldw_chatbook.Widgets.Console.console_terminal_workspace import TerminalViewport
+    from tldw_chatbook.Widgets.Console.console_terminal_workspace import (
+        TerminalViewport,
+    )
     from tldw_chatbook.Widgets.Console.console_terminal_messages import (
         ConsoleTerminalInputRequested,
     )
@@ -924,7 +988,9 @@ async def test_terminal_escape_ownership_keeps_the_composer_cue_truthful(
             await pilot.press("x")
             await pilot.pause()
             assert terminal_input == [b"\x1b", b"x"], (
-                console.focused, composer.draft_text(), viewport.input_focused
+                console.focused,
+                composer.draft_text(),
+                viewport.input_focused,
             )
             assert console.focused is viewport
             assert composer.draft_text() == ""
@@ -965,5 +1031,33 @@ async def test_terminal_escape_ownership_keeps_the_composer_cue_truthful(
             assert composer.draft_has_focus
             assert composer.draft_text() == "y"
             assert terminal_input == [b"\x1b", b"x"]
+
+            # A full row reserves a second caret row while focused. Capture
+            # removes the cue and may shrink it; release/outside focus must
+            # paint any returning cue inside the measured widget, not crop it.
+            visible = composer.query_one("#console-command-visible-text", Static)
+            for transition in ("release", "outside"):
+                composer.focus()
+                composer.load_draft("a" * composer._draft_render_width())
+                await pilot.pause()
+                viewport.focus_input()
+                await pilot.pause()
+                assert _COMPOSER_CUE not in _draft_render(composer)
+                if transition == "release":
+                    await pilot.press("ctrl+right_square_bracket")
+                else:
+                    help_button.focus()
+                await pilot.pause()
+                assert _COMPOSER_CUE in _draft_render(composer)
+                painted = "\n".join(
+                    visible.render_line(row).text
+                    for row in range(visible.content_size.height)
+                )
+                assert _COMPOSER_CUE in painted, (
+                    transition,
+                    visible.content_size,
+                    _draft_render(composer),
+                    painted,
+                )
     finally:
         manager.finalize_shutdown()

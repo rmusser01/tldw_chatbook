@@ -1185,7 +1185,6 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Ctrl+P", "palette"),
     ("Enter", "send / queue"),  # Enter/Shift+F6 last: 211x44 keeps Alt+I/A/C
     ("Shift+F6", "previous pane"),
-    ("U", "review reports"),  # last: the narrow footer drops it first
 )
 
 #: TASK-24703: `AppFooterStatus` degrades by keeping a PREFIX of the hint
@@ -1280,6 +1279,7 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
             ("f", "fork from the selected message"),
             ("r", "regenerate the selected message"),
             ("y", "open Trace for this chat (transcript keys only)"),
+            ("u", "open review reports for this chat (transcript keys only)"),
             ("More…", "Save as, feedback, delete, and diagnostics"),
             ("Escape", "clear the selection, then return to the composer"),
         ),
@@ -1933,7 +1933,8 @@ class ChatScreen(BaseAppScreen):
             )
         if action == "stop_console_run":
             return run_controls.stop_available(self)
-        if action == "open_trajectory_view":  # TASK-33622.3: list mode only
+        if action in {"open_trajectory_view", "open_code_review_reports"}:
+            # TASK-33622.3: single-letter screen actions belong to list mode.
             return run_controls.focus_in_transcript(self.focused)
         if action == "exit_console_hands_free":
             # One-line delegation (wave-2 console decomposition, task 1).

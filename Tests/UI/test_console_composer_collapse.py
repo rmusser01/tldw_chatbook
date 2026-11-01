@@ -1,6 +1,7 @@
 """Mounted regressions for the collapsible Console composer."""
 
 import inspect
+import time
 from itertools import pairwise
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -630,11 +631,28 @@ async def test_collapsed_escape_action_is_dynamic_and_setup_controls_are_inert(
             assert composer.collapsed is True
 
 
+# The app factory reads the real collection-bound config source.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_expanded_escape_clears_transcript_selection_before_focus_fallback():
     host = _ready_console_host()
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
+        # Composer mount precedes worker-owned attach/resume, which can still
+        # replace the session. Seed only after that work and its focus restore.
+        deadline = time.monotonic() + 30.0
+        while (
+            not console._console_attach_reconciled
+            or console._console_attach_resume_in_progress
+            or any(
+                timer._callback == console._restore_console_workbench_focus
+                and timer._task is not None
+                and not timer._task.done()
+                for timer in list(console._timers)
+            )
+        ):
+            assert time.monotonic() < deadline, "Console attach/resume never settled"
+            await pilot.pause(0.05)
         store = console._ensure_console_chat_store()
         message = store.append_message(
             store.active_session_id,
@@ -642,6 +660,9 @@ async def test_expanded_escape_clears_transcript_selection_before_focus_fallback
             content="selected answer",
         )
         await console._sync_native_console_chat_ui()
+        # A broad sync may coalesce and return False. Direct idle mutations
+        # use the real transcript publication path, bypassing only its cache.
+        await console._sync_native_console_transcript(force=True)
         transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         # The row lands on a later tick, and select_message ignores an id the
         # transcript does not hold yet. Esc then had nothing to clear, which

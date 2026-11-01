@@ -351,7 +351,7 @@ class ConsoleConversationActionMenu(VerticalScroll):
 
         Not named ``_detach``: that is Textual's hook for clearing a removed
         widget's parent, and shadowing it left every closed menu in the
-        registry, claiming the Console's next Esc (TASK-37620).
+        registry, claiming the Console's next Esc (TASK-37960).
         """
         if self._removal is None:
             self._removal = self.remove()

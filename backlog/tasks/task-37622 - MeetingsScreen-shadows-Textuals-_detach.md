@@ -8,14 +8,14 @@ labels:
   - meetings
   - textual
 dependencies:
-  - TASK-37620
+  - TASK-33622.3
 priority: low
 ---
 
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-MeetingsScreen defines a private _detach method (it unsubscribes from the live session). That name is Textual's hook for clearing a removed node's parent, which Textual calls when a screen is removed, and app_keep_alive also calls screen._detach() directly. The same shadowing in the Console row menus (TASK-37620) left closed menus reporting a parent and claiming the next Esc. Here a removed MeetingsScreen may keep its parent, and the session unsubscribe runs from Textual's teardown path rather than where the screen means it to.
+MeetingsScreen defines a private _detach method (it unsubscribes from the live session). That name is Textual's hook for clearing a removed node's parent, which Textual calls when a screen is removed, and app_keep_alive also calls screen._detach() directly. The same shadowing in the Console row menus found during TASK-33622.3 left closed menus reporting a parent and claiming the next Esc. Here a removed MeetingsScreen may keep its parent, and the session unsubscribe runs from Textual's teardown path rather than where the screen means it to.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

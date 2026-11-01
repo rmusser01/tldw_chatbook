@@ -1949,8 +1949,8 @@ async def test_console_registers_footer_workbench_shortcuts():
             "tab | Alt+I inspect | Alt+A approval | Alt+C context rail | "
             # Y trace belongs only to the transcript's active footer.
             "Ctrl+P palette | Enter send / queue | "
-            # TASK-35582: review reports trail, so narrow footers drop it first.
-            "Shift+F6 previous pane | U review reports | Ctrl+Q quit"
+            # Review reports, like Trace, is advertised in transcript mode.
+            "Shift+F6 previous pane | Ctrl+Q quit"
         )
 
         await console.remove()
