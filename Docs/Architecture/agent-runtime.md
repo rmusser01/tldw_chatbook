@@ -337,6 +337,42 @@ thread carries the same custody; actual dispatch checks the live phase, task,
 run, owner and activity claim after permission waits. No workflow scheduling is
 enabled by these preparation/binding APIs.
 
+`AgentService._compose_native_child` and `_launch_prepared_child` now hold the
+existing native child composition and fleet launch/settlement tail. Ordinary
+spawn retains its quota and inline branch; retained continuation enters the same
+launch tail. Startup instruction snapshots, writer, routing, cancellation and
+fleet bookkeeping are captured for the child rather than borrowed from a later
+turn.
+
+The private `_prepare_workflow_child` consumes the bridge's actual
+`ConsoleFirstRequestPlan`, target reference and fully wired service, checking
+the original task/phase, database, registry and runtime. Its frozen preparation
+lives on that original task authorization. Each workflow task owns one native
+service; another preparation or later `run_turn` cannot replace its tree state.
+The earlier direct `_run_owned` workflow seam also seals this ownership and
+retains its supported no-log path. Task8 supplies the real bridge/coordinator
+caller; these seams do not enable scheduling themselves.
+Preparation detaches the task-only native message seed, including bounded
+required inputs/handoffs, and requires the approved instruction row exactly
+once. It never borrows the parent chat or silently truncates mandatory context;
+Task8 constructs that seed from Task7-validated results.
+
+`launch_workflow_task` acquires the complete activity footprint before native
+child capacity and passes the **same** task reservation and run ID through the
+shared launcher. `_run_owned` still owns the final allowance commit and
+`_run_one` still binds the actual owner/run. Concurrent duplicate launch claims
+refuse before touching rows, capacity or clients; completed duplicate delivery
+returns the same `WorkflowChildReceipt`. Capacity/activity waits keep original
+preparation available; uncertain dispatch never replays automatically. Physical
+drain alone does not settle the required task-result journal. The receipt keeps
+the original activity claim, including a client-setup failure before run binding,
+so the coordinator can settle that exact claim after durable result capture.
+A parentless task uses its actual child identity for optional native logs and creates no invented
+supervisor or peer sender. Its task-owned writer reuses native manifest/final
+flush after model scope and row settlement, once, outside the DB-only launch
+operation; a genuine shared parent writer remains parent-owned. Its phase
+cancellation probe remains live regardless of ordinary survivor settings.
+
 Workflow tasks with effectful hooks refuse while their notification lifetime is
 unowned. Workflow skill scripts refuse in both modes until typed process/reader
 cleanup proof exists. Ordinary hooks, scripts and Goal policies keep their native

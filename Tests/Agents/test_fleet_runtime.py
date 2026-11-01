@@ -5062,3 +5062,59 @@ def test_worktree_service_propagates_malformed_run_id_without_creation(
         assert not provider._agent_roots
     finally:
         owner.finish_root()
+
+
+@pytest.mark.bootstrap_profile
+def test_shared_child_launcher_binds_one_native_owner_row_and_lifecycle(
+    db, monkeypatch
+):
+    """The extracted tail keeps ordinary fleet capacity and row ownership once."""
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+
+    service, _chat, coordinator = make_fleet_service(
+        db,
+        [
+            fence(SPAWN_TOOL_NAME, {"task": "one child"}),
+            fence(WAIT_AGENTS_TOOL_NAME, {}),
+            "parent done",
+        ],
+        {"one child": ["child done"]},
+    )
+    owners, scope_events = [], []
+    begin = service.runtime_capacity.begin_execution
+
+    def reserve(**kwargs):
+        owner = begin(**kwargs)
+        if kwargs.get("child"):
+            owners.append(owner)
+        return owner
+
+    @contextmanager
+    def child_scope():
+        owner = current_execution_owner()
+        scope_events.append(("open", owner))
+        try:
+            yield
+        finally:
+            scope_events.append(("close", owner))
+
+    monkeypatch.setattr(service.runtime_capacity, "begin_execution", reserve)
+    service._child_model_scope = child_scope
+    _, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "go"}],
+        config=FLEET_CFG,
+        api_endpoint="llama_cpp",
+    )
+    join_fleet_children(service)
+    assert outcome.status == RUN_DONE
+    children = [row for row in db.list_runs("c") if row["agent_kind"] == "subagent"]
+    assert len(owners) == len(children) == 1
+    assert owners[0].run_id == children[0]["id"]
+    assert scope_events == [("open", owners[0]), ("close", owners[0])]
+    kinds = Counter(step["kind"] for step in children[0]["steps"])
+    assert kinds["agent_run_reserved"] == kinds["agent_run_created"] == 1
+    assert service.runtime_capacity.snapshot().child_executions == 0
+    assert coordinator.live_count() == 0

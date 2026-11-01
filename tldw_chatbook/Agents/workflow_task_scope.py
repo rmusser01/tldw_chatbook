@@ -91,6 +91,9 @@ class WorkflowTaskAuthorization:
     footprint: WorktreeFootprint = field(repr=False)
     _runtime: ConsoleRuntime = field(repr=False)
     _binding_state: list = field(repr=False)
+    _native_preparation: list = field(repr=False)
+    _native_launch: list = field(repr=False)
+    _native_dispatch: list = field(repr=False)
     _lock: Lock = field(repr=False)
     _owners: tuple = field(repr=False)
 
@@ -104,6 +107,9 @@ class WorkflowTaskAuthorization:
                 object.__setattr__(self, name, value)
         object.__setattr__(self, "_runtime", runtime)
         object.__setattr__(self, "_binding_state", [])
+        object.__setattr__(self, "_native_preparation", [])
+        object.__setattr__(self, "_native_launch", [])
+        object.__setattr__(self, "_native_dispatch", [])
         object.__setattr__(self, "_lock", Lock())
         object.__setattr__(
             self,

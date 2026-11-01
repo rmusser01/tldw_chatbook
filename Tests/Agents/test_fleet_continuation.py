@@ -2087,7 +2087,9 @@ def _make_routed_service(db, parent_replies, child_replies):
     return service, chat, coordinator
 
 
-def test_continuation_reuses_snapshot_after_preset_edit(db, _default_routing):
+def test_continuation_reuses_snapshot_after_preset_edit(
+    db, _default_routing, monkeypatch
+):
     """THE snapshot-hit path: a retained child's continuation runs where
     the child ACTUALLY ran (the v16 snapshot frozen at spawn), not where
     the preset points NOW.
@@ -2124,6 +2126,16 @@ def test_continuation_reuses_snapshot_after_preset_edit(db, _default_routing):
         ],
         {"implement it": ["implemented", "continued implementing"]},
     )
+    child_owners = []
+    begin = service.runtime_capacity.begin_execution
+
+    def reserve(**kwargs):
+        owner = begin(**kwargs)
+        if kwargs.get("child"):
+            child_owners.append(owner)
+        return owner
+
+    monkeypatch.setattr(service.runtime_capacity, "begin_execution", reserve)
     _run1, outcome1 = _run(service)
     assert outcome1.status == RUN_DONE
     finished = _finished_child(coordinator)
@@ -2181,6 +2193,9 @@ def test_continuation_reuses_snapshot_after_preset_edit(db, _default_routing):
         lambda: db.get_run_fresh(resumed_row["id"])["status"] == RUN_DONE,
         "the resumed child's row never went terminal",
     )
+    assert [owner.run_id for owner in child_owners] == [old_run_id, resumed_row["id"]]
+    assert len(_subagent_rows(db)) == 2
+
 
 
 def test_continuation_without_a_snapshot_reroutes_live(db, _default_routing):

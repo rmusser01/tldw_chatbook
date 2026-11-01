@@ -24954,3 +24954,19 @@ PR3036 native validation17 (2026-11-07) returned exec session 82824. The initial
 **What to do.** Before closing a short mounted destination test, await its finite workers using the current screen's membership in `worker.node.ancestors_with_self` and `app.workers.wait_for_complete(unfinished)`. Keep app-wide long-running workers outside that set. A canvas mount proves navigation, not completion of background reads; a logging probe that happens to pass is not a cleanup condition. The final test passes with the native retirement checks unchanged.
 
 **PR #3494 follow-up.** The same route assertions passed on Windows while the shared teardown still refused to reset the profile. An executor stack after the Skills workers finished showed the scheduler acquiring Windows storage admission. The scheduler starts independently of deferred startup, so this navigation test stubs it explicitly. The test also joins native callbacks with its own deadline after the app closes, before the shared profile fixture runs. The isolated Windows case passed through teardown with the shared fixture's deadline intact.
+
+## Clearing source-profile admission can expose a separate storage-scope refusal (TASK-38529, 2026-11-01)
+
+The native child-launch baseline had98 failures at `raw_source_selection_changed`.
+Exact-node `bootstrap_profile` qualification exposed four isolated-worktree tests
+that instead failed with `operation_path_outside_scope`: the existing launch's
+AgentRuns repository operation did not authorize `_worktrees_base()` directory
+creation. A fresh interpreter loading the exact pre-change AgentService consumer
+read-only from a private temporary file reproduced all four failures with current
+dependencies; the installed shared source and admission guards were untouched.
+
+Treat profile qualification as removal of one test-setup obstacle, not proof that
+the next refusal is a regression or that the whole slice passes. Retain original,
+qualified and precisely attributed baseline evidence separately. This incident
+qualified196 other fleet cases and left four isolation bodies unqualified; it
+did not authorize widening storage scope.
