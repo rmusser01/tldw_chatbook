@@ -16,7 +16,7 @@
 
 **Baseline:** finalized design commit `8f989edc9f`. Source mapping was inspected in the current dirty checkout; unrelated staged additions are not implied to be committed prerequisites. Recheck the integrated source, symbols and schema before execution.
 
-**Status:** Implementation in progress. Tasks 1–4 passed their independent review gates; Tasks 5–10 remain pending. Runtime/UI delivery is incomplete.
+**Status:** Implementation in progress. Tasks 1–5 passed their independent review gates; Tasks 6–10 remain pending. Runtime/UI delivery is incomplete.
 
 ```text
 ADR required: no
@@ -249,9 +249,9 @@ The example demonstrates the calculation, not a required new one-line helper. Ke
 
 **Consumes:** accepted phase custody from Task 2, task definitions from Task 1, footprints from Task 3 and required atomic preconditions from Task 4. **Produces:** private `WorkflowTaskAuthorization` containing its exact phase/task attempt, native run, immutable mode/tools/scopes and live authority guard. `check_task_call(authorization, *, registry, call: ToolCall) -> None` raises a stable refusal on mismatch; its host-owned issuer requires a live accepted phase authorization and claimed task. IDs in tool arguments never select authority. Final invocation uses the same bound restriction after waits.
 
-- [ ] **1. Add negative tests** covering wrong/outside/nested alias, readonly/revoked binding, shared-provider sibling identity, alternate builtin `write_file`, a previously approved-session shell, progressive discovery, skill spawning, child/new-chat callbacks and unknown-effect MCP. Test the actual dispatch entry, not just the pure scope predicate.
-- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Agents/test_workflow_task_scope.py`.
-- [ ] **3. Wire narrowing around existing owners:**
+- [x] **1. Add negative tests** covering wrong/outside/nested alias, readonly/revoked binding, shared-provider sibling identity, alternate builtin `write_file`, a previously approved-session shell, progressive discovery, skill spawning, child/new-chat callbacks and unknown-effect MCP. Test the actual dispatch entry, not just the pure scope predicate.
+- [x] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Agents/test_workflow_task_scope.py`.
+- [x] **3. Wire narrowing around existing owners:**
 
 ```python
 # Existing guard/dispatch closures retain actual registry owner resolution.
@@ -260,9 +260,9 @@ check_task_call(authorization, registry=registry, call=call)
 ```
 
 Filter advertised tools by captured mode, but enforce the same boundary at runtime callbacks and actual invocation. Invoke-bound checks use the actual current run/task, captured native binding and registry owner; `PathAwareToolProvider.path_targets` is not a new permission grant. A sibling sharing LocalToolProvider must not see or overwrite another task's restriction. Do not replace configured hooks; compose restriction-only behavior with their current ordering and fail-closed rules.
-- [ ] **4. Check opaque mode separately.** It requires the Task 3 runtime-wide reservation and existing exact tool permission, shell arming or script trust. Serialization never converts shell/remote authority into confinement. Additional scope/dependency needs stop for replanning; neither Allow nor task prose widens the footprint. Required input/handoff paths must resolve to admitted sources.
-- [ ] **5. Run new tests plus** `Tests/Agents/test_tool_catalog.py`, `Tests/Agents/test_tool_catalog_owner_cache.py`, `Tests/Agents/test_local_tool_provider.py` affected cases, `Tests/Agents/test_fleet_runtime.py` runtime-tool gates and `Tests/Chat/test_response_rules_goal_intersection.py` to preserve existing hook/Goal separation. Add typed private-source and negative forged-ID tests at every new callback.
-- [ ] **6. Review and commit** `feat: enforce native workflow task scope at dispatch`. Inventory each supported effect route and its negative test in task notes; unsupported opaque operations refuse rather than silently falling back.
+- [x] **4. Check opaque mode separately.** It requires the Task 3 runtime-wide reservation and existing exact tool permission, shell arming or script trust. Serialization never converts shell/remote authority into confinement. Additional scope/dependency needs stop for replanning; neither Allow nor task prose widens the footprint. Required input/handoff paths must resolve to admitted sources.
+- [x] **5. Run new tests plus** `Tests/Agents/test_tool_catalog.py`, `Tests/Agents/test_tool_catalog_owner_cache.py`, `Tests/Agents/test_local_tool_provider.py` affected cases, `Tests/Agents/test_fleet_runtime.py` runtime-tool gates and `Tests/Chat/test_response_rules_goal_intersection.py` to preserve existing hook/Goal separation. Add typed private-source and negative forged-ID tests at every new callback.
+- [x] **6. Review and commit** `feat: enforce native workflow task scope at dispatch`. Inventory each supported effect route and its negative test in task notes; unsupported opaque operations refuse rather than silently falling back.
 
 <a id="task-6"></a>
 ## Task 6: Share native child launch without changing ordinary fleet behavior
