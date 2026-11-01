@@ -1111,3 +1111,45 @@ the owner loop. Exact native target and all five revisions are rechecked after
 that await. No widget is mounted, trust/plugin getter invoked or cold/custom/
 memory/source/permission qualification relaxed. Preserve cold refusal evidence
 and qualify the actual un-warmed first Send plus no-retention negative control.
+
+
+### Task9 fix1 — shared saved-session readiness and cleanup custody
+
+ADR required: yes; this clarifies existing ADR244, with no new execution or file
+authority. F02–F07 use ONE store-owned saved-conversation operation, reserved
+before I/O/native creation's first durable commit. Every observer shields the
+owned task/future. A provisional row is not a usable published owner: readiness
+includes progress, native Library policy and membership reconciliation. Actual
+failure/owner shutdown retains physical retirement and rolls back exact
+provisional state once; observer loss alone cannot cancel another opener.
+
+Presentation callers receive explicit exact cleanup custody. Terminal workspace,
+Buddy and the outer Character activation retain it until their final successful
+commit. Another successful opener adopts/publishes the ready owner and revokes
+that cleanup capability. Failed solitary unpublished restores still roll back.
+No blanket rollback suppression, hidden duplicate session, or extra registry.
+Cold saved publication defaults to the durable ID to retain Goal's existing
+sealed attempt/session contract; never renumber a live first-persisted owner,
+and refuse conflicting explicit IDs. Remote scope comes from the durable row,
+including explicit global, independently of terminal selection.
+
+Native new_chat/fork reserve their preallocated durable ID in this same operation
+before commit/copy. Their intended settings, assistant identity, opening draft
+and existing new-session project controls must be durable before a phone can
+observe publication; direct native completion joins the same readiness. Do not
+overwrite an accepted phone turn or widen project/file/permission authority.
+Source-close/orphan cleanup remains exact. Native shutdown drains owned physical
+work and detached exceptions are consumed. Focused regressions cover mixed
+native/phone readiness, presentation/cancellation, Goal iteration in both orders,
+native create/fork publication races and close/reopen. F01 separately bounds the
+saved discovery DTO (including scope/activity); F08 refreshes only current
+nonstarting registry discovery and retains stale target refusal.
+
+Fix1 implementation qualification: the common operation also joins the existing
+first-identity reservations for manual Save and durable first Send; these already
+live owners stay controllable while saved-open observers await publication. Native
+new_chat controls commit through the existing project-context writer in the native
+atomic creation transaction; fork's first commit and copy share the reservation.
+Shutdown carries saved-read cancellation through existing physical native cleanup.
+Host discovery refresh does not move a running event subscription: register and
+disconnect use the exact child captured with its parent buffer.

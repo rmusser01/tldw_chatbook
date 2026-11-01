@@ -92,6 +92,8 @@ class ConsoleRemoteCommands:
         )
         if session is None or session.incarnation_id != target.incarnation_id:
             raise ValueError("Console target incarnation changed.")
+        if not store.saved_session_ready(session):
+            raise RuntimeError("Console saved owner is still hydrating.")
         if controller._disposed or controller._shutdown_requested.is_set():
             raise RuntimeError("Console owner is shutting down.")
         return store, controller, session

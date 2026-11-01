@@ -16998,6 +16998,7 @@ class ConsoleChatController:
         )
 
         token = payload.get("_creation_token")
+        saved_producer = None
         try:
             validate_new_chat_arguments(payload)
             record = self._chat_creation_record(payload)
@@ -17055,8 +17056,16 @@ class ConsoleChatController:
                 or not record["approved"]
             ):
                 raise PermissionError("source_unavailable")
+            saved_producer = self.app.call_from_thread(
+                self.store.reserve_saved_creation, conversation_id
+            )
+            from .console_project_instructions import encode_project_context_json
+
             self.store.persistence.persist_console_conversation_with_policy(
                 conversation_id=conversation_id,
+                project_context_json=encode_project_context_json(
+                    ProjectInstructionControlState.new_session()
+                ),
                 policy_candidate=ConsoleLibraryPolicyCandidate(
                     defaults.auto_retrieve, defaults.assistant_access
                 ),
@@ -17088,16 +17097,16 @@ class ConsoleChatController:
             target = None
             try:
 
-                def restore():
+                async def restore():
                     if not self._chat_create_source_is_open(approved["session_id"]):
                         return None
-                    created_session = self.store.restore_persisted_session(
+                    created_session = await self.store.restore_persisted_session_owned(
+                        producer=saved_producer,
                         title=title,
                         workspace_id=approved["workspace_id"]
                         or CONSOLE_GLOBAL_WORKSPACE_ID,
                         persisted_conversation_id=conversation_id,
                         all_nodes=[],
-                        activate=False,
                         settings=startup.settings,
                         generation_durable_snapshot=snapshot,
                         generation_metadata_status=(
@@ -17112,7 +17121,6 @@ class ConsoleChatController:
                         initial_project_instruction_state=(
                             ProjectInstructionControlState.new_session()
                         ),
-                        prepare_progress=False,
                     )
                     self.store._project_workspace_membership_after_commit(
                         created_session
@@ -17123,14 +17131,6 @@ class ConsoleChatController:
                 if target is None:
                     result["reason"] = "source_unavailable"
                 else:
-                    from tldw_chatbook.Agents.fleet_messages import MessageError
-
-                    try:
-                        self.store.prepare_progress_inbox(
-                            target.id, expected_owner_id=target._progress_owner_id
-                        )
-                    except MessageError:
-                        pass  # Saved chat remains available for a later explicit read.
                     if approved["mode"] == "start":
                         result.update(self._start_created_chat(approved, target))
             except Exception:
@@ -17195,6 +17195,12 @@ class ConsoleChatController:
                 "error": "creation validation failed",
             }
         finally:
+            if saved_producer is not None and not saved_producer.ready:
+                self.app.call_from_thread(
+                    self.store.abort_saved_creation,
+                    saved_producer,
+                    RuntimeError("Native chat creation did not publish."),
+                )
             if isinstance(token, _ChatCreationToken):
                 token.close()
 
@@ -17418,6 +17424,7 @@ class ConsoleChatController:
         source_conv: str | None = None
         source_row: dict[str, Any] | None = None
         new_conv: str | None = None
+        saved_producer = None
         copied = 0
         if tool == "fork_chat":
             source_conv = session.persisted_conversation_id
@@ -17501,7 +17508,12 @@ class ConsoleChatController:
                         "kind": "empty_history",
                         "error": "nothing to fork yet; use new_chat",
                     }
-                new_conv = persistence.create_conversation(
+                new_conv = str(uuid4())
+                saved_producer = self.app.call_from_thread(
+                    self.store.reserve_saved_creation, new_conv
+                )
+                persistence.create_conversation(
+                    conversation_id=new_conv,
                     conversation_title=title,
                     scope_type=source_row.get("scope_type") or "global",
                     workspace_id=source_row.get("workspace_id"),
@@ -17538,6 +17550,10 @@ class ConsoleChatController:
         except ValueError as exc:
             if new_conv is not None:
                 self._discard_chat_create_orphan(db, new_conv)
+            if saved_producer is not None:
+                self.app.call_from_thread(
+                    self.store.abort_saved_creation, saved_producer, exc
+                )
             if "empty_history" in str(exc):
                 return {
                     "ok": False,
@@ -17548,6 +17564,10 @@ class ConsoleChatController:
         except Exception as exc:  # noqa: BLE001
             if new_conv is not None:
                 self._discard_chat_create_orphan(db, new_conv)
+            if saved_producer is not None:
+                self.app.call_from_thread(
+                    self.store.abort_saved_creation, saved_producer, exc
+                )
             return {"ok": False, "kind": "execution_failed", "error": str(exc)}
 
         # PR reviews #6/#10: hydrate the new session's transcript nodes on
@@ -17607,7 +17627,7 @@ class ConsoleChatController:
 
         completion_admitted = False
 
-        def complete_if_source_open(**kwargs: Any) -> bool:
+        async def complete_if_source_open(**kwargs: Any) -> bool:
             """UI THREAD: qualify the source before using the current view sink.
 
             Args:
@@ -17621,6 +17641,17 @@ class ConsoleChatController:
             if not self._chat_create_source_is_open(session_id):
                 return False
             completion_admitted = True
+            created_session = await self.store.restore_persisted_session_owned(
+                producer=saved_producer,
+                title=title,
+                workspace_id=completion_workspace_id,
+                persisted_conversation_id=new_conv,
+                all_nodes=nodes,
+                active_leaf_persisted_id=new_leaf,
+                settings=routed_settings,
+                **identity,
+            )
+            self.store._project_workspace_membership_after_commit(created_session)
             complete = self.complete_agent_chat_create
             if complete is not None:
                 complete(session_id=session_id, **kwargs)
@@ -17645,11 +17676,23 @@ class ConsoleChatController:
             except Exception:
                 # A retiring app can refuse the UI hop before running its gate.
                 # Keep unrelated completion failures on their existing path.
+                if saved_producer is not None and not saved_producer.ready:
+                    self.app.call_from_thread(
+                        self.store.abort_saved_creation,
+                        saved_producer,
+                        RuntimeError("Native fork publication failed."),
+                    )
                 if completion_admitted or self._chat_create_source_is_open(session_id):
                     raise
                 completion_allowed = False
         if not completion_allowed:
             self._discard_chat_create_orphan(db, new_conv)
+            if saved_producer is not None:
+                self.app.call_from_thread(
+                    self.store.abort_saved_creation,
+                    saved_producer,
+                    RuntimeError("Native source closed before publication."),
+                )
             return {
                 "ok": False,
                 "kind": _CHAT_CREATE_SESSION_GONE,
@@ -18207,7 +18250,6 @@ class ConsoleChatController:
 
         if recovery_cancelled:
             raise asyncio.CancelledError
-
 
     def begin_shutdown(self) -> None:
         """Synchronously fence work and marshal teardown to the owner loop.
@@ -21265,7 +21307,6 @@ class ConsoleChatController:
         )
 
         return await _controller_capture_turn_configuration_snapshot(self, session_id, context_provider=context_provider, selection=selection, _prepared_skills=_prepared_skills)
-
 
     def resolve_turn_configuration_snapshot(
         self, session_id: str
@@ -29245,12 +29286,9 @@ class ConsoleChatController:
         )
 
 
-
-
-
 _HOOK_AUTHORITY_VALUES_ORIGINAL = (
     ConsoleChatController,
-    '_hook_authority_values',
+    "_hook_authority_values",
     ConsoleChatController._hook_authority_values,
     ConsoleChatController._hook_authority_values.__code__,
     ConsoleChatController._hook_authority_values.__defaults__,
@@ -29268,19 +29306,41 @@ _CONSOLE_RECEIVED_QUEUE_METHOD = (
 # Stock sharing narrows only these directly consumed wrappers. A custom binding
 # keeps the preceding composition route; a captured change refuses publication.
 _CONSOLE_TOOL_COMPOSITION_METHODS = tuple(
-    (name, method, method.__code__, method.__globals__, method.__defaults__, method.__kwdefaults__,
-     tuple((method.__kwdefaults__ or {}).items()), method.__closure__)
-    for name in ("_compose_mcp_provider", "_compose_local_provider", "_publish_mcp_inspector_counts")
+    (
+        name,
+        method,
+        method.__code__,
+        method.__globals__,
+        method.__defaults__,
+        method.__kwdefaults__,
+        tuple((method.__kwdefaults__ or {}).items()),
+        method.__closure__,
+    )
+    for name in (
+        "_compose_mcp_provider",
+        "_compose_local_provider",
+        "_publish_mcp_inspector_counts",
+    )
     for method in (vars(ConsoleChatController)[name],)
 )
 
 
 _CONTEXT_DISPLAY_CALLBACKS = tuple(
-    (name, function, function.__code__, function.__defaults__, function.__kwdefaults__,
-     isinstance(vars(ConsoleChatController)[name], staticmethod))
-    for name in ("context_control_inputs", "_global_context_policy_overrides",
-                 "_durable_context_snapshots", "_applicable_branch_memory_state",
-                 "_held_send_echo_id")
+    (
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        isinstance(vars(ConsoleChatController)[name], staticmethod),
+    )
+    for name in (
+        "context_control_inputs",
+        "_global_context_policy_overrides",
+        "_durable_context_snapshots",
+        "_applicable_branch_memory_state",
+        "_held_send_echo_id",
+    )
     for function in (getattr(ConsoleChatController, name),)
 )
 
@@ -29319,11 +29379,21 @@ _CONSOLE_PENDING_FACTS_CALLBACK_CODES = {
 }
 
 
-
 # Direct callback definitions for optional manual Preparing display selection.
 _CONSOLE_PREPARING_CONTROLLER_READERS = tuple(
-    (name, method, method.__code__, method.__defaults__, method.__kwdefaults__,
-     tuple((method.__kwdefaults__ or {}).items()))
-    for name in ('_provider_selection', 'in_flight_run_count', '_live_busy_session_ids', 'activity_for')
+    (
+        name,
+        method,
+        method.__code__,
+        method.__defaults__,
+        method.__kwdefaults__,
+        tuple((method.__kwdefaults__ or {}).items()),
+    )
+    for name in (
+        "_provider_selection",
+        "in_flight_run_count",
+        "_live_busy_session_ids",
+        "activity_for",
+    )
     for method in (getattr(ConsoleChatController, name),)
 )

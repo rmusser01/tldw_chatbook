@@ -145,9 +145,27 @@ Served mode selects `Web_Server/console_web_driver.py` through `TldwCli` only fo
 lease survive terminal disconnect/replacement; a generation-fenced full repaint
 restores the terminal without another input thread. Parent host ownership and the
 saved-conversation reservation seam are documented in [web-server.md](web-server.md).
-Remote saved-open reserves by conversation identity before hydration. Native
-persistence publishes the same identity through the store callback; terminal,
-launch and remote opens share pending hydration and reuse one session/incarnation.
+`ConsoleChatStore.resolve_saved_session` owns one saved-identity operation and
+physical hydration task shared by terminal, Buddy, launch, Goal and remote opens.
+Every observer shields its wait; provisional restored rows cannot appear in host
+snapshots or resolve as command targets until progress/policy readiness. Native
+failure removes only that exact unpublished row. Presentation callers carry an
+opaque creator cleanup proof through their final visibility/focus commit; a
+successful remote or other opener publishes/adopts the owner and revokes cleanup.
+Runtime shutdown drains the physical read and existing native teardown before
+returning cancellation. Detached task/future failures are consumed.
+
+A cold saved owner defaults to its durable conversation ID (including Goal's
+sealed iteration binding); conflicting requested IDs refuse. A live session's
+first persistence retains its original ID. Saved opens join its existing staged
+first-identity reservation across SQL commit and native identity/policy
+publication without hiding that already-live session from normal controls.
+Native new_chat and fork reserve their preallocated durable IDs in the same store
+operation before the first commit/copy. They publish their intended settings,
+assistant identity and opening draft before observers can return. New-chat local
+project controls use the existing native metadata writer in the atomic creation
+transaction; fork preserves native non-consenting controls. The disposable fork
+view completion projects the ready owner and never rewrites its draft.
 
 `app_served.py` watches the child control connection independently of Canvas
 exposure. Genuine parent/control loss closes boot admission and automatic wakes,

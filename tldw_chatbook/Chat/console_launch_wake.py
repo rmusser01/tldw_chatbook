@@ -319,7 +319,8 @@ async def deliver_launch_wakes(app: Any, marked: Sequence[str] = ()) -> int:
             conversation_id in (session.persisted_conversation_id, session.id)
             for session in store.sessions()
         ):
-            continue  # already open (a re-entrant call); the coordinator has it
+            await store.resolve_saved_session(conversation_id)
+            continue  # Re-entrant observers adopt only a policy-ready owner.
         if not _conversation_exists_locally(app, conversation_id):
             _clear_unresolvable_mark(app, conversation_id)
             continue

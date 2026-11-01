@@ -188,10 +188,16 @@ owner death. The child separately watches genuine private-control loss, closes
 native admission/wakes, invokes native runtime disposal and exits. Disabling Canvas
 alone preserves control and terminal work.
 
-Host `reserve_saved_conversation` and `register_saved_conversation` deduplicate
-native session identity and concurrent hydration. These are the Task3 seam; Task9
-wires remote create/open and native save/hydration callbacks. Ordinary terminal
-persistence/hydration remains native. Remote saved-open is not qualified here.
+Host `reserve_saved_conversation` and `register_saved_conversation` retain native
+identity metadata; the authoritative shared readiness/custody operation lives in
+`ConsoleChatStore` (see [console.md](console.md)). Remote saved opens explicitly
+use the saved row's global/workspace scope, independently of desktop selection.
+Canonical saved listings allow only bounded ID/title/scope/workspace/activity
+summaries, excluding prompts and raw metadata. Nonstarting adapter discovery
+refreshes the registry's current live host; old exact targets remain stale. An
+event stream pins registration, buffer reads and disconnect to its captured child,
+even if discovery later observes a successor. Lost registration acknowledgements
+still attempt cleanup of that same child's client claim.
 
 Evidence lives in `Tests/Web_Server/test_served_console_hosts.py`,
 `test_console_web_driver.py`, `test_served_shell_browser.py` and focused

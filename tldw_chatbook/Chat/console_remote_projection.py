@@ -255,6 +255,8 @@ class ConsoleRemoteProjection:
             sessions = store.sessions() if store is not None else []
         rows = []
         for session in sessions:
+            if not store.saved_session_ready(session):
+                continue
             scope = dict(
                 self.host_identity.model_dump(),
                 session_id=session.id,

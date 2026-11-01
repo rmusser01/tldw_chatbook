@@ -139,7 +139,16 @@ def real_db_controller(tmp_path):
     persistence = ChatPersistenceService(db)
     store = ConsoleChatStore(persistence=persistence)
     controller = ConsoleChatController(store=store, provider_gateway=object())
-    controller.app = _FakeApp()
+
+    class CreationApp(_FakeApp):
+        def call_from_thread(self, callback, *args, **kwargs):
+            import asyncio
+            import inspect
+
+            result = callback(*args, **kwargs)
+            return asyncio.run(result) if inspect.isawaitable(result) else result
+
+    controller.app = CreationApp()
     completed = []
     controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
     try:
@@ -818,7 +827,7 @@ def test_fork_from_child_run_context_copies_parent_conversation(real_db_controll
     assert handoff["conversation_id"] == outcome["conversation_id"]
 
 
-def _prepare_close_new_chat(controller, session_id, title):
+def _prepare_close_new_chat(controller, session_id, title, opening_prompt=""):
     """Prepare the exact live primary request used by Close integration fixtures."""
     from types import SimpleNamespace
     from tldw_chatbook.Agents.run_context import use_run_id
@@ -873,6 +882,7 @@ def _prepare_close_new_chat(controller, session_id, title):
                 "tool": "new_chat",
                 "session_id": session_id,
                 "title": title,
+                "opening_prompt": opening_prompt,
                 "source_run_id": run,
                 "source_message_id": message_id,
             }
@@ -880,10 +890,12 @@ def _prepare_close_new_chat(controller, session_id, title):
     return prepared, run
 
 
-def _approve_close_new_chat(controller, source, title):
+def _approve_close_new_chat(controller, source, title, opening_prompt=""):
     from tldw_chatbook.Agents.run_context import use_run_id
 
-    prepared, run = _prepare_close_new_chat(controller, source.id, title)
+    prepared, run = _prepare_close_new_chat(
+        controller, source.id, title, opening_prompt
+    )
 
     def approve(pending):
         if pending:
@@ -1016,6 +1028,7 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
             close_at.startswith("ui-handoff")
             and threading.current_thread() is worker
             and not queued
+            and callback.__name__ in {"restore", "complete_if_source_open"}
         ):
             queued.append((callback, args, kwargs))
             entered.set()
@@ -1049,7 +1062,7 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         assert not any(s.id == source.id for s in controller.store.sessions())
         if queued and close_at != "ui-handoff-error":
             callback, args, kwargs = queued[0]
-            result["ui_result"] = callback(*args, **kwargs)
+            result["ui_result"] = original_marshal(callback, *args, **kwargs)
     finally:
         release.set()
         worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
@@ -1100,6 +1113,8 @@ def test_chat_create_completion_uses_the_current_view_sink(
         kwargs
     )
 
+    original_marshal = controller.app.call_from_thread
+
     def handoff_after_view_change(callback, *args, **kwargs):
         """Execute the actual queued callback after changing its UI sink.
 
@@ -1116,7 +1131,7 @@ def test_chat_create_completion_uses_the_current_view_sink(
             if view_change == "detached"
             else lambda **fields: new_completed.append(fields)
         )
-        return callback(*args, **kwargs)
+        return original_marshal(callback, *args, **kwargs)
 
     monkeypatch.setattr(controller.app, "call_from_thread", handoff_after_view_change)
     outcome = controller.execute_agent_chat_create(prepared)
@@ -1139,16 +1154,17 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
     controller, db = real_db_controller
     source = controller.store.create_session(title="Source")
     prepared = _approve_close_new_chat(controller, source, "Placed chat")
-    original_restore = controller.store.restore_persisted_session
+    original_restore = controller.store.restore_persisted_session_owned
+    original_marshal = controller.app.call_from_thread
     placed = []
 
-    def place_then_fail(**kwargs):
+    async def place_then_fail(**kwargs):
         """Place the durable chat before a subsequent UI completion failure.
 
         Args:
             kwargs: Real executor completion inputs.
         """
-        placed.append(original_restore(**kwargs))
+        placed.append(await original_restore(**kwargs))
         raise RuntimeError("completion failed after placement")
 
     def retire_before_worker_receives_error(callback, *args, **kwargs):
@@ -1163,7 +1179,7 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
             The actual callback result if it succeeds.
         """
         try:
-            return callback(*args, **kwargs)
+            return original_marshal(callback, *args, **kwargs)
         except RuntimeError:
             ticket = controller.begin_session_close(
                 source.id,
@@ -1174,7 +1190,9 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
             controller.finalize_session_close(ticket)
             raise
 
-    monkeypatch.setattr(controller.store, "restore_persisted_session", place_then_fail)
+    monkeypatch.setattr(
+        controller.store, "restore_persisted_session_owned", place_then_fail
+    )
     monkeypatch.setattr(
         controller.app, "call_from_thread", retire_before_worker_receives_error
     )

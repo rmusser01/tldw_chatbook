@@ -23721,9 +23721,8 @@ class ChatScreen(BaseAppScreen):
         ``console_agent_handoff`` draft into the new session's composer
         and defers clearing the persisted key to that session's FIRST
         activation, so an unopened draft survives an app restart. The
-        explicit draft fill below is KEPT as an idempotent same-value
-        write and as the safety net for a degraded restore-side handoff
-        read.
+        controller completes that restoration before this disposable view
+        callback; this callback never rewrites a draft accepted by the phone.
 
         Args:
             session_id: The OWNING (source) session of the confirmed run.
@@ -23751,41 +23750,16 @@ class ChatScreen(BaseAppScreen):
         store = controller.store
         try:
             if tool == "fork_chat":
-                session = store.restore_persisted_session(
-                    title=title,
-                    workspace_id=workspace_id,
-                    persisted_conversation_id=conversation_id,
-                    all_nodes=nodes or [],
-                    active_leaf_persisted_id=active_leaf_persisted_id,
-                    settings=settings,
-                    assistant_kind=assistant_kind,
-                    assistant_id=assistant_id,
-                    assistant_authority_id=assistant_authority_id,
-                    persona_memory_mode=persona_memory_mode,
-                    character_id=character_id,
-                    character_name=character_name,
-                    activate=False,
-                    prepare_progress=False,
+                session = next(
+                    (
+                        s
+                        for s in store.sessions()
+                        if s.persisted_conversation_id == conversation_id
+                    ),
+                    None,
                 )
-
-                async def prepare_created_progress() -> None:
-                    from ...Agents.fleet_messages import MessageError
-
-                    try:
-                        await store.prepare_progress_inbox_owned(session.id)
-                    except MessageError:
-                        pass  # Durable chat remains available for a later explicit read.
-
-                self.run_worker(
-                    prepare_created_progress(),
-                    exclusive=True,
-                    group=f"console-progress-restore-{session.id}",
-                )
-                # Single write path: the restore rehydrates the draft from
-                # the persisted console_agent_handoff key; this fill only
-                # covers a degraded restore-side read (empty draft).
-                if opening_prompt and not session.draft:
-                    store.set_session_draft(session.id, opening_prompt)
+                if session is None or not store.saved_session_ready(session):
+                    raise RuntimeError("Native fork owner is not ready.")
             self._workspace._invalidate_console_persisted_rows_cache()
             self.run_worker(
                 self._sync_native_console_chat_ui, exclusive=True, group="console-sync"

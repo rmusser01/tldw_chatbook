@@ -536,7 +536,9 @@ class ConsoleGoalCoordinator:
         if existing is not None:
             if existing.persisted_conversation_id != goal.conversation_id:
                 raise ValueError("conversation_identity_conflict")
-            return existing
+            return await self.controller.store.resolve_saved_session(
+                goal.conversation_id, session_id=goal.conversation_id
+            )
         tree = await load_console_conversation_tree(app, goal.conversation_id)
         if tree is None:
             raise ValueError("goal_conversation_missing")
@@ -999,6 +1001,10 @@ class ConsoleGoalCoordinator:
         if session is None:
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "goal_session_missing"
+            )
+        if not self.controller.store.saved_session_ready(session):
+            return GoalIterationResult(
+                goal_id, 0, None, None, None, "goal_session_loading"
             )
         if session.assistant_kind == "character":
             return GoalIterationResult(

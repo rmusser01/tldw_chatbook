@@ -1582,6 +1582,7 @@ class ChatPersistenceService:
         conversation_id: str,
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
+        project_context_json: str | None = None,
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit a first conversation row and its Library policy together."""
         self.validate_workspace_target(**conversation_kwargs)
@@ -1601,6 +1602,10 @@ class ChatPersistenceService:
             if result.status is not ConsoleLibraryPolicyWriteStatus.COMMITTED:
                 raise RuntimeError(
                     "Console Library policy could not be committed with conversation."
+                )
+            if project_context_json is not None:
+                self.db.set_conversation_console_project_context(
+                    conversation_id, project_context_json
                 )
         return result.snapshot
 
@@ -4260,4 +4265,3 @@ class ChatPersistenceService:
             are omitted.
         """
         return self.db.get_generation_metadata_for_messages(message_ids)
-

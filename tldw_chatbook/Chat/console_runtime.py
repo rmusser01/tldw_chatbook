@@ -2266,10 +2266,10 @@ class ConsoleRuntime:
             identities.setdefault(conversation_id, session_id)
 
     async def open_remote_conversation(self, conversation_id: str):
-        """Share hydration of a saved identity, retaining it across observer loss."""
+        """Open the one ready native saved owner, independently of desktop scope."""
         from .console_conversation_hydration import (
+            _hydrate_console_session,
             hydrate_console_generation_settings,
-            hydrate_console_session,
             load_console_conversation_tree,
         )
         from .console_launch_wake import _ensure_launch_runtime
@@ -2279,45 +2279,35 @@ class ConsoleRuntime:
         if controller is None:
             raise RuntimeError("Console owner is unavailable.")
         store = controller.store
-        # Persistence publishes the identity on the native session. Always consult
-        # that owner before the reservation table, including terminal-created chats.
-        reservations = getattr(self, "_remote_saved_opens", None)
-        if reservations is None:
-            reservations = self._remote_saved_opens = {}
-        if conversation_id not in reservations:
-            pending = getattr(store, "_saved_hydrations", {}).get(conversation_id)
-            if pending is not None:
-                return await asyncio.shield(pending)
-            matches = [s for s in store.sessions() if s.persisted_conversation_id == conversation_id]
-            preferred = getattr(self, "_remote_saved_sessions", {}).get(conversation_id)
-            if matches:
-                return next((s for s in matches if s.id == preferred), matches[0])
-        task = reservations.get(conversation_id)
-        if task is None:
-            async def hydrate():
-                try:
-                    tree = await load_console_conversation_tree(self._app, conversation_id)
-                    self._raise_if_disposed_or_session_fenced(None)
-                    if tree is None:
-                        raise ValueError("Saved conversation is unavailable.")
-                    # A native caller may have opened it while the read was pending.
-                    matches = [s for s in store.sessions() if s.persisted_conversation_id == conversation_id]
-                    if matches:
-                        return matches[0]
-                    settings = hydrate_console_generation_settings(
-                        getattr(self._app, "app_config", {}) or {}, tree["conversation"])
-                    session = await hydrate_console_session(
-                        app=self._app, store=store, conversation_id=conversation_id, tree=tree,
-                        settings=settings.settings, generation_durable_snapshot=settings.durable_snapshot,
-                        generation_metadata_status=settings.metadata_status, activate=False,
-                    )
-                    self.register_saved_conversation(session.id, conversation_id)
-                    return session
-                finally:
-                    reservations.pop(conversation_id, None)
-            task = asyncio.create_task(hydrate(), name="open-saved-console")
-            reservations[conversation_id] = task
-        return await asyncio.shield(task)
+
+        async def hydrate(operation):
+            tree = await load_console_conversation_tree(self._app, conversation_id)
+            self._raise_if_disposed_or_session_fenced(None)
+            if tree is None:
+                raise ValueError("Saved conversation is unavailable.")
+            conversation = tree["conversation"]
+            settings = hydrate_console_generation_settings(
+                getattr(self._app, "app_config", {}) or {}, conversation
+            )
+            session = await _hydrate_console_session(
+                app=self._app,
+                store=store,
+                conversation_id=conversation_id,
+                tree=tree,
+                settings=settings.settings,
+                generation_durable_snapshot=settings.durable_snapshot,
+                generation_metadata_status=settings.metadata_status,
+                target_scope_type="workspace"
+                if conversation.get("workspace_id")
+                else "global",
+                target_workspace_id=conversation.get("workspace_id"),
+                activate=False,
+                _operation=operation,
+            )
+            self.register_saved_conversation(session.id, conversation_id)
+            return session
+
+        return await store.resolve_saved_session(conversation_id, hydrate)
 
     def ensure_remote_projection(self, host_identity):
         """Bind private served projection to the authenticated parent incarnation."""
@@ -2790,7 +2780,6 @@ class ConsoleRuntime:
         if getattr(controller, "store", None) is store and callable(changed):
             changed(session_id)
 
-
     def _require_received_custody_current(self, record, controller) -> None:
         from .console_received_dispatch import require_received_custody_current
 
@@ -2912,7 +2901,6 @@ class ConsoleRuntime:
             for record in self._turn_custody.values()
         )
 
-
     def cancel_received_intents(self, session_id: str | None = None) -> bool:
         """Cancel existing intake custody, including a queue/review with no claim."""
         cancelled = False
@@ -2932,7 +2920,6 @@ class ConsoleRuntime:
         if callable(cancel_reviews):
             cancel_reviews(session_id)
         return cancelled
-
 
     def _project_received_input(self, record) -> None:
         from .console_received_dispatch import project_received_input
@@ -4837,7 +4824,6 @@ class ConsoleRuntime:
         self._activity_hydration_task = task
         return task
 
-
     async def _drain_activity_hydration(self) -> bool:
         """Join the exact hydration owner, retaining cancellation until it settles."""
         task = self._activity_hydration_task
@@ -4853,8 +4839,6 @@ class ConsoleRuntime:
                 break
         self._consume_task_outcome(task)
         return cancelled
-
-
 
     def ensure_chat_controller(self, **kwargs: Any) -> "ConsoleChatController":
         """Return the Console chat controller, creating it lazily.
@@ -4990,7 +4974,6 @@ class ConsoleRuntime:
         )
         return await asyncio.shield(answer)
 
-
     def _hook_review_presentation_current(
         self,
         review_id: str,
@@ -5014,7 +4997,6 @@ class ConsoleRuntime:
             and projection.attachment_generation == self._attached_generation
         )
 
-
     @staticmethod
     async def _await_hook_review_work(task):
         """Retain the original finite producer through repeated waiter cancellation."""
@@ -5031,7 +5013,6 @@ class ConsoleRuntime:
                 task.exception()
             raise cancelled
         return task.result()
-
 
     async def _execute_hook_review_operation(self, host, operation, expected, keys):
         snapshot = None
@@ -5089,7 +5070,6 @@ class ConsoleRuntime:
                     snapshot = producer.result()
             host.finish_hook_review_operation(operation, snapshot, error=error)
 
-
     def _start_hook_review_operation(self, host, operation, expected, keys):
         coroutine = self._execute_hook_review_operation(host, operation, expected, keys)
         try:
@@ -5113,7 +5093,6 @@ class ConsoleRuntime:
 
         task.add_done_callback(finished)
         return task
-
 
     async def apply_hook_review_action(
         self,
@@ -5145,7 +5124,6 @@ class ConsoleRuntime:
         task = self._start_hook_review_operation(host, operation, expected, keys)
         return await self._await_hook_review_work(task)
 
-
     def resolve_initial_hook_review(
         self,
         review_id: str,
@@ -5172,7 +5150,6 @@ class ConsoleRuntime:
             review_id, generation, result, presentation_token=presentation_token
         )
 
-
     async def _drain_hook_review_operations(self, session_id=None) -> bool:
         controller = self._chat_controller
         host = getattr(controller, "_interrupt_host", None)
@@ -5191,7 +5168,6 @@ class ConsoleRuntime:
                         ) from None
                     cancelled = True
         return cancelled
-
 
     def ensure_hook_permissions(self) -> HookPermissions:
         """Return the app-owned consent owner, independent of any view."""
@@ -6106,13 +6082,13 @@ class ConsoleRuntime:
         refuses work through its permanently-set cancellation Event, which
         is exactly the right answer at exit.
         """
-        # Hydration owns physical reads independently of the requesting socket.
-        # Retire these retained tasks before normal store/DB disposal.
-        openings = tuple(getattr(self, "_remote_saved_opens", {}).values())
-        hydrations = tuple(getattr(self._chat_store, "_saved_hydrations", {}).values())
-        if openings or hydrations:
+        saved_cancelled = False
+        if self._chat_store is not None:
             self._disposed = True
-            await asyncio.gather(*(asyncio.shield(task) for task in (*openings, *hydrations)), return_exceptions=True)
+            try:
+                await self._chat_store.close_saved_session_operations()
+            except asyncio.CancelledError:
+                saved_cancelled = True
         if self._remote_projection is not None:
             self._remote_projection.close()
         controller = self._chat_controller
@@ -6121,7 +6097,11 @@ class ConsoleRuntime:
             # Capture only the installed stock field; custom facade getters
             # and optional presentation methods remain outside this cleanup.
             try:
-                namespace = object.__getattribute__(controller, "__dict__") if controller is not None else {}
+                namespace = (
+                    object.__getattribute__(controller, "__dict__")
+                    if controller is not None
+                    else {}
+                )
             except (AttributeError, TypeError):
                 namespace = {}
             candidate = namespace.get("_fleet_wake")
@@ -6136,7 +6116,7 @@ class ConsoleRuntime:
                 _recovery_owner=recovery_owner,
             )
         finally:
-            cancelled = False
+            cancelled = saved_cancelled
             if recovery_owner is not None:
                 cancelled |= await recovery_owner.drain_recovery()
             if controller is not None:
@@ -6148,7 +6128,6 @@ class ConsoleRuntime:
             cancelled |= await self._drain_activity_hydration()
             if cancelled:
                 raise asyncio.CancelledError
-
 
     async def _dispose_owned(
         self,

@@ -82,11 +82,33 @@ class CanonicalMobileReads:
         )
         return _wire_safe(
             {
-                "items": result["items"],
+                "items": [self._saved_summary(row) for row in result["items"]],
                 "page": page,
                 "has_more": result["pagination"]["has_more"],
             }
         )
+
+    @staticmethod
+    def _saved_summary(row: dict[str, Any]) -> dict[str, Any]:
+        """Allowlist inert bounded discovery fields, never automatic bodies."""
+        from tldw_chatbook.Canvas.limits import validate_opaque_identifier
+
+        identity = validate_opaque_identifier(row["id"], field_name="conversation ID")
+        workspace = row.get("workspace_id")
+        if workspace is not None:
+            workspace = validate_opaque_identifier(workspace, field_name="workspace ID")
+        return {
+            "id": identity,
+            "title": str(row.get("title") or "Saved conversation")[:160],
+            "scope_type": "workspace" if workspace is not None else "global",
+            "workspace_id": workspace,
+            "last_modified": str(_wire_safe(row["last_modified"]))[:64]
+            if row.get("last_modified") is not None
+            else None,
+            "created_at": str(_wire_safe(row["created_at"]))[:64]
+            if row.get("created_at") is not None
+            else None,
+        }
 
     def session_messages(self, conversation_id, **coordinates):
         result = ChatConversationService(
@@ -279,9 +301,11 @@ class MobileChatService:
         if start:
             await asyncio.to_thread(self.require_cutover)
             self._host = await self.hosts.get_or_start(self.storage_identity)
-        if self._host is None:
-            getter = getattr(self.hosts, "get_existing", None)
-            self._host = getter(self.storage_identity) if getter else None
+        getter = getattr(self.hosts, "get_existing", None)
+        if getter is not None:
+            # Discovery follows the registry's current owner, including a
+            # terminal-started successor; it never bootstraps or replays.
+            self._host = getter(self.storage_identity)
         if self._host is None or self._host._closed:
             raise MobileOwnerUnavailable("console_unavailable")
         child_id = self._host.service.app_service_id
@@ -420,9 +444,11 @@ class MobileChatService:
         buffer = self.broker.console_events(child_id)
         sequence = 0
         try:
-            await self._request(
+            await self.broker.request(
+                child_id,
                 "console.events.request",
-                {"operation": "register", "client_id": client_id},
+                {"request": {"operation": "register", "client_id": client_id}},
+                timeout=5,
             )
             while not self._closed:
                 batch = buffer.read(sequence)
@@ -443,9 +469,11 @@ class MobileChatService:
                 await buffer.wait_changed(sequence)
         finally:
             try:
-                await self._request(
+                await self.broker.request(
+                    child_id,
                     "console.events.request",
-                    {"operation": "disconnect", "client_id": client_id},
+                    {"request": {"operation": "disconnect", "client_id": client_id}},
+                    timeout=5,
                 )
             except Exception as error:  # noqa: BLE001 - cleanup must preserve the original stream outcome.
                 logger.debug(

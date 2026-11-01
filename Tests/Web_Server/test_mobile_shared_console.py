@@ -1068,3 +1068,70 @@ async def test_lost_subscription_ack_releases_only_its_native_claim(
         await anext(stream)
     assert not case.app.console_runtime._remote_projection._clients
     assert not case.app.console_runtime._disposed
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.loopback_network
+@pytest.mark.asyncio
+async def test_saved_listing_is_bounded_metadata_only_without_start_or_writer(
+    shared_mobile_case, mobile_surface_gate, tmp_path, monkeypatch
+):
+    import json
+
+    from Tests.Web_Server.test_mobile_api import _logged_in_client
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    case = shared_mobile_case
+    core = case.app.chachanotes_db
+    for index in range(3):
+        core.add_conversation(
+            {
+                "title": "SAVED_LABEL_" + str(index) + "x" * 20000,
+                "system_prompt": "AUTOMATIC_PROMPT_SENTINEL" * 10000,
+                "metadata": json.dumps(
+                    {"private_body": "RAW_METADATA_SENTINEL" * 10000}
+                ),
+            }
+        )
+    core.close_connection()
+    opened = []
+    original = CharactersRAGDB.__init__
+
+    def read_only(actual, *args, **kwargs):
+        assert kwargs.get("_read_only") is True, "Listing opened a canonical writer"
+        opened.append(True)
+        return original(actual, *args, **kwargs)
+
+    monkeypatch.setattr(CharactersRAGDB, "__init__", read_only)
+    phone = tmp_path / "saved-list-phone"
+    phone.mkdir()
+    async with _logged_in_client(phone, service=case.service) as client:
+        responses = []
+        for page in (1, 2):
+            response = await client.get(
+                f"/api/v1/mobile/conversations?page={page}&per_page=2"
+            )
+            assert response.status == 200, await response.text()
+            body = await response.json()
+            wire = json.dumps(body)
+            assert "AUTOMATIC_PROMPT_SENTINEL" not in wire
+            assert "RAW_METADATA_SENTINEL" not in wire
+            assert len(wire) < 2048
+            assert body["page"] == page
+            assert len(body["items"]) == 2
+            for row in body["items"]:
+                assert set(row) == {
+                    "id",
+                    "title",
+                    "scope_type",
+                    "workspace_id",
+                    "last_modified",
+                    "created_at",
+                }
+                assert len(row["title"]) <= 160
+            responses.append(body)
+        assert responses[0]["has_more"] is True
+        assert responses[1]["has_more"] is False
+        assert len({row["id"] for body in responses for row in body["items"]}) == 4
+    assert opened and case.host_start_count == 0
+    assert case.app.console_runtime.chat_store is None

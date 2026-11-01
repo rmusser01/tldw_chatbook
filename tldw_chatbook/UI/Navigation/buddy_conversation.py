@@ -175,6 +175,7 @@ class BuddyConversationCoordinator:
         runtime = self._runtime
         store = None
         restored = None
+        cleanup_owner = object()
         try:
             if not await self._read_saved_availability(target):
                 raise ValueError("This saved conversation is missing or unavailable.")
@@ -225,6 +226,12 @@ class BuddyConversationCoordinator:
                     raise ValueError(
                         "This conversation binding changed. Choose it again."
                     )
+                await store.resolve_saved_session(target)
+                matched = binding.resolve_session(store.sessions())
+                if matched is None:
+                    raise ValueError(
+                        "This conversation binding changed. Choose it again."
+                    )
                 self.controller._interrupt_host.retain_decision_target(matched.id)
                 self.notices[binding] = ""
                 return
@@ -245,12 +252,14 @@ class BuddyConversationCoordinator:
                 else None,
                 activate=False,
                 prepared_data=prepared_data,
+                cleanup_owner=cleanup_owner,
             )
             record_available = await self._read_saved_availability(target)
             if self.controller is None or runtime._disposed or not record_available:
                 raise ValueError("This saved conversation is no longer available.")
             if binding.resolve_session(store.sessions()) is not restored:
                 raise ValueError("This conversation binding changed. Choose it again.")
+            store.publish_restored_session(restored, cleanup_owner=cleanup_owner)
             self.notices[binding] = ""
             self.controller._interrupt_host.retain_decision_target(restored.id)
         except Exception:  # noqa: BLE001 - retain a bounded unavailable state
@@ -259,6 +268,7 @@ class BuddyConversationCoordinator:
                     restored.id,
                     expected_session=restored,
                     prior_active_session_id=store.active_session_id,
+                    cleanup_owner=cleanup_owner,
                 )
             self.notices[binding] = (
                 "This saved conversation could not be loaded. Open Console to retry."

@@ -255,3 +255,158 @@ def test_read_only_cached_handle_obeys_ordinary_pause(tmp_path, owner):
     finally:
         pause.resume()
         reader.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_nonstarting_discovery_replaces_retired_cache_and_fences_old_host():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Chat.console_remote_commands import ConsoleRemoteCommands
+    from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
+    from tldw_chatbook.Web_Server.mobile_service import MobileChatService
+    from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
+    from tldw_chatbook.Web_Server.served_console_hosts import (
+        ServedConsoleHost,
+        ServedConsoleHosts,
+    )
+
+    starts = []
+
+    class Service:
+        def __init__(self, **callbacks):
+            self.app_service_id = "native-child-" + str(len(starts))
+            self._process = SimpleNamespace(returncode=None)
+
+        async def start(self, width, height):
+            starts.append(self.app_service_id)
+
+        async def stop(self):
+            self._process.returncode = 0
+
+    hosts = ServedConsoleHosts(lambda identity: ServedConsoleHost(Service))
+    buffer = ConsoleEventBuffer()
+
+    class Broker:
+        async def wait_connected(self, child_id, **kwargs):
+            pass
+
+        def console_events(self, child_id):
+            return buffer
+
+        async def request(self, child_id, method, payload, **kwargs):
+            identity = ConsoleHostIdentity(
+                server_epoch="server-epoch", console_id=child_id
+            )
+            if method == "console.snapshot.request":
+                return SimpleNamespace(
+                    payload={
+                        "snapshot": dict(
+                            identity.model_dump(),
+                            sequence=0,
+                            reset_required=False,
+                            execution_admitted=True,
+                        )
+                    }
+                )
+            if method == "console.ticket.request":
+                native = ConsoleRemoteCommands(
+                    SimpleNamespace(
+                        _raise_if_disposed_or_session_fenced=lambda _: None
+                    ),
+                    identity,
+                )
+                native._require_host(
+                    ConsoleHostIdentity.model_validate(payload["request"]["target"])
+                )
+                raise AssertionError("Old-host ticket reached issuance")
+            return SimpleNamespace(payload={})
+
+    service = MobileChatService(
+        hosts=hosts,
+        storage_identity="canonical",
+        broker=Broker(),
+        readers=SimpleNamespace(close=lambda: None),
+        require_cutover=lambda: None,
+    )
+    try:
+        old = await hosts.get_or_start("canonical")
+        old_identity = await service.bootstrap_host()
+        await old.aclose()
+        current = await hosts.get_or_start("canonical")
+        assert current is not old and len(starts) == 2
+        snapshot = await service.snapshot()
+        assert snapshot["console_id"] == current.service.app_service_id
+        stream = service.events(client_id="reconnecting-phone")
+        await stream.aclose()
+        assert len(starts) == 2
+        with pytest.raises(ValueError, match="owner changed"):
+            await service.issue_command_ticket(
+                "create", old_identity, {"workspace_id": "global"}
+            )
+        assert len(starts) == 2
+    finally:
+        await service.shutdown()
+        await hosts.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replacement", ["registration", "cleanup"])
+async def test_event_stream_pins_exact_child_across_successor_discovery(replacement):
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Web_Server.mobile_service import MobileChatService
+    from tldw_chatbook.Web_Server.served_console_events import ConsoleEventBuffer
+
+    hosts = SimpleNamespace(
+        current=SimpleNamespace(
+            _closed=False, service=SimpleNamespace(app_service_id="child-A")
+        )
+    )
+    hosts.get_existing = lambda identity: hosts.current
+    entered, release = asyncio.Event(), asyncio.Event()
+    buffers = {child: ConsoleEventBuffer() for child in ("child-A", "child-B")}
+    calls = []
+
+    class Broker:
+        async def wait_connected(self, child_id, **kwargs):
+            entered.set()
+            await release.wait()
+
+        def console_events(self, child_id):
+            return buffers[child_id]
+
+        async def request(self, child_id, method, payload, **kwargs):
+            calls.append((child_id, payload["request"]["operation"]))
+            return SimpleNamespace(payload={})
+
+    service = MobileChatService(
+        hosts=hosts,
+        storage_identity="canonical",
+        broker=Broker(),
+        readers=SimpleNamespace(close=lambda: None),
+        require_cutover=lambda: None,
+    )
+    stream = service.events(client_id="same-phone")
+    first = asyncio.create_task(anext(stream))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        if replacement == "registration":
+            hosts.current = SimpleNamespace(
+                _closed=False, service=SimpleNamespace(app_service_id="child-B")
+            )
+        buffers["child-A"].publish("console.changed", {"sequence": 1})
+        release.set()
+        event = await asyncio.wait_for(first, 1)
+        assert event.type == "console.changed"
+        hosts.current = SimpleNamespace(
+            _closed=False, service=SimpleNamespace(app_service_id="child-B")
+        )
+    finally:
+        release.set()
+        if not first.done():
+            first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+        await stream.aclose()
+        await service.shutdown()
+    assert calls == [("child-A", "register"), ("child-A", "disconnect")]

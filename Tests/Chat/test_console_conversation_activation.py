@@ -11,7 +11,10 @@ from tldw_chatbook.Character_Chat.character_conversation_navigation import (
     LocalCharacterConversationTarget,
     ResolvedLocalCharacterKey,
 )
-from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_chat_store import (
+    ConsoleChatStore,
+    ConsoleSavedSessionCleanup,
+)
 from tldw_chatbook.Chat.console_conversation_activation import (
     CharacterConversationActivationRequest,
     ConsoleActivationCommit,
@@ -700,8 +703,9 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     controller._screen = screen
     controller._chat_store_accessor = lambda: store
 
-    async def hydrate(_conversation_id):
+    async def hydrate(_conversation_id, *, restore_cleanup_owner=None):
         store.restore_persisted_session(
+            cleanup_owner=restore_cleanup_owner,
             title="Target",
             workspace_id=None,
             persisted_conversation_id="conversation-X",
@@ -768,7 +772,7 @@ async def test_cancelled_transcript_publication_removes_only_owned_cold_runtime(
     )
     controller._chat_store_accessor = lambda: store
 
-    async def hydrate(conversation_id):
+    async def hydrate(conversation_id, *, restore_cleanup_owner=None):
         nonlocal target_runtime
         assert conversation_id == "conversation-X"
         if target_runtime is None:
@@ -776,6 +780,7 @@ async def test_cancelled_transcript_publication_removes_only_owned_cold_runtime(
                 title="Target",
                 workspace_id=None,
                 persisted_conversation_id=conversation_id,
+                cleanup_owner=restore_cleanup_owner,
                 all_nodes=[],
             )
         else:
@@ -824,13 +829,17 @@ async def test_workspace_final_screen_transfer_failure_rolls_back_exact_owned_se
     controller._chat_store_accessor = lambda: store
 
     async def open_target(_request):
+        cleanup_owner = object()
         owned = store.restore_persisted_session(
+            cleanup_owner=cleanup_owner,
             title="Target",
             workspace_id=None,
             persisted_conversation_id="conversation-X",
             all_nodes=[],
         )
-        return ConsoleActivationCommit(True, owned)
+        return ConsoleActivationCommit(
+            True, ConsoleSavedSessionCleanup(owned, cleanup_owner)
+        )
 
     async def restore(prior_session_id):
         store.switch_session(prior_session_id)
@@ -903,7 +912,9 @@ async def test_committed_workspace_revalidates_after_hydration_and_rolls_back_ow
         controller._chat_store_accessor = lambda: store
 
         async def open_then_mutate(_request):
+            cleanup_owner = object()
             owned = store.restore_persisted_session(
+                cleanup_owner=cleanup_owner,
                 title="Target",
                 workspace_id=None,
                 persisted_conversation_id="conversation-X",
@@ -911,7 +922,9 @@ async def test_committed_workspace_revalidates_after_hydration_and_rolls_back_ow
             )
             with db.transaction(immediate=True) as connection:
                 connection.execute(mutation)
-            return ConsoleActivationCommit(True, owned)
+            return ConsoleActivationCommit(
+                True, ConsoleSavedSessionCleanup(owned, cleanup_owner)
+            )
 
         async def restore(prior_session_id):
             store.switch_session(prior_session_id)
