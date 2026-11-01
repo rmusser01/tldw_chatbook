@@ -522,6 +522,14 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) 
             message = f"fs_patch failed [{exc.reason_code}]: {rel_path}"
             if getattr(exc, "detail", None):
                 message += f" — {HINT_LABEL}: {exc.detail}"
+            if summaries and not dry_run:
+                message += f"; earlier effects retained: {'; '.join(summaries)}"
+            raise LocalToolError(message) from exc
+        except LocalToolError as exc:
+            prior = "; ".join(summaries)
+            message = f"fs_patch failed: {rel_path}: {exc}"
+            if prior and not dry_run:
+                message += f"; earlier effects retained: {prior}"
             raise LocalToolError(message) from exc
         summaries.append(f"{'would patch' if dry_run else 'patched'} {rel_path}")
     return "\n".join(summaries)
@@ -569,6 +577,14 @@ def patch_validated_files(
             message = f"fs_patch failed [{exc.reason_code}]: {rel_path}"
             if getattr(exc, "detail", None):
                 message += f" — {HINT_LABEL}: {exc.detail}"
+            if summaries and not dry_run:
+                message += f"; earlier effects retained: {'; '.join(summaries)}"
+            raise LocalToolError(message) from exc
+        except LocalToolError as exc:
+            prior = "; ".join(summaries)
+            message = f"fs_patch failed: {rel_path}: {exc}"
+            if prior and not dry_run:
+                message += f"; earlier effects retained: {prior}"
             raise LocalToolError(message) from exc
         summaries.append(f"{'would patch' if dry_run else 'patched'} {rel_path}")
         if content_stamps and not dry_run:
@@ -628,7 +644,11 @@ def _patch_relative_file(
             target,
             data,
             shown=str(rel_path),
-            expected_sha256=None,
+            expected_sha256=(
+                hashlib.sha256(original.encode("utf-8")).hexdigest()
+                if patch_file.action == "modify"
+                else None
+            ),
             expected_absent=patch_file.action != "modify",
         )
     return hashlib.sha256(data).hexdigest(), len(data)

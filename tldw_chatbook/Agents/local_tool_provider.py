@@ -2631,10 +2631,51 @@ class LocalToolProvider:
                     # is ABOUT to produce -- recorded post-dispatch below.
                     pass
                 elif name == "fs_write":
+                    workflow_write = (
+                        automatic_work is not None
+                        and automatic_work.attempt_kind == "workflow_phase"
+                        and clean_args.get("dry_run") is not True
+                    )
+                    guard_args = clean_args
+                    if workflow_write:
+                        # Model CAS cannot replace this run's actual observation.
+                        guard_args = {
+                            key: value
+                            for key, value in clean_args.items()
+                            if key not in {"expected_sha256", "expected_absent"}
+                        }
                     stale_guard = self._fs_write_guard_injection(
-                        clean_args,
+                        guard_args,
                         ledger_root,
                     )
+                    if workflow_write:
+                        observed = stale_guard[0] if stale_guard is not None else {}
+                        explicit_absence = (
+                            clean_args.get("expected_absent") is True
+                            and "expected_sha256" not in clean_args
+                        )
+                        conflict = (
+                            any(
+                                key in clean_args
+                                and clean_args[key] != observed.get(key)
+                                for key in ("expected_sha256", "expected_absent")
+                            )
+                            if stale_guard is not None
+                            else not explicit_absence
+                        )
+                        if conflict:
+                            dispatch_started = False
+                            return LocalToolInvocationResult(
+                                result=ToolResult.blocked(
+                                    "workflow fs_write requires this run's observed content "
+                                    "or an atomic absent-file precondition; read the file again"
+                                ),
+                                final_gate=gate.verdict,
+                                approval_consumed=gate.approval_consumed,
+                                reason_code=LocalToolInvocationReason.INVALID_ARGUMENTS,
+                                dispatch_started=False,
+                                provider_terminal=LocalProviderTerminal.NOT_STARTED,
+                            )
                     if stale_guard is not None:
                         dispatch_args = stale_guard[0]
                 elif (

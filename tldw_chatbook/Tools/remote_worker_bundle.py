@@ -2967,7 +2967,7 @@ def _edit_relative_file(relative: Path, old_string: str, new_string: str, *, wor
         data = updated.encode('utf-8')
     except UnicodeEncodeError as exc:
         raise LocalToolError(f'new_string is not UTF-8 encodable (lone surrogate?): {exc}') from exc
-    _atomic_write_target(target, data, shown=shown, expected_sha256=None, expected_absent=False)
+    _atomic_write_target(target, data, shown=shown, expected_sha256=hashlib.sha256(content.encode('utf-8')).hexdigest(), expected_absent=False)
     n = count if replace_all else 1
     summary = f"made {n} replacement{('s' if n != 1 else '')} in {shown}"
     if content_stamps:
@@ -4869,6 +4869,14 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool=False) ->
             message = f'fs_patch failed [{exc.reason_code}]: {rel_path}'
             if getattr(exc, 'detail', None):
                 message += f' — {HINT_LABEL}: {exc.detail}'
+            if summaries and (not dry_run):
+                message += f"; earlier effects retained: {'; '.join(summaries)}"
+            raise LocalToolError(message) from exc
+        except LocalToolError as exc:
+            prior = '; '.join(summaries)
+            message = f'fs_patch failed: {rel_path}: {exc}'
+            if prior and (not dry_run):
+                message += f'; earlier effects retained: {prior}'
             raise LocalToolError(message) from exc
         summaries.append(f"{('would patch' if dry_run else 'patched')} {rel_path}")
     return '\n'.join(summaries)
@@ -4904,6 +4912,14 @@ def patch_validated_files(plans: tuple[PatchFile, ...], *, root: PinnedWorkspace
             message = f'fs_patch failed [{exc.reason_code}]: {rel_path}'
             if getattr(exc, 'detail', None):
                 message += f' — {HINT_LABEL}: {exc.detail}'
+            if summaries and (not dry_run):
+                message += f"; earlier effects retained: {'; '.join(summaries)}"
+            raise LocalToolError(message) from exc
+        except LocalToolError as exc:
+            prior = '; '.join(summaries)
+            message = f'fs_patch failed: {rel_path}: {exc}'
+            if prior and (not dry_run):
+                message += f'; earlier effects retained: {prior}'
             raise LocalToolError(message) from exc
         summaries.append(f"{('would patch' if dry_run else 'patched')} {rel_path}")
         if content_stamps and (not dry_run):
@@ -4940,7 +4956,7 @@ def _patch_relative_file(patch_file: PatchFile, relative: Path, *, workspace: Pa
     except UnicodeEncodeError as exc:
         raise LocalToolError(f"patched content for '{rel_path}' is not UTF-8 encodable (lone surrogate?): {exc}") from exc
     if not dry_run:
-        _atomic_write_target(target, data, shown=str(rel_path), expected_sha256=None, expected_absent=patch_file.action != 'modify')
+        _atomic_write_target(target, data, shown=str(rel_path), expected_sha256=hashlib.sha256(original.encode('utf-8')).hexdigest() if patch_file.action == 'modify' else None, expected_absent=patch_file.action != 'modify')
     return (hashlib.sha256(data).hexdigest(), len(data))
 
 
@@ -5855,4 +5871,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("4ab7c4f9e2e28663cd787c87d5c236f843c4e92b0a4737440cc6a8369a15c3ce")
+BUNDLE_SHA256 = _enter_worker_exchange("5699e3c3a851ff607e23375163f4871724ddaac3ed4365444647685657109201")

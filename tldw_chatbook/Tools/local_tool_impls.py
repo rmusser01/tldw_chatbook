@@ -1365,7 +1365,7 @@ def _edit_relative_file(
         target,
         data,
         shown=shown,
-        expected_sha256=None,
+        expected_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
         expected_absent=False,
     )
     n = count if replace_all else 1

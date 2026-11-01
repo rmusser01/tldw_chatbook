@@ -49,7 +49,9 @@ The Console bridge composes a fresh registry per `run_reply`, in a fixed order: 
 
 Tool results that exceed budgets spill into the chat's private scratch space (`tool-spill`, per-result cap 32 KiB, aggregate inline budget 256 KiB, 0600 files in a 0700 dir); the preview names the read-back path so `fs_read` can page it back with no new grant. The opaque absolute scratch locator is stripped from every model/log-bound result via the redaction-root seam.
 
-`fs_write` is CAS-capable (`expected_sha256`/`expected_absent`, portalocker inode lock, `O_NOFOLLOW` descriptor writes) and the provider injects stale-write guards from the per-run ReadLedger — a write to a file the run has not (re)read refuses with "Re-read the file and retry".
+`fs_write` is CAS-capable (`expected_sha256`/`expected_absent`, portalocker inode lock, `O_NOFOLLOW` descriptor writes). The provider injects stale-write guards from the per-run ReadLedger; ordinary callers retain explicit-CAS and blind-write compatibility. A checked private `AutomaticWorkContext` of kind `workflow_phase` requires that run's observed digest (including its own settled writes), or an explicit atomic absent-file precondition. Missing/evicted observations cannot become blind writes, and supplied digests cannot override an observed stamp. Dry-run previews do not create observations. The separate repository-instruction promotion path retains its private proposal/snapshot revalidation and exact CAS matching; workflow task scope is an additional narrowing boundary (ADR-285).
+
+`fs_edit` and modify patches hash the actual newline-preserving UTF-8 read and carry that digest into the same `_atomic_write_target` used by `fs_write`, in both local and generated remote workers. This detects replacement/disappearance between read and mutation. Create patches retain atomic absence checks. A later patch failure names the failed target and earlier completed targets; their bytes remain written. Worker admitted/failure and cleanup receipts retain their existing meanings: neither partial effects nor arbitrary external editors become an all-or-nothing patch guarantee.
 
 ## CLI adapters
 
