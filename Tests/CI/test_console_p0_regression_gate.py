@@ -55,6 +55,8 @@ _KEEP = "Tests/UI/test_app_keep_alive_dead_screen.py::"
 
 #: P0 task -> the gated regression tests (a file, or one test's node id).
 P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
+    # PR3300: new mounted return/input regressions use the private bootstrap lane.
+    "TASK-33622.23": ("Tests/UI/test_console_terminal_return_input.py",),
     "TASK-35552": (
         "Tests/Canvas/test_gateway.py::test_navigation_completion_preserves_independently_current_selection",
     ),

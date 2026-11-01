@@ -611,6 +611,9 @@ class ConsoleTerminalWorkspace(Static):
             width = button.size.width
             padded = width - 2 * _LABEL_LINE_PAD
             label = full if width <= 0 or cell_len(full) <= padded else compact
+            # Textual 8's CSS integer parser rejects line-pad: 0, including
+            # token-expanded zero. Keep its existing Python-only workaround,
+            # also used by the composer/rail controls; normal padding is TCSS.
             pad = _LABEL_LINE_PAD if width <= 0 or cell_len(label) <= padded else 0
             if button.styles.line_pad != pad:
                 button.styles.line_pad = pad
@@ -712,7 +715,11 @@ class ConsoleTerminalWorkspace(Static):
             # TASK-33622.5: `input_focused` is the viewport's own mode, not
             # Textual focus; the status claimed the shell had the keyboard
             # while keys were going to the chat composer.
-            status = "Focus or click the terminal to type in it"
+            status = (
+                "Focus or click the terminal to type in it"
+                if viewport.input_focused
+                else "Focus terminal, then Enter to type"
+            )
         elif viewport.input_focused:
             status = "Ctrl+] Release input"
         else:

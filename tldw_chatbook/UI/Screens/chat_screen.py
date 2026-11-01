@@ -1954,6 +1954,11 @@ class ChatScreen(BaseAppScreen):
             # TASK-33622.3: single-letter screen actions belong to list mode.
             return run_controls.focus_in_transcript(self.focused)
         if action == "exit_console_hands_free":
+            if self._console_terminal_open:
+                from ..Console_Modules.terminal import capturing_viewport
+
+                if capturing_viewport(self) is not None:
+                    return False
             # One-line delegation (wave-2 console decomposition, task 1).
             # See `ConsoleHandsFreeController.console_hands_free_exit_
             # available` for the real implementation. TASK-28226: a row
@@ -10543,6 +10548,9 @@ class ChatScreen(BaseAppScreen):
     def _restore_console_transcript_reading_state(
         self,
         state: _ConsoleTranscriptReadingState | None,
+        *,
+        is_current: Callable[[], bool] | None = None,
+        on_restored: Callable[[], None] | None = None,
     ) -> None:
         """Restore the transcript anchor, offset, and selected message.
 
@@ -10550,10 +10558,14 @@ class ChatScreen(BaseAppScreen):
 
         Args:
             state: The reading state captured before the layout change.
+            is_current: Optional owner guard for a queued restore.
+            on_restored: Optional callback after the reading position is applied.
         """
         region = self._console_transcript_region_or_none()
         if region is not None:
-            region.restore_reading_state(state)
+            region.restore_reading_state(
+                state, is_current=is_current, on_restored=on_restored
+            )
 
     def _set_console_composer_collapsed(self, collapsed: bool) -> None:
         """Synchronize screen-owned collapse state with the mounted composer."""
@@ -17792,6 +17804,10 @@ class ChatScreen(BaseAppScreen):
                 return False
             if poll_record is None and not self._console_sync_requested and full_source is not None and run_controls.poll_source_is_current(self, full_source):
                 self._console_completed_full_source = full_source
+            if poll_record is None and self._console_terminal_return_reading is not None:
+                from ..Console_Modules.terminal import restore_returned_reading_after_publication
+
+                restore_returned_reading_after_publication(self)
             return True
         except run_controls.PreparingPollChanged:
             self._console_sync_requested = True
@@ -22446,6 +22462,15 @@ class ChatScreen(BaseAppScreen):
 
     def on_paste(self, event: Paste) -> None:
         """Treat pasted text as Console composer draft input by default."""
+        if self._console_terminal_open:
+            from ..Console_Modules.terminal import capturing_viewport
+
+            viewport = capturing_viewport(self)
+            if viewport is not None and not self._console_setup_modal_blocking():
+                self._terminal.send_paste(event.text)
+                event.stop()
+                event.prevent_default()
+            return
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
         except QueryError:

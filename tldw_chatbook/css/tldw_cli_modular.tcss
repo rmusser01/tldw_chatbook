@@ -6584,8 +6584,9 @@ ConsoleTerminalWorkspace#console-main-column {
 
 
 ConsoleTerminalWorkspace#console-main-column > Button {
-    padding: 0;
+    padding: $ds-space-0;
 }
+
 
 #console-terminal-danger,
 #console-terminal-access,

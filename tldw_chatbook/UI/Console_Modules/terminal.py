@@ -460,22 +460,38 @@ class ConsoleTerminalController:
             return False
         return getattr(result, "accepted", False) is True
 
-    def send_paste(self, text: str, *, bracketed: bool) -> bool:
-        """Offer one atomic paste through the manager-owned input actor."""
-        selected = self._selected_session_id()
+    def send_paste(self, text: str, *, bracketed: bool | None = None) -> bool:
+        """Offer one atomic paste using the live selected session's mode by default."""
         view = self._view
-        if selected is None or view is None:
+        if view is None:
             return False
         try:
-            result = self._terminal_runtime().send_paste(
+            runtime = self._terminal_runtime()
+            state = runtime.view_state(view)
+            if not isinstance(state, TerminalViewState):
+                return False
+            selected = state.selected_session_id
+            session = next(
+                (item for item in state.sessions if item.projection.session_id == selected),
+                None,
+            )
+            if session is None:
+                return False
+            result = runtime.send_paste(
                 selected,
                 text,
-                bracketed=bracketed,
+                bracketed=session.screen.bracketed_paste if bracketed is None else bracketed,
                 view=view,
             )
         except Exception:
+            self._status("Terminal paste is unavailable.")
             return False
-        return getattr(result, "accepted", False) is True
+        accepted = getattr(result, "accepted", False) is True
+        if not accepted:
+            self._status(getattr(result, "safe_message", "") or "Terminal paste is unavailable.")
+        else:
+            self._status("")
+        return accepted
 
     async def request_resize(self, columns: int, rows: int) -> bool:
         """Offer and apply the latest selected-session resize for this view."""
@@ -684,11 +700,16 @@ def capture_center_reading(screen: Any, center: Any) -> None:
     """
     capture = getattr(center, "capture_reading_state", None)
     if callable(capture):
-        # Keyed by conversation: Return must never apply this offset to
-        # another conversation activated while the Terminal was open.
+        pending = screen._console_terminal_return_reading
+        if pending is not None and pending[0] == _active_console_session_id(screen):
+            return  # Return/Open again must not recapture an unrestored center.
+        # The store may already be activating B while A is still painted.
+        # Never relabel A's offset with the active-but-unpublished owner.
+        owner = center.reading_session_id
         screen._console_terminal_return_reading = (
-            _active_console_session_id(screen),
-            capture(),
+            (owner, capture())
+            if owner is not None and owner == _active_console_session_id(screen)
+            else None
         )
 
 
@@ -719,12 +740,10 @@ def finish_center_swap(screen: Any) -> None:
     if screen._console_terminal_open:
         screen.call_after_refresh(screen._focus_open_console_terminal)
         return
-    reading = screen._console_terminal_return_reading
-    screen._console_terminal_return_reading = None
     # The mounted transcript is new: its sync gate must not skip it.
     screen._console_transcript_sync_token = None
     screen.run_worker(
-        _resync_returned_transcript(screen, reading),
+        screen._sync_native_console_chat_ui(),
         group="console-sync",
         exclusive=True,
     )
@@ -733,19 +752,57 @@ def finish_center_swap(screen: Any) -> None:
     )
 
 
-async def _resync_returned_transcript(screen: Any, reading: Any) -> None:
-    """Render the returned center, then put the reader back where they were.
-
-    ``reading`` is the ``(session id, reading state)`` pair captured before the
-    swap, or ``None``; a different active conversation keeps its own position.
-    """
-    await screen._sync_native_console_chat_ui()
-    if reading is None:
+def restore_returned_reading_after_publication(screen: Any) -> None:
+    """Restore a pending return only after the existing sync publishes its center."""
+    reading = screen._console_terminal_return_reading
+    if reading is None or screen._console_terminal_open:
         return
     session_id, state = reading
     if session_id != _active_console_session_id(screen):
+        screen._console_terminal_return_reading = None
         return
-    screen.call_after_refresh(screen._restore_console_transcript_reading_state, state)
+    region = screen._console_transcript_region_or_none()
+    if region is None or not region.is_attached or region.reading_session_id != session_id:
+        return
+
+    def still_current() -> bool:
+        return (
+            region.is_attached
+            and screen._console_terminal_return_reading is reading
+            and region.reading_session_id == session_id
+            and not screen._console_terminal_open
+            and session_id == _active_console_session_id(screen)
+            and region is screen._console_transcript_region_or_none()
+        )
+
+    def restored() -> None:
+        if screen._console_terminal_return_reading is reading:
+            screen._console_terminal_return_reading = None
+
+    def restore() -> None:
+        if screen._console_terminal_return_reading is not reading:
+            return
+        if session_id != _active_console_session_id(screen):
+            screen._console_terminal_return_reading = None
+            return
+        if not still_current():
+            return
+        screen._restore_console_transcript_reading_state(
+            state, is_current=still_current, on_restored=restored
+        )
+
+    screen.call_after_refresh(restore)
+
+
+def capturing_viewport(screen: Any) -> Any | None:
+    """Return only the focused Terminal viewport that currently owns input."""
+    focused = screen.focused
+    if not screen._console_terminal_open or getattr(focused, "id", None) != "console-terminal-viewport":
+        return None
+    # Preserve lazy Terminal imports on the ordinary Console first-paint path.
+    from ...Widgets.Console.console_terminal_workspace import TerminalViewport
+
+    return focused if isinstance(focused, TerminalViewport) and focused.input_focused else None
 
 
 def _projection_fingerprint(

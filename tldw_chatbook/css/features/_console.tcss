@@ -576,8 +576,9 @@ ConsoleTerminalWorkspace#console-main-column {
    Textual's one-cell line pad but drop the side padding, so a 13-cell column
    at 80x24 shows "Terminal 1" whole; narrower cells get compact labels. */
 ConsoleTerminalWorkspace#console-main-column > Button {
-    padding: 0;
+    padding: $ds-space-0;
 }
+
 
 #console-terminal-danger,
 #console-terminal-access,
