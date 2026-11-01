@@ -218,8 +218,10 @@ included-artwork restoration also have targeted evidence, detailed below.
 Imported-history holds remain enforced throughout. Targeted integrations now
 qualify the restored-generation observer and recovery under the current accounting.
 The original-BASE review and scoped accounting correction review are complete.
-Canonical mobile API wiring remains the next task; the legacy mobile engine has
-not yet been retired.
+The canonical mobile API now routes through the retained Console owner and
+canonical read services; the separate mobile engine has been retired. Its original
+ownership review and both scoped correction reviews are complete. The Chats-first
+phone UI and full retained-child/browser qualification remain Tasks 10–11.
 
 
 ## Native mobile consolidation admission (ADR-244/125/126)
