@@ -270,6 +270,7 @@ CSS_MODULES = [
     "features/_console.tcss",
     "features/_console_archive_recovery.tcss",
     "features/_console_panels.tcss",
+    "features/_console_inspector.tcss",
     "features/_console_attachment_block.tcss",
     "features/_console_response_rules.tcss",
     "features/_library.tcss",

@@ -219,6 +219,7 @@ async def test_capture_on_retry_retains_both_calls_usage_and_project_context(
         GUIDANCE,
     )
     from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+    from tldw_chatbook.Chat.provider_usage import ProviderUsage
 
     first_usage = {"prompt_tokens": 21, "completion_tokens": 0, "total_tokens": 21}
     with _server(empty_stream=True, empty_stream_usage=first_usage) as server:
@@ -251,10 +252,29 @@ async def test_capture_on_retry_retains_both_calls_usage_and_project_context(
                 user.persisted_message_id
             )
             assert len(captures) == 2
-            assert [json.loads(call.capture.usage_json) for call in captures] == [
-                first_usage,
-                _USAGE,
+            captured_usage = [json.loads(call.capture.usage_json) for call in captures]
+            usage_provider = {"custom": "custom-openai-api", "vllm": "vllm"}[provider]
+            expected_usage = [
+                ProviderUsage(
+                    uncached_input=21,
+                    output=output,
+                    provider=usage_provider,
+                    model="local-model",
+                )
+                for output in (0, 5)
             ]
+            assert captured_usage == [
+                json.loads(item.to_json()) for item in expected_usage
+            ]
+            physical_totals = [
+                sum(
+                    item[key]
+                    for key in ("uncached_input", "cache_read", "cache_write", "output")
+                )
+                for item in captured_usage
+            ]
+            assert physical_totals == [21, 26]
+            assert sum(physical_totals) == 47
             assert all(
                 GUIDANCE in json.dumps(call.capture.request) for call in captures
             )

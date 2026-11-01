@@ -301,6 +301,16 @@ async def test_preparing_changed_source_after_original_tab_await_replays_full(
                 "timeline_dropped": timeline_dropped,
             }
             record_property("preparing_tab_hold_failure", details)
+            # CI retains captured stderr even without a JUnit artifact; this
+            # bounded state contains flags and source locations, never bodies.
+            import json
+
+            print(
+                "P0_PREPARING_TAB_HOLD_FAILURE "
+                + json.dumps(details, sort_keys=True, separators=(",", ":")),
+                file=sys.stderr,
+                flush=True,
+            )
             return details
 
         def custom(self):
