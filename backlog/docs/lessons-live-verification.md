@@ -1,5 +1,58 @@
 # Lessons: verifying against the real thing
 
+## At high load, the 4 ms samples of a slow, low-CPU callback show where the thread waited, not what cost (TASK-33620.15.21, 2026-10-30)
+
+**Incident.** TASK-33620.15.8 was filed from 4 ms samples taken at load 78-109.
+They put 34 samples in `ConsoleChatStore.publish_durable_turn_identity`.
+
+Re-measured at load 99-127 with exact timers on each piece (48 sends), that
+method took 0.17-0.25 ms (median), and it held 7 of the 184 samples taken
+inside its step.
+
+At that load, samples land wherever the main thread lost the CPU or the GIL:
+- A 161 ms callback with 1.6 ms of CPU had all 10 of its samples in
+  importlib's `ModuleSpec.parent`.
+- A 157 ms post-commit step with 14.8 ms of CPU had 14 of its 18 samples on
+  `SimpleQueue.put` inside `ThreadPoolExecutor.submit`. That is the moment the
+  loop wakes the prompt-history worker thread.
+
+Code that releases the GIL (SQLite calls, stat calls, handing work to a
+thread) collects these waits far more often than pure Python does. For
+example, in 3 of 48 sends the trace request's transaction entry held the
+step for 44-167 ms on 1.4-2.1 ms of CPU. Those samples sit in storage
+admission's `Path.resolve` (`realpath`'s stat calls), which the entry runs
+before it issues BEGIN IMMEDIATE; none is on the BEGIN statement. Reading
+"the transaction was slow" as SQLite write-lock contention would have sent
+the fix to the wrong place. Follow the stack down to the leaf before naming
+the wait.
+
+**What to do.**
+- On a loaded host, rank suspects with per-site timers that record both wall
+  time and thread CPU, and compare the two.
+- If a callback's wall time is many times its CPU, its samples show only where
+  it waited. Do not file the method they land in as the cost.
+- This is the same wait as the TASK-33620.15.1.6 entry below: I/O on the loop
+  releases the GIL, then waits to be scheduled again.
+
+You can create the load yourself with a bounded generator: 88 busy
+`python -I -S -c` children, each running the snippet below with its run time
+as its argument. A parent kills every child on SIGTERM, SIGINT or at its own
+deadline (capped at 1500 s), and the round script stops the parent after each
+high-load block. (The generator was a session-local script, not in the repo.)
+
+```python
+import signal, sys, time
+T = float(sys.argv[1])
+signal.alarm(int(T) + 5)  # backstop: the default action terminates the child
+end = time.monotonic() + T
+while time.monotonic() < end:
+    pass
+```
+
+On the 14-core host, load1 went from 4 to 75 in 70-75 s, and fell back under
+12 within 145-175 s of the stop. Record load1 at every Enter, not only when
+the round starts.
+
 ## A margin on a Console transcript row paints a notch that text checks cannot see (TASK-33621.51, 2026-10-29)
 
 **Incident.** The Library outcome line passed two review rounds: every test read
