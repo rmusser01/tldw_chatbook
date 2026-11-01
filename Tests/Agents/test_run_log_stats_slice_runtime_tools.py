@@ -13,6 +13,10 @@ import re
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Agents.conftest import join_fleet_children
+from Tests.Agents.test_agent_runtime import make_deps
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
@@ -36,10 +40,6 @@ from tldw_chatbook.Agents.tool_catalog import (
     BuiltinToolProvider,
     ToolCatalogRegistry,
 )
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from Tests.Agents.test_agent_runtime import make_deps
-from Tests.Agents.conftest import join_fleet_children
-from Tests.Agents.test_agent_service import FleetChat, verbatim
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -186,7 +186,7 @@ def test_subagent_cannot_call_run_log_stats_or_run_log_slice(tmp_path, monkeypat
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -260,7 +260,7 @@ def wired(tmp_path, monkeypatch):
     from tldw_chatbook.Agents import run_log as run_log_module
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
     return db, reg, tmp_path
@@ -336,7 +336,7 @@ def test_real_closures_on_a_missing_log_return_a_clean_error(monkeypatch, tmp_pa
     """
     from tldw_chatbook.Agents.run_log import RunLogWriter
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
     inactive_writer = RunLogWriter(dir_name="agent-runs")
@@ -588,7 +588,7 @@ def test_real_run_log_stats_and_slice_stay_bounded_on_a_large_log(
     from tldw_chatbook.Agents import agent_service as agent_service_module
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 
@@ -666,7 +666,7 @@ def test_real_run_log_stats_caps_groups_when_tool_names_far_exceed_the_cap(
     from tldw_chatbook.Agents.run_log_search import MAX_STATS_GROUPS
 
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = ToolCatalogRegistry()
     reg.register_provider(BuiltinToolProvider())
 

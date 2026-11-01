@@ -657,6 +657,52 @@ async def hydrate_console_session(
     activate: bool = True,
     session_id: str | None = None,
     prepared_data: ConsoleConversationHydrationData | None = None,
+    cleanup_owner: object | None = None,
+) -> Any:
+    """Join one store-owned policy-ready owner independently of observers."""
+
+    async def hydrate(operation):
+        return await _hydrate_console_session(
+            app=app,
+            store=store,
+            conversation_id=conversation_id,
+            tree=tree,
+            settings=settings,
+            generation_durable_snapshot=generation_durable_snapshot,
+            generation_metadata_status=generation_metadata_status,
+            target_scope_type=target_scope_type,
+            target_workspace_id=target_workspace_id,
+            activate=False,
+            session_id=session_id,
+            prepared_data=prepared_data,
+            _operation=operation,
+        )
+
+    session = await store.resolve_saved_session(
+        conversation_id, hydrate, cleanup_owner=cleanup_owner, session_id=session_id
+    )
+    if activate:
+        store.switch_session(session.id)
+    return session
+
+
+async def _hydrate_console_session(
+    *,
+    app: Any,
+    store: Any,
+    conversation_id: str,
+    tree: Mapping[str, Any],
+    settings: ConsoleSessionSettings | None,
+    generation_durable_snapshot: ConsoleGenerationSettingsSnapshot | None = None,
+    generation_metadata_status: ConsoleGenerationSettingsReadStatus = (
+        ConsoleGenerationSettingsReadStatus.ABSENT
+    ),
+    target_scope_type: str | None = None,
+    target_workspace_id: str | None = None,
+    activate: bool = True,
+    session_id: str | None = None,
+    prepared_data: ConsoleConversationHydrationData | None = None,
+    _operation=None,
 ) -> Any:
     """Create a Console session from a persisted tree.
 
@@ -806,6 +852,7 @@ async def hydrate_console_session(
         **({"prepared_data": prepared_data} if prepared_data is not None else {}),
         activate=False,
         prepare_progress=False,
+        _operation=_operation,
     )
     session.persona_system_template = roleplay_context.persona_system_template
     # Opening a saved chat is not a use of it. Keep the row's last change as
@@ -830,6 +877,7 @@ async def hydrate_console_session(
             session.id,
             expected_session=session,
             prior_active_session_id=prior_active_session_id,
+            _operation=_operation,
         )
         raise
     return session

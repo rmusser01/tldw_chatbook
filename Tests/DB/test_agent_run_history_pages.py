@@ -2,12 +2,12 @@
 
 import pytest
 
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from Tests.agent_runs_owner import owned_agent_runs_db
 
 
 @pytest.fixture
 def db(tmp_path):
-    database = AgentRunsDB(tmp_path / "runs.db", client_id="history")
+    database = owned_agent_runs_db(tmp_path / "runs.db", client_id="history")
     try:
         yield database
     finally:

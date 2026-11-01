@@ -2,6 +2,7 @@
 
 import json
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
     AGENT_KIND_PRIMARY,
     AGENT_KIND_SUBAGENT,
@@ -11,10 +12,9 @@ from tldw_chatbook.Agents.agent_models import (
     STEP_TOOL_RESULT,
     AgentConfig,
 )
+from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
-from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 
 
 def _fence(name, args):
@@ -28,7 +28,7 @@ def _registry():
 
 
 def test_on_step_receives_primary_steps_in_order(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry()
     script = [
         {
@@ -71,7 +71,7 @@ def test_on_step_receives_primary_steps_in_order(tmp_path):
 
 
 def test_on_step_distinguishes_subagent_steps(tmp_path, inline_spawns):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry()
     # Primary spawns a sub-agent; sub-agent answers directly.
     script = [
@@ -109,7 +109,7 @@ def test_on_step_distinguishes_subagent_steps(tmp_path, inline_spawns):
 
 def test_on_step_exception_does_not_crash_run(tmp_path):
     """A raising on_step callback must be captured — never kill the run."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry()
 
     def chat_call(**kwargs):
@@ -130,7 +130,7 @@ def test_on_step_exception_does_not_crash_run(tmp_path):
 
 
 def test_on_step_default_is_noop(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry()
     service = AgentService(
         db, reg, chat_call=lambda **k: {"choices": [{"message": {"content": "hello"}}]}
@@ -150,7 +150,7 @@ def test_on_step_receives_run_id_for_primary_and_child(tmp_path, inline_spawns):
     steps, and the CHILD run's own (distinct) id for a spawned sub-agent's
     steps. This is what lets a fleet of concurrent children be told apart
     downstream (PR 2b)."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry()
     script = [
         {

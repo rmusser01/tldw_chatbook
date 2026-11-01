@@ -78,6 +78,7 @@ def main():
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
     from tldw_chatbook import config
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from Tests.agent_runs_owner import owned_agent_runs_db
     from tldw_chatbook.DB import base_db
     from tldw_chatbook.Chat import console_agent_bridge as bridge_module
     from tldw_chatbook.UI.Console_Modules import agent as agent_module
@@ -153,7 +154,7 @@ def main():
     assert len(shield_lines) == 2
     drain_line = shield_lines[1]
 
-    database = AgentRunsDB(config.get_user_data_dir() / 'historical-cancel.sqlite',
+    database = owned_agent_runs_db(config.get_user_data_dir() / 'historical-cancel.sqlite',
                            client_id='historical-cancel')
     bridge, child = helpers._historical_bridge(database)
     database.close()  # Close only the test creator's seed cache before the worker.

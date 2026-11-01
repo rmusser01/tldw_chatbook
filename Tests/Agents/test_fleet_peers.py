@@ -6,6 +6,7 @@ import time
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_fleet_runtime import FLEET_CFG
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_models import (
@@ -264,7 +265,6 @@ async def test_service_children_receive_scoped_tools_and_direct_delivery_is_priv
         BuiltinToolProvider,
         ToolCatalogRegistry,
     )
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     pin_agent_settings(monkeypatch, run_log_enabled=False)
     monkeypatch.setattr(run_log, "_setting", agent_service._setting)
@@ -314,7 +314,7 @@ async def test_service_children_receive_scoped_tools_and_direct_delivery_is_priv
     )
     registry = ToolCatalogRegistry()
     registry.register_provider(BuiltinToolProvider())
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits
 
     chain = db.automatic_work.create_chain(
@@ -386,7 +386,6 @@ def test_only_child_with_exact_attachment_advertises_peers_even_when_alone(
     from tldw_chatbook.Agents import agent_service, run_log
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     pin_agent_settings(monkeypatch, run_log_enabled=False)
     monkeypatch.setattr(run_log, "_setting", agent_service._setting)
@@ -397,7 +396,7 @@ def test_only_child_with_exact_attachment_advertises_peers_even_when_alone(
         [fence("spawn_subagent", {"task": "alone"}), fence("wait_agents", {}), "done"],
         {"alone": [fence("list_peer_agents", {}), "alone done"]},
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits
 
     chain = db.automatic_work.create_chain(

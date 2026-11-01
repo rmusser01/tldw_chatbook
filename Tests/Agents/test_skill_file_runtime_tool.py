@@ -12,20 +12,19 @@ import json
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
-    AgentConfig,
     RUN_DONE,
     RUNTIME_TOOL_NAMES,
-    RunBudget,
     SKILL_FILE_TOOL_NAME,
+    AgentConfig,
+    RunBudget,
     SkillFileBindings,
 )
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
-
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
@@ -98,7 +97,7 @@ def test_bindings_object_shape():
 
 
 def test_skill_file_schema_offered_first_turn_and_authorized_read_succeeds(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()
 
     read_calls = []
@@ -173,7 +172,7 @@ def test_skill_file_revalidates_the_admitted_definition_before_every_read(tmp_pa
             return script.pop(0)
 
         service = AgentService(
-            AgentRunsDB(tmp_path / f"runs-{suffix}.db", client_id="t"),
+            owned_agent_runs_db(tmp_path / f"runs-{suffix}.db", client_id="t"),
             _registry_with_builtins(),
             chat_call=chat_call,
             skill_file_bindings=bindings,
@@ -234,7 +233,7 @@ def test_skill_file_definition_mismatch_revokes_even_without_a_reader(tmp_path):
         return script.pop(0)
 
     service = AgentService(
-        AgentRunsDB(tmp_path / "runs.db", client_id="t"),
+        owned_agent_runs_db(tmp_path / "runs.db", client_id="t"),
         _registry_with_builtins(),
         chat_call=chat_call,
         skill_file_bindings=bindings,
@@ -254,7 +253,7 @@ def test_skill_file_definition_mismatch_revokes_even_without_a_reader(tmp_path):
 
 
 def test_skill_file_unauthorized_name_is_refused(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()
 
     def reader(skill_name, path):
@@ -304,7 +303,7 @@ def test_skill_file_reader_returning_non_mapping_fails_the_call_not_the_run(
     returns a bare string (not a dict-like result) must fail only THAT tool
     call -- not crash the whole run via an uncaught AttributeError from
     `.get` on a non-mapping."""
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()
 
     def bad_reader(skill_name, path):
@@ -350,7 +349,7 @@ def test_skill_file_empty_authorized_schema_absent_and_falls_through(tmp_path):
     # must use the SAME predicate as schema pinning: empty authorized falls
     # through to the generic "Tool not permitted" path, identical to
     # bindings=None.
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()
 
     def reader(skill_name, path):
@@ -392,7 +391,7 @@ def test_skill_file_empty_authorized_schema_absent_and_falls_through(tmp_path):
 
 
 def test_skill_file_bindings_none_schema_absent_and_falls_through(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()
 
     script = [
@@ -456,7 +455,7 @@ def test_skill_file_e2e_fork_reads_its_own_reference_file(tmp_path):
 
     bindings = _pinned_bindings(reader)
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="t")
     reg = _registry_with_builtins()
 
     script = [
@@ -523,7 +522,7 @@ def test_host_plugin_context_survives_only_whole_in_final_agent_payload(tmp_path
         )
         return {"choices": [{"message": {"content": text}}]}
 
-    db = AgentRunsDB(tmp_path / "origin-runs.sqlite", client_id="t")
+    db = owned_agent_runs_db(tmp_path / "origin-runs.sqlite", client_id="t")
     service = AgentService(
         db,
         _registry_with_builtins(),

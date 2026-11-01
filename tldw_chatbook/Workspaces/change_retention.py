@@ -26,6 +26,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
 from tldw_chatbook.Workspaces.change_bounds import (
     DEFAULT_RETENTION_DAYS,
     change_review_setting,
@@ -200,6 +201,7 @@ def run_retention_for_app(
     db_path: Path | str,
     *,
     service: ShadowRepoService | None = None,
+    execution_owner: ConsoleExecutionOwner | None = None,
 ) -> PruneReport | None:
     """One maintenance-path retention pass for the production layout.
 
@@ -209,6 +211,7 @@ def run_retention_for_app(
             uses).
         service: Injection seam for tests; defaults to the app's shadow
             service.
+        execution_owner: The App runtime's current physical run-store lease.
 
     Returns:
         The pass report, or ``None`` when there is no runs DB yet, git is
@@ -227,7 +230,7 @@ def run_retention_for_app(
             service = ShadowRepoService()
         if not service.available:
             return None
-        runs_db = AgentRunsDB(runs_path)
+        runs_db = AgentRunsDB(runs_path, execution_owner=execution_owner)
         try:
             return prune_change_history(runs_db, service)
         finally:

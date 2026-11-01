@@ -8,6 +8,7 @@ sensitive information from log messages.
 import hashlib
 import os
 import re
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List
@@ -454,7 +455,9 @@ _V3_KEY_CREDENTIALS = (
 )
 
 
-def trace_credential_key_spans(text: str) -> list[tuple[int, int]]:
+def trace_credential_key_spans(
+    text: str, *, reserve_span: Callable[[], None] | None = None
+) -> list[tuple[int, int]]:
     """Code-point spans of the keys a newer projection masks beyond v1.
 
     A stored v1 or v2 policy's frozen PII spans are applied to its own
@@ -462,11 +465,13 @@ def trace_credential_key_spans(text: str) -> list[tuple[int, int]]:
     so no key fragment survives the current masks (TASK-39123, TASK-41133).
     A key the stored projection already masked is no longer in its text.
     """
-    return [
-        m.span()
-        for p in (*_UNDERSCORE_KEY_CREDENTIALS, *_V3_KEY_CREDENTIALS)
-        for m in p.finditer(text)
-    ]
+    spans = []
+    for pattern in (*_UNDERSCORE_KEY_CREDENTIALS, *_V3_KEY_CREDENTIALS):
+        for match in pattern.finditer(text):
+            if reserve_span is not None:
+                reserve_span()
+            spans.append(match.span())
+    return spans
 
 
 def sanitize_trace_credentials_v2(text: str) -> str:

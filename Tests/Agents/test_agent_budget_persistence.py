@@ -4,11 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RUN_ERROR, AgentConfig
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.LLM_Calls import pricing_catalog
 
 
@@ -38,7 +38,7 @@ def test_completed_service_run_persists_its_budget_counter(
         "choices": [{"message": {"content": "a completed answer"}}],
         "usage": usage,
     }
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     try:
         service = AgentService(
             db=db, registry=ToolCatalogRegistry(), chat_call=lambda **kwargs: response
@@ -64,7 +64,7 @@ def test_exception_escaping_runtime_leaves_budget_unknown(tmp_path, monkeypatch)
         raise RuntimeError("runtime escaped before returning its accounting")
 
     monkeypatch.setattr(agent_service, "run_agent_loop", broken_loop)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     try:
         service = AgentService(
             db=db, registry=ToolCatalogRegistry(), chat_call=lambda **kwargs: {}
@@ -87,7 +87,7 @@ def test_measured_budget_survives_racing_terminal_observation(
 ):
     from tldw_chatbook.Agents.agent_models import RUN_CANCELLED
 
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="terminal-budget-race")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="terminal-budget-race")
     try:
         service = AgentService(
             db, ToolCatalogRegistry(), chat_call=lambda **kwargs: {}

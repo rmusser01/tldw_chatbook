@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.DB.test_automatic_wake_attempts import claim, survivor
 from Tests.DB.test_automatic_work_budget import (
     _automatic_work_db,  # noqa: F401
@@ -82,7 +83,6 @@ def test_monotonic_elapsed_prevents_slow_wall_clock_from_extending_budget(db, cl
 def test_expired_monotonic_budget_stays_expired_on_new_handle(
     db, clock, observe_expiry_first
 ):
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
 
     chain_id = chain(db, wall_seconds=10)
@@ -94,7 +94,7 @@ def test_expired_monotonic_budget_stays_expired_on_new_handle(
             reserve(db, chain_id, "second")
     with db.connection() as conn:
         database_path = conn.execute("PRAGMA database_list").fetchone()[2]
-    reopened = AgentRunsDB(database_path)
+    reopened = owned_agent_runs_db(database_path)
     try:
         reopened.automatic_work = AutomaticWorkLedger(
             reopened, wall_clock=lambda: clock[0], monotonic_clock=lambda: clock[1]
@@ -132,14 +132,13 @@ def test_recovered_chain_uses_new_process_clock_without_renewing_time(
     db, clock, monkeypatch, first_admission_refused
 ):
     from tldw_chatbook.DB import automatic_work
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     chain_id = chain(db, wall_seconds=10, budget_tokens=100)
     reserve(db, chain_id, "first")
     db.automatic_work.commit("first", owner_id="owner")
     db.close()
     monkeypatch.setattr(automatic_work, "_CLOCK_OWNER_ID", "replacement-process")
-    reopened = AgentRunsDB(db.db_path_str)
+    reopened = owned_agent_runs_db(db.db_path_str)
     try:
         reopened.automatic_work = automatic_work.AutomaticWorkLedger(
             reopened, wall_clock=lambda: clock[0], monotonic_clock=lambda: clock[1]

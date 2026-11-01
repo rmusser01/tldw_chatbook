@@ -6,6 +6,7 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_worktree import (
     AgentWorktree,
     WorktreeRefusal,
@@ -15,7 +16,6 @@ from tldw_chatbook.Agents.agent_worktree import (
 )
 from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
 from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 def git(root, *args):
@@ -42,7 +42,7 @@ def work(tmp_path, monkeypatch):
     git(root, "commit", "-m", "base")
     child = create_agent_worktree(root, "child-1")
     assert isinstance(child, AgentWorktree)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="test")
     db.create_run(conversation_id="chat", agent_kind="subagent", run_id=child.run_id)
     db.set_status(child.run_id, status="done", result="done")
     authority = RunAdmittedWorkspaceRoot(

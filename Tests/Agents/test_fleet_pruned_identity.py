@@ -4,17 +4,17 @@ from dataclasses import asdict
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Agents.test_fleet_continuation import _run
 from Tests.Agents.test_fleet_runtime import _tool_results, make_fleet_service
 from Tests.Agents.test_fleet_steering_mailbox import fence
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 @pytest.mark.parametrize("address", ["handle", "run"])
 @pytest.mark.parametrize("status", ["cancelled", "superseded", "error"])
 def test_pruned_child_receives_honest_terminal_refusal(tmp_path, address, status):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="identity")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="identity")
     target = {}
 
     def steer():
@@ -40,7 +40,7 @@ def test_pruned_child_receives_honest_terminal_refusal(tmp_path, address, status
 
 
 def test_db_only_terminal_run_does_not_invent_an_earlier_session(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="identity")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="identity")
     child_id = db.create_run(conversation_id="c", agent_kind="subagent")
     db.set_status(child_id, "cancelled")
     service, _chat, _fleet = make_fleet_service(
@@ -55,7 +55,7 @@ def test_db_only_terminal_run_does_not_invent_an_earlier_session(tmp_path):
 
 
 def test_foreign_conversation_run_stays_unknown(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="identity")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="identity")
     child_id = db.create_run(conversation_id="foreign", agent_kind="subagent")
     db.set_status(child_id, "cancelled", result="private result")
     service, _chat, _fleet = make_fleet_service(
@@ -102,7 +102,7 @@ def test_pruned_handle_identity_wins_over_a_colliding_run_id():
 
 
 def test_live_run_id_still_wins_over_pruned_identity(tmp_path):
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="identity")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="identity")
     target = {}
 
     def steer():

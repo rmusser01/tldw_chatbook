@@ -7,7 +7,9 @@ from contextlib import contextmanager
 
 import pytest
 
-from Tests.DB.test_automatic_work_budget import _automatic_work_db as db, chain  # noqa: F401
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.DB.test_automatic_work_budget import _automatic_work_db as db  # noqa: F401
+from Tests.DB.test_automatic_work_budget import chain
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 
 
@@ -451,12 +453,11 @@ def test_stale_review_settlement_cannot_pause_healthy_replacement(db):
 def test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_replacement(
     tmp_path, memory
 ):
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    first_db = AgentRunsDB(
+    first_db = owned_agent_runs_db(
         ":memory:" if memory else tmp_path / "first.sqlite", client_id="first"
     )
-    second_db = AgentRunsDB(
+    second_db = owned_agent_runs_db(
         ":memory:" if memory else tmp_path / "second.sqlite", client_id="second"
     )
     try:
@@ -511,7 +512,6 @@ def test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_rep
 def test_late_recovery_cleanup_preserves_new_owner_uncertainty(
     db, monkeypatch, replacement_owner, unknown_root
 ):
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     old = db.automatic_work
     old_root, old_source = source_run(db)
@@ -519,7 +519,7 @@ def test_late_recovery_cleanup_preserves_new_owner_uncertainty(
     assert old.accept_chat_start(retired.id, owner_id="owner")
     assert old.complete_chat_start(retired.id, owner_id="owner")
     old._restrict_chat_start(retired.id, owner_id="owner", chain_id=old_root)
-    peer = AgentRunsDB(db.db_path, client_id="replacement", reconcile_on_init=False)
+    peer = owned_agent_runs_db(db.db_path, client_id="replacement", reconcile_on_init=False)
     committed, release = threading.Event(), threading.Event()
     transaction = old.transaction
 
@@ -755,13 +755,12 @@ def test_restriction_identity_is_captured_for_aliases_and_memory_peers(
     """Cleanup and admission keep the same key when filesystem observation fails."""
     from pathlib import Path
     import sys
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
     from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
 
-    db = AgentRunsDB(
+    db = owned_agent_runs_db(
         ":memory:" if memory else tmp_path / "identity.sqlite", client_id="identity"
     )
-    other = AgentRunsDB(
+    other = owned_agent_runs_db(
         ":memory:" if memory else tmp_path / "other.sqlite", client_id="other"
     )
     peer = None
@@ -779,7 +778,7 @@ def test_restriction_identity_is_captured_for_aliases_and_memory_peers(
     else:
         alias = tmp_path / "alias"
         alias.mkdir()
-        peer = AgentRunsDB(
+        peer = owned_agent_runs_db(
             alias / ".." / db.db_path.name, client_id="alias", reconcile_on_init=False
         )
         sibling = peer.automatic_work
@@ -825,9 +824,8 @@ def test_initial_restriction_identity_failure_refuses_automatic_authority(
     """A failed initial canonical key must not produce an authority-capable ledger."""
     from pathlib import Path
     import sys
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    db = AgentRunsDB(tmp_path / "uncertain.sqlite", client_id="identity")
+    db = owned_agent_runs_db(tmp_path / "uncertain.sqlite", client_id="identity")
     resolve = Path.resolve
 
     def fail_resolution(path, *args, **kwargs):

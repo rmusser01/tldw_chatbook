@@ -175,28 +175,30 @@ def _run_helper(
 
 def _prepare_request(path: Path) -> dict[str, object]:
     return {
-        "version": 1,
+        "version": 2,
         "operation": "prepare",
         "path": str(path),
         "writable": True,
         "create_if_missing": True,
         "preserve_source_mode": False,
+        "require_private_mode": False,
     }
 
 
 def _tts_request(path: Path) -> dict[str, object]:
     return {
-        "version": 1,
+        "version": 2,
         "operation": "tts_exact_current",
         "path": str(path),
         "writable": False,
         "create_if_missing": False,
         "preserve_source_mode": False,
+        "require_private_mode": False,
     }
 
 
 def _close_request() -> dict[str, object]:
-    return {"version": 1, "operation": "close"}
+    return {"version": 2, "operation": "close"}
 
 
 @pytest.fixture(scope="module")
@@ -296,7 +298,7 @@ def test_installed_entry_runs_close_prepare_and_fixed_tts_from_hostile_cwd(
     )
     assert close.returncode == 0
     assert _decode_frames(close.stdout) == [
-        {"version": 1, "operation": "close", "status": "ok"}
+        {"version": 2, "operation": "close", "status": "ok"}
     ]
     assert close.stderr == b""
 
@@ -318,7 +320,7 @@ def test_installed_entry_runs_close_prepare_and_fixed_tts_from_hostile_cwd(
         "absent",
     ]
     assert prepared_replies[1] == {
-        "version": 1,
+        "version": 2,
         "operation": "close",
         "status": "ok",
     }
@@ -579,7 +581,7 @@ def test_missing_installed_leaf_cannot_fall_back_to_hostile_pythonpath(
     assert completed.returncode == 0
     assert _decode_frames(completed.stdout) == [
         {
-            "version": 1,
+            "version": 2,
             "operation": "tts_exact_current",
             "status": "helper_unavailable",
         }
