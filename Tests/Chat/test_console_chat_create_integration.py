@@ -2158,3 +2158,34 @@ def test_creation_missing_row_status_fails_closed(creation_validation_rig, monke
     monkeypatch.setattr(runs, "get_run", incomplete_row)
     with use_run_actor(actor):
         assert controller._chat_creation_record(prepared) is None
+
+
+def test_new_chat_rechecks_source_after_saved_identity_reservation(
+    real_db_controller, monkeypatch
+):
+    """The new owner-loop reservation hop cannot admit SQL after source Close."""
+    controller, db = real_db_controller
+    source = controller.store.create_session(title="Source")
+    prepared = _approve_close_new_chat(controller, source, "Must not save after Close")
+    before = _live_conversation_count(db)
+    reserve = controller.store.reserve_saved_creation
+
+    def close_during_reservation(conversation_id):
+        operation = reserve(conversation_id)
+        ticket = controller.begin_session_close(
+            source.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=source.id
+            ).revision,
+        )
+        controller.finalize_session_close(ticket)
+        return operation
+
+    monkeypatch.setattr(
+        controller.store, "reserve_saved_creation", close_during_reservation
+    )
+    result = controller.execute_agent_chat_create(prepared)
+    assert not result["ok"], result
+    assert result["kind"] == "creation_refused"
+    assert _live_conversation_count(db) == before
+    assert not controller.store._saved_session_operations

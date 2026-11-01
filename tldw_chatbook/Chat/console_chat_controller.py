@@ -17059,6 +17059,13 @@ class ConsoleChatController:
             saved_producer = self.app.call_from_thread(
                 self.store.reserve_saved_creation, conversation_id
             )
+            # The new owning-loop hop can observe a committed source Close.
+            # Reserve identity before SQL without extending the exact approval.
+            if (
+                self._chat_creation_record(payload) is not record
+                or not record["approved"]
+            ):
+                raise PermissionError("source_unavailable")
             from .console_project_instructions import encode_project_context_json
 
             self.store.persistence.persist_console_conversation_with_policy(

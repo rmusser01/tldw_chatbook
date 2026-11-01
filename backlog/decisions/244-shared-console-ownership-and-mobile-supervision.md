@@ -2468,3 +2468,8 @@ atomic creation transaction; fork's first commit and copy share the reservation.
 Shutdown carries saved-read cancellation through existing physical native cleanup.
 Host discovery refresh does not move a running event subscription: register and
 disconnect use the exact child captured with its parent buffer.
+
+The new native new_chat reservation hop does not extend approval lifetime: exact
+source/approval is rechecked after that owner-loop hop and before initial SQL. A
+Close observed there refuses and settles the exact reservation without saving;
+native postcommit source-Close still retains its already-saved draft.
