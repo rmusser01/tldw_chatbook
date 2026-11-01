@@ -31,20 +31,35 @@ shares the GIL with that import instead.
 ``Tests/UI/test_console_first_send_import_cycles.py`` keeps the list free of
 module-level import cycles, which two threads could otherwise deadlock on.
 
-Keep the list to modules the send path really imports, in the order it does;
-``Tests/UI/test_console_first_send_preimport.py`` checks that each is still
-lazy at UI-ready and that the harness's send imports nothing lazy beyond it.
+A step that has started runs to its end, so a navigation that arrives
+mid-step shares the GIL with the rest of it. TASK-33620.15.18 measured that
+live: imported whole, ``Canvas.native_authority`` was one 63-70 ms-CPU step
+(it loaded aiohttp, html5lib and tinycss2), and a Library click sent as it
+began drew Library's first frame a paired median +48.6 ms later than without
+the warm-up.
+So each third-party package the send path loads is its own step, listed
+after its dependencies; the heaviest left is aiohttp (about 37 ms CPU).
+
+Keep the list to modules the send path really imports, in the order it does
+(a package's dependencies first); ``Tests/UI/test_console_first_send_preimport.py``
+checks that each is still lazy at UI-ready, that the harness's send imports
+nothing lazy beyond it, and that no step loads a third-party package it does
+not name.
 """
 
 from __future__ import annotations
 
 import importlib
+import sys
 import time
 from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.Utils.ui_responsiveness import freeze_long_lived_heap
+from tldw_chatbook.Utils.ui_responsiveness import (
+    freeze_long_lived_heap,
+    seconds_since_user_input,
+)
 
 #: In first-send order. Before acceptance: the acknowledgement, the received
 #: intent and admission. After it, run start: hook preparation, compaction
@@ -98,6 +113,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.response_rules.chat_state",
     "tldw_chatbook.UI.Console_Modules.response_rules",
     "tldw_chatbook.app_served",
+    "textual_serve",
     "tldw_chatbook.Web_Server.served_relay_publisher",
     "tldw_chatbook.Guardian.settings",
     "tldw_chatbook.Agents.local_tool_provider",
@@ -117,12 +133,25 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.console_stream_persistence",
     "tldw_chatbook.Chat.provider_rate_limits",
     # The run's end: canvas settlement (one UI-loop callback of 157 ms CPU on
-    # a loaded host), remote sessions and citation counts.
-    "tldw_chatbook.Canvas.native_authority",
-    "tldw_chatbook.Canvas.compiler",
-    "tldw_chatbook.Canvas.gateway",
+    # a loaded host), remote sessions and citation counts. Its third-party
+    # packages come first, each after its dependencies, then the canvas
+    # modules leaves first: imported whole, native_authority was one step of
+    # 63-70 ms CPU that a navigation could not park (TASK-33620.15.18).
+    "webencodings",
+    "html5lib",
+    "tinycss2",
+    "multidict",
+    "propcache",
+    "yarl",
+    "frozenlist",
+    "aiosignal",
+    "aiohappyeyeballs",
+    "aiohttp",
     "tldw_chatbook.Canvas.capabilities",
     "tldw_chatbook.Canvas.control_protocol",
+    "tldw_chatbook.Canvas.compiler",
+    "tldw_chatbook.Canvas.gateway",
+    "tldw_chatbook.Canvas.native_authority",
     "tldw_chatbook.Tools.remote_session_registry",
     "tldw_chatbook.Tools.remote_session_worker",
     "tldw_chatbook.UI.Console_Modules.citation_counts",
@@ -136,6 +165,17 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
 )
 
 
+#: A navigation takes the app's lock only when its click or key reaches the
+#: handler (live, the lock was still free 7 ms after a click arrived and held
+#: by 27-53 ms), and until then the pass's park cannot see it. So no step
+#: starts until no input of any kind (a key, click, paste, scroll or mouse
+#: move) has arrived for this long; then the warm-up parks again
+#: (TASK-33620.15.18). A step runs only in a gap longer than this: typing
+#: slower than about six keys a second lets one through per keystroke, while
+#: faster typing or steady mouse motion holds every step back (TASK-33620.15.49).
+INPUT_QUIET_SECONDS = 0.15
+
+
 def preimport_first_send_modules(app: Any) -> None:
     """Import ``FIRST_SEND_MODULES`` in order, then parse the MCP manifest source.
 
@@ -145,10 +185,13 @@ def preimport_first_send_modules(app: Any) -> None:
     thread parks while a navigation or accepted Console work owns the loop
     (so a send that starts first imports what it needs itself, as before),
     then gives the UI loop a pause as long as the previous import took (the
-    app's pre-import pacing). A module that fails to import is left to fail
+    app's pre-import pacing). It also waits until no input has arrived for
+    ``INPUT_QUIET_SECONDS`` and parks again, so a click's navigation finds
+    no new step started under it. A module that fails to import is left to fail
     again, identically, where the send imports it (a failed import is never
-    cached). When it finishes it freezes the heap, as the routes' pass did
-    before it (ADR-198: these modules live as long as the app).
+    cached). Each step that loaded modules freezes the heap, and so does the
+    end, as the routes' pass did before it (ADR-198: these modules live as
+    long as the app).
 
     Args:
         app: The running ``TldwCli``. Its ``_shutting_down`` stops the
@@ -161,14 +204,26 @@ def preimport_first_send_modules(app: Any) -> None:
         logger.debug("First-send warm-up stopped (error_type={})", type(exc).__name__)
 
 
+def _pause(app: Any, gap: float) -> None:
+    """The pass's gap and park, then wait out recent input and park again."""
+    app._pause_between_preimports(gap)
+    while not getattr(app, "_shutting_down", False):
+        quiet = seconds_since_user_input()
+        if quiet >= INPUT_QUIET_SECONDS:
+            return
+        time.sleep(INPUT_QUIET_SECONDS - quiet)
+        app._pause_between_preimports(0.0)
+
+
 def _warm_first_send(app: Any) -> None:
     ratio, cap = app._screen_preimport_pacing()
     previous = 0.0
     for name in FIRST_SEND_MODULES:
-        app._pause_between_preimports(min(previous * ratio, cap))
+        _pause(app, min(previous * ratio, cap))
         if getattr(app, "_shutting_down", False):
             return
         started = time.monotonic()
+        loaded = len(sys.modules)
         try:
             importlib.import_module(name)
         except Exception as exc:  # noqa: BLE001 -- a speculative warm-up
@@ -177,8 +232,14 @@ def _warm_first_send(app: Any) -> None:
                 name,
                 type(exc).__name__,
             )
+        if len(sys.modules) != loaded:
+            # Left unfrozen until the last step, what the steps loaded made a
+            # generation-2 pass due, and a navigation's allocations ran it on
+            # the UI loop (TASK-33620.15.18). A boot freeze is typically under
+            # 1 ms now.
+            freeze_long_lived_heap("first_send_step")
         previous = time.monotonic() - started
-    app._pause_between_preimports(min(previous * ratio, cap))
+    _pause(app, min(previous * ratio, cap))
     if getattr(app, "_shutting_down", False):
         return
     try:

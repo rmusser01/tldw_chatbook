@@ -158,10 +158,10 @@ print(
 """
 
 
-@pytest.fixture(scope="module")
-def pass_outcome(tmp_path_factory) -> dict:
-    """Run the app's pre-import pass in a fresh interpreter (sys.modules is global)."""
-    tmp_path = tmp_path_factory.mktemp("first_send_pass")
+def _run_isolated(
+    tmp_path: Path, script: str, *args: str
+) -> subprocess.CompletedProcess:
+    """Run ``script`` in a fresh interpreter with a scratch HOME (sys.modules is global)."""
     home, data, config_dir = (tmp_path / n for n in ("home", "data", "config"))
     for directory in (home, data, config_dir):
         directory.mkdir(mode=0o700)
@@ -176,9 +176,8 @@ def pass_outcome(tmp_path_factory) -> dict:
     }
     env.pop("PYTEST_CURRENT_TEST", None)
     env.pop("TLDW_CONFIG_PATH", None)
-    expected = [f"tldw_chatbook.{name}" for name in LIVE_FIRST_SEND_IMPORTS]
     result = subprocess.run(
-        [sys.executable, "-c", _PASS_SCRIPT, json.dumps(expected)],
+        [sys.executable, "-c", script, *args],
         cwd=REPO_ROOT,
         env=env,
         text=True,
@@ -187,8 +186,82 @@ def pass_outcome(tmp_path_factory) -> dict:
         timeout=300,
     )
     assert result.returncode == 0, result.stderr[-4000:]
+    return result
+
+
+@pytest.fixture(scope="module")
+def pass_outcome(tmp_path_factory) -> dict:
+    """Run the app's pre-import pass in a fresh interpreter (sys.modules is global)."""
+    expected = [f"tldw_chatbook.{name}" for name in LIVE_FIRST_SEND_IMPORTS]
+    result = _run_isolated(
+        tmp_path_factory.mktemp("first_send_pass"), _PASS_SCRIPT, json.dumps(expected)
+    )
     line = next(x for x in result.stdout.splitlines() if x.startswith("PASS_JSON:"))
     return json.loads(line[len("PASS_JSON:") :])
+
+
+#: The pass as it runs live: the screen routes, then the warm-up, each
+#: warm-up step recording the third-party packages it loaded (TASK-33620.15.18).
+_STEPS_SCRIPT = """
+import importlib
+import json
+import sys
+
+from loguru import logger
+
+import tldw_chatbook.app as app_module
+import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401  (the initial route)
+from tldw_chatbook.Chat import console_first_send_modules as warm
+
+cls = app_module.TldwCli
+app = cls.__new__(cls)  # the pass reads only these
+app._shutting_down = False
+app.loguru_logger = logger
+cls._pause_between_preimports = lambda self, gap: None  # pacing: unit-tested
+# The routes run first, as live: whatever they load is resident already.
+app._preimport_screens(app._screen_preimport_route_order())
+stdlib = set(sys.stdlib_module_names)
+
+
+def third_party():
+    # A private top-level module (``_cython_3_2_3``, ``_cffi_backend``) is a
+    # compiled package's own runtime, loaded with it.
+    return {
+        name.split(".")[0]
+        for name, module in list(sys.modules.items())
+        if module is not None
+        and name.split(".")[0] not in stdlib
+        and not name.startswith(("tldw_chatbook", "_"))
+    }
+
+
+steps = []
+
+
+class Recorder:
+    def import_module(self, name, package=None):
+        before = third_party()
+        try:
+            return importlib.import_module(name, package)
+        finally:
+            steps.append([name, sorted(third_party() - before)])
+
+    def __getattr__(self, attr):
+        return getattr(importlib, attr)
+
+
+warm.importlib = Recorder()
+warm.preimport_first_send_modules(app)
+print("STEPS_JSON:" + json.dumps(steps))
+"""
+
+
+@pytest.fixture(scope="module")
+def warm_up_steps(tmp_path_factory) -> list[list]:
+    """``[step, [third-party packages it loaded]]`` for the live pass's warm-up."""
+    result = _run_isolated(tmp_path_factory.mktemp("first_send_steps"), _STEPS_SCRIPT)
+    line = next(x for x in result.stdout.splitlines() if x.startswith("STEPS_JSON:"))
+    return json.loads(line[len("STEPS_JSON:") :])
 
 
 @pytest.mark.integration
@@ -225,6 +298,51 @@ def test_the_idle_pass_parses_the_manifest_source_for_the_first_send(pass_outcom
     assert pass_outcome["manifest_parses"] == 0, (
         f"the first send's manifest read parsed server.py "
         f"{pass_outcome['manifest_parses']} time(s) on the UI loop"
+    )
+
+
+#: What a listed package imports only when it is installed (aiohttp 3.13:
+#: ``resolver.py`` tries aiodns, which loads pycares; ``compression_utils.py``
+#: tries brotlicffi or brotli and backports.zstd; ``aiohttp[speedups]``
+#: installs them). The measured venv had none of them, so live they never
+#: loaded; where they are installed they load inside aiohttp's own step.
+_OPTIONAL_ACCELERATORS: dict[str, frozenset[str]] = {
+    "aiohttp": frozenset({"aiodns", "pycares", "brotli", "brotlicffi", "backports"}),
+}
+
+
+@pytest.mark.integration
+def test_no_warm_up_step_loads_a_third_party_package_it_does_not_name(warm_up_steps):
+    """A navigation waits behind one small step at most (TASK-33620.15.18).
+
+    The warm-up parks before each step while a navigation holds the loop, but
+    a step it has started runs to its end, sharing the GIL with the
+    navigation. Live on origin/dev 7536ac3b87 (160x45, established profiles,
+    an idle host), ``Canvas.native_authority`` was one step of 85-222 ms
+    (63-70 ms CPU): importing it loaded aiohttp, html5lib, tinycss2 and
+    their dependencies, 121 modules. A Library click landing in it drew
+    Library's first frame 181-216 ms after the click reached the app on a
+    lightly loaded host, against 141-165 ms on origin/dev without the
+    warm-up at the same moment (paired median +48.6 ms from the click's
+    send, slower in 8 of 8 pairs at all loads). Keys landing in it were not
+    slower.
+
+    So each third-party package a send needs is its own step, after its
+    dependencies: a step loads no third-party package but the one it names,
+    apart from an optional accelerator that package imports only when it is
+    installed (the list cannot name a package that may be absent).
+    """
+    assert len(warm_up_steps) > 60, "the warm-up recorded no steps"
+    hidden = {
+        step: packages
+        for step, packages in warm_up_steps
+        if set(packages)
+        - {step.split(".")[0]}
+        - _OPTIONAL_ACCELERATORS.get(step, frozenset())
+    }
+    assert not hidden, (
+        "these warm-up steps load third-party packages they do not name; list "
+        "each package, after its dependencies, before the step: " + repr(hidden)
     )
 
 
@@ -271,6 +389,7 @@ def test_the_warm_up_stops_on_quit_and_swallows_a_failed_import(monkeypatch):
 
     monkeypatch.setattr(warm.importlib, "import_module", fake_import)
     monkeypatch.setattr(warm, "freeze_long_lived_heap", frozen.append, raising=False)
+    monkeypatch.setattr(warm, "seconds_since_user_input", lambda: float("inf"))
     warm.preimport_first_send_modules(_PassApp(stop_after=3))
 
     # Every import waits behind a pause (the park); quit lands in the third.
@@ -293,6 +412,7 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
     app = _PassApp()
     clock = iter(float(n) * 0.1 for n in range(10_000))
     monkeypatch.setattr(warm.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(warm, "seconds_since_user_input", lambda: float("inf"))
     monkeypatch.setattr(
         warm.importlib,
         "import_module",
@@ -321,6 +441,159 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
     assert app.pauses == [0.0] + [pytest.approx(0.2)] * len(warm.FIRST_SEND_MODULES)
     assert app.events[:2] == [("pause", 0.0), ("import", warm.FIRST_SEND_MODULES[0])]
     assert app.events[-2:] == [("prime", None), ("freeze", "first_send_preimport")]
+
+
+def test_the_warm_up_waits_out_recent_input_then_parks_again(monkeypatch):
+    """No step starts within the input-quiet time of any input (TASK-33620.15.18).
+
+    A navigation takes the app's lock only when its click reaches the
+    handler. Live (fix head d9320f721e, 160x45, idle host), the pass's park
+    checked the lock 1-7 ms after a Library click arrived, found it free and
+    started the next step: ``Canvas.gateway``, 46 ms, inside the click's
+    navigation; the lock was held by 27-53 ms. At a random moment of the
+    window a click drew Library's first frame a paired median +9 ms later
+    than without the warm-up (10 launches), keys +0.3 ms.
+
+    So before each step the warm-up waits until no input has arrived for
+    ``INPUT_QUIET_SECONDS``, then parks again for a navigation that started
+    meanwhile. Negative control: with no recent input it waits for nothing.
+    """
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+    from tldw_chatbook.MCP import server as mcp_server
+
+    app = _PassApp()
+    ages = iter([0.04, 0.12, float("inf")])  # a click 40 ms ago, then quiet
+    monkeypatch.setattr(
+        warm, "seconds_since_user_input", lambda: next(ages, float("inf"))
+    )
+
+    class Clock:
+        @staticmethod
+        def monotonic() -> float:
+            return 0.0
+
+        @staticmethod
+        def sleep(seconds: float) -> None:
+            app.events.append(("sleep", round(seconds, 3)))
+
+    monkeypatch.setattr(warm, "time", Clock)
+    monkeypatch.setattr(
+        warm.importlib,
+        "import_module",
+        lambda name: app.events.append(("import", name)),
+    )
+    monkeypatch.setattr(mcp_server, "prime_local_manifest_source", lambda: None)
+    monkeypatch.setattr(
+        warm, "freeze_long_lived_heap", lambda reason: None, raising=False
+    )
+
+    warm.preimport_first_send_modules(app)
+
+    quiet = warm.INPUT_QUIET_SECONDS
+    assert app.events[:6] == [
+        ("pause", 0.0),
+        ("sleep", round(quiet - 0.04, 3)),
+        ("pause", 0.0),
+        ("sleep", round(quiet - 0.12, 3)),
+        ("pause", 0.0),
+        ("import", warm.FIRST_SEND_MODULES[0]),
+    ], "a step started inside the input-quiet time of a click"
+    # Negative control: input long past, so each later step waits for nothing.
+    assert ("sleep", round(quiet, 3)) not in app.events
+    assert app.events[6:8] == [("pause", 0.0), ("import", warm.FIRST_SEND_MODULES[1])]
+
+
+def test_quit_stops_the_warm_up_while_it_waits_out_input(monkeypatch):
+    """Quitting ends the input wait at once, whatever the user does (TASK-33620.15.18).
+
+    Input that never pauses keeps the warm-up waiting before its next step,
+    so that wait must watch for quit itself, or the pass's daemon thread
+    would outlive the app's shutdown. Here every read says input arrived
+    just now; quit lands in the third park, and the warm-up then imports
+    nothing and freezes nothing.
+    """
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+
+    app = _PassApp(stop_after=3)
+    imported: list[str] = []
+    frozen: list[str] = []
+    monkeypatch.setattr(warm, "seconds_since_user_input", lambda: 0.0)
+
+    class Clock:
+        @staticmethod
+        def monotonic() -> float:
+            return 0.0
+
+        @staticmethod
+        def sleep(seconds: float) -> None:
+            app.events.append(("sleep", round(seconds, 3)))
+            assert len(app.events) < 50, "the warm-up kept waiting after quit"
+
+    monkeypatch.setattr(warm, "time", Clock)
+    monkeypatch.setattr(warm.importlib, "import_module", imported.append)
+    monkeypatch.setattr(warm, "freeze_long_lived_heap", frozen.append, raising=False)
+
+    warm.preimport_first_send_modules(app)
+
+    quiet = round(warm.INPUT_QUIET_SECONDS, 3)
+    assert app.events == [
+        ("pause", 0.0),
+        ("sleep", quiet),
+        ("pause", 0.0),
+        ("sleep", quiet),
+        ("pause", 0.0),
+    ], "the warm-up did not stop waiting when the app quit"
+    assert imported == [] and frozen == []
+
+
+def test_each_step_that_loads_modules_freezes_them_before_the_next(monkeypatch):
+    """The warm-up's objects never wait unfrozen for a UI-loop pass (TASK-33620.15.18).
+
+    Live (head 8e9e9c3409, 160x45, idle host), a Library click at a random
+    moment of the warm-up's window ran a generation-2 collection on the UI
+    loop in 9 of 10 launches (median 5.6 ms) against 0 of 10 without the
+    warm-up, and drew Library's first frame a paired median +10.5 ms later,
+    with no import running when the click arrived in 7 of them. The modules
+    already imported sat unfrozen until the warm-up's last step, so the
+    navigation's allocations made a full pass over them due. A boot freeze
+    no longer walks the frozen set (typically under 1 ms), so each step
+    that loads modules now freezes them at once.
+
+    Negative control: a step that loads nothing freezes nothing.
+    """
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+    from tldw_chatbook.MCP import server as mcp_server
+
+    app = _PassApp()
+    monkeypatch.setattr(warm, "seconds_since_user_input", lambda: float("inf"))
+    first, second = warm.FIRST_SEND_MODULES[:2]
+
+    def fake_import(name):
+        app.events.append(("import", name))
+        if name == first:  # loads a module; the second step finds it loaded
+            monkeypatch.setitem(sys.modules, "_m18_fake_first_send_module", object())
+
+    monkeypatch.setattr(warm.importlib, "import_module", fake_import)
+    monkeypatch.setattr(mcp_server, "prime_local_manifest_source", lambda: None)
+    monkeypatch.setattr(
+        warm,
+        "freeze_long_lived_heap",
+        lambda reason: app.events.append(("freeze", reason)),
+        raising=False,
+    )
+
+    warm.preimport_first_send_modules(app)
+
+    freezes = [i for i, event in enumerate(app.events) if event[0] == "freeze"]
+    assert app.events[:4] == [
+        ("pause", 0.0),
+        ("import", first),
+        ("freeze", "first_send_step"),
+        ("pause", app.pauses[1]),
+    ], "the first step's modules stayed unfrozen into the next step"
+    assert app.events[4] == ("import", second)
+    assert len(freezes) == 2, "a step that loaded nothing froze the heap"
+    assert app.events[-1] == ("freeze", "first_send_preimport")
 
 
 def _raise(*_args, **_kwargs):

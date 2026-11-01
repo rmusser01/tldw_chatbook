@@ -448,7 +448,7 @@ def _full_pass_ran_here() -> bool:
     return phases[:1] == ["start"] and "stop" in phases
 
 
-def freeze_long_lived_heap(reason: str) -> int:
+def freeze_long_lived_heap(reason: str) -> int | None:
     """Move the objects alive now into CPython's permanent GC generation.
 
     ADR-198 (PERF-11, TASK-33270): with nothing frozen, every automatic
@@ -465,12 +465,32 @@ def freeze_long_lived_heap(reason: str) -> int:
         reason: What froze the heap, for the DEBUG log line.
 
     Returns:
-        The permanent generation's size after the freeze.
+        How many objects the freeze moved, or None when nothing counted them
+        (before the refreezer's first look, which measures them itself).
     """
     gc.collect(1)
-    frozen = _HEAP_REFREEZER.freeze_at_boot_point(_freeze)
-    logging.getLogger(__name__).debug("gc heap frozen (%s): %d objects", reason, frozen)
-    return frozen
+    moved = _HEAP_REFREEZER.freeze_at_boot_point(_freeze)
+    logging.getLogger(__name__).debug(
+        "gc heap frozen (%s): %s objects moved",
+        reason,
+        "uncounted" if moved is None else moved,
+    )
+    return moved
+
+
+def count_unfrozen_objects() -> int:
+    """How many objects ``gc.freeze()`` would move now (generations 0-2).
+
+    A boot point counts what it freezes this way (TASK-33620.15.18). It
+    touches only the unfrozen generations, where walking the permanent one
+    touches everything frozen so far: live, one such walk held the GIL
+    15-34 ms on an idle host and 160-290 ms at a load average of about 110,
+    long enough to delay a key or click sent while it ran.
+
+    Returns:
+        The number of objects tracked in generations 0, 1 and 2.
+    """
+    return sum(len(gc.get_objects(generation=generation)) for generation in range(3))
 
 
 def _freeze() -> None:
@@ -626,6 +646,7 @@ class IdleHeapRefreezer:
         refreeze: Callable[[str], object] = refreeze_long_lived_heap,
         compact: Callable[[str], int] = compact_long_lived_heap,
         freeze_count: Callable[[], int] = gc.get_freeze_count,
+        unfrozen_count: Callable[[], int] = count_unfrozen_objects,
     ) -> None:
         """Create a refreezer with nothing requested.
 
@@ -643,6 +664,8 @@ class IdleHeapRefreezer:
             compact: Unfreezes, collects the whole heap, freezes it and
                 returns the permanent generation's size.
             freeze_count: Walks the permanent generation to size it.
+            unfrozen_count: Counts what a boot point's freeze will move,
+                without walking the permanent generation.
         """
         self._quiet = quiet_seconds
         self._compaction_quiet = compaction_quiet_seconds
@@ -653,6 +676,7 @@ class IdleHeapRefreezer:
         self._refreeze = refreeze
         self._compact = compact
         self._freeze_count = freeze_count
+        self._unfrozen_count = unfrozen_count
         self._last_input = float("-inf")
         self._requested_at = float("-inf")
         self._request: tuple[str, weakref.ref[Any], Callable[[Any], bool]] | None = None
@@ -680,6 +704,10 @@ class IdleHeapRefreezer:
     def note_input(self) -> None:
         """Record that the user just typed, clicked or pasted."""
         self._last_input = self._clock()
+
+    def seconds_since_input(self) -> float:
+        """Seconds since the last user input; infinite before the first."""
+        return self._clock() - self._last_input
 
     def request(self, reason: str, owner: Any, busy: Callable[[Any], bool]) -> None:
         """Ask for a re-freeze once ``owner`` is idle and the user is quiet.
@@ -710,7 +738,7 @@ class IdleHeapRefreezer:
         """
         self._stranded = True
 
-    def freeze_at_boot_point(self, freeze: Callable[[], object]) -> int:
+    def freeze_at_boot_point(self, freeze: Callable[[], object]) -> int | None:
         """Run a boot point's freeze; what it adds never counts as growth.
 
         ``_ui_ready`` and the pre-import passes (ADR-198) freeze long-lived
@@ -718,24 +746,31 @@ class IdleHeapRefreezer:
         has looked, such a freeze moves the baseline by what it added and
         marks the measured size stale, so the next budget check measures it
         and counts only what re-freezes added (TASK-33620.15.12). Before the
-        first look it costs no extra walk: that look measures it.
+        first look nothing counts it: that look measures it.
+
+        It never walks the permanent generation (TASK-33620.15.18). What it
+        adds is what the unfrozen generations hold just before it, counted
+        by ``unfrozen_count``; walking the frozen set before and after cost
+        15-34 ms of held GIL per walk live, and the first-send warm-up's
+        freeze runs while the user may be typing or navigating. Objects
+        another thread allocates between the count and the freeze are frozen
+        uncounted, the same tolerance the walks had (the bound above).
 
         Args:
             freeze: Freezes the heap.
 
         Returns:
-            The permanent generation's size after the freeze.
+            How many objects the freeze moved, or None before the first look.
         """
         with self._lock:
             if self._baseline is None:
                 freeze()
-                return self._freeze_count()
-            before = self._freeze_count()
+                return None
+            moved = self._unfrozen_count()
             freeze()
-            frozen = self._freeze_count()
-            self._baseline += frozen - before
+            self._baseline += moved
             self._stale = True
-            return frozen
+            return moved
 
     def compaction_due(self) -> bool:
         """Whether stranded garbage or growth since the last compaction calls for one.
@@ -830,3 +865,12 @@ def heap_refreezer() -> IdleHeapRefreezer:
 def note_user_input() -> None:
     """Stamp a user input for the idle re-freeze's quiet check."""
     _HEAP_REFREEZER.note_input()
+
+
+def seconds_since_user_input() -> float:
+    """Seconds since the user last typed, clicked or pasted (infinite before).
+
+    Read from other threads too (the first-send warm-up, TASK-33620.15.18): a
+    float attribute read, never a wait on the refreezer's lock.
+    """
+    return _HEAP_REFREEZER.seconds_since_input()
