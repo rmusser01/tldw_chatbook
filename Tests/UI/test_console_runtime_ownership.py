@@ -104,18 +104,7 @@ def _register_runtime_database_owners(monkeypatch, owned_console_apps):  # noqa:
 #: (`UI/Persona_Modules/personas_preview_controller.py`).
 _RUNTIME_OWNED_CONSTRUCTIONS = ("ConsoleChatStore", "ConsoleChatController")
 
-#: ADR-234: the served MobileChatService is the sanctioned second
-#: construction site -- the parent-process engine binding the spike proved
-#: (see backlog/decisions/234-served-mobile-companion-surface.md and the
-#: binding spike Docs/superpowers/spikes/2026-10-15-mobile-engine-binding-spike.md).
-#: Prefixes are matched against the construction site's package-relative
-#: path, so an entry covers exactly the files it names. Any NEW foreign
-#: construction site must be registered here with an ADR that justifies
-#: it, or the ownership pin below fails.
-_SANCTIONED_FOREIGN_SITES: dict[str, tuple[str, ...]] = {
-    "ConsoleChatStore": ("tldw_chatbook/Web_Server/mobile_service.py",),
-    "ConsoleChatController": ("tldw_chatbook/Web_Server/mobile_service.py",),
-}
+_SANCTIONED_FOREIGN_SITES: dict[str, tuple[str, ...]] = {}
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 _RUNTIME_MODULE = "tldw_chatbook/Chat/console_runtime.py"
@@ -602,10 +591,8 @@ def _construction_sites(class_name: str) -> list[str]:
 def test_console_runtime_is_the_single_construction_site():
     """PIN (characterization): only the runtime builds the store/controller.
 
-    ADR-234 sanctions exactly one foreign construction site per token --
-    the served MobileChatService parent-process engine -- registered in
-    `_SANCTIONED_FOREIGN_SITES`. A new foreign site must be registered
-    there with an ADR that justifies it, not silence this pin.
+    ADR-244 retires the former mobile parent engine. No foreign production
+    construction site is sanctioned; mobile routes use the native runtime.
     """
     for token in _RUNTIME_OWNED_CONSTRUCTIONS:
         sites = _construction_sites(token)

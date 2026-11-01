@@ -64,11 +64,10 @@ ADR-123 (`123-artifact-share-web-export.md` — the staged-snapshot child server
 The executing native App or served child owns the physical run-store OS lease,
 not its routing parent. Contention refuses execution before AgentRuns schema or
 recovery work. Non-owning readers use the explicit read-only store path. The
-legacy mobile engine temporarily acquires the same kind of lease for its existing
-run-store path; its idle shutdown releases the lease only after controller/fleet retirement;
-bounded teardown retains that lease until process exit when
-physical retirement cannot be proven. Shared canonical storage/routing cutover
-is backed by the retained-host lifecycle described below.
+mobile adapter never acquires execution ownership. It uses canonical read-only
+Core, Media and run-store readers, and routes mutations to the retained native
+child. Shutdown of that adapter closes only its readers; the server registry owns
+the native host lifecycle.
 
 ## Independent served control and bounded projections (ADR-244, Task 2)
 
@@ -98,8 +97,8 @@ value/depth/collection limits apply; extra outer fields and wrong container type
 refuse. Native snapshot/event adapters strictly validate the inner arguments. Ticket,
 command and receipt methods dispatch through the retained runtime's native
 remote ticket/command/receipt owner (`app_served.py`); unavailable authority still
-refuses. No request constructs another engine. The separate public mobile-service
-engine retirement and HTTP route cutover remain unfinished Task9 work.
+refuses. No request constructs another engine. The public mobile API routes through this
+control channel; `MobileChatService` owns neither a controller nor a provider.
 `console.changed` is body-free `{sequence: int >= 0, reset_required?: bool}` metadata.
 Correlated responses resolve directly through the pending request map; projections
 never own command outcomes, receipts or native approval resolution.
@@ -121,30 +120,46 @@ separate from native projection revision: a later snapshot adapter must register
 its parent cursor **before** native capture, replay events received during capture,
 and never acknowledge past that capture merely because transport advanced.
 
-The legacy mobile engine remains until its later cutover. Its relay observes
-lifecycle state using its own cursor, drops decision projections on loss and
-refuses stale/replacement-child decisions even while its observer is paused.
-Per-browser projection queues also cap at 64; overflow retains one reset and
-suppresses further projections for that subscription. The existing phone status
-line reports unavailable and clears/fences approval cards. A new subscription
-inherits any outstanding child projection reset even while the child is idle;
-page refresh cannot clear that warning or recover a missing native snapshot.
-The phone reports that current approvals cannot be verified. A subscription-only
-queue overflow may recover on page refresh when parent/native projections remain
-current. This affects projection traffic
-only; native execution, decisions and HTTP/control command responses retain their
-existing owners. The child publisher uses a bounded thread-safe deque, one
-coalesced loop wake and one async sender, with reset metadata on dropped history.
+`MobileChatService.snapshot` registers the parent transport boundary before
+native capture and exposes it separately as `transport_sequence`. Incomplete
+pages retain that boundary; loss or an event received during capture keeps reset
+sticky. A completed coherent snapshot acknowledges only its captured native and
+parent boundaries. Streams expose body-free native change hints or reset, never
+legacy decision bodies. Subscription IDs belong to the server; disconnect removes
+only that client's answerability claims, leaving native work and other clients.
 
-Verification: `Tests/Web_Server/test_served_console_events.py` covers zero
-subscribers, overflow, current snapshot acknowledgement, independent wake readers,
-Canvas/mobile-disabled control, identity replacement, paused decision fencing,
-bounded browser subscriptions and real Chromium reset behavior. Existing broker,
-publisher, auth, Canvas kill-switch and mobile relay tests retain their native
-security assertions. The auth module and config-reading kill-switch node use the
-documented `bootstrap_profile` marker so guarded config keeps its admitted private
-source; test DB/session stores remain temporary.
+### Canonical mobile HTTP API (TASK-36767)
 
+HTTP protocol **1** is independent of private control protocol 3. Authenticated,
+CSRF-protected `POST /api/v1/mobile/console/host` accepts exactly
+`{protocol_version: 1}`. It verifies cutover, gets or starts the canonical registry
+host, and positively verifies native execution admission before returning its
+exact identity. It creates no chat, ticket or provider request. GET history,
+Library reads, discovery and stream reconnect never start a host.
+
+`GET /console/snapshot`, `POST /commands/tickets`, `POST /commands`, and
+`GET /commands/{command_id}` are relative to `/api/v1/mobile`. Tickets
+bind the exact host/target, action and immutable payload. Create/Open use a host
+identity and return native session/incarnation identities; subsequent controls use
+exact targets. A lost command response is queried by command ID; no reconnect,
+replacement host or refresh automatically reissues a ticket or replays a mutation.
+Old create/send/cancel/decide routes refuse with `reload_required`. Wrong/missing
+protocol versions also refuse before effects. Receipts omit private fingerprints.
+
+Saved sessions and bounded history use native `ChatConversationService` and
+explicit `CharactersRAGDB.open_read_only`; notes and media retain native Library
+filters and pagination through `MediaDatabase.open_read_only`. Missing files are
+not created, incompatible schemas are not migrated, and finite worker reads close
+physical SQLite connections before returning. There is no mobile-only execution
+graph or mobile DB constructor. Consolidation remains an explicit reviewed
+operator operation; a missing cutover gives a bounded refusal.
+
+Verification: `Tests/Web_Server/test_mobile_shared_console.py` covers native
+create/open identity, uncertain acknowledgement, target fencing, bounded transport,
+viewless decisions and a mounted Library first Send through the native agent loop.
+API tests retain authentication, CSRF, same-origin and exposure gates. Native
+read-only and owner-loop tests cover their separate boundaries. Browser page
+integration is a separate implementation/qualification boundary.
 
 ## Retained Console host and terminal attachment (TASK-36761, ADR-244)
 

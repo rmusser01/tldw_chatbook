@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 MAX_COMMAND_RECEIPTS = 4096
 ACTIONS = frozenset(
     {
+        "create",
+        "open",
         "send",
         "steer",
         "redirect",

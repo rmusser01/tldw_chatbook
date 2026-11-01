@@ -74,6 +74,8 @@ class ConsoleRemoteReceipts:
             for key in ("server_epoch", "console_id")
         ):
             raise ValueError("command_owner_changed")
+        if (action in {"create", "open"}) != (type(target) is ConsoleHostIdentity):
+            raise ValueError("invalid_command_target")
         now = self.monotonic_ns()
         command_id = secrets.token_hex(16)
         value = dict(

@@ -255,7 +255,7 @@ class FakeMobileService:
             queue.put_nowait(event)
         return event
 
-    async def events(self):
+    async def events(self, *, client_id=None):
         """One queue per subscriber; discarded on close (Task 3 shape)."""
         queue: asyncio.Queue = asyncio.Queue()
         self._event_queues.add(queue)
@@ -264,6 +264,33 @@ class FakeMobileService:
                 yield await queue.get()
         finally:
             self._event_queues.discard(queue)
+
+    async def set_answerable(self, client_id, target, answerable):
+        self.calls.append(("answerable", {"client_id": client_id,"target": target.model_dump(),"answerable": answerable}))
+
+    async def bootstrap_host(self):
+        from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
+        self.calls.append(("bootstrap", {}))
+        return ConsoleHostIdentity(server_epoch="epoch", console_id="console")
+
+    async def snapshot(self, **kwargs):
+        self.calls.append(("snapshot", kwargs))
+        return {"server_epoch": "epoch", "console_id": "console", "chats": [], "messages": []}
+
+    async def issue_command_ticket(self, action, target, payload):
+        self.calls.append(("ticket", {"action": action, "target": target.model_dump(), "payload": payload}))
+        return {"ticket": "signed-ticket", "command_id": "command-a"}
+
+    async def submit_command(self, ticket, payload):
+        self.calls.append(("command", {"ticket": ticket, "payload": payload}))
+        from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity
+        from tldw_chatbook.DB.console_command_receipts import ConsoleCommandReceipt
+        return ConsoleCommandReceipt(command_id="command-a", server_epoch="epoch", console_id="console",
+            action="create", target=ConsoleHostIdentity(server_epoch="epoch", console_id="console"),
+            payload_fingerprint="a" * 64, state="pending", issued_ns=1, expires_ns=2)
+
+    async def query_command(self, command_id):
+        return await self.submit_command("query-only", {}) if command_id == "command-a" else None
 
     def cancel(self, session_id: str) -> bool:
         self.calls.append(("cancel", {"session_id": session_id}))
@@ -405,7 +432,6 @@ def _mobile_server(
     policy,
     *,
     service: FakeMobileService | None = None,
-    provider_gateway: Any | None = None,
 ):
     """Build a config-free served server, injecting only what is given.
 
@@ -430,8 +456,6 @@ def _mobile_server(
     mobile_kwargs: dict[str, Any] = {}
     if service is not None:
         mobile_kwargs["mobile_service"] = service
-    if provider_gateway is not None:
-        mobile_kwargs["mobile_provider_gateway"] = provider_gateway
     return cls(
         command="python -m tldw_chatbook.app",
         host=policy.bind_host,
@@ -504,56 +528,8 @@ def _loopback_policy():
     )
 
 
-def test_production_mobile_service_gets_real_gateway_without_override(
-    tmp_path, monkeypatch
-) -> None:
-    """C1 regression: the lazy production path binds the REAL gateway.
-
-    ``create_server`` passes no mobile kwargs, so the first mobile request
-    used to construct ``MobileChatService`` with a ``None``
-    ``provider_gateway`` — every production send then died inside the
-    engine's provider resolution. Without the override the lazily
-    constructed service must carry a real ``ConsoleProviderGateway``.
-    """
-
-    # The gateway's owned httpx client reads ``[network] ssl_verify``
-    # through the guarded loader at construction time
-    # (``tls_trust.httpx_verify`` — the same read every TUI-side gateway
-    # construction performs). The per-test sandbox fails guarded reads
-    # closed (the standing web_auth baseline's environmental cause), so
-    # patch the module-local reference exactly like the
-    # ``mobile_surface_gate`` fixture does.
-    from tldw_chatbook.Utils import tls_trust
-
-    monkeypatch.setattr(
-        tls_trust,
-        "get_cli_setting",
-        lambda section, key=None, default=None: (
-            True if (section, key) == ("network", "ssl_verify") else default
-        ),
-    )
-    monkeypatch.setattr(serve, "get_user_data_dir", lambda: tmp_path)
-    server = _mobile_server(tmp_path, _loopback_policy())
-
-    service = server._get_mobile_service()
-
-    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
-
-    assert isinstance(service.provider_gateway, ConsoleProviderGateway)
 
 
-def test_mobile_provider_gateway_override_wins(tmp_path, monkeypatch) -> None:
-    """The injected ``mobile_provider_gateway`` seam still wins."""
-
-    monkeypatch.setattr(serve, "get_user_data_dir", lambda: tmp_path)
-    sentinel = object()
-    server = _mobile_server(
-        tmp_path, _loopback_policy(), provider_gateway=sentinel
-    )
-
-    service = server._get_mobile_service()
-
-    assert service.provider_gateway is sentinel
 
 
 async def _current_session_id(client) -> str:
@@ -625,6 +601,8 @@ async def test_mobile_routes_require_an_authenticated_session(
         assert response.status == 401
 
         for path in (
+            "/api/v1/mobile/console/snapshot?protocol_version=1",
+            "/api/v1/mobile/commands/command-a",
             "/api/v1/mobile/notes",
             "/api/v1/mobile/notes/n1",
             "/api/v1/mobile/library",
@@ -632,6 +610,14 @@ async def test_mobile_routes_require_an_authenticated_session(
         ):
             reading = await client.get(path)
             assert reading.status == 401, path
+
+        for path, body in (
+            ("console/host", {"protocol_version": 1}),
+            ("commands/tickets", {"protocol_version": 1}),
+            ("commands", {"protocol_version": 1}),
+        ):
+            response = await client.post("/api/v1/mobile/" + path, json=body)
+            assert response.status == 401
 
     assert service.calls == []
 
@@ -652,7 +638,7 @@ async def test_send_requires_the_csrf_header(tmp_path, mobile_surface_gate) -> N
             json={"text": "phone question"},
             headers={CSRF_HEADER_NAME: await _csrf(client)},
         )
-        assert accepted.status == 202
+        assert accepted.status == 409
 
 
 @pytest.mark.asyncio
@@ -738,86 +724,8 @@ async def test_conversations_pagination_contract(
         assert ("sessions_page", {"page": 1, "per_page": 50}) in service.calls
 
 
-@pytest.mark.asyncio
-async def test_new_conversation_creates_201_and_lists(
-    tmp_path, mobile_surface_gate
-) -> None:
-    service = FakeMobileService()
-    async with _logged_in_client(tmp_path, service=service) as client:
-        csrf = await _csrf(client)
-
-        explicit = await client.post(
-            "/api/v1/mobile/conversations",
-            json={"title": "New chat", "workspace_id": "ws-1"},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert explicit.status == 201
-        assert explicit.headers["Cache-Control"] == "no-store"
-        assert (await explicit.json())["session"] == {
-            "id": "s-new-1",
-            "title": "New chat",
-            "workspace_id": "ws-1",
-            "has_folder_tools": False,
-        }
-
-        # An empty body still creates a session (default title/workspace).
-        default = await client.post(
-            "/api/v1/mobile/conversations",
-            json={},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert default.status == 201
-        default_session = (await default.json())["session"]
-        assert default_session["id"] == "s-new-2"
-        assert default_session["title"]
-        assert default_session["workspace_id"] == "global"
-
-        listing = await (await client.get("/api/v1/mobile/conversations")).json()
-        assert [session["id"] for session in listing["items"]] == [
-            "s-new-2",
-            "s-new-1",
-            "s-known",
-        ]
-        assert ("create_session", {"title": "New chat", "workspace_id": "ws-1"}) in (
-            service.calls
-        )
 
 
-@pytest.mark.asyncio
-async def test_send_202_then_polled_history_shows_the_new_message(
-    tmp_path, mobile_surface_gate
-) -> None:
-    service = FakeMobileService()
-    async with _logged_in_client(tmp_path, service=service) as client:
-        csrf = await _csrf(client)
-
-        before = await (
-            await client.get("/api/v1/mobile/conversations/s-known/messages")
-        ).json()
-        assert [message["id"] for message in before["messages"]] == ["m1", "m2"]
-        assert before["cursor"] == "m2"
-
-        sent = await client.post(
-            "/api/v1/mobile/conversations/s-known/messages",
-            json={"text": "phone question"},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert sent.status == 202
-        assert (await sent.json()) == {"ok": True}
-        assert service.calls[-1] == (
-            "send",
-            {"session_id": "s-known", "draft": "phone question"},
-        )
-
-        after = await (
-            await client.get(
-                "/api/v1/mobile/conversations/s-known/messages?after=m2"
-            )
-        ).json()
-        assert [message["id"] for message in after["messages"]] == ["m3"]
-        assert after["messages"][0]["role"] == "user"
-        assert after["messages"][0]["content"] == "phone question"
-        assert after["cursor"] == "m3"
 
 
 @pytest.mark.asyncio
@@ -837,130 +745,21 @@ async def test_unknown_session_is_404_on_every_route(
             json={"text": "anyone?"},
             headers={CSRF_HEADER_NAME: csrf},
         )
-        assert sent.status == 404
-        assert (await sent.json()) == {"error": "unknown_session"}
+        assert sent.status == 409
+        assert (await sent.json()) == {"error": "reload_required"}
 
         cancelled = await client.post(
             "/api/v1/mobile/conversations/nope/cancel",
             headers={CSRF_HEADER_NAME: csrf},
         )
-        assert cancelled.status == 404
-        assert (await cancelled.json()) == {"error": "unknown_session"}
+        assert cancelled.status == 409
+        assert (await cancelled.json()) == {"error": "reload_required"}
 
 
-@pytest.mark.asyncio
-async def test_send_text_bounds(tmp_path, mobile_surface_gate) -> None:
-    service = FakeMobileService()
-    async with _logged_in_client(tmp_path, service=service) as client:
-        csrf = await _csrf(client)
-
-        empty = await client.post(
-            "/api/v1/mobile/conversations/s-known/messages",
-            json={"text": ""},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert empty.status == 400
-        assert (await empty.json()) == {"error": "invalid_text"}
-
-        wrong_type = await client.post(
-            "/api/v1/mobile/conversations/s-known/messages",
-            json={"text": 42},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert wrong_type.status == 400
-        assert (await wrong_type.json()) == {"error": "invalid_text"}
-
-        oversized = await client.post(
-            "/api/v1/mobile/conversations/s-known/messages",
-            json={"text": "x" * 32769},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert oversized.status == 413
-        assert (await oversized.json()) == {"error": "text_too_large"}
-
-        boundary = await client.post(
-            "/api/v1/mobile/conversations/s-known/messages",
-            json={"text": "x" * 32768},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert boundary.status == 202
 
 
-@pytest.mark.asyncio
-async def test_oversized_body_answers_uniform_413_shape(
-    tmp_path, mobile_surface_gate
-) -> None:
-    """A body over the route's byte cap gets the uniform JSON 413, not text.
-
-    ``_read_mobile_json`` used to raise aiohttp's plain-text
-    ``HTTPRequestEntityTooLarge``; the surface contract says every caller
-    mistake answers ``{"error": ...}`` JSON.
-    """
-    service = FakeMobileService()
-    async with _logged_in_client(tmp_path, service=service) as client:
-        csrf = await _csrf(client)
-
-        oversized_small_route = await client.post(
-            "/api/v1/mobile/conversations",
-            json={"title": "x" * 5000},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert oversized_small_route.status == 413
-        assert (await oversized_small_route.json()) == {"error": "body_too_large"}
-
-        oversized_send = await client.post(
-            "/api/v1/mobile/conversations/s-known/messages",
-            json={"text": "x" * mobile_api.MOBILE_MAX_BODY_BYTES},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert oversized_send.status == 413
-        assert (await oversized_send.json()) == {"error": "body_too_large"}
 
 
-@pytest.mark.asyncio
-async def test_chunked_body_over_the_app_cap_answers_uniform_413_shape(
-    tmp_path, mobile_surface_gate
-) -> None:
-    """#3127 review minor: the over-app-cap path during read answers JSON 413.
-
-    The test above covers the declared-length route (the Content-Length
-    pre-check). A CHUNKED upload has no length up front, so the rejection
-    comes from aiohttp's ``HTTPRequestEntityTooLarge`` raised by
-    ``client_max_size`` enforcement while ``_read_mobile_json`` reads — the
-    route boundary must still answer the surface's uniform
-    ``{"error": "body_too_large"}``, never aiohttp's plain-text 413, and the
-    service is never touched.
-    """
-
-    async def oversized_chunks():
-        yield b'{"text": "'
-        yield b"x" * (mobile_api.MOBILE_MAX_BODY_BYTES + 8192)
-        yield b'"}'
-
-    service = FakeMobileService()
-    async with _logged_in_client(tmp_path, service=service) as client:
-        csrf = await _csrf(client)
-
-        send = await client.post(
-            "/api/v1/mobile/conversations/s-known/messages",
-            data=oversized_chunks(),
-            headers={CSRF_HEADER_NAME: csrf, "Content-Type": "application/json"},
-        )
-        assert send.status == 413
-        assert (await send.json()) == {"error": "body_too_large"}
-
-        # Same app-cap answer on a small-cap route: the route's tighter
-        # bound cannot be pre-checked on a chunked body, but the app cap
-        # still stops the read and the shape stays uniform.
-        new_conversation = await client.post(
-            "/api/v1/mobile/conversations",
-            data=oversized_chunks(),
-            headers={CSRF_HEADER_NAME: csrf, "Content-Type": "application/json"},
-        )
-        assert new_conversation.status == 413
-        assert (await new_conversation.json()) == {"error": "body_too_large"}
-
-        assert service.calls == []
 
 
 @pytest.mark.asyncio
@@ -977,212 +776,14 @@ async def test_unknown_cursor_message_is_400(
         assert (await response.json()) == {"error": "invalid_cursor"}
 
 
-@pytest.mark.asyncio
-async def test_cancel_maps_the_service_bool(
-    tmp_path, mobile_surface_gate
-) -> None:
-    service = FakeMobileService()
-    async with _logged_in_client(tmp_path, service=service) as client:
-        csrf = await _csrf(client)
-
-        stopped = await client.post(
-            "/api/v1/mobile/conversations/s-known/cancel",
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert stopped.status == 200
-        assert (await stopped.json()) == {"ok": True}
-
-        service.cancel_result = False
-        idle = await client.post(
-            "/api/v1/mobile/conversations/s-known/cancel",
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert idle.status == 200
-        assert (await idle.json()) == {"ok": False}
-        assert service.calls.count(("cancel", {"session_id": "s-known"})) == 2
 
 
-@pytest.mark.asyncio
-async def test_approvals_list_and_decide(tmp_path, mobile_surface_gate) -> None:
-    service = FakeMobileService()
-    async with _logged_in_client(tmp_path, service=service) as client:
-        csrf = await _csrf(client)
-
-        listing = await client.get("/api/v1/mobile/approvals")
-        assert listing.status == 200
-        assert listing.headers["Cache-Control"] == "no-store"
-        body = await listing.json()
-        assert body["approvals"][0]["round_id"] == "r1"
-        assert body["approvals"][0]["calls"][0]["llm_name"] == "fs_list"
-
-        # ADR-236: desktop-relayed rounds list alongside mobile ones and
-        # their surface/child_id markers pass through the route untouched
-        # (the phone tags each card desktop/phone off these fields).
-        desktop = body["approvals"][1]
-        assert desktop["round_id"] == "r-desktop-1"
-        assert desktop["surface"] == "desktop"
-        assert desktop["child_id"] == "child-a"
-
-        decided = await client.post(
-            "/api/v1/mobile/approvals/r1",
-            json={"decisions": {"c1": "approve_once"}},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert decided.status == 200
-        assert (await decided.json()) == {"ok": True}
-        # Absent child_id forwards as None — the service keeps its
-        # deterministic oldest-entry fallback for ambiguous rounds.
-        assert (
-            "decide_approval",
-            {
-                "round_id": "r1",
-                "decisions": {"c1": "approve_once"},
-                "child_id": None,
-            },
-        ) in service.calls
-
-        unknown = await client.post(
-            "/api/v1/mobile/approvals/no-such-round",
-            json={"decisions": {"c1": "deny"}},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert unknown.status == 200
-        assert (await unknown.json()) == {"ok": False}
-
-        invalid = await client.post(
-            "/api/v1/mobile/approvals/r1",
-            json={"decisions": {"c1": "not-a-verdict"}},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert invalid.status == 400
-        assert (await invalid.json()) == {"error": "invalid_decisions"}
-
-        missing = await client.post(
-            "/api/v1/mobile/approvals/r1",
-            json={},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert missing.status == 400
-        assert (await missing.json()) == {"error": "invalid_decisions"}
 
 
-@pytest.mark.asyncio
-async def test_decide_forwards_child_id_and_rejects_malformed_ones(
-    tmp_path, mobile_surface_gate
-) -> None:
-    """PR-#3142 minor: an optional ``child_id`` rides the decide body through
-    to ``decide_approval`` — exact addressing for desktop rounds whose
-    child-local round_id collides across children. The surface's family
-    rules: absent stays absent (the service's deterministic oldest-entry
-    fallback), and a present-but-malformed id (non-string, or beyond the
-    control protocol's 200-char identifier ceiling) is the uniform
-    ``400 invalid_child_id`` before the service is touched."""
-    service = FakeMobileService()
-    async with _logged_in_client(tmp_path, service=service) as client:
-        csrf = await _csrf(client)
-
-        addressed = await client.post(
-            "/api/v1/mobile/approvals/r1",
-            json={
-                "decisions": {"c1": "approve_once"},
-                "child_id": "child-a",
-            },
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert addressed.status == 200
-        assert (await addressed.json()) == {"ok": True}
-        assert (
-            "decide_approval",
-            {
-                "round_id": "r1",
-                "decisions": {"c1": "approve_once"},
-                "child_id": "child-a",
-            },
-        ) in service.calls
-
-        calls_before = len(service.calls)
-        for malformed in (
-            123,  # non-string
-            ["child-a"],  # non-string (list)
-            "c" * 201,  # beyond the control protocol's identifier ceiling
-        ):
-            rejected = await client.post(
-                "/api/v1/mobile/approvals/r1",
-                json={
-                    "decisions": {"c1": "deny"},
-                    "child_id": malformed,
-                },
-                headers={CSRF_HEADER_NAME: csrf},
-            )
-            assert rejected.status == 400
-            assert (await rejected.json()) == {"error": "invalid_child_id"}
-        # Every malformed id was refused before the service was touched.
-        assert len(service.calls) == calls_before
 
 
-@pytest.mark.asyncio
-async def test_send_refused_maps_to_409(tmp_path, mobile_surface_gate) -> None:
-    from tldw_chatbook.Web_Server.mobile_service import MobileSendRefused
-
-    service = FakeMobileService()
-    service.send_error = MobileSendRefused("hooks not reviewed")
-    async with _logged_in_client(tmp_path, service=service) as client:
-        response = await client.post(
-            "/api/v1/mobile/conversations/s-known/messages",
-            json={"text": "hello?"},
-            headers={CSRF_HEADER_NAME: await _csrf(client)},
-        )
-
-        assert response.status == 409
-        assert (await response.json()) == {"error": "send_refused"}
 
 
-@pytest.mark.asyncio
-async def test_send_returns_202_while_the_turn_is_still_pending(
-    tmp_path, mobile_surface_gate
-) -> None:
-    """Non-blocking send (spec 4.2 / live-check round 1, finding 1).
-
-    The scripted turn parks on ``turn_gate``; the POST must answer 202 in
-    bounded time with the turn observably still pending, a concurrent send
-    must be refused 409, and releasing the gate must let the scripted
-    events flow (the full frame sequence is proven by the stream tests,
-    which now run against the same async fake).
-    """
-    service = FakeMobileService()
-    service.turn_gate = asyncio.Event()
-    async with _logged_in_client(tmp_path, service=service) as client:
-        csrf = await _csrf(client)
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-
-        response = await client.post(
-            "/api/v1/mobile/conversations/s-known/messages",
-            json={"text": "slow turn"},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-
-        assert response.status == 202
-        assert (await response.json()) == {"ok": True}
-        assert loop.time() - started < 1.0, "send blocked on the turn"
-        assert service.turn_running is True
-
-        second = await client.post(
-            "/api/v1/mobile/conversations/s-known/messages",
-            json={"text": "too soon"},
-            headers={CSRF_HEADER_NAME: csrf},
-        )
-        assert second.status == 409
-        assert (await second.json()) == {"error": "send_refused"}
-
-        service.turn_gate.set()
-        for _ in range(100):
-            if not service.turn_running:
-                break
-            await asyncio.sleep(0.02)
-        assert service.turn_running is False
-
-    await _assert_subscribers_drained(service)
 
 
 # --------------------------------------------------------------------- #
@@ -1382,7 +983,7 @@ async def test_shutdown_stops_the_mobile_service(
 class _EngineErrorService(FakeMobileService):
     """Service whose event subscription fails before the first event."""
 
-    async def events(self):
+    async def events(self, *, client_id=None):
         raise RuntimeError("engine unavailable")
         yield  # pragma: no cover - makes this an async generator
 
@@ -1455,12 +1056,7 @@ async def test_stream_delivers_run_frames_in_order(
                     break
                 await asyncio.sleep(0.02)
             assert service._event_queues
-            sent = await client.post(
-                "/api/v1/mobile/conversations/s-known/messages",
-                json={"text": "stream me"},
-                headers={CSRF_HEADER_NAME: csrf},
-            )
-            assert sent.status == 202
+            await service.send("s-known", "stream me")
 
             frames = []
             while len(frames) < 6:
@@ -1653,3 +1249,55 @@ async def test_stream_closes_1011_when_server_shutdown_cancels_the_handler(
             assert message.data == 1011
 
     await _assert_subscribers_drained(service)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["console/host", "commands/tickets", "commands"])
+@pytest.mark.parametrize("body,expected", [({},409), ({"protocol_version":True},409),
+    ({"protocol_version":3},409), ({"protocol_version":1,"path":"/chosen/store"},400)])
+async def test_canonical_envelope_refuses_before_effects(tmp_path, mobile_surface_gate, path, body, expected):
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        response = await client.post("/api/v1/mobile/" + path, json=body,
+            headers={CSRF_HEADER_NAME: await _csrf(client)})
+        assert response.status == expected
+        assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_explicit_host_ticket_command_and_query_contract(tmp_path, mobile_surface_gate):
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        csrf = {CSRF_HEADER_NAME: await _csrf(client)}
+        denied = await client.post("/api/v1/mobile/console/host", json={"protocol_version":1})
+        assert denied.status == 401 and service.calls == []
+        boot = await client.post("/api/v1/mobile/console/host", json={"protocol_version":1}, headers=csrf)
+        host = (await boot.json())["host"]
+        assert boot.status == 200
+        ticket = await client.post("/api/v1/mobile/commands/tickets", json={
+            "protocol_version": 1, "action": "create", "target": host, "payload": {"workspace_id":"global"}}, headers=csrf)
+        assert ticket.status == 200
+        value = await ticket.json()
+        receipt = await client.post("/api/v1/mobile/commands", json={
+            "protocol_version": 1,"ticket": value["ticket"],"payload": {"workspace_id":"global"}}, headers=csrf)
+        assert receipt.status == 202
+        assert "payload_fingerprint" not in await receipt.json()
+        queried = await client.get("/api/v1/mobile/commands/command-a")
+        assert queried.status == 200
+        snapshot = await client.get("/api/v1/mobile/console/snapshot?protocol_version=1")
+        assert snapshot.status == 200
+        old = await client.get("/api/v1/mobile/console/snapshot?protocol_version=3")
+        assert old.status == 409
+        large = await client.post("/api/v1/mobile/commands", data="x" * (mobile_api.MOBILE_MAX_BODY_BYTES + 1),headers=csrf)
+        assert large.status == 413
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["conversations", "conversations/s-known/messages", "conversations/s-known/cancel", "approvals/r1"])
+async def test_obsolete_mutations_require_reload_without_service_call(tmp_path, mobile_surface_gate, path):
+    service = FakeMobileService()
+    async with _logged_in_client(tmp_path, service=service) as client:
+        response = await client.post("/api/v1/mobile/"+path, json={},headers={CSRF_HEADER_NAME:await _csrf(client)})
+        assert response.status == 409
+        assert await response.json() == {"error":"reload_required"}
+        assert service.calls == []

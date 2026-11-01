@@ -213,6 +213,19 @@ class ServedConsoleHosts:
             and not task.result()._closed
         )
 
+    def get_existing(self, storage_identity: str) -> ServedConsoleHost | None:
+        """Discover an admitted retained child without starting or reconciling it."""
+        task = self._starts.get(storage_identity)
+        if (
+            task is None
+            or not task.done()
+            or task.cancelled()
+            or task.exception() is not None
+        ):
+            return None
+        host = task.result()
+        return None if host._closed else host
+
     async def get_or_start(self, storage_identity: str) -> ServedConsoleHost:
         """Share one start task even when the initiating browser disappears."""
         if self._closed:

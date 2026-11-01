@@ -550,6 +550,8 @@ def _register_core_connection(repository, connection):
             }
             else participant.owner_id
         )
+        if participant.read_only and participant.owner_id in {"db.chachanotes.primary", "db.media.primary"}:
+            policy_id = participant.owner_id.removesuffix(".primary") + ".read"
         if participant.owner_id == "db.agent_runs" and participant.read_only:
             policy_id = "db.agent_runs.read"
         if participant.owner_id == "notes.file_notes":

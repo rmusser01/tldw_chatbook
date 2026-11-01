@@ -1832,6 +1832,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         self._session_mru: deque[str] = deque()
         self._active_session_epoch = 0
         self.on_active_session_changed: Callable[[], None] | None = None
+        self.on_persisted_identity: Callable[[str, str | None], None] | None = None
         self._speech_preference_epoch_sequence = 0
         self._progress_identity_lock = threading.RLock()
         self._progress_message_store: MessageStore | None = None
@@ -3280,6 +3281,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         ):
             session.title = title
         session.persisted_conversation_id = persisted_conversation_id
+        if self.on_persisted_identity is not None:
+            self.on_persisted_identity(session.id, session.persisted_conversation_id)
 
     def _durable_thinking_history_policy(
         self,
@@ -8494,6 +8497,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             raise RuntimeError("A persisted Console session cannot be rebound.")
         with self._fork_source_transition(session_id):
             session.persisted_conversation_id = conversation_id
+            if self.on_persisted_identity is not None:
+                self.on_persisted_identity(session.id, session.persisted_conversation_id)
             self._record_console_settings_binding_revision(
                 session_id,
                 session.conversation_binding_revision,
@@ -8524,6 +8529,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     )
                 )
                 session.persisted_conversation_id = conversation_id
+                if self.on_persisted_identity is not None:
+                    self.on_persisted_identity(session.id, session.persisted_conversation_id)
                 session.settings_persistence_failures.clear()
                 session.generation_durable_snapshot = None
                 session.context_policy_durable_revision = None
@@ -11544,6 +11551,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         )
         if session.persisted_conversation_id is None:
             session.persisted_conversation_id = conversation_id
+            if self.on_persisted_identity is not None:
+                self.on_persisted_identity(session.id, session.persisted_conversation_id)
         self._register_tree_node(session_id, message, parent_native_id=parent_native_id)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
@@ -11616,6 +11625,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         )
         if session.persisted_conversation_id is None:
             session.persisted_conversation_id = conversation_id
+            if self.on_persisted_identity is not None:
+                self.on_persisted_identity(session.id, session.persisted_conversation_id)
         self._register_tree_node(
             session_id,
             message,

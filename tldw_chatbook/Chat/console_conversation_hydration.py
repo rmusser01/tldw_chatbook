@@ -614,6 +614,68 @@ async def hydrate_console_session(
     session_id: str | None = None,
     prepared_data: ConsoleConversationHydrationData | None = None,
 ) -> Any:
+    """Reserve saved identity across terminal, launch and remote hydration."""
+    kwargs = {
+        "app": app,
+        "store": store,
+        "conversation_id": conversation_id,
+        "tree": tree,
+        "settings": settings,
+        "generation_durable_snapshot": generation_durable_snapshot,
+        "generation_metadata_status": generation_metadata_status,
+        "target_scope_type": target_scope_type,
+        "target_workspace_id": target_workspace_id,
+        "activate": activate,
+        "session_id": session_id,
+        "prepared_data": prepared_data,
+    }
+    target = conversation_id
+    reservations = getattr(store, "_saved_hydrations", None)
+    if reservations is None:
+        reservations = store._saved_hydrations = {}
+    if target not in reservations:
+        existing = next(
+            (s for s in store.sessions() if s.persisted_conversation_id == target), None
+        )
+        if existing is not None:
+            if kwargs.get("activate", True):
+                store.switch_session(existing.id)
+            return existing
+    task = reservations.get(target)
+    created = task is None
+    if created:
+
+        async def hydrate():
+            try:
+                return await _hydrate_console_session(**kwargs)
+            finally:
+                reservations.pop(target, None)
+
+        task = asyncio.create_task(hydrate(), name="hydrate-canonical-console")
+        reservations[target] = task
+    session = await task if created else await asyncio.shield(task)
+    if kwargs.get("activate", True):
+        store.switch_session(session.id)
+    return session
+
+
+async def _hydrate_console_session(
+    *,
+    app: Any,
+    store: Any,
+    conversation_id: str,
+    tree: Mapping[str, Any],
+    settings: ConsoleSessionSettings | None,
+    generation_durable_snapshot: ConsoleGenerationSettingsSnapshot | None = None,
+    generation_metadata_status: ConsoleGenerationSettingsReadStatus = (
+        ConsoleGenerationSettingsReadStatus.ABSENT
+    ),
+    target_scope_type: str | None = None,
+    target_workspace_id: str | None = None,
+    activate: bool = True,
+    session_id: str | None = None,
+    prepared_data: ConsoleConversationHydrationData | None = None,
+) -> Any:
     """Create a Console session from a persisted tree.
 
     Moved verbatim out of `_resume_console_workspace_conversation`: the

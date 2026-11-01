@@ -697,42 +697,6 @@ def _required_str(payload: dict, key: str) -> str:
     return value
 
 
-def _build_production_mobile_provider_gateway() -> Any:
-    """Construct the real provider gateway for the mobile surface (headless).
-
-    Production mirror of ``ConsoleRuntime.ensure_provider_gateway``
-    (``Chat/console_runtime.py``): the gateway resolves providers through
-    a ``config_provider`` callable over the guarded ``load_settings``
-    path — the same settings source ``create_server`` already trusts via
-    ``get_cli_setting`` — fenced exactly like ``console_runtime``
-    ``_provider_config_for_app``: a load that raises (e.g. the ADR-126
-    ``RecoveryRequired`` fence) yields an empty mapping, so a fenced or
-    unreadable config degrades to a clean provider error surfaced as
-    ``run_failed`` instead of crashing the send path. The trace boundary
-    factory is omitted on purpose: the mobile surface owns no trace
-    database, and the gateway's normalized-writes gate fails closed
-    without one.
-    """
-    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
-    from tldw_chatbook.config import runtime_capture_policy
-
-    def _config_provider() -> Mapping[str, object]:
-        try:
-            from tldw_chatbook.config import load_settings
-
-            fresh = load_settings()
-        except Exception:  # noqa: BLE001 - fence mirror of _provider_config_for_app
-            return {}
-        return fresh if isinstance(fresh, Mapping) and fresh else {}
-
-    return ConsoleProviderGateway(
-        config_provider=_config_provider,
-        normalized_writes_enabled=lambda: (
-            runtime_capture_policy().normalized_writes_enabled
-        ),
-    )
-
-
 class ChatbookWebServerMixin:
     """Textual web server with Chatbook-specific viewport resize hardening."""
 
@@ -747,7 +711,6 @@ class ChatbookWebServerMixin:
         session_idle_timeout_seconds: float | None = None,
         session_absolute_timeout_seconds: float | None = None,
         mobile_service: Any | None = None,
-        mobile_provider_gateway: Any | None = None,
         webauthn_service: Any | None = None,
         **kwargs,
     ) -> None:
@@ -757,12 +720,6 @@ class ChatbookWebServerMixin:
             mobile_service: Injected mobile companion service (ADR-234).
                 ``None`` (the default) constructs ``MobileChatService``
                 lazily on the first ``/api/v1/mobile`` request.
-            mobile_provider_gateway: Optional provider gateway forwarded to
-                the lazily constructed ``MobileChatService`` — a test /
-                live-check seam. ``None`` (the default) constructs the
-                real ``ConsoleProviderGateway`` headless
-                (:func:`_build_production_mobile_provider_gateway`), so
-                production sends resolve providers without an override.
             webauthn_service: Injected WebAuthn ceremony service
                 (``Web_Server.webauthn_service.WebAuthnService``, ADR-235).
                 ``None`` (the default) means passkeys are unavailable:
@@ -804,7 +761,6 @@ class ChatbookWebServerMixin:
         )
         self._served_canvas_launches: dict[str, tuple[CanvasGatewayScope, object]] = {}
         self._mobile_service = mobile_service
-        self._mobile_provider_gateway = mobile_provider_gateway
         self._webauthn_service = webauthn_service
 
     def __repr__(self) -> str:
@@ -1572,47 +1528,52 @@ class ChatbookWebServerMixin:
             {"ok": removed}, headers={"Cache-Control": "no-store"}
         )
 
-    def _get_mobile_service(self) -> Any:
-        """Return the mobile companion service, constructing it on first use.
-
-        The real ``MobileChatService`` binds the parent-process Console
-        engine over the user data dir. Its ``provider_gateway`` is the
-        injected seam value when one was supplied
-        (``mobile_provider_gateway`` — tests and live checks); without an
-        override this constructs the REAL ``ConsoleProviderGateway``
-        headless (:func:`_build_production_mobile_provider_gateway`), so
-        every production send resolves providers instead of dying on a
-        ``None`` gateway.
-        """
-        if self._mobile_service is None:
-            from .mobile_service import MobileChatService
-
-            gateway = self._mobile_provider_gateway
-            if gateway is None:
-                gateway = _build_production_mobile_provider_gateway()
-            self._mobile_service = MobileChatService(
-                data_dir=get_user_data_dir() / "mobile",
-                provider_gateway=gateway,
-            )
-        self._attach_mobile_relay(self._mobile_service)
-        return self._mobile_service
-
-    def _attach_mobile_relay(self, service: Any) -> None:
-        """Observe lifecycle-owned projections when the mobile surface is used."""
-        if getattr(service, "_relay_task", None) is not None:
-            return
-        broker = getattr(self, "_canvas_control_broker", None)
-        if broker is None:
-            return
-        children = self._served_browser_children
-        service.attach_relay(
-            broker,
-            child_ids=lambda: list(
-                dict.fromkeys(
-                    (*self._served_console_hosts.child_ids(), *children.values())
-                )
-            ),
+    def _canonical_console_selection(self):
+        """Resolve only admitted server configuration; browsers select no storage."""
+        from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+            CanonicalConsoleStores,
         )
+        from tldw_chatbook.Backup_Recovery.profile_paths import (
+            canonical_console_paths,
+            database_path,
+            legacy_mobile_dir,
+        )
+        from tldw_chatbook.config import load_settings
+
+        settings = load_settings()
+        return (CanonicalConsoleStores(*canonical_console_paths(settings)),
+                database_path(settings, "media_db_path"), legacy_mobile_dir(settings))
+
+    def _get_mobile_service(self) -> Any:
+        """Return the canonical owner adapter without starting an execution host."""
+        if self._mobile_service is None:
+            from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+                require_mobile_cutover,
+            )
+
+            from .mobile_service import CanonicalMobileReads, MobileChatService
+
+            stores, media_path, source_dir = self._canonical_console_selection()
+            def require_cutover():
+                from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+                from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+                    MobileConsolidationRefused,
+                )
+                from tldw_chatbook.Backup_Recovery.service_storage import (
+                    default_control_root,
+                )
+                try:
+                    require_mobile_cutover(source_dir, stores)
+                except (ValueError, RecoveryRequired) as error:
+                    raise MobileConsolidationRefused(str(error), control_root=default_control_root()) from error
+
+            self._mobile_service = MobileChatService(
+                hosts=self._served_console_hosts, storage_identity=stores.identity,
+                broker=self._canvas_control_broker,
+                readers=CanonicalMobileReads(stores.chat_path, media_path, stores.run_path),
+                require_cutover=require_cutover,
+            )
+        return self._mobile_service
 
     async def on_startup(self, app) -> None:
         """Start the private loopback control broker before children spawn."""
@@ -1969,8 +1930,6 @@ class ChatbookWebServerMixin:
         """Attach one authenticated terminal to the retained profile child."""
         from aiohttp import web
 
-        from tldw_chatbook.config import get_chachanotes_db_path
-
         websocket = web.WebSocketResponse(heartbeat=15, protocols=(WEBSOCKET_PROTOCOL,))
         session = request.get("chatbook_browser_session")
         if session is None:
@@ -1986,7 +1945,8 @@ class ChatbookWebServerMixin:
             )
             expiry_task = asyncio.create_task(self._expire_websocket_session(session))
             # Server-admitted configuration only; browser parameters never select storage.
-            storage_identity = str(get_chachanotes_db_path().parent / "agent_runs.db")
+            stores, _media_path, _source_dir = self._canonical_console_selection()
+            storage_identity = stores.identity
             host = await self._served_console_hosts.get_or_start(storage_identity)
             if session.revoked or websocket.closed:
                 return websocket

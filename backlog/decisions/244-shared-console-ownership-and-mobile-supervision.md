@@ -2370,3 +2370,59 @@ The B1 direct-restoration integration exposed an actual ordinary16MiB refusal wh
 Generic trace/Notes constructors and private migration remain16MiB. Public migration remains4GiB with the original coupled16MiB native child. Every existing validation, lease, source flock, physical/custody/retirement check and independent SQL/archive limit stays unchanged. No later reset, refund, cached proof or caller-selected capacity is introduced.64MiB is the controller's bounded engineering choice within the user's restored-profile implementation approval, not a user-specified number or RSS/universal-fit guarantee. Retained B1/builtin1892 selected-charge floors exclude other work; fresh B/C qualification decides actual fit. Preserve original failures and immutable decisions.
 
 Before code save precode and finite local issuer/default/exhaustion controls, then one fresh B with actual success/failure counter evidence. Conditional C/D/E follow only on green. Public Workspace fresh-process qualification remains separate under R145; no full Task8/Task9 release follows.
+
+
+### Task9 canonical read and saved identity seams
+
+Core and Media expose explicit `open_read_only` constructors over existing current
+schemas. Their dedicated read owner policies retain ordinary storage admission,
+native participant registration and physical close, with SQLite mode=ro and no
+initialization, migration, reconciliation or execution lease. Missing or incompatible
+stores are unavailable. Parent Library reads use the canonical conversation service
+and existing notes/media filtering; GET never starts a child. These are ordinary
+read roles, not recovery, integrity or foreign-source capabilities.
+
+Native runtime saved-open reserves the conversation before its first hydration
+await and shares that operation through cancellation. Native persistence publishes
+saved identity through the store's existing session state; lookup always checks
+current sessions before hydrating. Host-level create/open use the same durable
+command receipt owner as session actions and never select a desktop tab.
+
+
+### Task9 R147 explicit first-host bootstrap
+
+An authenticated, CSRF-protected `POST /api/v1/mobile/console/host` accepts only
+`{protocol_version: 1}`. After verified cutover it reuses the canonical registry,
+awaits connection and positively checks native run-store execution admission,
+then returns the exact `ConsoleHostIdentity`. It creates no native chat, provider
+request or ticket. An explicit Create/Open may bootstrap then issue one exact-host
+ticket; races refuse. Reads and reconnects never bootstrap, reticket or replay.
+
+
+### Task9 connected native project callback correction
+
+The first native remote Send reached durable persistence, then the unchanged
+project-provider composition invoked `project_authority_guard` on the controller
+loop. Its local `on_owning_loop` unconditionally used Textual `call_from_thread`,
+which refuses on that loop. Preserve the four original activation/authority/
+dispatch callers and every project/source/permission check: invoke directly only
+on a non-null matching controller owner loop; otherwise retain worker marshalling
+and the existing no-App fallback. Catch only absence of a running loop, never a
+callback exception. Original first-Send exception evidence is in Task9 agent10;
+qualify actual native Send plus owner-loop/worker/error/default routing controls.
+This is a routine shared bug fix under ADR244, with no new authority or API.
+
+
+### Task9 cold viewless source metadata dependency
+
+The un-warmed Library-mounted native first Send refused before execution because
+`_resident_skill_wiring()` had no resident `Widgets.compact_model_bar` source
+metadata. The existing cold stock catalog proof deliberately requires that
+module's original source capsule; a mounted Console normally imports it. Explicit
+remote Send loads this same dependency through `run_preparation_read`, observed by
+controller/runtime physical teardown, before unchanged received-configuration
+capture. Its import reads/compiles Textual parent source metadata, so it runs off
+the owner loop. Exact native target and all five revisions are rechecked after
+that await. No widget is mounted, trust/plugin getter invoked or cold/custom/
+memory/source/permission qualification relaxed. Preserve cold refusal evidence
+and qualify the actual un-warmed first Send plus no-retention negative control.

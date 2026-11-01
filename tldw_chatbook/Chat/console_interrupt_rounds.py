@@ -961,7 +961,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
         }
 
     def retain_decision_target(self, session_id: str) -> None:
-        """An explicit Buddy opener makes this exact session's cards recoverable."""
+        """An explicit chat opener makes this exact session's cards recoverable."""
         session = next(
             (
                 row
@@ -979,7 +979,7 @@ class InterruptRoundHost(InitialHookReviewMixin):
                 )
 
     def has_retained_decision_target(self, session_id: str | None) -> bool:
-        """Wake-only, closed, replaced or repurposed slots gain no Buddy capability."""
+        """Wake-only, closed, replaced or repurposed slots gain no opener capability."""
         with self.lock:
             retained = self._retained_decision_targets.get(session_id)
         if retained is None:

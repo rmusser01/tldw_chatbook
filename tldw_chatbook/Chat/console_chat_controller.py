@@ -26624,6 +26624,12 @@ class ConsoleChatController:
                 expected_project_state = state
 
                 def on_owning_loop(callback):
+                    try:
+                        running_loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        running_loop = None
+                    if self._owner_loop is not None and running_loop is self._owner_loop:
+                        return callback()
                     call_from_thread = getattr(self.app, "call_from_thread", None)
                     if callable(call_from_thread):
                         return call_from_thread(callback)

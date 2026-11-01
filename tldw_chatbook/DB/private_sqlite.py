@@ -207,6 +207,16 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "BaseDB is the shared file and memory connection owner for subclasses.",
     ),
+    "db.chachanotes.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/ChaChaNotes_DB", _READ_ONLY_URI,
+        "Canonical saved-history and notes reads without schema initialization.",
+        preserve_read_only_source_mode=True,
+    ),
+    "db.media.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Client_Media_DB_v2", _READ_ONLY_URI,
+        "Canonical Library reads without schema initialization.",
+        preserve_read_only_source_mode=True,
+    ),
     "db.agent_runs.read": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/AgentRuns_DB",
         _READ_ONLY_URI,

@@ -2894,6 +2894,8 @@ DELETE FROM keywords
         client_id: str,
         check_integrity_on_startup: bool = False,
         console_library_migration_seed: "ConsoleLibraryMigrationSeed | None" = None,
+        *,
+        _read_only: bool = False,
     ):
         """
         Initializes the CharactersRAGDB instance.
@@ -2925,6 +2927,7 @@ DELETE FROM keywords
                                   a critical error.
             SchemaError: If schema migration or versioning issues occur.
         """
+        self._read_only = _read_only
         if isinstance(db_path, Path):
             self.is_memory_db = False
             self.db_path = lexical_path(db_path)
@@ -2955,7 +2958,21 @@ DELETE FROM keywords
             None if self.is_memory_db else self.db_path_str
         )
         try:
-            self._initialize_schema()
+            if self._read_only:
+                if self.is_memory_db:
+                    raise ValueError("Read-only inspection requires an existing file.")
+                row = (
+                    self._get_thread_connection()
+                    .execute(
+                        "SELECT version FROM db_schema_version WHERE schema_name = ?",
+                        (self._SCHEMA_NAME,),
+                    )
+                    .fetchone()
+                )
+                if row is None or row[0] != self._CURRENT_SCHEMA_VERSION:
+                    raise SchemaError("Existing database schema is incompatible.")
+            else:
+                self._initialize_schema()
 
             # Run integrity check if requested and not in-memory
             if check_integrity_on_startup and not self.is_memory_db:
@@ -2996,6 +3013,11 @@ DELETE FROM keywords
             raise CharactersRAGDBError(
                 f"Unexpected database initialization error: {exc}"
             ) from exc
+
+    @classmethod
+    def open_read_only(cls, db_path: Path):
+        """Read an existing current store without creating or migrating it."""
+        return cls(db_path, client_id="canonical-reader", _read_only=True)
 
     # --- Connection Management ---
     @_core_getter
@@ -3061,13 +3083,30 @@ DELETE FROM keywords
 
             if not conn:
                 try:
-                    conn = connect_private_sqlite(
-                        "db.chachanotes.primary",
-                        self.db_path_str,
-                        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-                        check_same_thread=False,  # Required for threading.local approach
-                        timeout=15,  # Maybe slightly increase timeout?
-                        factory=_QuiescentSQLiteConnection,
+                    conn = (
+                        connect_private_sqlite(
+                            "db.chachanotes.read",
+                            self.db_path_str,
+                            read_only=self._read_only,
+                            must_exist=self._read_only,
+                            detect_types=sqlite3.PARSE_DECLTYPES
+                            | sqlite3.PARSE_COLNAMES,
+                            check_same_thread=False,  # Required for threading.local approach
+                            timeout=15,  # Maybe slightly increase timeout?
+                            factory=_QuiescentSQLiteConnection,
+                        )
+                        if self._read_only
+                        else connect_private_sqlite(
+                            "db.chachanotes.primary",
+                            self.db_path_str,
+                            read_only=self._read_only,
+                            must_exist=self._read_only,
+                            detect_types=sqlite3.PARSE_DECLTYPES
+                            | sqlite3.PARSE_COLNAMES,
+                            check_same_thread=False,  # Required for threading.local approach
+                            timeout=15,  # Maybe slightly increase timeout?
+                            factory=_QuiescentSQLiteConnection,
+                        )
                     )
                     if not isinstance(conn, _QuiescentSQLiteConnection):
                         raise RuntimeError("quiescent_connection_factory")
@@ -3075,7 +3114,7 @@ DELETE FROM keywords
                     _core_access(self)
                     conn.attach_quiescence_registry(self._connection_quiescence)
                     conn.row_factory = sqlite3.Row
-                    if not self.is_memory_db:
+                    if not self.is_memory_db and not self._read_only:
                         conn.execute("PRAGMA journal_mode=WAL;")
                     # NORMAL is safe under WAL (app-crash-safe; only an OS/power
                     # crash can lose the last commit or two, acceptable for this

@@ -145,8 +145,9 @@ Served mode selects `Web_Server/console_web_driver.py` through `TldwCli` only fo
 lease survive terminal disconnect/replacement; a generation-fenced full repaint
 restores the terminal without another input thread. Parent host ownership and the
 saved-conversation reservation seam are documented in [web-server.md](web-server.md).
-Task9 connects remote saved-open/save callbacks; terminal native hydration and
-persistence retain their existing paths.
+Remote saved-open reserves by conversation identity before hydration. Native
+persistence publishes the same identity through the store callback; terminal,
+launch and remote opens share pending hydration and reuse one session/incarnation.
 
 `app_served.py` watches the child control connection independently of Canvas
 exposure. Genuine parent/control loss closes boot admission and automatic wakes,
@@ -159,7 +160,7 @@ revocation and Canvas disable do not enter this native shutdown path.
 
 `Chat/console_remote_commands.py::ConsoleRemoteCommands` is the runtime command
 adapter for an existing `ConsoleHostIdentity` / `ConsoleTarget`. Its supported
-actions are `send`, `steer`, `redirect`, `stop`, `subagent_guidance` and
+actions are `create`, `open`, `send`, `steer`, `redirect`, `stop`, `subagent_guidance` and
 `subagent_stop`, plus exact retained `decision` answers. Unsupported actions refuse. This seam does not select a desktop
 tab or construct a second controller. Browser transport wiring and receipt
 observation are separate owners.
@@ -203,7 +204,7 @@ or provider construction. Discovery combines live identities with canonical save
 conversation listings; an unhydrated live persisted target pages native metadata
 first, then canonical bounded history, including when fleet/decisions remain live.
 The history cursor fences that metadata and canonical content revisions; a change
-restarts from native metadata with reset. Saved-only history routing remains Task9.
+restarts from native metadata with reset. Saved-only history uses the canonical mobile read-only Library adapter.
 Each non-null target is checked against host, session incarnation and supplied
 turn/run/handle/round identities before reading and again before returning.
 

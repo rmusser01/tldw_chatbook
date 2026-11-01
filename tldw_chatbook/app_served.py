@@ -160,7 +160,14 @@ async def _handle_served_control_request(self: Any, request: Any) -> Any:
                 if set(data) != {"ticket", "payload"}:
                     raise ValueError("Unexpected command fields.")
                 receipt = await receipts.submit(data["ticket"], data["payload"])
-                return reply({"receipt": receipt.public()})
+                return reply(
+                    {
+                        "receipt": dict(
+                            receipt.public(),
+                            payload_fingerprint=receipt.payload_fingerprint,
+                        )
+                    }
+                )
             if request.message_type == "console.receipt.request":
                 if set(data) != {"command_id"} or not isinstance(
                     data["command_id"], str
@@ -168,7 +175,14 @@ async def _handle_served_control_request(self: Any, request: Any) -> Any:
                     raise ValueError("Unexpected receipt fields.")
                 receipt = receipts.query(data["command_id"])
                 return reply(
-                    {"receipt": receipt.public() if receipt is not None else None}
+                    {
+                        "receipt": dict(
+                            receipt.public(),
+                            payload_fingerprint=receipt.payload_fingerprint,
+                        )
+                        if receipt is not None
+                        else None
+                    }
                 )
             if request.message_type == "console.snapshot.request":
                 if set(data) - {"target", "cursor", "limit", "receipt_cursor"}:
@@ -178,16 +192,17 @@ async def _handle_served_control_request(self: Any, request: Any) -> Any:
                     if data.get("target") is not None
                     else None
                 )
-                return reply(
-                    {
-                        "snapshot": projection.snapshot(
-                            target,
-                            cursor=data.get("cursor"),
-                            limit=data.get("limit", 50),
-                            receipt_cursor=data.get("receipt_cursor"),
-                        )
-                    }
+                snapshot = projection.snapshot(
+                    target,
+                    cursor=data.get("cursor"),
+                    limit=data.get("limit", 50),
+                    receipt_cursor=data.get("receipt_cursor"),
                 )
+                admitted = runtime._agent_runs_db is not None
+                if admitted:
+                    runtime._agent_runs_db._require_execution_owner()
+                snapshot["execution_admitted"] = admitted
+                return reply({"snapshot": snapshot})
             if request.message_type == "console.events.request":
                 operation = data.get("operation", "read")
                 if operation == "read" and set(data) <= {"operation", "after_sequence"}:
@@ -223,7 +238,15 @@ async def _handle_served_control_request(self: Any, request: Any) -> Any:
                 return reply({"batch": batch(projection.events.read(0).sequence)})
             raise ControlProtocolError("authority_unavailable")
         except (ValueError, TypeError, KeyError) as error:
-            raise ControlProtocolError("invalid_console_request") from error
+            from .Chat.console_remote_receipts import ExpiredConsoleCommand
+
+            raise ControlProtocolError(
+                "command_expired"
+                if isinstance(error, ExpiredConsoleCommand)
+                else "invalid_console_request"
+            ) from error
+        except (RuntimeError, PermissionError) as error:
+            raise ControlProtocolError("authority_unavailable") from error
     return await self.served_canvas_handler.handle(request)
 
 

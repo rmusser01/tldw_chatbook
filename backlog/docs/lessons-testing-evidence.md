@@ -20464,3 +20464,19 @@ GC cleanup for explicit fixture ownership or infer a cause from elapsed time alo
 Task 8's real-home standalone fixture exposed two eager configuration imports hidden by the test suite's preload: Subscriptions' class module imported config for an optional settings getter, and Media's pure template migration imported runtime Chunking package exports. Both retained startup admission and blocked later maintenance. Guarded cold tests reproduced the import boundary and then constructed/closed native owners without loading config after the narrow lazy-import corrections (64101 and 69936). Keep runtime settings/default behavior at actual use; do not retire startup leases or relax admission to make a fixture pass. Existing frozen-default test 70112 separately failed config-selection setup; its origin is unclassified, and the fresh native-source rolling-dispatch control 71245 is a distinct passing scope.
 
 The later FileNotesReplica case (Notes absent epochs13795/32743/46602) exposed the same trap in raw participant selection: eager `_types()` imported unrelated grammar/feedback services and config before reaching the exact File Notes branch. Two fixture-order corrections moved the refusal from initial enrollment to missing-required Complete, then to maintenance after a legitimately retained startup lease; they did not solve that import cause. Deferring only the unrelated lookup to its actual fallback preserved exact source/admission checks. Fresh real-home cold proof63271 verified native schema/read, actual retained SQLite handle closure, config never loaded, no startup leases, both guards and unchanged selector; seventeen native grammar/feedback/FileNotes fallback/pause/close controls63682 passed separately. Preserve those failed setup epochs and avoid a fixture shutdown or admission bypass.
+
+
+### Task36767: qualify an un-warmed viewless native Send
+
+A real App mounted on Library first refused remote Send because the existing
+stock cold configuration proof required the source capsule normally imported by
+CompactModelBar. Warming trust/plugin services in the fixture hid that caller
+dependency. The final control keeps both services cold and loads only the existing
+metadata dependency through native preparation-read lifetime before unchanged
+source checks. The same connected run then exposed an existing project callback
+that unconditionally used Textual `call_from_thread` from its own loop. Preserve
+first failures and distinguish fixture source selection, oracle failures and
+production failures; a successful gateway double alone does not qualify native
+persistence, project review, approval/question, worker execution or physical drain.
+Evidence: Task9 cold-red, agent10 and native-controls packets in the shared
+Console implementation SDD directory.

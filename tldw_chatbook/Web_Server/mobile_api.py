@@ -1,22 +1,11 @@
 """Mobile companion REST API + event stream under ``/api/v1/mobile``.
 
-ADR-234, Phase 1b: task 4's thin authed HTTP wrappers and task 5's
-``GET /api/v1/mobile/stream`` WebSocket over the Task-3
-``MobileChatService``
-(:mod:`tldw_chatbook.Web_Server.mobile_service`): every REST handler
-parses one bounded JSON body (or query parameter), makes exactly one
-service call, and answers with ``web.json_response`` plus
-``Cache-Control: no-store``. Authentication and CSRF are NOT handled
-here — the routes are registered among the authed serve routes (never in
-``_public_auth_paths``), so the Phase-1a middleware enforces the session
-cookie on every method and the CSRF header on every POST before any
-handler runs; the stream route receives the middleware's websocket
-treatment (GET upgrade + BOTH subprotocols ``csrf.<token>`` and
-``chatbook-v1``) before ``handle_mobile_stream`` runs.
-
-Error contract: an unknown session answers ``404 {"error":
-"unknown_session"}`` and an unknown approval round answers ``200
-{"ok": false}``; nothing on this surface may 5xx for a caller mistake.
+ADR-244: canonical Console protocol 1 routes exact native tickets, commands,
+receipts and bounded snapshots through the retained host. Saved history and
+Library reads use noncreating native read-only owners. Legacy mutations return
+reload_required. Authentication, same-origin and CSRF are enforced by serve
+middleware before handlers; websocket upgrades require both csrf.<token> and
+chatbook-v1 subprotocols. Private child control protocol 3 is independent.
 
 Logging discipline (ADR-234): these handlers log nothing except one
 transport-failure diagnostic on the stream route (session id + error
@@ -28,11 +17,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Mapping
 from functools import partial
-from typing import Any
+from typing import Any, Literal
+from uuid import uuid4
 
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
+
+from tldw_chatbook.Chat.console_remote_models import ConsoleHostIdentity, ConsoleTarget
 
 from ..Canvas.web_auth import WEBSOCKET_PROTOCOL
 from ..config import get_cli_setting
@@ -97,21 +89,6 @@ _MAX_PER_PAGE = 100
 
 _NO_STORE = {"Cache-Control": "no-store"}
 
-#: Title used when a new-conversation POST carries no usable title.
-_DEFAULT_SESSION_TITLE = "Mobile chat"
-
-#: Allowed approval verdicts (the service contract's closed set).
-_APPROVAL_DECISIONS = frozenset(
-    {"approve_once", "approve_session", "always_allow", "deny"}
-)
-
-#: Decide-route ``child_id`` bound (chars): the control protocol's
-#: identifier ceiling (``Canvas/control_protocol.py`` mints child ids as
-#: 1-200 printable-ASCII strings). A longer id can never address a child
-#: and is rejected as the uniform ``400 invalid_child_id`` before the
-#: service is touched.
-_MAX_CHILD_ID_CHARS = 200
-
 
 def mobile_surface_enabled() -> bool:
     """Read the ``[web_server] mobile_surface`` feature gate (default on).
@@ -121,7 +98,7 @@ def mobile_surface_enabled() -> bool:
     """
     try:
         return bool(get_cli_setting("web_server", "mobile_surface", default=True))
-    except Exception:  # noqa: BLE001 - server feature gate fails closed
+    except Exception:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
         return False
 
 
@@ -134,6 +111,18 @@ def build_mobile_routes(server: Any) -> list:
     from aiohttp import web
 
     return [
+        web.post("/api/v1/mobile/console/host", partial(handle_console_host, server)),
+        web.get(
+            "/api/v1/mobile/console/snapshot", partial(handle_console_snapshot, server)
+        ),
+        web.post(
+            "/api/v1/mobile/commands/tickets", partial(handle_command_ticket, server)
+        ),
+        web.post("/api/v1/mobile/commands", partial(handle_command, server)),
+        web.get(
+            "/api/v1/mobile/commands/{command_id}",
+            partial(handle_command_query, server),
+        ),
         web.get(
             "/api/v1/mobile/conversations",
             partial(handle_conversations, server),
@@ -197,6 +186,193 @@ def build_mobile_routes(server: Any) -> list:
     ]
 
 
+class _HostBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    protocol_version: Literal[1]
+
+
+class _CommandTicketBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    protocol_version: Literal[1]
+    action: Literal[
+        "create",
+        "open",
+        "send",
+        "steer",
+        "redirect",
+        "stop",
+        "subagent_guidance",
+        "subagent_stop",
+        "decision",
+    ]
+    target: ConsoleTarget | ConsoleHostIdentity
+    payload: dict
+
+
+class _CommandBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    protocol_version: Literal[1]
+    ticket: StrictStr = Field(min_length=1, max_length=16384)
+    payload: dict
+
+
+class _SnapshotQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    protocol_version: Literal[1]
+    target: ConsoleTarget | None = None
+    cursor: StrictStr | None = Field(default=None, max_length=2048)
+    receipt_cursor: StrictStr | None = Field(default=None, max_length=2048)
+    limit: StrictInt = Field(default=50, ge=1, le=100)
+
+
+async def _command_error(error):
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        MobileConsolidationRefused,
+    )
+    from tldw_chatbook.Canvas.control_protocol import ControlProtocolError
+
+    from .mobile_service import MobileOwnerUnavailable
+
+    if isinstance(error, MobileConsolidationRefused):
+        from aiohttp import web
+
+        return web.json_response(
+            {
+                "error": "cutover_required",
+                "reason": str(error),
+                "operation_id": error.operation_id,
+                "review_path": str(error.control_root) if error.control_root else None,
+            },
+            status=409,
+            headers=_NO_STORE,
+        )
+    if isinstance(error, ControlProtocolError):
+        if error.code == "command_expired":
+            return _error(410, "command_expired")
+        if error.code == "invalid_console_request":
+            return _error(409, "command_refused")
+        return _error(503, "console_unavailable")
+    if isinstance(error, (MobileOwnerUnavailable, TimeoutError)):
+        return _error(503, "console_unavailable")
+    if isinstance(error, (ValueError, TypeError)):
+        return _error(409, "command_refused")
+    return _error(503, "console_unavailable")
+
+
+async def _command_body(request, model):
+    value = await _read_mobile_json(request, max_bytes=MOBILE_MAX_BODY_BYTES)
+    if type(value.get("protocol_version")) is not int or value["protocol_version"] != 1:
+        raise RuntimeError("reload_required")
+    return model.model_validate(value)
+
+
+async def handle_console_host(server, request):
+    from aiohttp import web
+
+    try:
+        await _command_body(request, _HostBody)
+        host = await server._get_mobile_service().bootstrap_host()
+        return web.json_response({"host": host.model_dump()}, headers=_NO_STORE)
+    except _BodyTooLarge:
+        return _error(413, "body_too_large")
+    except ValidationError:
+        return _error(400, "invalid_command")
+    except RuntimeError as error:
+        if str(error) == "reload_required":
+            return _error(409, "reload_required")
+        return await _command_error(error)
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
+
+
+async def handle_command_ticket(server, request):
+    from aiohttp import web
+
+    try:
+        body = await _command_body(request, _CommandTicketBody)
+        result = await server._get_mobile_service().issue_command_ticket(
+            body.action, body.target, body.payload
+        )
+        return web.json_response(result, headers=_NO_STORE)
+    except _BodyTooLarge:
+        return _error(413, "body_too_large")
+    except ValidationError:
+        return _error(400, "invalid_command")
+    except RuntimeError as error:
+        if str(error) == "reload_required":
+            return _error(409, "reload_required")
+        return await _command_error(error)
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
+
+
+async def handle_command(server, request):
+    from aiohttp import web
+
+    try:
+        body = await _command_body(request, _CommandBody)
+        receipt = await server._get_mobile_service().submit_command(
+            body.ticket, body.payload
+        )
+        return web.json_response(
+            receipt.public(),
+            status=202 if receipt.state in {"pending", "accepted", "queued"} else 200,
+            headers=_NO_STORE,
+        )
+    except _BodyTooLarge:
+        return _error(413, "body_too_large")
+    except ValidationError:
+        return _error(400, "invalid_command")
+    except RuntimeError as error:
+        if str(error) == "reload_required":
+            return _error(409, "reload_required")
+        return await _command_error(error)
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
+
+
+async def handle_command_query(server, request):
+    from aiohttp import web
+
+    from tldw_chatbook.Canvas.limits import validate_opaque_identifier
+
+    try:
+        validate_opaque_identifier(request.match_info["command_id"])
+        receipt = await server._get_mobile_service().query_command(
+            request.match_info["command_id"]
+        )
+        if receipt is None:
+            return _error(404, "unknown_command")
+        return web.json_response(receipt.public(), headers=_NO_STORE)
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
+
+
+async def handle_console_snapshot(server, request):
+    import json
+
+    from aiohttp import web
+
+    try:
+        data = dict(request.query)
+        if data.pop("protocol_version", None) != "1":
+            return _error(409, "reload_required")
+        if "target" in data:
+            data["target"] = json.loads(data["target"])
+        if "limit" in data:
+            data["limit"] = int(data["limit"])
+        body = _SnapshotQuery.model_validate(dict(protocol_version=1, **data))
+        result = await server._get_mobile_service().snapshot(
+            **body.model_dump(exclude={"protocol_version", "target"}),
+            target=body.target,
+        )
+        return web.json_response(result, headers=_NO_STORE)
+    except (ValueError, TypeError):
+        return _error(400, "invalid_snapshot")
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
+
+
 class _BodyTooLarge(Exception):
     """Internal marker: the request body exceeded the route's byte cap.
 
@@ -239,6 +415,15 @@ def _error(status: int, code: str):
     return web.json_response({"error": code}, status=status, headers=_NO_STORE)
 
 
+async def _read_service(server, method, *args, **kwargs):
+    from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+    service = server._get_mobile_service()
+    return await asyncio.to_thread(
+        run_finite_local_worker, getattr(service, method), *args, **kwargs
+    )
+
+
 async def handle_conversations(server: Any, request) -> Any:
     """List one page of the mobile sessions, newest first.
 
@@ -255,150 +440,82 @@ async def handle_conversations(server: Any, request) -> Any:
     per_page = _parse_per_page(request.query.get("per_page"))
     if per_page is None:
         return _error(400, "invalid_per_page")
-    service = server._get_mobile_service()
-    return web.json_response(
-        service.sessions_page(page=page, per_page=per_page), headers=_NO_STORE
-    )
+    try:
+        result = await _read_service(
+            server, "sessions_page", page=page, per_page=per_page
+        )
+        return web.json_response(result, headers=_NO_STORE)
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
 
 
 async def handle_new_conversation(server: Any, request) -> Any:
-    """Create one mobile session; answers ``201 {"session": {...}}``."""
-    from aiohttp import web
-
-    service = server._get_mobile_service()
-    try:
-        payload = await _read_mobile_json(request, max_bytes=_SMALL_BODY_BYTES)
-    except _BodyTooLarge:
-        return _error(413, "body_too_large")
-    title = payload.get("title")
-    workspace_id = payload.get("workspace_id")
-    if title is not None and not isinstance(title, str):
-        return _error(400, "invalid_title")
-    if workspace_id is not None and not isinstance(workspace_id, str):
-        return _error(400, "invalid_workspace")
-    usable_title = title if isinstance(title, str) and title.strip() else None
-    session = await service.create_session(
-        title=usable_title or _DEFAULT_SESSION_TITLE,
-        workspace_id=workspace_id if isinstance(workspace_id, str) else None,
-    )
-    return web.json_response({"session": session}, status=201, headers=_NO_STORE)
+    """Refuse retired mutation envelopes before native effects."""
+    return _error(409, "reload_required")
 
 
 async def handle_messages(server: Any, request) -> Any:
-    """Return one session's transcript, optionally past a cursor."""
+    """Read saved canonical history without hydration or host startup."""
     from aiohttp import web
 
-    service = server._get_mobile_service()
-    after = request.query.get("after") or None
     try:
-        result = await service.session_messages(
-            request.match_info["sid"], after_message_id=after
-        )
+        allowed = {
+            "message_offset",
+            "message_limit",
+            "max_chars",
+            "message_id",
+            "char_start",
+        }
+        if set(request.query) - allowed:
+            return _error(400, "invalid_cursor")
+        data = dict(request.query)
+        for key, maximum in (
+            ("message_offset", 1000000),
+            ("message_limit", 100),
+            ("max_chars", 8000),
+            ("char_start", 100000000),
+        ):
+            if key in data:
+                if not data[key].isascii() or not data[key].isdigit():
+                    return _error(400, "invalid_cursor")
+                data[key] = int(data[key])
+                if (
+                    not 0 <= data[key] <= maximum
+                    or key in {"message_limit", "max_chars"}
+                    and data[key] == 0
+                ):
+                    return _error(400, "invalid_cursor")
+        # Compatibility fakes may expose an async method; production reads are synchronous.
+        service = server._get_mobile_service()
+        result = await service.session_messages(request.match_info["sid"], **data)
+        return web.json_response(result, headers=_NO_STORE)
     except KeyError:
         return _error(404, "unknown_session")
     except ValueError:
         return _error(400, "invalid_cursor")
-    return web.json_response(result, headers=_NO_STORE)
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
 
 
 async def handle_send(server: Any, request) -> Any:
-    """Submit one draft; answers ``202 {"ok": true}`` once it is scheduled.
-
-    Non-blocking (spec §4.2 / live-check round 1): ``service.send``
-    pre-validates synchronously — unknown session ``404``, a turn already
-    in flight ``409 send_refused`` — then schedules the turn on a
-    background task and returns, because the engine's ``submit_draft``
-    spans the whole run including any tool-approval wait. The phone
-    observes streaming and the outcome via the WS stream (or the messages
-    resync), including a submit-time refusal, which arrives as a
-    ``run_failed {"status": "send_refused"}`` event.
-    """
-    from aiohttp import web
-    from .mobile_service import MobileSendRefused
-
-    service = server._get_mobile_service()
-    try:
-        payload = await _read_mobile_json(request, max_bytes=MOBILE_MAX_BODY_BYTES)
-    except _BodyTooLarge:
-        return _error(413, "body_too_large")
-    text = payload.get("text")
-    if not isinstance(text, str) or not text:
-        return _error(400, "invalid_text")
-    if len(text) > MAX_SEND_TEXT_CHARS:
-        return _error(413, "text_too_large")
-    try:
-        await service.send(request.match_info["sid"], text)
-    except KeyError:
-        return _error(404, "unknown_session")
-    except MobileSendRefused:
-        return _error(409, "send_refused")
-    return web.json_response({"ok": True}, status=202, headers=_NO_STORE)
+    """Refuse retired mutation envelopes before native effects."""
+    return _error(409, "reload_required")
 
 
 async def handle_cancel(server: Any, request) -> Any:
-    """Stop a session's active run; answers ``{"ok": bool}``."""
-    from aiohttp import web
-
-    service = server._get_mobile_service()
-    try:
-        stopped = service.cancel(request.match_info["sid"])
-    except KeyError:
-        return _error(404, "unknown_session")
-    return web.json_response({"ok": bool(stopped)}, headers=_NO_STORE)
+    """Refuse retired mutation envelopes before native effects."""
+    return _error(409, "reload_required")
 
 
 async def handle_approvals(server: Any, request) -> Any:
     """List the pending approval rounds across mobile sessions."""
-    from aiohttp import web
 
-    service = server._get_mobile_service()
-    return web.json_response(
-        {"approvals": service.list_approvals()}, headers=_NO_STORE
-    )
+    return _error(409, "reload_required")
 
 
 async def handle_decide(server: Any, request) -> Any:
-    """Resolve one approval round; answers ``{"ok": bool}``, never 5xx.
-
-    An unknown or already-dead round is a reported ``{"ok": false}``, not
-    an error: the phone may legitimately race a round that expired while
-    the decision was in flight. Desktop-relayed rounds (ADR-236) route
-    through the canvas control broker inside this await — the 2 s routing
-    budget bounds the response.
-
-    The body may carry the owning desktop ``child_id`` (the wire card
-    does): it forwards to ``decide_approval`` for exact addressing when
-    two children collide on the same child-local round id. Absent stays
-    absent (the service's deterministic oldest-entry fallback governs);
-    a present-but-malformed id (non-string, or beyond the control
-    protocol's identifier ceiling) is the uniform ``400
-    invalid_child_id`` before the service is touched.
-    """
-    from aiohttp import web
-
-    service = server._get_mobile_service()
-    try:
-        payload = await _read_mobile_json(request, max_bytes=_SMALL_BODY_BYTES)
-    except _BodyTooLarge:
-        return _error(413, "body_too_large")
-    decisions = payload.get("decisions")
-    if not isinstance(decisions, Mapping) or not all(
-        isinstance(key, str) and value in _APPROVAL_DECISIONS
-        for key, value in decisions.items()
-    ):
-        return _error(400, "invalid_decisions")
-    child_id = payload.get("child_id")
-    if child_id is not None and (
-        not isinstance(child_id, str) or len(child_id) > _MAX_CHILD_ID_CHARS
-    ):
-        return _error(400, "invalid_child_id")
-    try:
-        delivered = await service.decide_approval(
-            request.match_info["round_id"], dict(decisions), child_id=child_id
-        )
-    except KeyError:
-        delivered = False
-    return web.json_response({"ok": bool(delivered)}, headers=_NO_STORE)
+    """Refuse retired mutation envelopes before native effects."""
+    return _error(409, "reload_required")
 
 
 def _parse_page(raw: str | None) -> int | None:
@@ -439,16 +556,21 @@ async def handle_notes_page(server: Any, request) -> Any:
     page = _parse_page(request.query.get("page"))
     if page is None:
         return _error(400, "invalid_page")
-    service = server._get_mobile_service()
-    return web.json_response(service.notes_page(page=page), headers=_NO_STORE)
+    try:
+        result = await _read_service(server, "notes_page", page=page)
+        return web.json_response(result, headers=_NO_STORE)
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
 
 
 async def handle_note_detail(server: Any, request) -> Any:
     """Return one note's full row, or ``404 unknown_note``."""
     from aiohttp import web
 
-    service = server._get_mobile_service()
-    note = service.note_detail(request.match_info["note_id"])
+    try:
+        note = await _read_service(server, "note_detail", request.match_info["note_id"])
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
     if note is None:
         return _error(404, "unknown_note")
     return web.json_response({"note": note}, headers=_NO_STORE)
@@ -461,8 +583,11 @@ async def handle_library_page(server: Any, request) -> Any:
     page = _parse_page(request.query.get("page"))
     if page is None:
         return _error(400, "invalid_page")
-    service = server._get_mobile_service()
-    return web.json_response(service.library_page(page=page), headers=_NO_STORE)
+    try:
+        result = await _read_service(server, "library_page", page=page)
+        return web.json_response(result, headers=_NO_STORE)
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
 
 
 async def handle_library_detail(server: Any, request) -> Any:
@@ -476,8 +601,10 @@ async def handle_library_detail(server: Any, request) -> Any:
     raw_media_id = request.match_info["media_id"]
     if not (raw_media_id.isascii() and raw_media_id.isdigit()):
         return _error(400, "invalid_item")
-    service = server._get_mobile_service()
-    item = service.library_detail(int(raw_media_id))
+    try:
+        item = await _read_service(server, "library_detail", int(raw_media_id))
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
+        return await _command_error(error)
     if item is None:
         return _error(404, "unknown_item")
     return web.json_response({"item": item}, headers=_NO_STORE)
@@ -517,15 +644,14 @@ async def handle_mobile_stream(server: Any, request) -> Any:
     websocket = web.WebSocketResponse(
         heartbeat=15,
         protocols=(WEBSOCKET_PROTOCOL,),
+        max_msg_size=_SMALL_BODY_BYTES,
     )
     await websocket.prepare(request)
     session = request.get("chatbook_browser_session")
     unregister_channel = (
         server._web_auth.register_channel(
             session,
-            lambda: asyncio.create_task(
-                websocket.close(code=CLOSE_AUTH_EXPIRED)
-            ),
+            lambda: asyncio.create_task(websocket.close(code=CLOSE_AUTH_EXPIRED)),
         )
         if session is not None
         else (lambda: None)
@@ -536,12 +662,13 @@ async def handle_mobile_stream(server: Any, request) -> Any:
         else None
     )
     events = None
+    subscription_id = uuid4().hex
     receive_task: asyncio.Task | None = None
     event_task: asyncio.Task | None = None
     close_code: int | None = None
     try:
         try:
-            events = server._get_mobile_service().events()
+            events = server._get_mobile_service().events(client_id=subscription_id)
         except Exception as error:
             # Engine-start failure (service construction / relay attach):
             # engine-side, never a caller mistake — 1011, not the generic
@@ -577,6 +704,30 @@ async def handle_mobile_stream(server: Any, request) -> Any:
                     if isinstance(frame, dict) and frame.get("type") == "ping":
                         await websocket.send_json({"type": "pong"})
                         last_send = loop.time()
+                    elif (
+                        isinstance(frame, dict)
+                        and set(frame)
+                        == {"type", "protocol_version", "target", "answerable"}
+                        and frame["type"] == "answerable"
+                    ):
+                        if (
+                            type(frame["protocol_version"]) is int
+                            and frame["protocol_version"] == 1
+                            and type(frame["answerable"]) is bool
+                        ):
+                            try:
+                                await server._get_mobile_service().set_answerable(
+                                    subscription_id,
+                                    ConsoleTarget.model_validate(frame["target"]),
+                                    frame["answerable"],
+                                )
+                            except (ValueError, RuntimeError):
+                                await websocket.send_json(
+                                    {
+                                        "type": "reset",
+                                        "payload": {"reset_required": True},
+                                    }
+                                )
                 receive_task = asyncio.create_task(websocket.receive())
             if event_task in done:
                 try:
@@ -598,7 +749,7 @@ async def handle_mobile_stream(server: Any, request) -> Any:
         close_code = CLOSE_ENGINE_ERROR
     except _StreamEngineError:
         close_code = CLOSE_ENGINE_ERROR
-    except Exception as error:  # noqa: BLE001 - transport failure; the socket is gone
+    except Exception as error:  # noqa: BLE001 - bounded public failure or independent stream cleanup.
         # One diagnostic line, ids/types only (no content, no credentials),
         # so a dead socket is distinguishable from a silent handler.
         logger.warning(
@@ -611,9 +762,7 @@ async def handle_mobile_stream(server: Any, request) -> Any:
             if task is not None:
                 task.cancel()
         pending_tasks = [
-            task
-            for task in (receive_task, event_task, expiry_task)
-            if task is not None
+            task for task in (receive_task, event_task, expiry_task) if task is not None
         ]
         if pending_tasks:
             await asyncio.gather(*pending_tasks, return_exceptions=True)

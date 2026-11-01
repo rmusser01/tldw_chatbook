@@ -205,81 +205,41 @@ download actions sit outside that generated runtime. See the
 
 ## Mobile companion surface
 
-`/m` is a phone-first companion page for a served Chatbook: chat and
-tool-call approvals for conversations initiated from the phone, plus reading
-of this server run's mobile conversations (earlier runs' conversations are
-listed and restored on demand — see the limits below). It is not the full
-served terminal. The
-mobile surface runs its own engine over its own databases under
-`<user data dir>/mobile/`, so it shows only mobile-initiated conversations;
-desktop conversations stay on the desktop surfaces.
+The mobile API supervises the same retained native Console as the served
+terminal. It uses the existing browser sign-in, same-origin/CSRF gates and
+`[web_server] mobile_surface` exposure gate. With that gate disabled, `/m`, assets,
+manifest, API and stream are unregistered (404).
 
-Reach it through the **Phone view** link on the login page (shown on narrow
-screens) or at `/m` directly. It uses the same browser sign-in as the rest
-of the served app. `tldw-serve --pair` prints a one-use QR that signs a
-phone in before serving (this requires `public_url`).
+The canonical HTTP protocol is version **1**. An explicit Create/Open action first
+uses `POST /api/v1/mobile/console/host` with exactly `{protocol_version: 1}` to
+verify cutover and native execution admission. It then issues one exact-host
+command ticket and submits once. `GET /console/snapshot` discovers live identities;
+`POST /commands/tickets` and `/commands` route to the native owner;
+`GET /commands/{command_id}` observes uncertain outcomes. These paths are
+relative to `/api/v1/mobile`. Old create/send/cancel/decide requests and stale
+protocols return `reload_required`; they cannot silently run old browser mutations.
+The page's migration to these canonical controls is a separate UI change.
 
-**Library tab (Phase 2b).** Next to Chats, a bottom-tab **Library** view
-offers read-only browsing of the main desktop libraries — unlike the chat
-engine, it reads the app's own notes and media databases, not the
-mobile-only data dir. Notes (`GET /api/v1/mobile/notes`, full reader at
-`/notes/{id}`) and media items (`GET /api/v1/mobile/library`, detail with
-transcripts at `/library/{media_id}`) list 50/25 per page with a
-Load-more button. These four GET routes are the surface's only library
-access: no write, create, edit, delete, or ingest path to notes or media
-exists on `/m`, and reading views refresh on open only (no extra
-polling). Everything renders as plain text (`textContent` only), so note
-and transcript bodies are always inert.
+GET sessions/history, notes and media use canonical native read-only services,
+without creating DBs, migrating schemas, starting a child or selecting a terminal
+tab. History is bounded and paginated. Notes and media remain read-only; their
+bodies render as inert plain text. No notes/media create, edit, ingest or delete
+route is exposed. Missing/incompatible stores refuse rather than creating them.
 
-**Desktop approval relay (Phase 2c, ADR-236).** When Canvas browser
-delivery is enabled, approval rounds raised by desktop terminal sessions
-(served child Apps) reach `/m`'s approvals inbox alongside mobile-initiated
-ones — each card tagged **desktop** or **phone** — and a decision made on
-the phone routes back over the parent's loopback control broker to the
-owning desktop session, releasing the waiting agent run there. Desktop run
-completions also push to the phone as live cross-surface events (the
-`run_status` event over the existing stream), which resync an open chat and
-refresh the approvals inbox; this is update-level sync, not token-level
-transcript streaming. The relay covers rounds raised for the ACTIVE session
-while its Console view is mounted. Rounds raised while the Console screen
-is unmounted, and rounds for parked background sessions, are not relayed.
-Fail-closed is the rule on every failure: a disconnecting or unresponsive
-child (2 s routing budget) drops its rounds from the phone and the desktop
-child's own timeout/deny semantics govern, and with Canvas disabled the
-relay is entirely inert — no broker exists, and desktop approvals stay
-invisible on the phone (a documented limitation, not an error). The phone's
-decision authority equals the desktop user's: same single operator, riding
-the authenticated mobile API and the child-secret loopback hop.
+Live native projections include background/viewless work and ordinary decisions
+supported by the native owner. Unsupported scopes require Open terminal. Streams
+carry bounded change/reset hints; full snapshots recover state. Losing a browser
+subscription revokes that client's answerability without stopping native runs or
+other phones. Loss/overflow cannot create authority or supply a command outcome.
+Reconnect never replays a command; query its receipt and require another explicit
+action if the result remains unavailable.
 
-v1 limits:
-
-- Desktop approvals reach the phone only through the relay above — only
-  while Canvas is enabled and the round's Console view is mounted; every
-  other desktop round (unmounted Console screen, parked background
-  session) waits on the desktop user, exactly as before.
-- Conversations survive a server restart: the sessions list also shows
-  persisted conversations from `<user data dir>/mobile/` (pre-existing rows
-  were written under the same schema), listed lazily without loading their
-  trees — a conversation's history is restored on first read or send
-  through the same resume machinery the desktop uses.
-- Desktop activity reaches the phone at completion level via the relay's
-  run-status pushes; the 12-second/focus-regain polling syncs within
-  mobile-initiated conversations (the isolated mobile databases cannot see
-  desktop conversations). Not live transcript streaming. The phone's own
-  runs do stream over a WebSocket while it is connected.
-- There is no service worker and no offline support; with no connection the
-  page shows the last synced state.
-- REVIEWED run hooks never fire on mobile sends (`ensure_run_hooks` is not
-  wired on this path). Hooks that are unreviewed or fail their configuration
-  check still refuse sends, fail-closed.
-- Approval rounds mount only for the most recently activated session.
-- Conversations created without an explicit workspace (the default) expose
-  no local `fs_*`/`git_*` tools to the agent.
-- `[web_server] mobile_surface = true` (the default) enables the surface.
-  With `false` the page, its assets and manifest, the REST API under
-  `/api/v1/mobile/*`, and the stream all 404 as unregistered routes.
-- A web app manifest and icons are served, so a phone browser's
-  add-to-home-screen installs `/m` as a standalone app.
+The retired mobile engine, provider gateway and `<user data dir>/mobile/` DB
+construction no longer execute. Existing legacy data requires the explicit reviewed
+consolidation operator flow; API reads never migrate it. The native App retains
+execution ownership, normal hooks, source checks and permission decisions. There is
+no service worker or offline execution. The manifest/icons still support a phone
+browser's add-to-home-screen feature.
 
 ## Binary Distribution
 

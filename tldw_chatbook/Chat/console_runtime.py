@@ -1842,6 +1842,9 @@ class ConsoleRuntime:
             self._retire_response_rules()
             self._response_rules = None
         self._chat_store = value
+        if value is not None:
+            value.on_persisted_identity = self.register_saved_conversation
+
         if value is not None and hasattr(value, "on_active_session_changed"):
             value.on_active_session_changed = self._on_active_session_changed
 
@@ -2250,6 +2253,71 @@ class ConsoleRuntime:
         store = self._chat_store
         sessions = store.sessions() if store is not None else ()
         return any(session.id == session_id for session in sessions)
+
+    def register_saved_conversation(self, session_id: str, conversation_id: str | None) -> None:
+        """Publish committed native identity without replacing a live reservation."""
+        identities = getattr(self, "_remote_saved_sessions", None)
+        if identities is None:
+            identities = self._remote_saved_sessions = {}
+        for saved, native in tuple(identities.items()):
+            if native == session_id and saved != conversation_id:
+                identities.pop(saved, None)
+        if conversation_id:
+            identities.setdefault(conversation_id, session_id)
+
+    async def open_remote_conversation(self, conversation_id: str):
+        """Share hydration of a saved identity, retaining it across observer loss."""
+        from .console_conversation_hydration import (
+            hydrate_console_generation_settings,
+            hydrate_console_session,
+            load_console_conversation_tree,
+        )
+        from .console_launch_wake import _ensure_launch_runtime
+
+        self._raise_if_disposed_or_session_fenced(None)
+        controller = _ensure_launch_runtime(self._app)
+        if controller is None:
+            raise RuntimeError("Console owner is unavailable.")
+        store = controller.store
+        # Persistence publishes the identity on the native session. Always consult
+        # that owner before the reservation table, including terminal-created chats.
+        reservations = getattr(self, "_remote_saved_opens", None)
+        if reservations is None:
+            reservations = self._remote_saved_opens = {}
+        if conversation_id not in reservations:
+            pending = getattr(store, "_saved_hydrations", {}).get(conversation_id)
+            if pending is not None:
+                return await asyncio.shield(pending)
+            matches = [s for s in store.sessions() if s.persisted_conversation_id == conversation_id]
+            preferred = getattr(self, "_remote_saved_sessions", {}).get(conversation_id)
+            if matches:
+                return next((s for s in matches if s.id == preferred), matches[0])
+        task = reservations.get(conversation_id)
+        if task is None:
+            async def hydrate():
+                try:
+                    tree = await load_console_conversation_tree(self._app, conversation_id)
+                    self._raise_if_disposed_or_session_fenced(None)
+                    if tree is None:
+                        raise ValueError("Saved conversation is unavailable.")
+                    # A native caller may have opened it while the read was pending.
+                    matches = [s for s in store.sessions() if s.persisted_conversation_id == conversation_id]
+                    if matches:
+                        return matches[0]
+                    settings = hydrate_console_generation_settings(
+                        getattr(self._app, "app_config", {}) or {}, tree["conversation"])
+                    session = await hydrate_console_session(
+                        app=self._app, store=store, conversation_id=conversation_id, tree=tree,
+                        settings=settings.settings, generation_durable_snapshot=settings.durable_snapshot,
+                        generation_metadata_status=settings.metadata_status, activate=False,
+                    )
+                    self.register_saved_conversation(session.id, conversation_id)
+                    return session
+                finally:
+                    reservations.pop(conversation_id, None)
+            task = asyncio.create_task(hydrate(), name="open-saved-console")
+            reservations[conversation_id] = task
+        return await asyncio.shield(task)
 
     def ensure_remote_projection(self, host_identity):
         """Bind private served projection to the authenticated parent incarnation."""
@@ -6038,6 +6106,13 @@ class ConsoleRuntime:
         refuses work through its permanently-set cancellation Event, which
         is exactly the right answer at exit.
         """
+        # Hydration owns physical reads independently of the requesting socket.
+        # Retire these retained tasks before normal store/DB disposal.
+        openings = tuple(getattr(self, "_remote_saved_opens", {}).values())
+        hydrations = tuple(getattr(self._chat_store, "_saved_hydrations", {}).values())
+        if openings or hydrations:
+            self._disposed = True
+            await asyncio.gather(*(asyncio.shield(task) for task in (*openings, *hydrations)), return_exceptions=True)
         if self._remote_projection is not None:
             self._remote_projection.close()
         controller = self._chat_controller

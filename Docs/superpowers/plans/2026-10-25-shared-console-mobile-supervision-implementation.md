@@ -1072,3 +1072,42 @@ R146 B4 test-only cohort correction: B3 native theme save/binding/inode assertio
 ### Original Task8 FIX1 — T8FULL-I1 / M1
 
 ADR required: no new ADR. ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md. Reason: correct accepted R146 same-coordinator propagation, without changing limits, roles or validation. Before code, review identified that ordinary original-generation owner verification entered an unbudgeted preview. Change only that call to forward the existing budget. Extend the genuine public-produced B target with real native scope/copy identity and same-counter source/copy scarcity checks; preserve all restored controls. Record RED/GREEN, physical native cleanup/source identity, focused static and one scoped local FIX1 commit. Carry M1's zero introduced/1,841 inherited Ruff, unassigned caller-scan warning origins and historical/runtime/hardware limits explicitly. Full task and Task9 stay held for fresh scoped re-review.
+
+
+### Task9 R147 explicit first-host bootstrap
+
+An authenticated, CSRF-protected `POST /api/v1/mobile/console/host` accepts only
+`{protocol_version: 1}`. After verified cutover it reuses the canonical registry,
+awaits connection and positively checks native run-store execution admission,
+then returns the exact `ConsoleHostIdentity`. It creates no native chat, provider
+request or ticket. An explicit Create/Open may bootstrap then issue one exact-host
+ticket; races refuse. Reads and reconnects never bootstrap, reticket or replay.
+
+
+### Task9 connected native project callback correction
+
+The first native remote Send reached durable persistence, then the unchanged
+project-provider composition invoked `project_authority_guard` on the controller
+loop. Its local `on_owning_loop` unconditionally used Textual `call_from_thread`,
+which refuses on that loop. Preserve the four original activation/authority/
+dispatch callers and every project/source/permission check: invoke directly only
+on a non-null matching controller owner loop; otherwise retain worker marshalling
+and the existing no-App fallback. Catch only absence of a running loop, never a
+callback exception. Original first-Send exception evidence is in Task9 agent10;
+qualify actual native Send plus owner-loop/worker/error/default routing controls.
+This is a routine shared bug fix under ADR244, with no new authority or API.
+
+
+### Task9 cold viewless source metadata dependency
+
+The un-warmed Library-mounted native first Send refused before execution because
+`_resident_skill_wiring()` had no resident `Widgets.compact_model_bar` source
+metadata. The existing cold stock catalog proof deliberately requires that
+module's original source capsule; a mounted Console normally imports it. Explicit
+remote Send loads this same dependency through `run_preparation_read`, observed by
+controller/runtime physical teardown, before unchanged received-configuration
+capture. Its import reads/compiles Textual parent source metadata, so it runs off
+the owner loop. Exact native target and all five revisions are rechecked after
+that await. No widget is mounted, trust/plugin getter invoked or cold/custom/
+memory/source/permission qualification relaxed. Preserve cold refusal evidence
+and qualify the actual un-warmed first Send plus no-retention negative control.

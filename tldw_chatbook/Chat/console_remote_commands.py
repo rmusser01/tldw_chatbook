@@ -31,6 +31,48 @@ class ConsoleRemoteCommands:
         self.runtime = runtime
         self.host_identity = host_identity
 
+    def _require_host(self, target: ConsoleHostIdentity) -> None:
+        if type(target) is not ConsoleHostIdentity or target != self.host_identity:
+            raise ValueError("Console target owner changed.")
+        self.runtime._raise_if_disposed_or_session_fenced(None)
+
+    def _target(self, session) -> ConsoleTarget:
+        self.runtime.chat_controller._interrupt_host.retain_decision_target(session.id)
+        return ConsoleTarget(
+            **self.host_identity.model_dump(),
+            session_id=session.id,
+            incarnation_id=session.incarnation_id,
+        )
+
+    def create_chat(self, workspace_id: str, command_id: str) -> ConsoleTarget:
+        """Create an ordinary native chat without switching the terminal tab."""
+        from .console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+        from .console_launch_wake import _ensure_launch_runtime
+        from .console_turn_preparation import _validate_identifier
+
+        _validate_identifier(command_id, "command ID")
+        _validate_identifier(workspace_id, "workspace ID")
+        if workspace_id != CONSOLE_GLOBAL_WORKSPACE_ID:
+            registry = getattr(self.runtime.app, "workspace_registry_service", None)
+            if registry is None or registry.get_workspace(workspace_id) is None:
+                raise ValueError("Unknown workspace.")
+        controller = _ensure_launch_runtime(self.runtime.app)
+        if controller is None:
+            raise RuntimeError("Console owner is unavailable.")
+        session = controller.store.create_session(
+            workspace_id=workspace_id, activate=False
+        )
+        return self._target(session)
+
+    async def open_chat(self, conversation_id: str, command_id: str) -> ConsoleTarget:
+        """Reserve one native saved owner before any hydration await."""
+        from .console_turn_preparation import _validate_identifier
+
+        _validate_identifier(command_id, "command ID")
+        _validate_identifier(conversation_id, "conversation ID")
+        session = await self.runtime.open_remote_conversation(conversation_id)
+        return self._target(session)
+
     def _resolve(self, target: ConsoleTarget):
         if not isinstance(target, ConsoleTarget) or any(
             getattr(target, key) != getattr(self.host_identity, key)
@@ -86,6 +128,33 @@ class ConsoleRemoteCommands:
         if target.handle_id is not None or target.round_id is not None:
             raise ValueError("Send requires a chat target.")
         self._revisions(session, expected_revisions)
+        # The existing stock cold-source proof uses this module's original
+        # metadata capsule. A viewless owner has no widget import to load it.
+        # Its import checks Textual source bytes; retain that finite read through
+        # the same native physical teardown observers as turn preparation.
+        from importlib import import_module
+
+        from .console_preparation_reads import run_preparation_read
+
+        def require_current():
+            fresh_store, fresh_controller, fresh_session = self._resolve(target)
+            if (
+                fresh_store is not store
+                or fresh_controller is not controller
+                or fresh_session is not session
+            ):
+                raise RuntimeError("Console target owner changed.")
+            self._revisions(session, expected_revisions)
+
+        await run_preparation_read(
+            lambda: import_module("tldw_chatbook.Widgets.compact_model_bar"),
+            creator=controller,
+            session_id=session.id,
+            reads=controller._preparation_reads,
+            observers=(self.runtime._preparation_reads,),
+            require_current=require_current,
+        )
+        require_current()
         inputs = store.command_input_snapshot(
             session.id, text=text, command_id=command_id
         )
@@ -130,6 +199,7 @@ class ConsoleRemoteCommands:
                 else None
             ),
         )
+        controller._interrupt_host.retain_decision_target(session.id)
         return self.runtime.accept_received_intent(
             intent, _configuration_preparation=preparation
         )
@@ -148,6 +218,17 @@ class ConsoleRemoteCommands:
             _validate_identifier(command_id, "command ID")
             if type(payload) is not dict:
                 raise ValueError("Command payload must be an object.")
+            if action in {"create", "open"}:
+                self._require_host(target)
+                field = "workspace_id" if action == "create" else "conversation_id"
+                if set(payload) != {field}:
+                    raise ValueError("Unexpected host command fields.")
+                result = (
+                    self.create_chat(payload[field], command_id)
+                    if action == "create"
+                    else await self.open_chat(payload[field], command_id)
+                )
+                return {"state": "applied", "native_id": result.session_id}
             _store, controller, session = self._resolve(target)
             if action == "decision":
                 if set(payload) != {"kind", "answer"} or not isinstance(

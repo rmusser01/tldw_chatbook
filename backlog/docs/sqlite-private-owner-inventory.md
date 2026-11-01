@@ -385,3 +385,9 @@ restrictions. Its preparation flag permits only binding state/revision and
 assessment state/JSON updates. This path is selected-import preparation only;
 internal rollback does not disable local rules. The private-call census pins
 this symbol, literal adapter selection, candidate argument, and validation call.
+
+
+## Canonical Console Library readers (TASK-36767, ADR-244)
+
+| C98 | tldw_chatbook/DB/ChaChaNotes_DB | CharactersRAGDB._get_thread_connection | db.chachanotes.read | read_only_uri | existing canonical current schema only | Migrated via `connect_private_sqlite`. Ordinary storage admission and Core participant custody; must-exist SQLite read-only, no migration or execution authority. |
+| C99 | tldw_chatbook/DB/Client_Media_DB_v2 | MediaDatabase._get_thread_connection | db.media.read | read_only_uri | existing canonical current schema only | Migrated via `connect_private_sqlite`. Ordinary storage admission and Media participant custody; active/trash filtering and physical retirement remain native. |
