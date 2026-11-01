@@ -113,6 +113,19 @@ _PRIVATE_MEMORY_AND_READ_ONLY = frozenset(
 )
 
 _SQLITE_OWNER_POLICIES = {
+    "recovery.mobile.completion.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/mobile_consolidation_recovery",
+        _READ_ONLY_URI,
+        "Ordinary admitted completion/schema reads; SQLite SHM coordination only.",
+        preserve_read_only_source_mode=True,
+    ),
+    "recovery.mobile.preview": SQLiteOwnerPolicy(
+        "tldw_chatbook/Backup_Recovery/mobile_consolidation",
+        _READ_ONLY_URI,
+        "Read-only legacy inventory over native checked SQLite snapshots.",
+        preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
     "plugins.registry": SQLiteOwnerPolicy(
         "tldw_chatbook/Plugins/registry",
         _PRIVATE_MEMORY_AND_READ_ONLY,
@@ -203,6 +216,27 @@ _SQLITE_OWNER_POLICIES = {
         "tldw_chatbook/DB/base_db",
         _PRIVATE_OR_MEMORY,
         "BaseDB is the shared file and memory connection owner for subclasses.",
+    ),
+    "db.workspaces.preflight": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Workspace_DB", _READ_ONLY_URI,
+        "Fixed incompatible-preview metadata rejection before native schema initialization.",
+        preserve_read_only_source_mode=True,
+    ),
+    "db.chachanotes.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/ChaChaNotes_DB", _READ_ONLY_URI,
+        "Canonical saved-history and notes reads without schema initialization.",
+        preserve_read_only_source_mode=True,
+    ),
+    "db.media.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/Client_Media_DB_v2", _READ_ONLY_URI,
+        "Canonical Library reads without schema initialization.",
+        preserve_read_only_source_mode=True,
+    ),
+    "db.agent_runs.read": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/AgentRuns_DB",
+        _READ_ONLY_URI,
+        "Non-owning Console inspection without schema initialization or recovery.",
+        preserve_read_only_source_mode=True,
     ),
     "db.subscriptions.agent_read": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/Subscriptions_DB",
@@ -1501,22 +1535,33 @@ def _with_storage_admission(function):
             return function(owner_id, database, **kwargs)
         from tldw_chatbook.Backup_Recovery.storage_admission import (
             _acquire_capture_storage,
+            _acquire_mobile_storage,
             _CaptureLease,
+            _MobileScope,
         )
 
+        factory = kwargs.get("factory", sqlite3.Connection)
         try:
-            lease = _acquire_capture_storage(
-                Path(database),
-                owner_id=owner_id,
+            lease = _acquire_mobile_storage(
+                Path(database), owner_id=owner_id, factory=factory,
                 read_only=kwargs.get("read_only", False),
+                must_exist=kwargs.get("must_exist", False),
+                immutable=kwargs.get("immutable", False),
             )
+            if lease is None:
+                lease = _acquire_capture_storage(
+                    Path(database),
+                    owner_id=owner_id,
+                    read_only=kwargs.get("read_only", False),
+                )
         except BaseException:
             if outcome is not None:
                 outcome.admission_refused = True
             raise
         factory = kwargs.get("factory", sqlite3.Connection)
         capture_lease = type(lease) is _CaptureLease
-        if lease is not None and factory is not sqlite3.Connection:
+        mobile_lease = capture_lease and type(lease.scope) is _MobileScope
+        if lease is not None and factory is not sqlite3.Connection and not mobile_lease:
             # Custom __new__/__init__ may retain a native handle then raise before
             # the seam receives it. Capture qualifies only the native constructor;
             # ordinary owner factory compatibility remains unchanged below.
@@ -1540,6 +1585,21 @@ def _with_storage_admission(function):
             ):
                 raise RecoveryRequired("connection_factory_not_qualified")
 
+            if mobile_lease:
+
+                class MobileCursor(sqlite3.Cursor):
+                    def execute(self, *args, **options):
+                        _MobileScope.check(lease.scope)
+                        return super().execute(*args, **options)
+
+                    def executemany(self, *args, **options):
+                        _MobileScope.check(lease.scope)
+                        return super().executemany(*args, **options)
+
+                    def executescript(self, *args, **options):
+                        _MobileScope.check(lease.scope)
+                        return super().executescript(*args, **options)
+
             class AdmittedConnection(factory):
                 _admission_close_attempted = False
 
@@ -1551,6 +1611,39 @@ def _with_storage_admission(function):
                         # Bind the actual native handle before connector-level
                         # post-open validation can reject it.
                         lease.attach(self)
+
+                if mobile_lease:
+
+                    def cursor(self, factory=None):
+                        sqlite3.Connection.in_transaction.__get__(self)
+                        from tldw_chatbook.DB.base_db import _QuiescentSQLiteCursor
+
+                        _MobileScope.check(lease.scope)
+                        if factory not in (
+                            None,
+                            sqlite3.Cursor,
+                            _QuiescentSQLiteCursor,
+                        ):
+                            raise RecoveryRequired("mobile_cursor_factory_unqualified")
+
+                        return super().cursor(MobileCursor)
+
+                    def execute(self, *args, **options):
+                        return self.cursor().execute(*args, **options)
+
+                    def executemany(self, *args, **options):
+                        return self.cursor().executemany(*args, **options)
+
+                    def executescript(self, *args, **options):
+                        return self.cursor().executescript(*args, **options)
+
+                    def commit(self):
+                        _MobileScope.check(lease.scope)
+                        return super().commit()
+
+                    def rollback(self):
+                        _MobileScope.check(lease.scope)
+                        return super().rollback()
 
                 def __new__(cls, *args, **options):
                     nonlocal allocation_started
@@ -1862,6 +1955,11 @@ def _connect_registered_sqlite(
         if directory_result.status is PrivatePathStatus.UNVERIFIED_PLATFORM:
             _warn_unverified_platform(owner_id)
         deadline = OperationDeadline(operation_deadline)
+        from tldw_chatbook.Backup_Recovery.storage_admission import (
+            _mobile_private_preparation,
+        )
+
+        require_private_mode = _mobile_private_preparation(selected)
         with _helper_operation(1, deadline, reservation) as envelope:
             request = PrepareRequest(
                 path=str(selected),
@@ -1869,12 +1967,19 @@ def _connect_registered_sqlite(
                 create_if_missing=not read_only and not must_exist,
                 preserve_source_mode=(
                     read_only and policy.preserve_read_only_source_mode
+                    and not require_private_mode
                 ),
+                require_private_mode=require_private_mode,
             )
             if private_paths._WINDOWS_PLATFORM:
+                if require_private_mode:
+                    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+                    raise RecoveryRequired("mobile_native_preparation_unqualified")
                 deadline.remaining(5.0)
                 _prepare_artifact(
-                    selected, writable=request.writable,
+                    selected,
+                    writable=request.writable,
                     create_if_missing=request.create_if_missing,
                     enforce_private_mode=not request.preserve_source_mode,
                 )
@@ -1890,6 +1995,9 @@ def _connect_registered_sqlite(
             verify_expected_named_identity(selected, expected_identity)
             if capture_path is not None:
                 _verify_capture_sqlite_target(capture_path)
+            if require_private_mode:
+                # Preparation cannot turn a foreign generation into SQLite ownership.
+                _mobile_private_preparation(selected)
             connection = sqlite3.connect(connection_target, uri=use_uri, **kwargs)
             try:
                 if capture_path is not None:
@@ -1970,6 +2078,7 @@ def open_recovery_validation(
     writable: bool,
     with_restrictions: bool = False,
     cancel=None,
+    _custody=None,
 ) -> Iterator[sqlite3.Connection | tuple[sqlite3.Connection, Any]]:
     """Open a disposable candidate with restrictions before any imported query.
 
@@ -1985,9 +2094,35 @@ def open_recovery_validation(
     )
 
     _installed_owner(owner_id)
-    connection = _connect_recovery_candidate(candidate, writable=writable)
-    with contextlib.closing(connection):
+    with contextlib.ExitStack() as resources:
+        if _custody is None:
+            connection = resources.enter_context(
+                contextlib.closing(
+                    _connect_recovery_candidate(candidate, writable=writable)
+                )
+            )
+        else:
+            if writable:
+                raise ValueError("captured_validation_is_read_only")
+            from tldw_chatbook.Backup_Recovery.archive_reader import _regular
+            from tldw_chatbook.Backup_Recovery.storage_admission import _CaptureLease
+
+            stream = resources.enter_context(_regular(candidate, _custody=_custody))
+            lease = _CaptureLease(_custody.scope)
+            lease.descriptor_outcome = _SQLiteDescriptorOutcome()
+            resources.callback(lease.retire)
+            connection = connect_private_sqlite_descriptor(
+                "recovery.validation",
+                stream.fileno(),
+                _native_outcome=lease.descriptor_outcome,
+                isolation_level=None,
+                cached_statements=0,
+                timeout=0,
+            )
+            lease.attach(connection)
         restrictions = _restrict_connection(connection, cancel)
+        restrictions.capture_scope = None if _custody is None else _custody.scope
+        restrictions.capture_stream = None if _custody is None else stream
         with _recovery_restriction_scope(connection, restrictions):
             yield (connection, restrictions) if with_restrictions else connection
 

@@ -55,6 +55,52 @@ from tldw_chatbook.Chat.console_received_turn import (
 UNSPECIFIED_ASSISTANT = object()
 _HYDRATION_NOT_PREPARED = object()
 
+
+@dataclass(frozen=True)
+class ConsoleSavedSessionCleanup:
+    """Exact presentation handle; only its creator token authorizes cleanup."""
+
+    session: ConsoleChatSession
+    owner: object
+    incarnation_id: str = field(init=False)
+    conversation_id: str | None = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "incarnation_id", self.session.incarnation_id)
+        object.__setattr__(
+            self, "conversation_id", self.session.persisted_conversation_id
+        )
+
+    def matches(self, current: ConsoleChatSession | None) -> bool:
+        return (
+            current is self.session
+            and current.incarnation_id == self.incarnation_id
+            and current.persisted_conversation_id == self.conversation_id
+        )
+
+
+@dataclass(eq=False)
+class _SavedSessionOperation:
+    """One store-owned publication, including its exact provisional cleanup."""
+
+    conversation_id: str
+    future: asyncio.Future[ConsoleChatSession] | None = None
+    task: asyncio.Task[None] | None = None
+    session: ConsoleChatSession | None = None
+    ready: bool = False
+    published: bool = False
+    cleanup_owner: object | None = None
+    native_producer: bool = False
+    waiters: int = 0
+    abandoned: bool = False
+    error: BaseException | None = None
+
+
+def _consume_saved_outcome(future: asyncio.Future) -> None:
+    if not future.cancelled():
+        future.exception()
+
+
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.response_rules.models import RuleEvidence
     from tldw_chatbook.Chat.response_rules.store import ResponseRuleStore
@@ -199,6 +245,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     encode_project_context_json,
     sanitize_fork_project_instruction_state,
 )
+
 # resolve_console_message_presentation is re-exported for
 # console_speech_snapshot (and any other store-seam consumer): the
 # presentation resolver lives in console_roleplay_identity, but the
@@ -1720,7 +1767,9 @@ class _ConsoleEphemeralPromotionReservation:
     canvas_settled: bool = False
 
 
-class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentInputMixin):
+class ConsoleChatStore(
+    ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentInputMixin
+):
     """Manage native Console sessions and messages before UI integration."""
 
     DURABLE_TOMBSTONE_CAP = 128
@@ -1881,6 +1930,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         self._session_mru: deque[str] = deque()
         self._active_session_epoch = 0
         self.on_active_session_changed: Callable[[], None] | None = None
+        self.on_persisted_identity: Callable[[str, str | None], None] | None = None
+        self._saved_session_operations: dict[str, _SavedSessionOperation] = {}
+        self._saved_session_admission_closed = False
         self._speech_preference_epoch_sequence = 0
         self._progress_identity_lock = threading.RLock()
         self._progress_message_store: MessageStore | None = None
@@ -2988,14 +3040,383 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             )
         return True
 
+    def _saved_operation(self, conversation_id: str) -> _SavedSessionOperation | None:
+        with self._preparation_lock:
+            operation = self._saved_session_operations.get(conversation_id)
+            if (
+                operation is not None
+                and operation.session is not None
+                and (
+                    self._sessions.get(operation.session.id) is not operation.session
+                    or (
+                        operation.ready
+                        and operation.session.persisted_conversation_id
+                        != conversation_id
+                    )
+                )
+            ):
+                self._saved_session_operations.pop(conversation_id, None)
+                operation = None
+            if operation is None:
+                # First Send/manual Save already owns a live slot before SQL. Join
+                # that staged identity even after commit but before native publication.
+                staged_session = next(
+                    (
+                        self._sessions.get(sid)
+                        for sid, reservation in self._first_identity_reservations.items()
+                        if reservation[1].conversation_id == conversation_id
+                    ),
+                    None,
+                )
+                if staged_session is not None:
+                    operation = _SavedSessionOperation(
+                        conversation_id,
+                        session=staged_session,
+                        native_producer=True,
+                        published=True,
+                    )
+                    self._saved_session_operations[conversation_id] = operation
+            if operation is None:
+                session = next(
+                    (
+                        s
+                        for s in self.sessions()
+                        if s.persisted_conversation_id == conversation_id
+                    ),
+                    None,
+                )
+                if session is not None:
+                    # Existing first-persisted sessions keep their original live ID.
+                    operation = _SavedSessionOperation(
+                        conversation_id, session=session, ready=True, published=True
+                    )
+                    self._saved_session_operations[conversation_id] = operation
+            return operation
+
+    def saved_session_ready(self, session: ConsoleChatSession) -> bool:
+        operation = self._saved_session_operations.get(
+            session.persisted_conversation_id
+        )
+        return operation is None or (
+            operation.session is session and operation.published
+        )
+
+    def reserve_saved_creation(self, conversation_id: str) -> _SavedSessionOperation:
+        """Reserve a native preallocated ID before its first durable commit."""
+        if self._saved_session_admission_closed:
+            raise RuntimeError("Saved-session admission is closed.")
+        if self._saved_operation(conversation_id) is not None:
+            raise ValueError("Saved conversation already has a native owner.")
+        operation = _SavedSessionOperation(conversation_id, native_producer=True)
+        self._saved_session_operations[conversation_id] = operation
+        return operation
+
+    def abort_saved_creation(
+        self, operation: _SavedSessionOperation, error: BaseException
+    ) -> None:
+        """Fail only this unpublished native producer and wake its observers."""
+        with self._preparation_lock:
+            operation.error = error
+        try:
+            if (
+                self._saved_session_operations.get(operation.conversation_id)
+                is operation
+            ):
+                if operation.session is not None and not operation.published:
+                    self.rollback_restored_session(
+                        operation.session.id,
+                        expected_session=operation.session,
+                        prior_active_session_id=self.active_session_id,
+                        _operation=operation,
+                    )
+                self._saved_session_operations.pop(operation.conversation_id, None)
+        finally:
+            # The native hydration failure may already have purged its exact
+            # row/entry. Its detached observers still own this outcome future.
+            future = operation.future
+            if future is not None:
+
+                def settle():
+                    if not future.done():
+                        if isinstance(error, asyncio.CancelledError):
+                            future.cancel()
+                        else:
+                            future.set_exception(error)
+
+                future.get_loop().call_soon_threadsafe(settle)
+
+    def publish_restored_session(
+        self, session: ConsoleChatSession, cleanup_owner: object | None = None
+    ) -> None:
+        operation = self._saved_operation(session.persisted_conversation_id)
+        if (
+            operation is None
+            or operation.session is not session
+            or not operation.ready
+            or self._sessions.get(session.id) is not session
+        ):
+            raise RuntimeError("Saved conversation is not ready.")
+        operation.published = True
+        operation.cleanup_owner = None
+        operation.abandoned = False
+
+    def restored_cleanup_session(
+        self, cleanup_owner: object
+    ) -> ConsoleChatSession | None:
+        return next(
+            (
+                op.session
+                for op in self._saved_session_operations.values()
+                if op.cleanup_owner is cleanup_owner and not op.published
+            ),
+            None,
+        )
+
+    async def resolve_saved_session(
+        self,
+        conversation_id: str,
+        factory: Callable[[_SavedSessionOperation], Any] | None = None,
+        *,
+        cleanup_owner: object | None = None,
+        session_id: str | None = None,
+        producer: _SavedSessionOperation | None = None,
+    ) -> ConsoleChatSession:
+        """Await one authoritative ready owner; no observer owns its task."""
+        if self._saved_session_admission_closed:
+            raise RuntimeError("Saved-session admission is closed.")
+        operation = self._saved_operation(conversation_id)
+        with self._preparation_lock:
+            if producer is not None and operation is not producer:
+                raise RuntimeError("Saved producer ownership changed.")
+            if operation is None:
+                if factory is None:
+                    raise ValueError("Saved conversation has no native owner.")
+                operation = _SavedSessionOperation(
+                    conversation_id,
+                    future=asyncio.get_running_loop().create_future(),
+                    cleanup_owner=cleanup_owner,
+                )
+                operation.future.add_done_callback(_consume_saved_outcome)
+                self._saved_session_operations[conversation_id] = operation
+            if operation.error is not None:
+                raise operation.error
+            if not operation.ready and operation.future is None:
+                operation.future = asyncio.get_running_loop().create_future()
+                operation.future.add_done_callback(_consume_saved_outcome)
+        if (
+            not operation.ready
+            and operation.task is None
+            and (not operation.native_producer or producer is operation)
+        ):
+            if factory is None:
+                raise RuntimeError("Saved conversation is not ready.")
+
+            async def build():
+                try:
+                    session = await factory(operation)
+                    if (
+                        self._saved_session_admission_closed
+                        or self._sessions.get(session.id) is not session
+                        or session.persisted_conversation_id != conversation_id
+                    ):
+                        raise RuntimeError("Saved conversation owner changed.")
+                    operation.session = session
+                    operation.ready = True
+                    if operation.cleanup_owner is None:
+                        operation.published = True
+                    operation.future.set_result(session)
+                except BaseException as error:  # noqa: BLE001 - settle detached native ownership even on cancellation.
+                    self.abort_saved_creation(operation, error)
+                finally:
+                    operation.task = None
+                    if (
+                        operation.abandoned
+                        and operation.waiters == 0
+                        and operation.session is not None
+                        and not operation.published
+                    ):
+                        self.rollback_restored_session(
+                            operation.session.id,
+                            expected_session=operation.session,
+                            prior_active_session_id=self.active_session_id,
+                            _operation=operation,
+                        )
+
+            operation.task = asyncio.create_task(
+                build(), name="hydrate-canonical-console"
+            )
+            operation.task.add_done_callback(_consume_saved_outcome)
+        operation.waiters += 1
+        try:
+            session = (
+                operation.session
+                if operation.ready
+                else await asyncio.shield(operation.future)
+            )
+            if (
+                not operation.ready
+                or self._sessions.get(session.id) is not session
+                or session.persisted_conversation_id != conversation_id
+            ):
+                raise RuntimeError("Saved conversation owner changed.")
+            if session_id is not None and session.id != session_id:
+                raise ValueError("Conflicting native saved-session identity.")
+            if cleanup_owner is None:
+                self.publish_restored_session(session)
+            return session
+        except asyncio.CancelledError:
+            if cleanup_owner is not None and operation.cleanup_owner is cleanup_owner:
+                operation.abandoned = True
+            raise
+        finally:
+            operation.waiters -= 1
+            if (
+                operation.abandoned
+                and operation.waiters == 0
+                and operation.task is None
+                and operation.session is not None
+                and not operation.published
+            ):
+                self.rollback_restored_session(
+                    operation.session.id,
+                    expected_session=operation.session,
+                    prior_active_session_id=self.active_session_id,
+                    _operation=operation,
+                )
+
+    def _retire_first_saved_owner_locked(
+        self,
+        session: ConsoleChatSession | None,
+        identity: ConsoleStagedConversationIdentity,
+        *,
+        session_id: str,
+        error: BaseException | None = None,
+    ) -> _SavedSessionOperation | None:
+        """Retire one exact staged identity with no I/O while preparation is locked."""
+        reservation = self._first_identity_reservations.get(session_id)
+        if reservation is None or reservation[1] is not identity:
+            return None
+        operation = self._saved_session_operations.get(identity.conversation_id)
+        if (
+            operation is not None
+            and operation.native_producer
+            and operation.published
+            and operation.session is session
+        ):
+            if (
+                error is None
+                and session is not None
+                and self._sessions.get(session.id) is session
+                and session.persisted_conversation_id == identity.conversation_id
+            ):
+                operation.ready = True
+            else:
+                operation.error = (
+                    error
+                    if error is not None
+                    else RuntimeError("First saved owner did not publish.")
+                )
+                if (
+                    self._saved_session_operations.get(identity.conversation_id)
+                    is operation
+                ):
+                    self._saved_session_operations.pop(identity.conversation_id, None)
+        else:
+            operation = None
+        self._first_identity_reservations.pop(session_id, None)
+        return operation
+
+    @staticmethod
+    def _notify_first_saved_owner(operation: _SavedSessionOperation | None) -> None:
+        """Deliver terminal state without holding the native preparation lock."""
+        if operation is None or operation.future is None:
+            return
+        future, session, error = operation.future, operation.session, operation.error
+
+        def settle():
+            if not future.done():
+                if isinstance(error, asyncio.CancelledError):
+                    future.cancel()
+                elif error is not None:
+                    future.set_exception(error)
+                else:
+                    future.set_result(session)
+
+        future.get_loop().call_soon_threadsafe(settle)
+
+    def _finish_first_saved_owner(
+        self,
+        session: ConsoleChatSession,
+        identity: ConsoleStagedConversationIdentity,
+        *,
+        error: BaseException | None = None,
+    ) -> None:
+        with self._preparation_lock:
+            operation = self._retire_first_saved_owner_locked(
+                session, identity, session_id=session.id, error=error
+            )
+        self._notify_first_saved_owner(operation)
+
+    async def restore_persisted_session_owned(
+        self, *, producer=None, **kwargs
+    ) -> ConsoleChatSession:
+        """Publish direct native creation through the same policy-ready operation."""
+
+        async def restore(operation):
+            session = self.restore_persisted_session(
+                **dict(
+                    kwargs, _operation=operation, activate=False, prepare_progress=False
+                )
+            )
+            from tldw_chatbook.Agents.fleet_messages import MessageError
+
+            try:
+                await self.prepare_progress_inbox_owned(session.id)
+            except MessageError:
+                pass  # Preserve the native optional saved-report refusal.
+            await self.hydrate_session_library_policy(session.id)
+            await self.reconcile_pending_workspace_projection(session.id)
+            return session
+
+        return await self.resolve_saved_session(
+            kwargs["persisted_conversation_id"],
+            restore,
+            session_id=kwargs.get("session_id"),
+            producer=producer,
+        )
+
+    async def close_saved_session_operations(self) -> None:
+        """Fence publication and drain physical hydration before native DB teardown."""
+        self._saved_session_admission_closed = True
+        tasks = []
+        for operation in tuple(self._saved_session_operations.values()):
+            if operation.task is not None:
+                tasks.append(operation.task)
+            elif not operation.ready:
+                self.abort_saved_creation(
+                    operation, RuntimeError("Saved owner is closing.")
+                )
+        if tasks:
+            drain = asyncio.gather(*tasks, return_exceptions=True)
+            cancelled = False
+            while not drain.done():
+                try:
+                    await asyncio.shield(drain)
+                except asyncio.CancelledError:
+                    cancelled = True
+            if cancelled:
+                raise asyncio.CancelledError
+
     def rollback_restored_session(
         self,
         session_id: str,
         *,
         expected_session: ConsoleChatSession,
         prior_active_session_id: str | None,
+        cleanup_owner: object | None = None,
+        _operation: _SavedSessionOperation | None = None,
     ) -> bool:
-        """Remove only the exact runtime session created by a failed restore.
+        """Remove only an unpublished runtime under exact creator cleanup custody.
 
         Args:
             session_id: Runtime session identifier to remove.
@@ -3008,6 +3429,22 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         """
 
         if self._sessions.get(session_id) is not expected_session:
+            return False
+        operation = self._saved_session_operations.get(
+            expected_session.persisted_conversation_id
+        )
+        if (
+            operation is None
+            or operation.session is not expected_session
+            or operation.published
+            or not (
+                _operation is operation
+                or (
+                    cleanup_owner is not None
+                    and operation.cleanup_owner is cleanup_owner
+                )
+            )
+        ):
             return False
         self._purge_session_runtime_state(session_id)
         if self.active_session_id == session_id:
@@ -3049,6 +3486,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         prepared_data: ConsoleConversationHydrationData | None = None,
         initial_project_instruction_state: ProjectInstructionControlState | None = None,
         prepare_progress: bool = True,
+        cleanup_owner: object | None = None,
+        _operation: _SavedSessionOperation | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -3126,9 +3565,24 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             persisted_conversation_id,
             initial_project_instruction_state,
         )
+        operation = self._saved_operation(str(persisted_conversation_id))
+        if operation is not None and operation is not _operation:
+            if not operation.ready or operation.session is None:
+                raise RuntimeError("Saved conversation is still hydrating.")
+            if session_id is not None and operation.session.id != session_id:
+                raise ValueError("Conflicting native saved-session identity.")
+            self.publish_restored_session(operation.session)
+            if activate:
+                self.switch_session(operation.session.id)
+            return operation.session
+        if operation is None:
+            operation = _SavedSessionOperation(
+                str(persisted_conversation_id), cleanup_owner=cleanup_owner
+            )
+            self._saved_session_operations[str(persisted_conversation_id)] = operation
         prior_active_session_id = self.active_session_id
         session = self.create_session(
-            session_id=session_id,
+            session_id=session_id or str(persisted_conversation_id),
             title=title,
             workspace_id=workspace_id,
             settings=settings,
@@ -3146,6 +3600,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             ),
             activate=activate,
         )
+        operation.session = session
         try:
             session.user_display_name_override = user_display_name_override
             session.character_system_template = character_system_template
@@ -3333,12 +3788,16 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     self.prepare_progress_inbox(session.id)
                 except MessageError:
                     pass  # Saved capacity/load refusal must not roll back the chat.
+            if _operation is None:
+                operation.ready = True
+                operation.published = cleanup_owner is None
             return session
         except BaseException:
             self.rollback_restored_session(
                 session.id,
                 expected_session=session,
                 prior_active_session_id=prior_active_session_id,
+                _operation=operation,
             )
             raise
 
@@ -3363,6 +3822,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         ):
             session.title = title
         session.persisted_conversation_id = persisted_conversation_id
+        if self.on_persisted_identity is not None:
+            self.on_persisted_identity(session.id, session.persisted_conversation_id)
 
     def _durable_thinking_history_policy(
         self,
@@ -3440,6 +3901,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 checkpoint = recovery.checkpoint
                 if (
                     checkpoint is not None
+                    and recovery.error_code != "imported_history"
                     and checkpoint.origin == "queued"
                     and checkpoint.queue_entry_id is not None
                 ):
@@ -3761,6 +4223,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             checkpoint = current.checkpoint
             if (
                 checkpoint is not None
+                and current.error_code != "imported_history"
                 and checkpoint.origin == "queued"
                 and checkpoint.queue_entry_id is not None
             ):
@@ -3941,13 +4404,11 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
 
         return _store_retain_native_commit_owner(self, preparation_id, owner)
 
-
     def _release_native_commit_owner(self, preparation_id: str, owner: object) -> bool:
         """Release cleanup protection only for this same retired operation."""
         from .console_native_commit import _store_release_native_commit_owner
 
         return _store_release_native_commit_owner(self, preparation_id, owner)
-
 
     def settle_accepted_durable_turn(
         self,
@@ -3992,7 +4453,6 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             content=content,
             metadata_json=metadata_json,
         )
-
 
     def settle_dispatch_recovery(
         self,
@@ -5192,7 +5652,10 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         self, session_id: str, *, owners_claimed: bool = False
     ) -> None:
         """Delete one session's exact process-local ownership without DB writes."""
-        self._session_or_raise(session_id)
+        session = self._session_or_raise(session_id)
+        for conversation_id, operation in tuple(self._saved_session_operations.items()):
+            if operation.session is session:
+                self._saved_session_operations.pop(conversation_id, None)
         if self.response_rule_store is not None:
             self.response_rule_store.discard_temporary(session_id)
 
@@ -6982,6 +7445,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
     ) -> None:
         """Drop content-bearing caches and retain one bounded owner tombstone."""
 
+        operation = None
         with self._preparation_lock:
             current = self._durable_fingerprint_by_preparation.get(preparation_id)
             if current != fingerprint:
@@ -7024,8 +7488,16 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             if session_id is not None and (
                 reservation is not None and reservation[0] == preparation_id
             ):
-                self._first_identity_reservations.pop(session_id, None)
+                operation = self._retire_first_saved_owner_locked(
+                    self._sessions.get(session_id),
+                    reservation[1],
+                    session_id=session_id,
+                    error=RuntimeError(
+                        "First turn retired before identity publication."
+                    ),
+                )
             self._evict_durable_tombstones_locked()
+        self._notify_first_saved_owner(operation)
 
     def _evict_durable_tombstones_locked(self) -> None:
         """Hold the cap while preserving retirement proof still in use.
@@ -7096,10 +7568,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
     def discard_uncommitted_durable_preparation(self, preparation_id: str) -> None:
         """Forget staged content for an acceptance which never committed."""
 
+        outcomes = []
         with self._preparation_lock:
             if preparation_id in self._durable_commit_by_preparation:
                 raise RuntimeError("Committed durable acceptance cannot be discarded.")
-            if preparation_id in self._native_commit_owners_by_preparation or preparation_id in self._durable_commit_in_flight:
+            if (
+                preparation_id in self._native_commit_owners_by_preparation
+                or preparation_id in self._durable_commit_in_flight
+            ):
                 raise RuntimeError("Durable acceptance commit is still owned.")
             # ponytail: bounded by live sessions; keep cleanup independent of
             # preparation indexes because controller drop removes those first.
@@ -7107,11 +7583,20 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 self._first_identity_reservations.items()
             ):
                 if reservation[0] == preparation_id:
-                    self._first_identity_reservations.pop(session_id, None)
+                    outcomes.append(
+                        self._retire_first_saved_owner_locked(
+                            self._sessions.get(session_id),
+                            reservation[1],
+                            session_id=session_id,
+                            error=RuntimeError("First turn did not commit."),
+                        )
+                    )
             self._durable_identity_by_preparation.pop(preparation_id, None)
             self._durable_owner_ids_by_preparation.pop(preparation_id, None)
             self._durable_fingerprint_by_preparation.pop(preparation_id, None)
             self._durable_commit_in_flight.pop(preparation_id, None)
+        for operation in outcomes:
+            self._notify_first_saved_owner(operation)
 
     def durable_content_retention_count(self) -> int:
         """Return the number of content-bearing durable recovery cache entries."""
@@ -7144,10 +7629,6 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         """Publish committed identity, policy, and first-send settings bases."""
 
         self.publish_committed_identity(session_id, commit.identity)
-        with self._preparation_lock:
-            reservation = self._first_identity_reservations.get(session_id)
-            if reservation is not None and reservation[1] == commit.identity:
-                self._first_identity_reservations.pop(session_id, None)
         session = self._session_or_raise(session_id)
         repository = getattr(
             self.persistence, "console_library_policy_repository", None
@@ -7217,6 +7698,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 commit.identity.conversation_id,
                 session.library_policy_holder,
             )
+        self._finish_first_saved_owner(session, commit.identity)
 
     async def reconcile_durable_turn_settings(
         self,
@@ -8740,6 +9222,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             raise RuntimeError("A persisted Console session cannot be rebound.")
         with self._fork_source_transition(session_id):
             session.persisted_conversation_id = conversation_id
+            if self.on_persisted_identity is not None:
+                self.on_persisted_identity(session.id, session.persisted_conversation_id)
             self._record_console_settings_binding_revision(
                 session_id,
                 session.conversation_binding_revision,
@@ -8770,6 +9254,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     )
                 )
                 session.persisted_conversation_id = conversation_id
+                if self.on_persisted_identity is not None:
+                    self.on_persisted_identity(session.id, session.persisted_conversation_id)
                 session.settings_persistence_failures.clear()
                 session.generation_durable_snapshot = None
                 session.context_policy_durable_revision = None
@@ -11505,6 +11991,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         )
         if session.persisted_conversation_id is None:
             session.persisted_conversation_id = conversation_id
+            if self.on_persisted_identity is not None:
+                self.on_persisted_identity(session.id, session.persisted_conversation_id)
         self._register_tree_node(session_id, message, parent_native_id=parent_native_id)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
@@ -11577,6 +12065,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         )
         if session.persisted_conversation_id is None:
             session.persisted_conversation_id = conversation_id
+            if self.on_persisted_identity is not None:
+                self.on_persisted_identity(session.id, session.persisted_conversation_id)
         self._register_tree_node(
             session_id,
             message,
@@ -18462,16 +18952,20 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                 staged_identity = self.stage_first_persistence(session_id)
                 reservation = (None, staged_identity, False)
                 self._first_identity_reservations[session_id] = reservation
+            failure = None
             try:
                 return self._persist_session_if_needed(
                     session_id,
                     strict_roleplay_context=strict_roleplay_context,
                     staged_identity=staged_identity,
                 )
+            except (
+                BaseException
+            ) as error:  # Preserve the producer's exact terminal outcome.
+                failure = error
+                raise
             finally:
-                with self._preparation_lock:
-                    if self._first_identity_reservations.get(session_id) == reservation:
-                        self._first_identity_reservations.pop(session_id, None)
+                self._finish_first_saved_owner(session, staged_identity, error=failure)
 
     def _persist_session_if_needed(
         self,

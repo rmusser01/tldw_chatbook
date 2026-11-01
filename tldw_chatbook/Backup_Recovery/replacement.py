@@ -84,7 +84,16 @@ def _validate_builtin_safety(items, candidates, owners, plan):
                 raise ValueError(issues[0])
 
 
-def _checked_originals(plan, journal, session):
+def _checked_originals(
+    plan,
+    journal,
+    session,
+    *,
+    _source_archive=None,
+    _source_read_budget=None,
+    _source_journal=None,
+    cancel=None,
+):
     """Reprove local reviewed mappings; a damaged selector is never reparsed."""
     from .bootstrap import _records, _registry
     from .storage_admission import _contains_owned_path
@@ -164,6 +173,7 @@ def _checked_originals(plan, journal, session):
                 (registry[name] for name in binding["namespaces"]),
             )
         )
+        mobile_members = None
         entries = []
         for item in plan.target.items:
             if item.path is None or not (
@@ -188,7 +198,42 @@ def _checked_originals(plan, journal, session):
                 )
                 for root in physical_roots
             ):
-                raise ValueError("rollback_source_binding_unverified")
+                if (
+                    _source_read_budget is None
+                    or item.owner != "persona.visual_identity_builtin"
+                ):
+                    raise ValueError("rollback_source_binding_unverified")
+                from .mobile_builtin_preservation import (
+                    _mobile_safety_members,
+                    _preservation_budget,
+                )
+
+                source_budget = _preservation_budget(_source_read_budget)
+                source_budget.reserve(512)
+                if (
+                    item.status not in {"included", "included_directory"}
+                    or item.logical_id not in plan.safety_scope
+                    or not any(
+                        key == item.logical_id and path == item.path
+                        for key, path in plan.preserve
+                    )
+                ):
+                    raise ValueError("rollback_source_binding_unverified")
+                if mobile_members is None:
+                    mobile_members = _mobile_safety_members(
+                        plan,
+                        journal,
+                        parent,
+                        prepared,
+                        receipt,
+                        session,
+                        _source_archive,
+                        _source_journal,
+                        source_budget,
+                        cancel,
+                    )
+                if mobile_members.get(item.logical_id) != item:
+                    raise ValueError("rollback_source_binding_unverified")
             if item.status not in {
                 "included",
                 "included_directory",
@@ -322,6 +367,9 @@ def capture_verify_rollback(
     work_root: Path,
     cancel: Event,
     acknowledged_credential_issues: tuple[str, ...],
+    _source_archive=None,
+    _source_read_budget=None,
+    _source_journal=None,
 ) -> Path:
     """Capture, encrypt and verify exact local originals under retained admission.
 
@@ -339,7 +387,16 @@ def capture_verify_rollback(
     ):
         raise ValueError("rollback_credential_acknowledgements_invalid")
     reader._check(cancel)
-    prepared, inventory = _checked_originals(plan, journal, session)
+    source_options = {}
+    if _source_read_budget is not None:
+        _source_read_budget.reserve(512)
+        source_options = {
+            "_source_archive": _source_archive,
+            "_source_read_budget": _source_read_budget,
+            "_source_journal": _source_journal,
+            "cancel": cancel,
+        }
+    prepared, inventory = _checked_originals(plan, journal, session, **source_options)
     if prepared.publication.descriptor.path != str(candidate / "candidate.json"):
         raise ValueError("candidate_receipt_changed")
     limits = ArchiveLimits()
@@ -376,7 +433,12 @@ def capture_verify_rollback(
     entries = [item for item in inventory.items if item.status == "included"]
     groups = []
     with session._replacement_capture_scope(
-        plan, journal, stage, limits=limits, byte_budget=limits.expanded_bytes
+        plan,
+        journal,
+        stage,
+        limits=limits,
+        byte_budget=limits.expanded_bytes,
+        **source_options,
     ):
         for item in entries:
             reader._check(cancel)
@@ -600,7 +662,7 @@ def capture_verify_rollback(
         )
         reader.verify_sealed(archive, cancel)
     # Positive scope retirement (including source/WAL rechecks) precedes proof.
-    checked, _ = _checked_originals(plan, journal, session)
+    checked, _ = _checked_originals(plan, journal, session, **source_options)
     if checked != prepared or observe_artifact(destination) != ciphertext:
         raise ValueError("rollback_capture_changed")
     coverage = {}
@@ -1467,6 +1529,8 @@ def replace(
     control_root: Path,
     rollback_password: bytes,
     cancel: Event,
+    _source_read_budget=None,
+    _source_journal=None,
 ) -> str:
     """Replace reviewed data under one uninterrupted native maintenance session.
 
@@ -1640,6 +1704,14 @@ def replace(
             replacement_profiles=identities,
             incoming_credentials=incoming,
         )
+        source_options = {}
+        if _source_read_budget is not None:
+            _source_read_budget.reserve(512)
+            source_options = {
+                "_source_archive": archive,
+                "_source_read_budget": _source_read_budget,
+                "_source_journal": _source_journal,
+            }
         rollback = capture_verify_rollback(
             candidate,
             plan,
@@ -1649,6 +1721,7 @@ def replace(
             password=rollback_password,
             work_root=work / "capture",
             cancel=cancel,
+            **source_options,
             acknowledged_credential_issues=tuple(
                 issue
                 for issue in plan.acknowledged_credential_issues

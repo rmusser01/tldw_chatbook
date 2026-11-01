@@ -1,6 +1,7 @@
 """Registry overrides must reach the agent runtime; identity contracts must
 survive overrides. Real code paths; no accessor mocks."""
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 
 
@@ -131,9 +132,8 @@ def test_agent_lessons_suffix_follows_configured_protocol_and_precedes_environme
     from tldw_chatbook.Agents.agent_models import AgentConfig, ToolSchema
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    db = AgentRunsDB(tmp_path / "prompt-order.db", client_id="prompt-order")
+    db = owned_agent_runs_db(tmp_path / "prompt-order.db", client_id="prompt-order")
     service = AgentService(
         db,
         ToolCatalogRegistry(),

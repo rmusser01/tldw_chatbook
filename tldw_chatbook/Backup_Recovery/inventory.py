@@ -15,9 +15,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from tldw_chatbook.Chat.console_trace_read_budget import _TraceReadLimit
 from tldw_chatbook.Utils.platform_files import os
 
-from . import profile_paths
+from . import bootstrap, profile_paths
 from .models import (
     DISCOVERY_CONTEXT_KEY,
     DiscoveryContext,
@@ -211,6 +212,15 @@ def classify_entries(items: tuple[StorageItem, ...]) -> Inventory:
     records cannot become StorageItem authority; readers must obtain fresh owner
     validation. Task 3 supplies no tombstone validator and emits no such evidence.
     """
+    from .mobile_preview_budget import current, path_cost
+
+    scope = current()
+    if scope is not None:
+        scope.read_budget.reserve(2048 + 1024 * len(items))
+        for item in items:
+            scope.read_budget.value(item, text_copies=8)
+            if item.path is not None:
+                scope.read_budget.reserve(path_cost(item.path, copies=8))
     issues: set[str] = set()
     complete = all(item.status not in BLOCKING for item in items)
     if any(item.owner == "unknown" for item in items):
@@ -389,6 +399,9 @@ def _source_item(
     *,
     required: bool = False,
 ) -> StorageItem:
+    from .mobile_preview_budget import path_cost, reserve
+
+    reserve(512 + path_cost(path) + 32 * len(dependencies))
     try:
         value = os.stat(path, follow_symlinks=False)
         status = (
@@ -409,6 +422,27 @@ def _unknown_children(
     root: Path, known: set[Path], prefix: str
 ) -> tuple[StorageItem, ...]:
     try:
+        from .mobile_preview_budget import current, path_cost
+
+        scope = current()
+        if scope is not None:
+            from .native_files import pinned_directory
+
+            scope.read_budget.reserve(1024 + path_cost(root, copies=2))
+            with pinned_directory(root, _custody=scope.custody) as parent:
+                names = bootstrap._bounded_names(
+                    parent, 100_000, scope.read_budget, scope.custody
+                )
+            scope.read_budget.container(len(names))
+            children = []
+            for name in names:
+                scope.read_budget.reserve(path_cost(root) + 16 * len(name) + 1024)
+                children.append(root / name)
+            return tuple(
+                _source_item("unknown", prefix + ":unknown:" + child.name, child)
+                for child in children
+                if child not in known
+            )
         if any(path.is_symlink() for path in (root, *root.parents)):
             return (
                 StorageItem(
@@ -469,7 +503,7 @@ def _planned_output_exclusion(context, declared, data_root):
     )
 
 
-def _fixed_control_exclusion() -> tuple[StorageItem, ...]:
+def _fixed_control_exclusion(*, _budget=None, _custody=None) -> tuple[StorageItem, ...]:
     """Exclude only the installed fixed authority, never a directory lookalike.
 
     Discovery does not initialize admission, repair evidence, or follow control
@@ -489,8 +523,8 @@ def _fixed_control_exclusion() -> tuple[StorageItem, ...]:
         status = "unavailable"
     else:
         try:
-            _control_records(root)  # Strict private/no-follow fixed record reader.
-            registry = _registry(root)
+            _control_records(root, _budget=_budget, _custody=_custody)
+            registry = _registry(root, _budget=_budget, _custody=_custody)
             marker = root / "unbound-owner"
             after = os.stat(root, follow_symlinks=False)
             if (
@@ -504,6 +538,8 @@ def _fixed_control_exclusion() -> tuple[StorageItem, ...]:
             ):
                 raise ValueError("recovery_control_unverified")
             status = "intentionally_excluded"
+        except _TraceReadLimit:
+            raise
         except (OSError, ValueError, TypeError, KeyError, RuntimeError):
             status = "unavailable"
     return (
@@ -513,18 +549,24 @@ def _fixed_control_exclusion() -> tuple[StorageItem, ...]:
     )
 
 
-def _service_control_exclusion() -> tuple[StorageItem, ...]:
+def _service_control_exclusion(
+    *, _budget=None, _custody=None
+) -> tuple[StorageItem, ...]:
     """Exclude recognized local service work, keeping unknown/damaged roots visible."""
     from .service_storage import default_control_root, verify_default_storage
 
     root = default_control_root().parent
+    if _budget is not None:
+        _budget.reserve(2048 + 16 * len(str(root)))
     try:
         os.stat(root, follow_symlinks=False)
     except FileNotFoundError:
         return ()
     try:
-        verify_default_storage()
+        verify_default_storage(_budget=_budget, _custody=_custody)
         status = "intentionally_excluded"
+    except _TraceReadLimit:
+        raise
     except (OSError, ValueError, TypeError, RuntimeError):
         status = "unavailable"
     return (
@@ -532,8 +574,87 @@ def _service_control_exclusion() -> tuple[StorageItem, ...]:
     )
 
 
+def read_profile_config(selected: Path, *, _read_budget=None, _custody=None) -> dict:
+    """Read the existing strict config-selection boundary without bootstrap."""
+    from .mobile_preview_budget import read_options
+
+    _read_budget, _custody = read_options(_read_budget, _custody)
+    if _read_budget is not None:
+        from .archive_reader import _identity
+        from .bootstrap import MAX_RECORD
+        from .native_files import _close_owned, pinned_directory
+
+        if _custody is None:
+            raise ValueError("mobile_native_custody_required")
+        _read_budget.reserve(4096)
+        with pinned_directory(selected.parent, _custody=_custody) as parent:
+            fd = os.open(
+                selected.name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=parent,
+            )
+            _custody.fds.append(fd)
+            try:
+                before = os.fstat(fd)
+                if (
+                    not stat.S_ISREG(before.st_mode)
+                    or before.st_uid != os.geteuid()
+                    or before.st_nlink != 1
+                    or not 0 <= before.st_size <= MAX_RECORD
+                ):
+                    raise ValueError("config_unavailable")
+                _read_budget.reserve(64 + before.st_size + 1)
+                raw = os.read(fd, before.st_size + 1)
+                if (
+                    len(raw) != before.st_size
+                    or _identity(before) != _identity(os.fstat(fd))
+                    or _identity(before)
+                    != _identity(
+                        os.stat(selected.name, dir_fd=parent, follow_symlinks=False)
+                    )
+                ):
+                    raise ValueError("mobile_selector_changed")
+                return _parse_profile_config(raw, _read_budget=_read_budget)
+            finally:
+                _close_owned(fd, _custody)
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    with os.fdopen(os.open(selected, flags), "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("config_unavailable")
+        return _parse_profile_config(stream.read())
+
+
+def _parse_profile_config(payload: bytes, *, _read_budget=None) -> dict:
+    """Apply the installed selector decoding/validation to already owned bytes."""
+    if _read_budget is not None:
+        from .mobile_runs_selector import _charge_toml
+
+        _charge_toml(payload, _read_budget)
+    raw_config = tomllib.loads(payload.decode("utf-8"))
+    if _read_budget is not None:
+        _read_budget.value(raw_config, text_copies=2)
+        _read_budget.container(len(_ProfileSelectors.model_fields))
+        for name, definition in _ProfileSelectors.model_fields.items():
+            if name not in raw_config:
+                if definition.default_factory is not dict:
+                    raise ValueError("mobile_selector_default_unproved")
+                _read_budget.value(name, text_copies=2)
+                _read_budget.container()  # Native missing-field dictionary.
+                _read_budget.container()  # Its later model_dump clone.
+    if DISCOVERY_CONTEXT_KEY in raw_config:
+        raise ValueError("reserved_context_key")
+    parsed = _ProfileSelectors.model_validate(raw_config)
+    if _read_budget is not None:
+        _read_budget.value(raw_config, text_copies=2)
+    return parsed.model_dump()
+
+
 def discover(
-    config_paths: tuple[Path, ...], *, selections: DiscoverySelections | None = None
+    config_paths: tuple[Path, ...],
+    *,
+    selections: DiscoverySelections | None = None,
+    _read_budget=None,
+    _custody=None,
 ) -> Inventory:
     """Read only explicitly selected TOML sources and canonical app-owned roots.
 
@@ -541,6 +662,15 @@ def discover(
     Config parse failures produce no guessed profile/database targets. Installed
     adapters may extend declarations without importing optional engines here.
     """
+    from .mobile_preview_budget import current
+
+    native = current()
+    if native is not None:
+        if _read_budget is not native.read_budget:
+            raise ValueError("mobile_preview_budget_changed")
+        if _custody is None:
+            _custody = native.custody
+        _read_budget.reserve(4096 + 1024 * len(config_paths))
     if selections is None:
         selections = DiscoverySelections()
     if type(selections) is not DiscoverySelections:
@@ -552,6 +682,7 @@ def discover(
     if not any(adapter.owner_id == "recovered.media" for adapter in adapters):
         adapters += recovery_adapters()
     selected_roots: set[Path] = set()
+    mobile_controls: dict[int, StorageItem] = {}
     for selected in config_paths or (profile_paths.effective_config_path(),):
         selected = profile_paths.lexical_path(selected)
         profile_id = hashlib.sha256(str(selected).encode()).hexdigest()[:24]
@@ -562,17 +693,10 @@ def discover(
         item = _source_item("config", config_id, selected, required=True)
         items.append(item)
         try:
-            # Refuse non-regular sources before open, including FIFOs. O_NONBLOCK
-            # avoids hanging if a selected path is replaced during discovery.
-            flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
-            with os.fdopen(os.open(selected, flags), "rb") as stream:
-                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                    raise ValueError("config_unavailable")
-                raw_config = tomllib.load(stream)
-                if DISCOVERY_CONTEXT_KEY in raw_config:
-                    raise ValueError("reserved_context_key")
-                config = _ProfileSelectors.model_validate(raw_config).model_dump()
-                config[DISCOVERY_CONTEXT_KEY] = context
+            config = read_profile_config(
+                selected, _read_budget=_read_budget, _custody=_custody
+            )
+            config[DISCOVERY_CONTEXT_KEY] = context
             root = profile_paths.user_data_dir(config)
             selected_roots.add(root)
             declared = [item]
@@ -643,6 +767,11 @@ def discover(
                 )
             )
             for adapter in adapters:
+                if _read_budget is not None:
+                    # dict(config) is a shallow adapter-local copy; values keep
+                    # their original parsed representation.
+                    _read_budget.container(len(config))
+                    _read_budget.container(len(declared))
                 extras = adapter.discover(dict(config))
                 for extra in extras:
                     if extra.owner != adapter.owner_id or extra.deletion_validated:
@@ -664,6 +793,21 @@ def discover(
                             external=True,
                         )
                     )
+            mobile_declared = any(
+                adapter.owner_id == "db.agent_runs" for adapter in adapters
+            ) and not any(path.is_symlink() for path in (root, *root.parents))
+            if mobile_declared:
+                from .mobile_consolidation import mobile_inventory
+
+                existing_ids = {item.logical_id for item in declared}
+                for item in mobile_inventory(config, _read_budget=_read_budget):
+                    if item.logical_id not in existing_ids:
+                        declared.append(item)
+                        if (
+                            item.owner == "recovery.control"
+                            and item.status == "intentionally_excluded"
+                        ):
+                            mobile_controls[id(item)] = item
             declared.extend(_sqlite_sidecars(declared, adapters))
             declared.extend(_planned_output_exclusion(context, declared, root))
             items[profile_start:] = declared
@@ -671,6 +815,9 @@ def discover(
             from tldw_chatbook.MCP.recovery_activation import inventory_container
 
             known.update(inventory_container(context, root))
+            # The legacy subtree is enumerated by its exact mobile declarations.
+            if mobile_declared:
+                known.add(profile_paths.legacy_mobile_dir(config))
             items.extend(_unknown_children(root, known, prefix))
         except (tomllib.TOMLDecodeError, UnicodeError):
             items.append(
@@ -682,6 +829,8 @@ def discover(
                     (config_id,),
                 )
             )
+        except _TraceReadLimit:
+            raise
         except (OSError, ValueError, TypeError, RuntimeError):
             items.append(
                 StorageItem(
@@ -699,8 +848,8 @@ def discover(
             profile_paths.default_base_data_dir(), selected_roots, "profiles"
         )
     )
-    items.extend(_fixed_control_exclusion())
-    items.extend(_service_control_exclusion())
+    items.extend(_fixed_control_exclusion(_budget=_read_budget, _custody=_custody))
+    items.extend(_service_control_exclusion(_budget=_read_budget, _custody=_custody))
     items.extend(
         _unknown_children(
             profile_paths.default_config_path().parent,
@@ -715,6 +864,8 @@ def discover(
         if (
             entry.path is not None
             and entry.owner != "sqlite.transient"
+            # Native claim creation must not add payload-sharing scope.
+            and mobile_controls.get(id(entry)) is not entry
             and entry.shared_group is None
             and entry.status
             not in {
@@ -746,6 +897,10 @@ def discover(
     cohort_issues = (*cohort_issues, *tts_issues)
     result = classify_entries(tuple(items))
     issues = set(result.issues) | set(cohort_issues)
+    if any(":legacy-mobile-issue-" in item.logical_id for item in items):
+        # Unlike ordinary unavailable optional owners, legacy content may never
+        # disappear through allow_partial capture. A fresh complete review is required.
+        issues.add("mobile_review_required")
     if any(item.logical_id.endswith(":parse_failure") for item in items):
         issues.add("config_parse_failure")
     if any(item.logical_id.endswith(":discovery_failure") for item in items):
@@ -775,25 +930,30 @@ def discover(
         result,
         complete=result.complete and not issues,
         issues=tuple(sorted(issues)),
-        scope_digest=hashlib.sha256(
-            json.dumps(
-                (
-                    result.scope_digest,
-                    tuple(
-                        str(profile_paths.lexical_path(p))
-                        for p in selections.external_roots
-                    ),
-                    selections.model_ids,
-                    selections.temporary_media,
-                    selections.diagnostics,
-                    str(profile_paths.lexical_path(selections.planned_output_root))
-                    if selections.planned_output_root
-                    else None,
-                ),
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest(),
+        scope_digest=_selection_scope_digest(result.scope_digest, selections),
     )
+
+
+def _selection_scope_digest(scope_digest, selections):
+    """Bind native coverage choices to the classified declaration digest."""
+    return hashlib.sha256(
+        json.dumps(
+            (
+                scope_digest,
+                tuple(
+                    str(profile_paths.lexical_path(p))
+                    for p in selections.external_roots
+                ),
+                selections.model_ids,
+                selections.temporary_media,
+                selections.diagnostics,
+                str(profile_paths.lexical_path(selections.planned_output_root))
+                if selections.planned_output_root
+                else None,
+            ),
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
 
 
 def _merge_chachanotes_cohort(
@@ -827,6 +987,8 @@ def _merge_chachanotes_cohort(
         if any(len(identities) != 1 for identities in original.values()):
             return items, ("shared_identity_mismatch",)
         for index, item in enumerate(items):
+            if item.logical_id.endswith(":legacy-mobile"):
+                continue
             if item.owner not in owners or item.status != "included":
                 continue
             if item.owner == "db.chachanotes.primary" and item.shared_group is None:

@@ -150,6 +150,11 @@ def _load_page(
     *,
     metadata_only=False,
 ):
+    from tldw_chatbook.DB.mobile_imported_run_log import _PinnedHistory
+
+    pinned = type(log_dir) is _PinnedHistory
+    if pinned:
+        log_dir.check()
     if cursor is not None and (
         not isinstance(cursor, RunLogPageCursor)
         or any(
@@ -182,13 +187,17 @@ def _load_page(
         )
 
     while True:
-        segment = _next_segment(log_dir, current.segment_index)
+        segment = (
+            log_dir.next_segment(current.segment_index)
+            if pinned
+            else _next_segment(log_dir, current.segment_index)
+        )
         if segment is None:
             return finish(None)
         index, path = segment
         if index != current.segment_index:
             current = RunLogPageCursor(index, 0)
-        with path.open("rb") as file:
+        with log_dir.open_segment(path) if pinned else path.open("rb") as file:
             file.seek(0, os.SEEK_END)
             file_size = file.tell()
             while current.record_offset < file_size:
@@ -205,6 +214,8 @@ def _load_page(
                     at_line_start = file.read(1) == b"\n"
                     scanned += 1
                 file.seek(offset)
+                if pinned:
+                    log_dir.budget.reserve(64 + MAX_HEADER_BYTES + 1)
                 line = file.readline(MAX_HEADER_BYTES + 1)
                 scanned += len(line)
                 body_start = file.tell()
@@ -220,6 +231,12 @@ def _load_page(
                     )
                     current = RunLogPageCursor(index, body_start)
                     continue
+                if pinned:
+                    from tldw_chatbook.Backup_Recovery.mobile_runs_history import (
+                        _admit_header,
+                    )
+
+                    _admit_header(line, 0, len(line) - 1, log_dir.budget)
                 decoded = decode_record_header(line[:-1])
                 if decoded is None:
                     diagnostics.add("malformed_header")
@@ -261,6 +278,8 @@ def _load_page(
                         return finish(current)
                     amount = min(size - content_offset, allowance)
                     file.seek(body_start + content_offset)
+                    if pinned:
+                        log_dir.budget.reserve(128 + 10 * amount)
                     body = file.read(amount)
                     scanned += len(body)
                     # Only a trailing partial code point is deferred; invalid

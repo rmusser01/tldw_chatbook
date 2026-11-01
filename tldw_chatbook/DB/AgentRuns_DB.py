@@ -13,10 +13,10 @@ import json
 import sqlite3
 import sys
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
-from functools import cached_property
 from datetime import datetime, timezone
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence, Union, overload
 
@@ -25,14 +25,20 @@ from loguru import logger
 from tldw_chatbook.DB import declare_store
 from tldw_chatbook.Agents.agent_models import (
     AGENT_LIFECYCLE_INDEX_BASE,
-    AgentDefinition,
     TERMINAL_RUN_STATUSES,
+    AgentDefinition,
     validate_agent_definition,
 )
 from tldw_chatbook.Agents.run_log import DEFAULT_MAX_RECORD_BYTES
+from tldw_chatbook.Chat.console_execution_owner import (
+    ConsoleExecutionOwner,
+    ConsoleExecutionUnavailable,
+)
 from tldw_chatbook.Provider_Contract.sampling_params import params_to_dict
+
 from . import store_kernel as _store_kernel
 from .base_db import BaseDB
+from .private_sqlite import connect_private_sqlite
 from .store_kernel import SQLiteStoreKernel
 
 if TYPE_CHECKING:
@@ -307,7 +313,7 @@ def _canonical_step_payload(index: int, payload: dict) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
-@declare_store("db.agent_runs", closer="close", policy="db.base", finite_worker=False)
+@declare_store("db.agent_runs", closer="close", policy="db.base", finite_worker=False, read_only_policy="db.agent_runs.read")
 class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     """Run records for the agent runtime (vertical-slice spec data model).
 
@@ -337,7 +343,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 31
+    _CURRENT_SCHEMA_VERSION = 33
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: BaseDB-provenance (ADR-353): connections open through BaseDB's
@@ -352,13 +358,30 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         client_id: str = "default",
         *,
         reconcile_on_init: bool = True,
+        execution_owner: ConsoleExecutionOwner | None = None,
+        _read_only: bool = False,
     ) -> None:
+        self._execution_owner = execution_owner
+        self._read_only = _read_only
         self._init_store_kernel()
         self._join_connection_registry(db_path)  # owner's idle close (TASK-39117)
         self.receipt_capability_available = False
-        super().__init__(db_path, client_id)
-        # After super().__init__: the agent_runs table exists (base_db ran
-        # _initialize_schema) and self.is_memory_db is set. Reconcile once per
+        super().__init__(db_path, client_id, initialize_schema=False)
+        if not self._read_only:
+            self._require_execution_owner()
+            reject_incompatible_preview(self.db_path_str)
+            self._initialize_schema()
+        else:
+            with self.connection() as conn:
+                self.receipt_capability_available = (
+                    conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='console_activity_receipts'"
+                    ).fetchone()
+                    is not None
+                )
+        # A writable owner has initialized schema; read-only handles never do.
+        # Reconcile once per
         # file per process so a crash mid-run doesn't leave a 'running' row
         # orphaned forever. reconcile_orphaned_runs() itself guards against
         # memory DBs and against re-sweeping a path already swept this
@@ -368,11 +391,49 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         # settings panel) passes reconcile_on_init=False and runs the
         # (idempotent) sweep on a worker thread, so the BEGIN IMMEDIATE
         # scan never blocks the Textual event loop.
-        if reconcile_on_init:
+        if reconcile_on_init and not self._read_only:
             try:
                 self.reconcile_orphaned_runs()
             except Exception as exc:  # noqa: BLE001 — reconcile is best-effort
                 logger.warning(f"AgentRunsDB reconcile skipped: {exc}")
+
+    @classmethod
+    def open_read_only(cls, db_path: Path) -> AgentRunsDB:
+        """Inspect an existing store without creating, migrating or recovering it."""
+        return cls(db_path, reconcile_on_init=False, _read_only=True)
+
+    def _require_execution_owner(self) -> None:
+        if self.is_memory_db:
+            return
+        if self._read_only or self._execution_owner is None:
+            raise ConsoleExecutionUnavailable("execution_owner_required")
+        self._execution_owner.require_current(self.db_path)
+
+    @contextmanager
+    def transaction(
+        self, *, immediate: bool | None = None
+    ) -> Iterator[sqlite3.Connection]:
+        """Keep every write, including auxiliary ledgers, behind the same lease."""
+        self._require_execution_owner()
+        with self._execution_use(), super().transaction(immediate=immediate) as conn:
+            yield conn
+
+    def _execution_use(self):
+        return (
+            nullcontext()
+            if self.is_memory_db or self._read_only
+            else self._execution_owner._use(self.db_path)
+        )
+
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        with self._execution_use(), super().connection() as conn:
+            yield conn
+
+    def vacuum(self) -> None:
+        self._require_execution_owner()
+        with self._execution_use():
+            super().vacuum()
 
     @cached_property
     def automatic_work(self) -> AutomaticWorkLedger:
@@ -380,6 +441,13 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         from .automatic_work import AutomaticWorkLedger
 
         return AutomaticWorkLedger(self)
+
+    @cached_property
+    def command_receipts(self):
+        """Retain remote command facts under this store's execution owner."""
+        from .console_command_receipts import ConsoleCommandReceiptRepository
+
+        return ConsoleCommandReceiptRepository(self)
 
     @cached_property
     def goal_runs(self):
@@ -397,6 +465,15 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open through BaseDB's db.base path (ADR-353 provenance section)."""
+        if self._read_only:
+            return connect_private_sqlite(
+                "db.agent_runs.read",
+                self.db_path_str,
+                read_only=True,
+                must_exist=True,
+                check_same_thread=False,
+            )
+        self._require_execution_owner()
         return BaseDB._get_connection(self, check_same_thread=False)
 
     def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
@@ -423,14 +500,18 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         """
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 5000")
-        if not self.is_memory_db:
-            conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
+        if self._read_only:
+            conn.execute("PRAGMA query_only = ON")
+        else:
+            if not self.is_memory_db:
+                conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
         conn.row_factory = sqlite3.Row
         conn.isolation_level = None
         return conn
 
     def _initialize_schema(self) -> None:
+        self._require_execution_owner()
         with self.connection() as conn:
             tables = {
                 row[0]
@@ -445,7 +526,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 from .recovery_operations import _legacy_workflow_upgrade
 
                 conn.execute("PRAGMA foreign_keys=ON")
-                with _workflow_schema_transaction(conn):
+                with _schema_upgrade_transaction(conn):
                     # Another opener may have completed the bridge while we waited.
                     review_table = conn.execute(
                         "SELECT 1 FROM sqlite_schema WHERE type='table' "
@@ -972,11 +1053,54 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (23)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (24)")
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (25)")
+            _upgrade_mobile_schema(conn)
+
+    def read_imported_run_log_page(
+        self,
+        mapped_run_id: str,
+        operation_id: str,
+        source_fingerprint: str,
+        *,
+        cursor=None,
+    ):
+        """Read receipt-bound original-ID history through actual enrolled pins."""
+        from .mobile_imported_run_log import _read_page
+
+        return _read_page(self, mapped_run_id, operation_id, source_fingerprint, cursor)
+
+    def hold_imported_authority(
+        self,
+        cursor: sqlite3.Connection | sqlite3.Cursor,
+        operation_id: str,
+        authorities: Sequence[tuple[str, str]],
+    ) -> None:
+        """Record exact import holds in the caller's owning transaction."""
+        from .mobile_import_authority import hold_authorities
+
+        self._require_execution_owner()
+        with self.connection() as conn:
+            authorities = tuple(authorities)
+            hold_authorities(conn, cursor, operation_id, authorities)
+            for kind, identity in authorities:
+                if kind == "chain":
+                    conn.execute(
+                        "UPDATE automatic_work_chains SET status='review_required', "
+                        "pause_reason='import_review_required' WHERE id=?",
+                        (identity,),
+                    )
+
+    def imported_authority_allowed(self, kind: str, authority_id: str) -> bool:
+        """Read the persistent exact hold; ordinary work never releases it."""
+        from .mobile_import_authority import authority_allowed
+
+        with self.connection() as conn:
+            return authority_allowed(conn, kind, authority_id)
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection
     ) -> None:
         """Create the optional v15 receipt schema inside the caller's savepoint."""
+        self._require_execution_owner()
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS console_activity_receipts (
@@ -1055,6 +1179,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         assistant_message_id: str | None = None,
     ) -> tuple[str, bool]:
         """Publish one revision using the caller's existing write transaction."""
+        self._require_execution_owner()
         self._require_receipt_capability()
         self._validate_console_activity_fields(
             origin=origin,
@@ -1124,6 +1249,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         assistant_message_id: str | None = None,
     ) -> tuple[str, bool]:
         """Publish an idempotent Console activity receipt revision."""
+        self._require_execution_owner()
         with self.transaction() as conn:
             return self._publish_console_activity_in_transaction(
                 conn,
@@ -1192,6 +1318,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
 
     def acknowledge_console_activity(self, activity_ids: Sequence[str]) -> int:
         """Acknowledge only the supplied current receipt revisions."""
+        self._require_execution_owner()
         self._require_receipt_capability()
         ids: list[str] = []
         seen: set[str] = set()
@@ -1294,6 +1421,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         kind: str = "turn",
     ) -> None:
         """Atomically record every root row for one completed review window."""
+        self._require_execution_owner()
         if not records:
             return
         with self.transaction() as conn:
@@ -1339,6 +1467,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         Returns:
             Number of rows deleted.
         """
+        self._require_execution_owner()
         with self.transaction() as conn:
             cur = conn.execute(
                 "DELETE FROM change_snapshots WHERE created_at < ? "
@@ -1371,6 +1500,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 previously recorded set (a second partial revert must not
                 erase the first's record).
         """
+        self._require_execution_owner()
         with self.transaction() as conn:
             current = conn.execute(
                 "SELECT reverted FROM change_snapshots WHERE id = ?",
@@ -1532,6 +1662,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         Returns:
             The newly created note's row id.
         """
+        self._require_execution_owner()
         with self.transaction() as conn:
             cursor = conn.execute(
                 """
@@ -1573,6 +1704,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             True if a pending note was deleted; False if the note does
             not exist or has already been delivered.
         """
+        self._require_execution_owner()
         with self.transaction() as conn:
             cursor = conn.execute(
                 "DELETE FROM change_notes WHERE id = ? AND delivered_at IS NULL",
@@ -1733,12 +1865,19 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             significant to callers, all of which only ever test set
             membership against it.
         """
+        self._require_execution_owner()
         ids = [int(note_id) for note_id in note_ids]
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
         stamp = _now_iso()
         with self.transaction() as conn:
+            if delivered_by_run_id is not None:
+                from .automatic_work import AutomaticWorkRefused
+                from .mobile_import_authority import run_allowed
+
+                if not run_allowed(conn, delivered_by_run_id):
+                    raise AutomaticWorkRefused("import_review_required")
             conn.execute(
                 f"UPDATE change_notes SET delivered_at = ?, "
                 f"delivered_by_run_id = ? "
@@ -1955,6 +2094,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         Returns:
             The newly created run's id (a hex UUID4).
         """
+        self._require_execution_owner()
         run_id = run_id or uuid.uuid4().hex
         now = _now_iso()
         with self.transaction() as conn:
@@ -2017,6 +2157,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         Raises:
             ValueError: On validation failure, or a duplicate live name.
         """
+        self._require_execution_owner()
         errors = validate_agent_definition(defn)
         if errors:
             raise ValueError("; ".join(errors))
@@ -2065,6 +2206,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 silent no-op and the caller (Settings ▸ Agents) would still
                 report "Saved".
         """
+        self._require_execution_owner()
         errors = validate_agent_definition(defn)
         if errors:
             raise ValueError("; ".join(errors))
@@ -2101,6 +2243,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             raise ValueError(f"an agent named '{defn.name}' already exists") from exc
 
     def soft_delete_agent_definition(self, definition_id: str) -> None:
+        self._require_execution_owner()
         with self.transaction() as conn:
             conn.execute(
                 "UPDATE agent_definitions SET deleted = 1, updated_at = ? WHERE id = ?",
@@ -2126,7 +2269,25 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             query += " AND enabled = 1"
         query += " ORDER BY name"
         with self.connection() as conn:
-            rows = conn.execute(query).fetchall()
+            if not enabled_only:
+                rows = conn.execute(query).fetchall()
+            else:
+                from tldw_chatbook.Chat.console_trace_read_budget import (
+                    _TraceReadBudget,
+                )
+
+                from .mobile_consolidation_receipts import _imported_definition_ids
+
+                if conn.in_transaction:
+                    raise ValueError("mobile_owner_receipt_committed_snapshot_required")
+                conn.execute("BEGIN")
+                try:
+                    imported = _imported_definition_ids(conn, _TraceReadBudget())
+                    rows = [
+                        row for row in conn.execute(query) if row["id"] not in imported
+                    ]
+                finally:
+                    conn.rollback()
         return [self._definition_row_to_dict(row) for row in rows]
 
     def get_agent_definition(self, definition_id: str) -> dict | None:
@@ -2178,6 +2339,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         Raises:
             KeyError: If ``run_id`` does not exist.
         """
+        self._require_execution_owner()
         stamp = _now_iso()
         with self.transaction() as conn:
             exists = conn.execute(
@@ -2229,6 +2391,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ValueError: If an index is negative or disagrees with its payload.
             AgentStepConflictError: If one index has divergent payloads.
         """
+        self._require_execution_owner()
         prepared: dict[int, str] = {}
         for index, payload in steps:
             canonical = _canonical_step_payload(index, payload)
@@ -2307,6 +2470,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             already terminal or does not exist. Filling an unknown budget
             counter alone does not change this status-update return value.
         """
+        self._require_execution_owner()
         if budget_tokens is not None and (
             type(budget_tokens) is not int or not 0 <= budget_tokens < 2**63
         ):
@@ -2337,6 +2501,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         budget_tokens: int | None = None,
     ) -> bool:
         """Atomically persist a first-writer terminal state and observation."""
+        self._require_execution_owner()
         if status not in TERMINAL_RUN_STATUSES:
             raise ValueError("status must be terminal")
         if budget_tokens is not None and (
@@ -2442,11 +2607,10 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
 
         A hard crash between run start (``create_run`` -> ``running``) and run
         end (``set_status`` at finalize) leaves a row stuck ``running``
-        forever. On open, flip all such rows to ``error`` with a default
-        ``result`` (preserving any partial result via COALESCE). Assumes a
-        single app instance per data dir: a second instance sharing the file
-        would flip the first's actively-running run — an accepted edge case,
-        matching Library_Ingest_Jobs' "Interrupted by app restart" behavior.
+        forever. On an execution-owned open, flip those rows to ``error``
+        with a default ``result`` (preserving any partial result via COALESCE).
+        The physical run-store lease excludes a competing process before this
+        sweep, including explicit calls; read-only handles always refuse it.
 
         No-ops (returns ``0`` without touching the database) for in-memory
         databases and for any file path already reconciled once in this
@@ -2467,17 +2631,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         that finds zero orphaned rows still registers the path (it commits
         successfully; it just has nothing to update).
 
-        Timing note: despite this being framed as an "on app start" sweep
-        (see the backlog AC), it actually fires lazily -- the first time
-        something constructs an ``AgentRunsDB`` on this path, which today is
-        ``ChatScreen._ensure_console_agent_bridge()``'s first call, not app
-        boot. No surface can currently observe a stale ``running`` row
-        before that: the only readers of ``agent_runs.db`` are that bridge
-        itself and the chat-screen rail's sub-agent-count summary, which
-        also routes through ``_ensure_console_agent_bridge()`` first. A
-        future entry point that opens this DB file WITHOUT going through
-        that bridge construction path would not inherit this guarantee and
-        could observe a not-yet-reconciled orphaned row.
+        Recovery remains lazy: the first execution-capable open sweeps once.
+        Non-owning inspection can see unreconciled rows, but cannot execute or
+        turn their persisted status into live-process authority (ADR-244).
 
         Returns:
             The number of rows reconciled (``0`` if skipped by a guard).
@@ -2487,6 +2643,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 while sweeping; the path is left unregistered so a later
                 call in this process retries the sweep.
         """
+        from .mobile_import_authority import run_allowed
+
+        self._require_execution_owner()
         if self.is_memory_db or self.db_path_str in self._swept_paths:
             return 0
         with self.transaction() as conn:
@@ -2555,6 +2714,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "FROM agent_runs WHERE status = 'running' "
                 "AND agent_kind IN ('primary', 'subagent')"
             ).fetchall()
+            orphan_rows = [row for row in orphan_rows if run_allowed(conn, row["id"])]
             orphan_ids = [row["id"] for row in orphan_rows]
             local_orphan_ids = [
                 row["id"]
@@ -2562,6 +2722,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                     "SELECT id FROM agent_runs WHERE status = 'running' "
                     "AND agent_kind = 'local_command'"
                 ).fetchall()
+            ]
+            local_orphan_ids = [
+                identity for identity in local_orphan_ids if run_allowed(conn, identity)
             ]
             observed_at = _now_iso()
             diagnostic_index = AGENT_LIFECYCLE_INDEX_BASE + 500
@@ -2607,6 +2770,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "SELECT id, status FROM agent_runs WHERE status != 'running' "
                 "AND agent_kind IN ('primary', 'subagent')"
             ).fetchall()
+            terminal_rows = [
+                row for row in terminal_rows if run_allowed(conn, row["id"])
+            ]
             # Pre-load the whole scan's step payloads in one batched read so
             # run_observations below never queries per row (TASK-32804.10).
             _hydrated_terminal = self._batch_hydrate_steps(
@@ -2652,6 +2818,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 assistant reply this run produced; ``None`` clears a
                 previously recorded id.
         """
+        self._require_execution_owner()
         with self.transaction() as conn:
             conn.execute(
                 "UPDATE agent_runs SET assistant_message_id = ?, "
@@ -2847,6 +3014,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
 
     def set_run_active_fallback(self, run_id: str, index: int) -> None:
         """Persist selection before dispatch; failed persistence stops fallback."""
+        self._require_execution_owner()
         with self.transaction() as conn:
             row = conn.execute(
                 "SELECT fallback_targets_json, active_fallback_index FROM agent_runs WHERE id=?",
@@ -3045,6 +3213,63 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def read_subagent_result_page(
+        self,
+        conversation_id: str,
+        run_id: str,
+        *,
+        char_start: int = 0,
+        max_chars: int = 2000,
+    ) -> dict | None:
+        """Read only one conversation-bound child's scalar result window.
+
+        Args:
+            conversation_id: Canonical conversation owning this child.
+            run_id: Exact subagent run to inspect.
+            char_start: Unicode code-point offset into its result.
+            max_chars: Window size, at most 2000 code points.
+
+        Returns:
+            Bounded inert result and continuation facts, or None for another scope.
+
+        Raises:
+            ValueError: Invalid identifiers or window coordinates.
+        """
+        from tldw_chatbook.Canvas.limits import validate_opaque_identifier
+
+        validate_opaque_identifier(conversation_id)
+        validate_opaque_identifier(run_id)
+        if (
+            type(char_start) is not int
+            or not 0 <= char_start <= 100000000
+            or type(max_chars) is not int
+            or not 1 <= max_chars <= 2000
+        ):
+            raise ValueError("Invalid worker result window.")
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT id, status, updated_at, typeof(result) = 'text' AS available, "
+                "CASE WHEN typeof(result) = 'text' THEN length(result) END AS total_chars, "
+                "CASE WHEN typeof(result) = 'text' THEN substr(result, ?, ?) END AS text "
+                "FROM agent_runs WHERE id = ? AND conversation_id = ? AND agent_kind = 'subagent'",
+                (char_start + 1, max_chars, run_id, conversation_id),
+            ).fetchone()
+        if row is None:
+            return None
+        text = row["text"] if row["available"] else ""
+        following = char_start + len(text)
+        has_more = bool(row["available"] and following < row["total_chars"])
+        return {
+            "run_id": row["id"],
+            "status": str(row["status"])[:64],
+            "updated_at": str(row["updated_at"])[:64],
+            "available": bool(row["available"]),
+            "text": text,
+            "char_start": char_start,
+            "total_chars": row["total_chars"],
+            "next_offset": following if has_more else None,
+            "has_more": has_more,
+        }
 
     def list_subagent_run_headers(
         self,
@@ -3386,6 +3611,8 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             Matching run records (``steps``/``budget`` JSON-decoded),
             oldest ``updated_at`` first.
         """
+        from .mobile_import_authority import run_allowed
+
         with self.connection() as conn:
             rows = conn.execute(
                 "SELECT child.* FROM agent_runs AS child "
@@ -3401,7 +3628,9 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "ORDER BY child.updated_at ASC, child.id ASC",
                 (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
-            return self._rows_to_dicts(conn, rows)
+            return self._rows_to_dicts(
+                conn, [row for row in rows if run_allowed(conn, row["id"])]
+            )
 
     def pending_wake_conversation_ids(self) -> tuple[str, ...]:
         """Discover saved survivor results, including claims awaiting review.
@@ -3409,9 +3638,11 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         Attention badges are a view projection and never the discovery index.
         This projection reads identity only; result bodies are loaded per session.
         """
+        from .mobile_import_authority import run_allowed
+
         with self.connection() as conn:
             rows = conn.execute(
-                "SELECT DISTINCT child.conversation_id FROM agent_runs AS child "
+                "SELECT child.id, child.conversation_id FROM agent_runs AS child "
                 "JOIN agent_runs AS parent ON parent.id=child.parent_run_id "
                 "WHERE child.wake_delivered_at IS NULL AND child.agent_kind!='primary' "
                 "AND child.status IN ('done','error','cancelled') "
@@ -3420,10 +3651,20 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "AND child.updated_at>=parent.updated_at ORDER BY child.conversation_id",
                 tuple(sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
-        return tuple(str(row[0]) for row in rows)
+            return tuple(
+                sorted(
+                    {
+                        str(row["conversation_id"])
+                        for row in rows
+                        if run_allowed(conn, row["id"])
+                    }
+                )
+            )
 
     def pending_wake_results(self, conversation_id: str) -> list[dict]:
         """Read pending survivor identity and status without loading run bodies."""
+        from .mobile_import_authority import run_allowed
+
         with self.connection() as conn:
             rows = conn.execute(
                 "SELECT child.id, child.status, child.work_chain_id FROM agent_runs AS child "
@@ -3435,7 +3676,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
                 "AND child.updated_at>=parent.updated_at ORDER BY child.updated_at, child.id",
                 (conversation_id, *sorted(TERMINAL_RUN_STATUSES)),
             ).fetchall()
-        return [dict(row) for row in rows]
+            return [dict(row) for row in rows if run_allowed(conn, row["id"])]
 
     def mark_wake_delivered(self, run_ids: Sequence[str]) -> int:
         """Stamp runs as wake-delivered; already-stamped rows are left alone.
@@ -3456,11 +3697,17 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
         Returns:
             How many rows were newly stamped.
         """
+        from .mobile_import_authority import run_allowed
+
+        self._require_execution_owner()
         ids = [str(run_id) for run_id in run_ids if run_id]
         if not ids:
             return 0
-        placeholders = ", ".join("?" for _ in ids)
         with self.transaction() as conn:
+            ids = [identity for identity in ids if run_allowed(conn, identity)]
+            if not ids:
+                return 0
+            placeholders = ", ".join("?" for _ in ids)
             cursor = conn.execute(
                 "UPDATE agent_runs SET wake_delivered_at = ? "
                 f"WHERE id IN ({placeholders}) AND wake_delivered_at IS NULL",
@@ -3565,6 +3812,7 @@ class AgentRunsDB(SQLiteStoreKernel, BaseDB):
             already terminal. A live row (primary or child) is not
             counted -- it stays parented and running, untouched.
         """
+        self._require_execution_owner()
         placeholders = ",".join("?" for _ in TERMINAL_RUN_STATUSES)
         with self.transaction() as conn:
             cursor = conn.execute(
@@ -3839,7 +4087,7 @@ _CHANGE_REVIEW_READ_SOURCES = tuple(
 
 
 @contextmanager
-def _workflow_schema_transaction(conn: sqlite3.Connection) -> Iterator[None]:
+def _schema_upgrade_transaction(conn: sqlite3.Connection) -> Iterator[None]:
     previous_sync = int(conn.execute("PRAGMA synchronous").fetchone()[0])
     conn.execute("PRAGMA synchronous=FULL")
     try:
@@ -3874,7 +4122,7 @@ def _upgrade_workflow_schema(conn: sqlite3.Connection) -> None:
     ):
         if version in installed:
             continue
-        with _workflow_schema_transaction(conn):
+        with _schema_upgrade_transaction(conn):
             if conn.execute(
                 "SELECT 1 FROM schema_version WHERE version=?", (version,)
             ).fetchone():
@@ -3886,6 +4134,29 @@ def _upgrade_workflow_schema(conn: sqlite3.Connection) -> None:
                     _WORKFLOW_RUNS_SCHEMA, error_type=sqlite3.DatabaseError
                 )
                 migration.append("INSERT INTO schema_version(version) VALUES (26)")
+            for statement in migration:
+                conn.execute(statement)
+
+
+def _upgrade_mobile_schema(conn: sqlite3.Connection) -> None:
+    # Native workflow versions 26–31 retain their installed meanings (ADR-356).
+    installed = {
+        row[0] for row in conn.execute(
+            "SELECT version FROM schema_version WHERE version BETWEEN 32 AND 33"
+        )
+    }
+    for version in (32, 33):
+        if version in installed:
+            continue
+        with _schema_upgrade_transaction(conn):
+            if conn.execute(
+                "SELECT 1 FROM schema_version WHERE version=?", (version,)
+            ).fetchone():
+                continue
+            if version == 32:
+                from .console_command_receipts import COMMAND_RECEIPT_MIGRATION as migration
+            else:
+                from .mobile_import_authority import AGENT_RUNS_MIGRATION as migration
             for statement in migration:
                 conn.execute(statement)
 
@@ -4004,3 +4275,25 @@ CREATE TRIGGER IF NOT EXISTS workflow_result_immutable
 BEFORE UPDATE ON workflow_results
 BEGIN SELECT RAISE(ABORT, 'workflow result is immutable'); END;
 """
+
+
+def reject_incompatible_preview(db_path: str | Path) -> None:
+    """Refuse unmerged preview metadata before any schema-ready writer access."""
+    import time
+
+    from .mobile_preview_lineage import _existing_preview_target, _reject_preview_connection
+    from .private_sqlite import connect_private_sqlite
+
+    target = _existing_preview_target(db_path)
+    if target is None:
+        return
+    selected, identity = target
+    deadline = time.monotonic() + 5.0
+    connection = connect_private_sqlite(
+        'db.agent_runs.read', selected, read_only=True, must_exist=True, immutable=False,
+        expected_identity=identity, operation_deadline=deadline, timeout=5.0,
+    )
+    try:
+        _reject_preview_connection(connection, 'runs', deadline)
+    finally:
+        connection.close()

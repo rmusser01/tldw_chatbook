@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import tldw_chatbook.Agents.agent_service as agent_service_module
+import tldw_chatbook.DB.AgentRuns_DB as agent_runs_db_module
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.agent_models import (
     AGENT_LIFECYCLE_INDEX_BASE,
     TRACE_STEP_INDEX_BASE,
@@ -19,7 +21,6 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_runtime import LoopDeps, safe_utc_timestamp
 from tldw_chatbook.Agents.agent_service import AgentService
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
-import tldw_chatbook.DB.AgentRuns_DB as agent_runs_db_module
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -48,7 +49,7 @@ def _run(service: AgentService):
 
 @pytest.fixture()
 def db(tmp_path) -> AgentRunsDB:
-    return AgentRunsDB(tmp_path / "agent-runs.db", client_id="test")
+    return owned_agent_runs_db(tmp_path / "agent-runs.db", client_id="test")
 
 
 def test_first_step_is_durable_before_run_finalization(db: AgentRunsDB) -> None:

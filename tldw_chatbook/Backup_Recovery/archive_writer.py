@@ -59,7 +59,7 @@ def _overlaps(path: Path, root: Path) -> bool:
     return path == root or root in path.parents or path in root.parents
 
 
-def _output(capture: CaptureResult, destination: Path):
+def _output(capture: CaptureResult, destination: Path, *, _mobile_capture=None):
     if not destination.is_absolute() or ".." in destination.parts:
         raise ValueError("absolute_output_required")
     with pinned_directory(destination.parent) as parent:
@@ -70,6 +70,15 @@ def _output(capture: CaptureResult, destination: Path):
         else:
             raise FileExistsError("output_exists")
         identity = os.fstat(parent)
+    permitted_service = None
+    if _mobile_capture is not None:
+        from .mobile_consolidation_apply import _MobileCapturePartition
+
+        if type(_mobile_capture) is not _MobileCapturePartition:
+            raise ValueError("mobile_native_partition_required")
+        permitted_service = _mobile_capture.service_output_item(
+            capture.inventory, destination
+        )
     protected = [capture.root, default_bootstrap_root()]
     protected.extend(
         item.path
@@ -77,6 +86,7 @@ def _output(capture: CaptureResult, destination: Path):
         if item.path is not None
         and item.owner.startswith("recovery.")
         and item.owner != "recovery.output"
+        and item != permitted_service
     )
     if any(_overlaps(destination, path.resolve()) for path in protected):
         raise ValueError("output_overlap")
@@ -169,11 +179,22 @@ def _package(capture, doc, destination, cancel, limits, stored=()):
 
 
 def write_archive(
-    capture: CaptureResult, destination: Path, *, password: bytes | None, cancel: Event
+    capture: CaptureResult,
+    destination: Path,
+    *,
+    password: bytes | None,
+    cancel: Event,
+    _mobile_capture=None,
 ) -> SealedArchive:
     """Package, actually read/verify, then durably publish without replacement."""
+    if _mobile_capture is not None:
+        from .mobile_consolidation_apply import _MobileCapturePartition
+
+        if type(_mobile_capture) is not _MobileCapturePartition:
+            raise ValueError("mobile_native_partition_required")
+        _mobile_capture.check()
     destination = Path(destination)
-    parent_identity = _output(capture, destination)
+    parent_identity = _output(capture, destination, _mobile_capture=_mobile_capture)
     suffix = ".tldw-backup.zip" + (".age" if password is not None else "")
     if not destination.name.endswith(suffix):
         raise ValueError("invalid_output_suffix")
@@ -251,14 +272,25 @@ def write_archive(
         ).encode()
         if verified.manifest_bytes != canonical:
             raise ValueError("manifest_changed")
-        if _output(capture, destination) != parent_identity:
+        if (
+            _output(capture, destination, _mobile_capture=_mobile_capture)
+            != parent_identity
+        ):
             raise ValueError("output_parent_changed")
         reader._check(cancel)
+        if _mobile_capture is not None:
+            cleanup_operation = False
+            _mobile_capture.stage_publication(
+                output, destination, verified, capture.inventory
+            )
         publish_new(
             output,
             destination,
             parent_identities=(operation_identity, parent_identity),
         )
+        if _mobile_capture is not None:
+            _mobile_capture.observe_publication(destination)
+            cleanup_operation = True
         # A late cancellation never retracts or conceals durable publication.
         return SealedArchive(destination, digest, verified.manifest_bytes)
     except (OSError, ValueError) as error:

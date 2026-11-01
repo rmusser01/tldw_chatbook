@@ -30,9 +30,9 @@ def dispatch_case(review_case, monkeypatch, tmp_path):
     from tldw_chatbook.Utils import token_counter
     real_window = token_counter.resolve_context_window
     monkeypatch.setattr(token_counter, "resolve_context_window", lambda provider, model, **kwargs: token_counter.ContextWindowResolution(32768, "scripted model metadata", True) if model == "verify" or model.startswith(("review-model-", "fallback-model")) else real_window(provider, model, **kwargs))
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from Tests.agent_runs_owner import owned_agent_runs_db
 
-    c.db = AgentRunsDB(tmp_path / "dispatch.db", client_id="dispatch-test")
+    c.db = owned_agent_runs_db(tmp_path / "dispatch.db", client_id="dispatch-test")
     verifier = c.db.create_agent_definition(
         AgentDefinition(
             name="verifier", instructions="Verify", provider="openai", model="verify"

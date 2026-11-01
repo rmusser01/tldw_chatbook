@@ -12,6 +12,7 @@ from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
 from tldw_chatbook.UI.Console_Modules import review_selection
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_narrow_layout import _compositor_text
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -345,7 +346,7 @@ async def test_mounted_turn_card_confirms_cancels_then_undoes_real_files_off_thr
     target.write_text("before\n")
     service = ShadowRepoService(data_dir=tmp_path / "appdata")
     tracker = ChangeTurnTracker(service=service)
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="turn-undo-test")
+    db = owned_agent_runs_db(tmp_path / "runs.db", client_id="turn-undo-test")
     run_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
     _record_real_turn(db, tracker, root, run_id)
 

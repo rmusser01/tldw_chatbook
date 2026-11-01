@@ -903,3 +903,155 @@ Existing optional omissions and manual/automatic busy/input restoration remain.
 ADR285 records the native source and retirement contract. Source-specific
 qualification and historical adverse outcomes remain in the
 [workflow evidence index](../superpowers/qa/2026-11-01-native-phased-agent-workflows/README.md).
+
+## Physical execution owner (ADR-244)
+
+`Chat/console_execution_owner.py` holds a nonblocking OS lease for the secured
+physical run-store parent and leaf. `ConsoleRuntime` acquires it lazily before
+constructing the sibling `agent_runs.db`; different chat filenames in that
+parent share this resource. The empty runtime holder and saved-history readers
+do not acquire it. Settings and retention writers share the App's owner; manual
+worktree recovery shares its bridge's owner. A lost/unsafe lease refuses writes.
+
+The executing App/child retains the lease through physical SQLite operations.
+Disposal releases it only after the runtime drains, change-review publisher and
+cleanup prove retirement. Bounded or failed cleanup retains the owner until
+process exit; cancelling a waiter or losing a parent is never takeover authority.
+See [ADR-244](../../backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md).
+
+
+## Served lifecycle ownership (TASK-36761, ADR-244)
+
+Served mode selects `Web_Server/console_web_driver.py` through `TldwCli` only for
+`CHATBOOK_SERVED_CHILD`. The App, ConsoleRuntime, native stores and execution-owner
+lease survive terminal disconnect/replacement; a generation-fenced full repaint
+restores the terminal without another input thread. Parent host ownership and the
+saved-conversation reservation seam are documented in [web-server.md](web-server.md).
+`ConsoleChatStore.resolve_saved_session` owns one saved-identity operation and
+physical hydration task shared by terminal, Buddy, launch, Goal and remote opens.
+Every observer shields its wait. Restored rows require completed progress/policy
+readiness AND publication/adoption before host snapshots or remote commands can
+expose them. Pure metadata reads do not adopt provisional presentation custody. Native
+failure removes only that exact unpublished row. Presentation callers carry an
+opaque creator cleanup proof through their final visibility/focus commit; a
+successful remote or other opener publishes/adopts the owner and revokes cleanup.
+Runtime shutdown drains the physical read and existing native teardown before
+returning cancellation. Detached task/future failures are consumed.
+
+A cold saved owner defaults to its durable conversation ID (including Goal's
+sealed iteration binding); conflicting requested IDs refuse. A live session's
+first persistence retains its original ID. Saved opens join its existing staged
+first-identity reservation across SQL commit and native identity/policy
+publication without hiding that already-live session from normal controls.
+Native new_chat and fork reserve their preallocated durable IDs in the same store
+operation before the first commit/copy. They publish their intended settings,
+assistant identity and opening draft before observers can return. New-chat local
+project controls use the existing native metadata writer in the atomic creation
+transaction; fork preserves native non-consenting controls. The disposable fork
+view completion projects the ready owner and never rewrites its draft.
+
+`app_served.py` watches the child control connection independently of Canvas
+exposure. Genuine parent/control loss closes boot admission and automatic wakes,
+marks the Console as tearing down, awaits the existing runtime disposal/shutdown,
+and exits. Runtime physical cleanup retains the lease on failure or cancellation;
+the parent only permits a new host after observing actual process exit. Browser
+revocation and Canvas disable do not enter this native shutdown path.
+
+## Command-owned input and exact native controls (ADR-244)
+
+`Chat/console_remote_commands.py::ConsoleRemoteCommands` is the runtime command
+adapter for an existing `ConsoleHostIdentity` / `ConsoleTarget`. Its supported
+actions are `create`, `open`, `send`, `steer`, `redirect`, `stop`, `subagent_guidance` and
+`subagent_stop`, plus exact retained `decision` answers. Unsupported actions refuse. This seam does not select a desktop
+tab or construct a second controller. Browser transport wiring and receipt
+observation are separate owners.
+
+Send requires text and all five last-confirmed target revisions:
+`settings_revision`, `generation_settings_revision`, `context_policy_revision`,
+`identity_revision` and `conversation_binding_revision`. It builds a
+`ConsoleSessionInputSnapshot` with `input_origin="command"` and a command ID,
+empty attachments/prefill, and no staged-RAG launch. Its native source witnesses
+remain currentness requirements; desktop typing, prefill, attachment edits and
+view changes cannot invalidate or clear this command. Composer snapshots retain
+the original complete input comparisons. The same received-turn slot is claimed
+with `draft_revision=None`, then the existing checked configuration, hook review,
+permissions, native preparation and atomic promotion run under runtime custody.
+The synchronous resident configuration proof precedes receipt; complete async
+capture still follows the existing Preparing claim. Settings/binding changes
+before promotion refuse stale input.
+
+Command origin and its repr-hidden native input witness follow
+`ConsoleTurnCustodyRequest` through the existing prompt queue; configuration
+changes while queued are rechecked before its claim and native promotion. Command requests capture no desktop prefill and bypass only the queue's
+composer rider checks; normal queue revision, context, permission, capacity and
+continuation ownership still apply. Native `preserve_composer` behavior protects
+drafts and acceptance callbacks through prepared continuations and durable
+acceptance. Buddy's existing composer guards remain unchanged.
+
+`send()` returns the custody turn ID while it is Preparing. `execute()` returns
+body-free `state`, optional `native_id`, and `reason`: Send is `pending`, guidance
+is `queued`, accepted Stop is `accepted`, and native refusal is `refused`.
+Neither queued guidance nor accepted Stop claims mailbox consumption or physical
+worker exit. Main controls use explicit-session `steer_run`, `redirect_run` and
+`stop_run`; existing active-tab methods delegate to those native controls. A
+remote Stop needs an exact existing turn or live run and cannot stop a successor.
+
+
+## Retained remote projection and decisions (TASK-36763, ADR-244)
+
+`Chat/console_remote_projection.py::ConsoleRemoteProjection` reads the existing
+runtime/store/round owners without a ChatScreen, changing selection, hydration,
+or provider construction. Discovery combines live identities with canonical saved
+conversation listings; an unhydrated live persisted target pages native metadata
+first, then canonical bounded history, including when fleet/decisions remain live.
+The history cursor fences that metadata and canonical content revisions; a change
+restarts from native metadata with reset. Saved-only history uses the canonical mobile read-only Library adapter.
+Each non-null target is checked against host, session incarnation and supplied
+turn/run/handle/round identities before reading and again before returning.
+
+Snapshot sections are `chats`, `messages`, `fleet`, `decisions`, and `recoveries`,
+with host identity, native `sequence`, `reset_required`, and `next_cursor`. Chat
+rows include the five command `expected_revisions`. Pages contain at most 100
+rows and 64 KiB; large message text continues at a character offset. Content/scope
+revision changes reset continuation. System/automatic instruction bodies, hidden
+thinking, quarantined generation text, provider credentials and full DB rows are
+excluded. Recovery and unfaithful reviews expose only pending/Open terminal state.
+
+`InterruptRoundHost.remote_rounds` snapshots native ownership under its lock and
+formats outside that lock. Ordinary tool approval summaries share the native
+pure `Chat/approval_review.py` destination-first, bounded redaction policy with
+the terminal card; phone serialization/redaction failure hides the review and
+refuses answers. Raw shell, hook/skill/worktree/chat-create and project instruction
+confirmations remain unsupported pending terminal reviews. Ordinary approvals
+and validated user questions resolve through their original kind-specific native
+resolvers; exact kind/session/incarnation/run/round scope and bounded completed
+outcomes preserve one original winner. No remote policy grants or hook bypasses
+are added.
+
+Answerability belongs to a registered live subscription and an exact rendered
+round. Registration is capped at 64 clients and rendered-round claims at 100.
+Snapshot reads grant no answerability. Disconnect releases only that client's
+claims, so another phone's visible round keeps its native human-input clock
+answerable. Resolution and runtime disposal remove claims; native clock refresh
+matches the rendered round, not merely the session/kind. Task9 supplies the
+parent-generated authenticated subscription IDs and disconnect/revocation wiring.
+
+Saved first-identity observer registration and producer terminal outcome/removal
+share the existing preparation RLock. The operation records failure even before an
+observer Future is allocated; callbacks are delivered outside that critical
+section. Manual Save, durable publication/discard/retirement use the same handoff.
+Joined Character presentation carries the exact session, incarnation and durable
+binding to final publication; failed noncreator cleanup cannot remove that owner.
+
+## Fresh-profile tokenizer availability (Task11)
+
+The token counter asks `custom_tokenizers_available()` before entering the custom
+tokenizer tier. With no cached manager, the availability probe uses the native
+pinned directory seam and no-follow stat to prove that the default tokenizer
+root or mappings file is absent. Definite absence returns false without creating
+a directory, manager or storage lease; it is not cached. Existing mappings and
+uncertain/unsafe paths retain the original admitted manager path and errors.
+Explicit manager construction, installation and mapping writes retain their
+existing admission and pause behavior. A fresh unseeded served profile reached
+the provider and completed its phone continuation with the tokenizer directory
+still absent; see the [qualification packet](../superpowers/qa/2026-10-25-shared-console-mobile-supervision/README.md).

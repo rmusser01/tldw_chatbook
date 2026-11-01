@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError, replace
 import asyncio
-from pathlib import Path
 import threading
 import time
+from dataclasses import FrozenInstanceError, replace
+from pathlib import Path
 from time import monotonic
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
-from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
-    _retire_original_run_databases,
-)
 from textual.app import ComposeResult
 from textual.widgets import Button, Static
 
+from Tests.agent_runs_owner import owned_agent_runs_db
+from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
+    _retire_original_run_databases,
+)
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat import console_chat_models
 from tldw_chatbook.Chat.console_chat_models import (
@@ -28,7 +28,6 @@ from tldw_chatbook.Chat.console_chat_models import (
     RawCliPresentation,
 )
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.Chat.console_raw_cli import RawCliRuntime
 from tldw_chatbook.Tools.raw_cli_executor import (
@@ -37,13 +36,13 @@ from tldw_chatbook.Tools.raw_cli_executor import (
     RawCliResult,
     RawCliStreamEvent,
 )
-from tldw_chatbook.UI.Console_Modules.raw_cli import ConsoleRawCliController
 from tldw_chatbook.UI.Console_Modules import wiring as wiring_module
+from tldw_chatbook.UI.Console_Modules.raw_cli import ConsoleRawCliController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
 from tldw_chatbook.Widgets.Console import (
     console_assistant_turn as assistant_turn_module,
 )
+from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
@@ -493,7 +492,7 @@ def _controller_with_store(
 ]:
     store = ConsoleChatStore()
     session = store.create_session(title="raw")
-    runs_db = AgentRunsDB(tmp_path / "agent-runs.db")
+    runs_db = owned_agent_runs_db(tmp_path / "agent-runs.db")
     workers: list[Any] = []
     appended: list[ConsoleChatMessage] = []
     updated: list[ConsoleChatMessage] = []

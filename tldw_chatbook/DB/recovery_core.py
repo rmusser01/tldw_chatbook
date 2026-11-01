@@ -25,6 +25,13 @@ class _CoreAdapter:
     activation_required: bool = True
 
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+            reserve,
+            scalar_cost,
+            table_cost,
+        )
+
+        reserve(4096)
         context = discovery_context(config)
         path = database_path(config, self.setting_name)
         from .recovery_operations import _sqlite_inventory_status
@@ -49,6 +56,7 @@ class _CoreAdapter:
                         "recovery.core.chachanotes", path, read_only=True
                     )
                 ) as connection:
+                    scalar_cost(connection, 5)
                     optional_groups = {
                         "notes.file_notes": "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1",
                         "persona.assets": "SELECT 1 FROM persona_visual_assets WHERE substr(storage_relpath,1,12) <> 'actor_packs/' LIMIT 1",
@@ -72,6 +80,12 @@ class _CoreAdapter:
                 with closing(
                     connect_private_sqlite(self.backup_owner_id, path, read_only=True)
                 ) as connection:
+                    table_cost(
+                        connection,
+                        "library_collection_items",
+                        ("source_type",),
+                        copies=2,
+                    )
                     kinds = {
                         row[0].lower()
                         for row in connection.execute(
@@ -96,6 +110,7 @@ class _CoreAdapter:
                 with closing(
                     connect_private_sqlite(self.backup_owner_id, path, read_only=True)
                 ) as connection:
+                    scalar_cost(connection)
                     if (
                         connection.execute(
                             "SELECT 1 FROM ingest_jobs WHERE origin='local' AND media_id IS NOT NULL LIMIT 1"
@@ -251,28 +266,40 @@ class _CoreAdapter:
             raise ValueError(issues[0])
 
     def validate(self, candidate: Path) -> tuple[str, ...]:
-        from .private_sqlite import connect_private_sqlite
+        from tldw_chatbook.Backup_Recovery.mobile_preview_budget import (
+            current,
+            integrity_cost,
+            matching_schemas,
+            scalar_cost,
+        )
         from tldw_chatbook.Backup_Recovery.sqlite_validation import (
             _canvas_payload_issues,
             _canvas_schema_access,
             _restrict_connection,
         )
 
+        from .private_sqlite import connect_private_sqlite
+
         try:
             with closing(
                 connect_private_sqlite(self.backup_owner_id, candidate, read_only=True)
             ) as connection:
                 restrictions = _restrict_connection(connection)
-                actual = tuple(
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
-                    )
-                )
                 policy = self.schema_policy()
-                matched_versions = tuple(
-                    version for version, sql in policy.schema_sql if actual == sql
-                )
+                if current() is not None:
+                    matches = matching_schemas(connection, policy.schema_sql)
+                    matched_versions = tuple(row[0] for row in matches)
+                    actual = matches[0][1] if matches else ()
+                else:
+                    actual = tuple(
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+                        )
+                    )
+                    matched_versions = tuple(
+                        version for version, sql in policy.schema_sql if actual == sql
+                    )
                 if not matched_versions:
                     return ("unsupported_schema",)
                 version_sql = (
@@ -282,7 +309,10 @@ class _CoreAdapter:
                     # owner reads the latest stamp after validating the schema.
                     else "SELECT MAX(version) FROM schema_version"
                 )
-                versions = tuple(row[0] for row in connection.execute(version_sql))
+                scalar_cost(connection, 2)
+                versions = tuple(
+                    row[0] for row in connection.execute(version_sql).fetchmany(2)
+                )
                 if (
                     len(versions) != 1
                     or versions[0] not in policy.versions
@@ -290,6 +320,7 @@ class _CoreAdapter:
                 ):
                     return ("unsupported_schema_version",)
                 with _canvas_schema_access(connection, actual, restrictions):
+                    integrity_cost(connection)
                     if (
                         connection.execute("PRAGMA foreign_key_check").fetchone()
                         is not None
@@ -328,9 +359,15 @@ class _CoreAdapter:
         if item.owner != self.owner_id or not item.logical_id.startswith("profile:"):
             return ("invalid_dependency_context",)
         parts = item.logical_id.split(":")
-        if len(parts) != 3 or parts[2] != self.owner_id or not parts[1]:
+        legacy = len(parts) == 4 and parts[3] == "legacy-mobile"
+        if (
+            (len(parts) != 3 and not legacy)
+            or parts[2] != self.owner_id
+            or not parts[1]
+        ):
             return ("invalid_dependency_context",)
         prefix = "profile:" + parts[1] + ":"
+        suffix = ":legacy-mobile" if legacy else ""
         issues = self.validate(candidate)
         if issues:
             return issues
@@ -409,7 +446,7 @@ class _CoreAdapter:
                         ),
                     ):
                         if connection.execute(query).fetchone() is not None:
-                            key = prefix + owner
+                            key = prefix + owner + suffix
                             if (
                                 key not in item.dependencies
                                 or key not in candidates
@@ -429,7 +466,7 @@ class _CoreAdapter:
                                 if adapter.validate(candidates[key]):
                                     return ("dependency_unavailable",)
                 for owner, table, column, identity in references:
-                    key = prefix + owner
+                    key = prefix + owner + suffix
                     if owner == self.owner_id:
                         target = candidate
                     else:
@@ -482,6 +519,8 @@ class _CoreAdapter:
             CHACHANOTES_V77_SCHEMAS,
             CHACHANOTES_V78_SCHEMAS,
             CHACHANOTES_V79_SCHEMAS,
+            CHACHANOTES_V87_SCHEMAS,
+            CHACHANOTES_MOBILE_V86_TO_V87_SQL,
             CHACHANOTES_V80_SCHEMAS,
             CHACHANOTES_V81_SCHEMAS,
             CHACHANOTES_V82_SCHEMAS,
@@ -533,8 +572,9 @@ class _CoreAdapter:
             schemas += tuple((83, schema) for schema in CHACHANOTES_V83_SCHEMAS)
             schemas += tuple((84, schema) for schema in CHACHANOTES_V84_SCHEMAS)
             schemas += tuple((85, schema) for schema in CHACHANOTES_V85_SCHEMAS)
-            schemas += tuple((86, schema) for schema in CHACHANOTES_V86_SCHEMAS[2:])
-            versions += (85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
+            schemas += tuple((86, schema) for schema in CHACHANOTES_V86_SCHEMAS)
+            schemas += tuple((87, schema) for schema in CHACHANOTES_V87_SCHEMAS[2:])
+            versions += (86, 85, 84, 83, 82, 81, 80, 79, 78, 77, 76, 75)
             migrations = (
                 (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
                 (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
@@ -546,6 +586,7 @@ class _CoreAdapter:
                 (83, 84, CHACHANOTES_REGIONS_V83_TO_V84_SQL),
                 (84, 85, CHACHANOTES_ARCHIVE_V84_TO_V85_SQL),
                 (85, 86, CHACHANOTES_MIXINS_V85_TO_V86_SQL),
+                (86, 87, CHACHANOTES_MOBILE_V86_TO_V87_SQL),
             )
         elif self.owner_id == "db.library_collections":
             versions = (5, 4)

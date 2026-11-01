@@ -5794,6 +5794,72 @@ executor joining a worker thread). End a capture script with `os._exit(0)` after
 saving. Parallel capture runs need separate HOME/profile directories: a capture
 that resets its profile wipes a concurrent run's.
 
+### Served reconnect needs renderer and native receipts (TASK-36761, 2026-10-25)
+
+The actual-App retained-terminal probe emitted over 91 KiB of terminal output
+while the `.xterm-rows` DOM text remained empty: the installed renderer uses a
+canvas. Observe xterm's public active buffer through a passive harness reference,
+and combine it with native receipts for input-thread identity, dimensions and
+input effects. Do not swap the production renderer to make a DOM assertion pass.
+The same probe found xterm normalizes multiline paste separators to carriage
+returns; compare logical lines, then wait for the native composer event to settle
+before asserting the next key's effect. An F11 receipt can precede asynchronous
+paste/selection settlement even though both inputs arrived correctly.
+
+A bootstrap-profile browser fixture also inherited a collection-owned XDG data
+root; its receipt path was therefore different from the test's `tmp_path`.
+An explicit child test-data-root variable fixed artifact placement while keeping
+the admitted bootstrap config and real native stores/permission paths intact.
+
+### Same config filename does not prove the same storage selection (TASK-36769, 2026-11-01)
+
+The actual served child and parent shared explicit canonical DB overrides, yet
+the phone's cutover gate refused a genuine NoData claim. The parent reconstructed
+the legacy mobile source from `load_settings()`, whose runtime projection omits
+`[paths]`/`[Paths]`; the public producer used the authoritative selected config.
+A read-only comparison showed the raw/atomic config accepted the same real claim
+while the runtime projection selected a different legacy directory. Using one
+existing atomic config snapshot for all three parent path selectors fixed the
+selection mismatch. Check canonical DB, media and legacy-source identities
+against the actual selected snapshot; matching only DB filenames misses this
+boundary.
+
+The same qualification initially pre-created an optional tokenizer directory to
+get past first-Send admission. That proved only an already-enrolled cohort. The
+fresh-profile check became valid only after a native read-only availability fix
+and a new unseeded NoData cohort kept the directory absent at provider entry,
+phone continuation and final teardown. Record fixture preparation as part of
+first-use evidence; a prepared cohort cannot qualify an absent-state boundary.
+
+### TASK-36769: qualify the real wire envelope and read phase
+
+The first actual two-worker phone run returned `console_unavailable` although
+its projection unit test passed `json.dumps`. The live fleet carried native float
+timestamps, and the served control envelope deliberately accepts only integral
+JSON numbers. R161 removed the two unused timestamp fields and tested the actual
+`ControlMessage` boundary with running and completed native float-valued handles.
+A JSON encoder succeeding is not evidence that a stricter transport accepts it.
+
+The same qualification found cold Create/Send copying a live WAL database under
+a stable-byte preview guard. R160's ordinary read transaction was verified with
+a real native writer committed inside the read boundary; merely changing the
+old copy hook would have made that regression vacuously pass. Preview and
+maintenance retained separate strict-copy controls. The restored path also
+exposed one missing prepaid digest workspace on the accounting adapter, so its
+actual native consumers were audited before claiming the adapter complete.
+
+### A coalesced refresh is not completion of the requested observation (TASK-36769)
+
+The final trusted-proxy cold phone run accepted Create, then awaited `refresh()`
+and searched the current list once. Another refresh was already running, so the
+coalescing branch returned immediately; its older list lacked the new chat. A
+later list contained the exact native session, but the composer stayed unselected.
+R162 ties pending selection to the original receipt, host and selection revision
+until an authoritative live row arrives, while later navigation cancels it.
+A deterministic delayed-list regression and real cold TLS/proxy journeys qualify
+the fix. Deliver unrelated receipts through the actual fixture response too:
+an earlier passing test inserted one in a fake store whose snapshot filtered it
+out, so only the later response-body witness established that negative control.
 
 ## A missing one-use runner is not proof its allowance is unused (TASK-40127, 2026-11-08)
 

@@ -6,7 +6,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from tldw_chatbook.Agents.automatic_work_budget import RuntimeRecoveryResult
+from tldw_chatbook.Agents.automatic_work_budget import (
+    AutomaticWorkRefused,
+    RuntimeRecoveryResult,
+)
 from tldw_chatbook.Agents.goal_models import (
     GoalDecision,
     GoalEvidence,
@@ -104,6 +107,8 @@ class GoalRunService:
     @goal_storage_operation
     def checkpoint(self, result: GoalIterationResult) -> GoalSnapshot:
         """Atomically retain a native iteration; never dispatch its successor."""
+        with self.db.connection() as conn:
+            self.db.goal_runs._require_current_authority(conn, result.goal_id)
         goal = self.get(result.goal_id)
         return self.db.goal_runs.checkpoint(
             result,
@@ -115,6 +120,7 @@ class GoalRunService:
     def checkpoint_failed(self, goal_id: str) -> GoalSnapshot:
         """Fence an already drained increment when checkpoint durability is uncertain."""
         with self.db.automatic_work.transaction() as conn:
+            self.db.goal_runs._require_current_authority(conn, goal_id)
             goal = self.get(goal_id)
             if goal.status in {"completed", "removed", "closed"}:
                 return goal
@@ -148,6 +154,8 @@ class GoalRunService:
         )
         from tldw_chatbook.Agents.goal_models import GoalDecision
 
+        with self.db.connection() as conn:
+            self.db.goal_runs._require_current_authority(conn, goal_id)
         goal = self.get(goal_id)
         if goal.request is None:
             raise ValueError("goal_payload_removed")
@@ -191,6 +199,8 @@ class GoalRunService:
             AutomaticWorkRefused,
         )
 
+        with self.db.connection() as conn:
+            self.db.goal_runs._require_current_authority(conn, goal_id)
         goal = self.get(goal_id)
         if goal.status != "ready":
             return goal
@@ -207,6 +217,7 @@ class GoalRunService:
         ):
             raise ValueError("invalid_goal_retry")
         with self.db.automatic_work.transaction() as conn:
+            self.db.goal_runs._require_current_authority(conn, goal_id)
             goal = self.get(goal_id)
             if goal.status != "ready":
                 return goal
@@ -226,6 +237,7 @@ class GoalRunService:
     @goal_storage_operation
     def clear_wait(self, goal_id: str) -> None:
         with self.db.automatic_work.transaction() as conn:
+            self.db.goal_runs._require_current_authority(conn, goal_id)
             conn.execute("DELETE FROM goal_waits WHERE goal_id=?", (goal_id,))
 
     @goal_storage_operation
@@ -241,6 +253,10 @@ class GoalRunService:
         with self.db.automatic_work.transaction() as conn:
             self.db.automatic_work._check_runtime_owner(conn, audit.owner_id)
             for goal_id, revision, state in audit.goals:
+                try:
+                    self.db.goal_runs._require_current_authority(conn, goal_id)
+                except AutomaticWorkRefused:
+                    continue
                 conn.execute(
                     "UPDATE goal_runs SET status=?,pause_reason=?,revision=revision+1 WHERE id=? AND revision=? "
                     "AND status NOT IN ('completed','removed','closed','stopped')",
@@ -263,6 +279,8 @@ class GoalRunService:
             AutomaticWorkRefused,
         )
 
+        with self.db.connection() as conn:
+            self.db.goal_runs._require_current_authority(conn, goal_id)
         goal = self.get(goal_id)
         if goal.revision != expected_revision:
             raise ValueError("revision_conflict")
@@ -273,6 +291,7 @@ class GoalRunService:
             return self._state(goal, "paused", reason)
         try:
             with self.db.automatic_work._admission_transaction(goal.chain_id) as conn:
+                self.db.goal_runs._require_current_authority(conn, goal_id)
                 current = self.get(goal_id)
                 if current.revision != expected_revision:
                     raise ValueError("revision_conflict")
@@ -316,6 +335,7 @@ class GoalRunService:
         if type(accepted) is not bool:
             raise TypeError("accepted must be bool")
         with self.db.automatic_work.transaction() as conn:
+            self.db.goal_runs._require_current_authority(conn, goal_id)
             goal = self.get(goal_id)
             if goal.revision != expected_revision:
                 raise ValueError("revision_conflict")
@@ -346,6 +366,7 @@ class GoalRunService:
         if type(resolution) is not RecoveryResolution:
             raise TypeError("typed recovery resolution required")
         with self.db.automatic_work.transaction() as conn:
+            self.db.goal_runs._require_current_authority(conn, goal_id)
             goal = self.get(goal_id)
             if goal.revision != expected_revision:
                 raise ValueError("revision_conflict")
@@ -373,6 +394,7 @@ class GoalRunService:
         if snapshot.status not in {"starting", "paused", "ready"}:
             return snapshot
         with self.db.connection() as conn:
+            self.db.goal_runs._require_current_authority(conn, snapshot.id)
             accepted = conn.execute(
                 "SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=? AND a.accepted_at IS NOT NULL LIMIT 1",
                 (snapshot.id,),

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.private_profile import private_profile_test
 
 
@@ -33,7 +34,7 @@ async def test_original_marker_read_leaves_shared_loop_responsive(request):
         ChangeReviewPublicationSignal,
     )
 
-    database = AgentRunsDB(config.get_user_data_dir() / "marker-loop.sqlite")
+    database = owned_agent_runs_db(config.get_user_data_dir() / "marker-loop.sqlite")
     database.create_run(
         run_id="run",
         conversation_id="chat",
@@ -225,7 +226,7 @@ async def test_marker_read_keeps_native_custody_and_current_publication(
         ChangeReviewPublicationSignal,
     )
 
-    database = AgentRunsDB(config.get_user_data_dir() / "marker-custody.sqlite")
+    database = owned_agent_runs_db(config.get_user_data_dir() / "marker-custody.sqlite")
     database.create_run(
         run_id="run",
         conversation_id="chat",

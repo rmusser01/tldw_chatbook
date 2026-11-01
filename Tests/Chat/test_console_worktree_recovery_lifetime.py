@@ -7,7 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
 
 
 @pytest.mark.asyncio
@@ -31,7 +33,7 @@ async def test_physical_manual_worker_retains_owner_after_waiter_cancel(
         ),
         request_worktree_merge_confirm=lambda *a, **kw: {"allow": True},
     )
-    db = SimpleNamespace(db_path_str=str(tmp_path / "runs.db"))
+    db = owned_agent_runs_db(tmp_path / "runs.db")
     bridge = SimpleNamespace(runs_db=db, runtime_capacity=capacity)
     helper = ConsoleWorktreeRecovery(controller, bridge)
     monkeypatch.setattr(module, "validate_intent", lambda *a: object())
@@ -264,12 +266,11 @@ async def test_accepted_close_fences_late_manual_start_during_actual_drain(
     import tldw_chatbook.Chat.console_worktree_recovery as module
     from Tests.Chat.test_console_runtime_shutdown import _runtime_with_fleet
     from tldw_chatbook.Agents.agent_worktree_recovery import WorktreeRecoveryOutcome
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
     runtime, controller, bridge, store, session = _runtime_with_fleet()
     other = store.create_session(ephemeral=True)
     controller.app = SimpleNamespace(console_runtime=runtime)
-    bridge.runs_db = AgentRunsDB(tmp_path / "runs.db")
+    bridge.runs_db = owned_agent_runs_db(tmp_path / "runs.db")
     bridge.runtime_capacity = RuntimeCapacity()
     helper = runtime.worktree_recovery
     signal = threading.Event()
@@ -403,7 +404,10 @@ async def test_manual_submission_failure_hands_off_exact_owner(
             request_worktree_merge_confirm=lambda *a, **kw: {"allow": True},
         ),
         SimpleNamespace(
-            runs_db=SimpleNamespace(db_path_str=str(tmp_path / "runs.db")),
+            runs_db=SimpleNamespace(
+                db_path_str=str(tmp_path / "runs.db"),
+                _execution_owner=ConsoleExecutionOwner.acquire(tmp_path / "runs.db"),
+            ),
             runtime_capacity=capacity,
         ),
     )

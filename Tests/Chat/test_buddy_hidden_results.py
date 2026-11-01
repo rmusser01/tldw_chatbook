@@ -2,12 +2,12 @@
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_chat_controller import StreamingGateway
 from tldw_chatbook.Chat.console_activity_receipts import ConsoleActivityReceiptService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
 @pytest.mark.parametrize("visible", [True, False])
@@ -17,7 +17,7 @@ def test_selected_conversation_results_are_unseen_only_when_console_hidden(
 ):
     store = ConsoleChatStore()
     session = store.ensure_session()
-    db = AgentRunsDB(tmp_path / "activity.db")
+    db = owned_agent_runs_db(tmp_path / "activity.db")
     receipts = ConsoleActivityReceiptService(db, None)
     controller = ConsoleChatController(
         store=store, provider_gateway=StreamingGateway(), activity_receipts=receipts

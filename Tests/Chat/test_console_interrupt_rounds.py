@@ -418,3 +418,18 @@ def test_replaced_round_retires_old_presentation_without_touching_next_head(host
     host.park_round_payload("approval", "r1", _payload("r1", presentation_state=fresh))
     assert old == {"retired": True} and fresh == {}
     assert host.head_round_payload("approval", "sess-A")["round_id"] == "r1"
+
+
+def test_question_resolver_does_not_replace_an_already_set_native_event():
+    host = InterruptRoundHost(FakeSeamsFull())
+    state = {
+        "session_id": "sess-A",
+        "event": threading.Event(),
+        "decision": {"answers": []},
+    }
+    state["event"].set()
+    host.registries["question"]["question"] = state
+    host.resolve_pending_question(
+        [{"question": "late", "selected": ["answer"]}], "question"
+    )
+    assert state["decision"]["answers"] == []

@@ -314,6 +314,7 @@ _LIVE_CHILD = dedent(
         ConsoleProviderResolution,
     )
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from Tests.agent_runs_owner import owned_agent_runs_db
 
     text_sentinel = f"QWENCLOUD_LIVE_TEXT_{secrets.token_hex(8).upper()}"
     left = 10**12 + secrets.randbelow(10**11)
@@ -322,7 +323,7 @@ _LIVE_CHILD = dedent(
         left, right, text_sentinel
     )
 
-    db = AgentRunsDB(data_dir / f"agent-runs-{api_mode}.db", client_id="qwen-live")
+    db = owned_agent_runs_db(data_dir / f"agent-runs-{api_mode}.db", client_id="qwen-live")
     try:
         store = ConsoleChatStore()
         session = store.ensure_session()

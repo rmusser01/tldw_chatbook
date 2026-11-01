@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.Chat.test_console_dispatch_recovery import (
     _acceptance,
     _database,
@@ -513,7 +514,7 @@ def test_agent_service_wires_the_exact_dispatch_owner_into_handoff(
 
     monkeypatch.setattr(agent_service_module, "run_agent_loop", exercise_real_callback)
     service = AgentService(
-        db=AgentRunsDB(tmp_path / "agent-runs.sqlite", client_id="task16"),
+        db=owned_agent_runs_db(tmp_path / "agent-runs.sqlite", client_id="task16"),
         registry=ToolCatalogRegistry(),
         chat_call=lambda **_kwargs: pytest.fail("provider must be driven by loop"),
         persist_provider_continuation=partial(

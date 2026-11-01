@@ -39,7 +39,7 @@ async def test_picker_failure_is_contained(monkeypatch, tmp_path, failure, stale
     helper = recovery_module.ConsoleWorktreeRecovery(
         controller,
         SimpleNamespace(
-            runs_db=SimpleNamespace(db_path_str=str(tmp_path / "runs.db")),
+            runs_db=SimpleNamespace(db_path_str=str(tmp_path / "runs.db"), _execution_owner=None),
             runtime_capacity=capacity,
         ),
     )
@@ -66,7 +66,7 @@ async def test_picker_failure_is_contained(monkeypatch, tmp_path, failure, stale
     )
     entered = []
 
-    def failing_database(*args):
+    def failing_database(*args, **kwargs):
         entered.append(True)
         raise sqlite3.OperationalError("injected database-open failure")
 

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from Tests.private_profile import private_profile_test
 
 
@@ -15,9 +16,8 @@ def test_marker_projection_does_not_read_unrelated_step_payloads(
 ):
     from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
-    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-    database = AgentRunsDB(
+    database = owned_agent_runs_db(
         ":memory:" if storage_kind == "memory" else tmp_path / "marker-runs.sqlite"
     )
     bridge = ConsoleAgentBridge(

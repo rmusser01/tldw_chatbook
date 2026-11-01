@@ -563,3 +563,123 @@ textarea:focus {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* Shared Console: browser equivalents of the action, status, message and
+   navigation patterns. Palette stays shared with the incumbent Library. */
+:root {
+  --focus: var(--accent-strong);
+  --disabled-bg: var(--surface-raised);
+  --disabled-text: var(--text-dim);
+  --space-inline: 8px;
+  --space-section: 12px;
+  --touch-target: 44px;
+  color-scheme: dark;
+}
+button, select, input, textarea { font: inherit; }
+button, summary, a, select, input { min-height: var(--touch-target); }
+button, summary { cursor: pointer; }
+a { color: var(--accent-strong); text-underline-offset: 0.2em; }
+button:hover:not(:disabled), summary:hover { filter: brightness(1.15); }
+button:active:not(:disabled) { filter: brightness(0.9); }
+button:focus-visible, a:focus-visible, summary:focus-visible,
+textarea:focus-visible, select:focus-visible, input:focus-visible,
+.transcript:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+button:disabled, .primary-button:disabled {
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  opacity: 1;
+  cursor: default;
+  filter: none;
+  border: 1px solid var(--border);
+}
+textarea { caret-color: var(--text); min-width: 0; }
+textarea::placeholder { color: var(--text-dim); opacity: 1; }
+::selection { background: var(--accent); color: var(--text); }
+.connection-state {
+  flex: none;
+  margin: 0;
+  padding: 6px var(--space-section);
+  color: var(--text-dim);
+  background: var(--surface);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.list-actions { align-items: center; justify-content: space-between; }
+h1 { margin: 0; font-size: 20px; }
+.session-list li { display: block; padding: 0; }
+.chat-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  padding: var(--space-section) 4px;
+  text-align: left;
+  gap: 4px;
+  overflow-wrap: anywhere;
+}
+.chat-row .detail-meta { margin: 0; }
+.chat-row:hover { background: var(--surface-raised); }
+.chat-heading { display: flex; flex: none; align-items: center; justify-content: space-between; gap: var(--space-inline); }
+.chat-heading .chat-title { margin: 4px 0; }
+.agent-panel { max-height: 28%; overflow: auto; flex: none; }
+.agent-panel .entry-list li { padding: 4px 0; }
+.agent-panel button { width: 100%; text-align: left; overflow-wrap: anywhere; white-space: normal; }
+.message-role { display: block; color: var(--text-dim); font-size: 12px; margin-bottom: 4px; }
+.transcript li { flex: none; }
+.tool-content { max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font: inherit; }
+.role-tool details { width: 100%; min-width: 0; }
+.role-tool summary { display: flex; align-items: center; }
+.composer { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.composer label { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.composer textarea { flex: none; width: 100%; min-height: var(--touch-target); max-height: 20vh; }
+.composer .detail-meta { margin: 0; font-size: 12px; }
+.command-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.command-actions button { flex: 1; padding: 8px; border-radius: 12px; }
+.command-actions .danger-button { flex: 0 1 auto; }
+#command-status:empty, #target-state:empty { display: none; }
+#command-status { max-height: 52px; overflow: auto; }
+.decision-region { flex: none; max-height: 32%; overflow: auto; }
+.decision { padding: 8px; background: var(--surface-raised); margin-bottom: 8px; border-radius: 12px; overflow-wrap: anywhere; }
+.decision summary { font-weight: 600; }
+.decision label, .decision fieldset { display: block; margin: 4px 0; }
+.decision select, .decision textarea { display: block; width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+.decision input { vertical-align: middle; accent-color: var(--accent); margin-right: var(--space-inline); }
+.attention { color: var(--text); font-size: 13px; font-weight: 600; }
+#target-state button { display: block; margin-top: 4px; }
+@media (max-height: 500px) {
+  .app-header { min-height: 44px; padding-top: 2px; padding-bottom: 2px; }
+  .app-header .header-actions { flex-basis: auto; gap: 4px; }
+  .app-header .brand { display: none; }
+  .header-link { display: inline-flex; align-items: center; }
+  .connection-state { padding-top: 2px; padding-bottom: 2px; }
+  .chat-heading .chat-title { font-size: 14px; }
+  .composer textarea { height: 44px; }
+  .composer { padding-top: 4px; padding-bottom: calc(4px + env(safe-area-inset-bottom)); }
+  .composer .detail-meta { max-height: 30px; overflow: auto; }
+}
+.header-link { display: inline-flex; align-items: center; }
+.danger-button { background: var(--surface-raised); color: var(--text); border: 1px solid var(--danger); }
+.role-tool summary { display: list-item; padding-top: 10px; padding-bottom: 10px; }
+.composer label { max-height: 52px; overflow: auto; }
+.worker-detail { flex: 1; min-height: 0; overflow: auto; padding: 4px 0 8px; }
+.worker-detail .reading-content { overflow: auto; }
+.agent-panel h3 { font-size: 14px; margin: 8px 0 4px; }
+.worker-detail.live-activity { flex: none; max-height: 28%; }
+.composer.readonly textarea, .composer.readonly .command-actions { display: none; }
+@media (max-height: 500px) {
+  .agent-panel, .decision-region, .worker-detail.live-activity { max-height: 15%; }
+}
+.latest-output { flex: none; max-height: 22%; overflow: auto; background: var(--surface-raised); padding: 6px 8px; border-radius: 12px; margin-bottom: 8px; }
+.latest-output .detail-meta { margin: 0 0 4px; }
+.latest-output pre { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-height: 500px) { .latest-output { max-height: 15%; } }
+.latest-output .detail-meta { position: sticky; top: 0; background: var(--surface-raised); z-index: 1; }
+.decision select { height: var(--touch-target); }
+.decision a { display: inline-flex; align-items: center; }
+.badge { background: var(--surface-raised); color: var(--text); border: 1px solid var(--danger); }

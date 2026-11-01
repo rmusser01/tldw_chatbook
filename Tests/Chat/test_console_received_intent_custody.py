@@ -154,3 +154,21 @@ async def test_received_scheduling_failure_releases_claim_and_keeps_staging(
     assert store.pending_attachments(session.id) == [attachment]
     assert store.pending_attachments(session.id)[0] is attachment
     assert store.session_one_shot_prefill_snapshot(session.id) == before_prefill
+
+
+async def test_command_claim_has_no_desktop_draft_transfer(intent_case):
+    from dataclasses import replace
+
+    runtime, store, session, _request = intent_case
+    intent = replace(
+        _intent(intent_case),
+        inputs=store.command_input_snapshot(
+            session.id, text="phone", command_id="phone-a"
+        ),
+    )
+    runtime.accept_received_intent(intent)
+    claim = store.received_turn_for_session(session.id)
+    assert claim.draft_revision is None
+    assert store.session_draft(session.id) == "captured original draft"
+    record = runtime._turn_custody[intent.turn_id]
+    assert record.request is None and not record.inputs.durable_accepted

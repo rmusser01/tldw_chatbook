@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.agent_runs_owner import owned_agent_runs_db
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
@@ -42,7 +43,7 @@ def test_v23_goal_upgrade_preserves_fleet_history(tmp_path, standalone):
         ).read_text()
         with sqlite3.connect(path) as conn:
             conn.executescript(sql)
-    db = AgentRunsDB(path)
+    db = owned_agent_runs_db(path)
     with db.connection() as conn:
         row = conn.execute(
             "SELECT * FROM automatic_wake_attempts WHERE id='attempt'"
@@ -56,7 +57,7 @@ def test_v23_goal_upgrade_preserves_fleet_history(tmp_path, standalone):
         )
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     db.close()
-    AgentRunsDB(path).close()  # guarded runtime migration is repeatable
+    owned_agent_runs_db(path).close()  # guarded runtime migration is repeatable
 
 
 def test_standalone_goal_migration_matches_runtime_catalog(tmp_path):
@@ -114,7 +115,15 @@ def test_standalone_goal_migration_matches_runtime_catalog(tmp_path):
                     f"tldw_chatbook/DB/migrations/agent_runs_v{start}_to_v{start + 1}_workflow_{suffix}.sql"
                 ).read_text()
             )
-    AgentRunsDB(paths[0]).close()
+    for migration in (
+        "agent_runs_v31_to_v32_console_command_receipts.sql",
+        "agent_runs_v32_to_v33_mobile_consolidation.sql",
+    ):
+        with sqlite3.connect(paths[1]) as conn:
+            conn.executescript(
+                (Path("tldw_chatbook/DB/migrations") / migration).read_text()
+            )
+    owned_agent_runs_db(paths[0]).close()
     catalogs = []
     for path in paths:
         with sqlite3.connect(path) as conn:
@@ -151,7 +160,7 @@ def test_v25_recovery_accepts_both_upgrades_and_still_checks_goal_rows(
         conn.execute("INSERT INTO schema_version(version) VALUES (24)")
     path.chmod(0o600)
     if upgrade == "constructor":
-        AgentRunsDB(path).close()
+        owned_agent_runs_db(path).close()
     assert validate_candidate(owner, path, Event(), migrate=True) == ()
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone() == (

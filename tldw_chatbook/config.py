@@ -8511,6 +8511,23 @@ def seed_builtin_content(db: CharactersRAGDB) -> CharactersRAGDB:
     return db
 
 
+def preflight_selected_console_stores(
+    *, chat_path: str | Path | None = None, workspace_path: str | Path | None = None,
+) -> None:
+    """Check one authoritative selection, retaining explicit native owner paths."""
+    from tldw_chatbook.Backup_Recovery.profile_paths import canonical_console_paths
+    from tldw_chatbook.DB.mobile_preview_lineage import reject_incompatible_console_stores
+
+    snapshot = get_atomic_config_snapshot()
+    selected_chat, selected_workspace, selected_runs = canonical_console_paths(snapshot.values)
+    if chat_path is not None:
+        selected_chat = chat_path
+        selected_runs = ":memory:" if isinstance(chat_path, str) and chat_path == ":memory:" else Path(chat_path).parent / "agent_runs.db"
+    if workspace_path is not None:
+        selected_workspace = workspace_path
+    reject_incompatible_console_stores(selected_chat, selected_workspace, selected_runs)
+
+
 # --- API Models (should be defined based on CONFIG_TOML_CONTENT or loaded from it) ---
 # These can be loaded dynamically from the config or kept as fallback statics
 # For simplicity, if CONFIG_TOML_CONTENT has [providers], use that.
