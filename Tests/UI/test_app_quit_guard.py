@@ -459,7 +459,7 @@ async def test_non_console_quit_confirms_console_once_then_fences_before_cleanup
     rows = app.dialogs[0].message.splitlines()
     assert "Live agent runs: 1" in rows
     assert "Delegated agents: 2" in rows
-    assert 'Affected tabs: "Chat 1"' in rows
+    assert 'Affected tabs: "Tab 1"' in rows
     assert (
         "Open tabs are not reopened next time. Saved chats stay in the Chats rail."
         in rows

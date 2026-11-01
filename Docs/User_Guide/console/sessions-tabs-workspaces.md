@@ -647,7 +647,8 @@ conversations remain in Library, with the workspace marked archived. This is
 separate from individually archiving a conversation.
 
 Closing a tab removes the open session. Saved history stays in Library; the
-close dialog names the tab and lists only the consequences that apply: unsaved
+close dialog identifies the tab by its position (Tab 1, Tab 2, and so on,
+from left to right) and lists only the consequences that apply: unsaved
 messages, drafts, attachments, unsent turns needing attention, live or queued work,
 and pending human decisions.
 The dialog keeps both actions visible when the terminal is short. Press Shift+Tab
@@ -662,8 +663,8 @@ Quitting the app (**Ctrl+Q**, from any screen) closes every open tab, so it asks
 the same question for all of them at once. **Quit Chatbook?** appears whenever
 closing any open tab would lose something: it adds up the same counts the close
 dialog shows for each tab, lists only the ones that are not zero, and names the
-affected tabs. Apart from those tab names it shows no draft or message text. It
-also reminds you that open tabs are not reopened the next time Chatbook starts;
+affected tabs by those same positions. Tab titles, draft and message text never
+appear in the loss dialogs, even for renamed chats. It also reminds you that open tabs are not reopened the next time Chatbook starts;
 saved chats stay in the Chats rail. **Stay** keeps every draft, Temporary chat,
 staged attachment and unsent turn as it was. With nothing to lose, Ctrl+Q quits
 without asking.

@@ -140,7 +140,8 @@ _BUDGETS: dict[str, int] = {
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
     # into app_keep_alive.py).
-    "tldw_chatbook/app_lifecycle.py": 2135,
+    # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
+    "tldw_chatbook/app_lifecycle.py": 2147,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -670,8 +671,8 @@ _BUDGETS: dict[str, int] = {
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7154,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
-    # The integrated value is remeasured after the rebase.
-    "tldw_chatbook/UI/Console_Modules/session.py": 7065,
+    # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
+    "tldw_chatbook/UI/Console_Modules/session.py": 6982,
     # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 6987 -> 6993 (+6). transaction() rolls back on BaseException, and its

@@ -19,9 +19,10 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.test_console_key_ownership import _mounted
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -31,9 +32,8 @@ pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
 
 _SETTLE_SECONDS = 20.0
 _DRAFT = "draft alpha unsent do not lose"
-#: Longer than a tab label: the first send titles the tab with a cut-short
-#: prefix of it, so the whole prompt must never reach a dialog.
-_TEMPORARY_PROMPT = "temporary prompt beta, long enough that its tab label is cut short"
+#: Short enough to become the entire automatic title: clipping is not privacy.
+_TEMPORARY_PROMPT = "private case 827"
 _NOTE = "Open tabs are not reopened next time. Saved chats stay in the Chats rail."
 
 
@@ -76,8 +76,7 @@ async def _mounted_console(app, pilot):
         ),
         "the Console composer",
     )
-    await pilot.pause(0.2)
-    console = app.screen
+    console, _composer, _transcript = await _mounted(app, pilot, messages=False)
     assert console._console_runtime() is app.console_runtime
     return console
 
@@ -231,7 +230,20 @@ async def _temporary_chat_with_parked_turn(pilot, app, console) -> str:
         "the Temporary tab to open",
     )
     session_id = store.active_session_id
-    await _type_into_composer(pilot, console, _TEMPORARY_PROMPT)
+    await _until(
+        pilot,
+        lambda: console._console_visible_draft_session_id == session_id,
+        "the Temporary tab's composer to become current",
+    )
+    await pilot.pause()
+    composer = await _type_into_composer(pilot, console, _TEMPORARY_PROMPT)
+    await _until(
+        pilot,
+        lambda: composer.draft_has_focus
+        and not composer.query_one("#console-send-message", Button).disabled,
+        "the Temporary composer Send action to become ready",
+    )
+    await pilot.pause()
     await pilot.press("enter")
     runtime = app.console_runtime
     await _until(
@@ -270,18 +282,60 @@ async def test_ctrl_q_counts_a_temporary_chat_with_a_parked_unsent_turn(monkeypa
             row.startswith("Affected tabs:") and f'"{title}"' in row for row in rows
         ), rows
         assert not any(row.endswith(": 0") for row in rows), rows
-        # The tab's own label is the only text taken from the chat.
+        # No title exception: a short prompt can be the entire automatic title.
         assert _TEMPORARY_PROMPT not in dialog.message
-        assert not any(
-            "temporary prompt" in row
-            for row in rows
-            if not row.startswith("Affected tabs:")
-        ), rows
+        assert '"Tab 2"' in dialog.message
 
         await _stay(pilot, app, console)
         assert events == []
         assert session_id in {session.id for session in store.sessions()}
         assert len(app.console_runtime.recoveries_for_session(session_id)) == 1
+
+
+@pytest.mark.parametrize("renamed", [False, True])
+async def test_ctrl_q_from_home_keeps_short_and_renamed_titles_private(
+    monkeypatch, renamed
+):
+    """A real accepted Temporary input cannot leak through a tab label on Home."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    events: list[str] = []
+    app = _app_with_quit_recorder(monkeypatch, events)
+    async with app.run_test(size=(160, 48)) as pilot:
+        console = await _mounted_console(app, pilot)
+        store = console._ensure_console_chat_store()
+        session_id = await _temporary_chat_with_parked_turn(pilot, app, console)
+        session = next(item for item in store.sessions() if item.id == session_id)
+        assert session.title == _TEMPORARY_PROMPT
+        private_title = _TEMPORARY_PROMPT
+        if renamed:
+            private_title = "renamed private case 827"
+            console._session._open_console_session_rename_modal(session_id)
+            await _until(
+                pilot,
+                lambda: bool(app.screen.query("#console-rename-session-title")),
+                "Rename to open",
+            )
+            app.screen.query_one(
+                "#console-rename-session-title", Input
+            ).value = private_title
+            assert await pilot.click("#console-rename-session-save")
+            await _until(
+                pilot,
+                lambda: app.screen is console and session.title == private_title,
+                "the explicit rename to publish",
+            )
+        app.post_message(NavigateToScreen("home"))
+        await _until(pilot, lambda: type(app.screen).__name__ == "HomeScreen", "Home")
+        home = app.screen
+        dialog = await _ctrl_q_asks(pilot, app, events, "the Temporary tab on Home")
+        assert _TEMPORARY_PROMPT not in dialog.message
+        assert private_title not in dialog.message
+        assert 'Affected tabs: "Tab 2"' in dialog.message
+        await _stay(pilot, app, home)
+        assert session.title == private_title
+        assert len(app.console_runtime.recoveries_for_session(session_id)) == 1
+        assert events == []
 
 
 async def test_ctrl_q_with_only_a_pending_attachment_asks_and_stay_keeps_it(
@@ -341,6 +395,8 @@ async def test_tab_close_reports_a_parked_unsent_turn(monkeypatch):
         close_dialog = app.screen
         assert "Unsent turns needing attention: 1" in close_dialog.message.splitlines()
         assert _TEMPORARY_PROMPT not in close_dialog.message
+        assert _TEMPORARY_PROMPT not in str(close_dialog.title)
+        assert '"Tab 2"' in str(close_dialog.title)
         await pilot.click(close_dialog.query_one("#cancel-button", Button))
         await _until(pilot, lambda: app.screen is console, "Stay on the close dialog")
         assert temporary_id in {session.id for session in store.sessions()}

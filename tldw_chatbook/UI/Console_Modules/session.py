@@ -294,9 +294,6 @@ logger = logger.bind(module="ChatScreen")
 _DEFAULT_PROJECT_INSTRUCTION_NOTICE_TIMEOUT_SECONDS = 120.0
 _PROJECT_INSTRUCTION_NOTICE_POLL_SECONDS = 0.1
 _PROJECT_INSTRUCTION_AUTHORITY_REFRESH_SECONDS = 2.0
-#: A close-failure toast names the tab; the full 500-character tab title
-#: would drown the reason.
-_SESSION_CLOSE_TITLE_MAX_CHARACTERS = 60
 #: Close refusals whose own text is copy the user can act on, raised by
 #: `ConsoleChatController.begin_session_close` and the store's close. Every
 #: other exception is shown only by its type: `RuntimeError` is also the
@@ -3490,13 +3487,16 @@ class ConsoleSessionController:
 
         try:
             store = self._ensure_console_chat_store()
-            title = next(
-                (item.title for item in store.sessions() if item.id == session_id),
-                "",
+            tab_number = next(
+                (
+                    index for index, item in enumerate(store.sessions(), start=1)
+                    if item.id == session_id
+                ),
+                None,
             )
         except Exception:  # noqa: BLE001 -- a label must never block a close
-            title = ""
-        return tab_display_title(title)
+            tab_number = None
+        return tab_display_title(tab_number)
 
     async def _report_session_close_failure(
         self, session_id: str, title: str, exc: Exception
@@ -3544,7 +3544,7 @@ class ConsoleSessionController:
             return False
 
     def _notify_session_close_failure(self, title: str, reason: str) -> None:
-        # markup=False: the title is user text and must render literally.
+        # Keep the positional label and refusal reason literal.
         self.app_instance.notify(
             f'Couldn\'t close tab "{title}": {reason}',
             severity="error",

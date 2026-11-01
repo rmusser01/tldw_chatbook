@@ -118,6 +118,7 @@ def test_close_dialog_lists_only_non_zero_rows_including_unsent_turns() -> None:
 
     assert message.splitlines() == [
         "Saved history stays in Library.",
+        "Tab numbers follow the Console tab strip from left to right.",
         "Closing will discard or cancel:",
         "Unsent turns needing attention: 2",
     ]
@@ -166,19 +167,19 @@ def test_quit_dialog_names_five_tabs_then_counts_the_rest(
 
 
 @pytest.mark.parametrize(
-    ("stored_title", "expected_label"),
+    "stored_title",
     [
-        ("", "Untitled"),
-        ("[bold]Plan[/bold]", "[bold]Plan[/bold]"),
-        ("x" * 80, None),
+        "",
+        "private case 827",
+        "renamed private case 827",
+        "[bold]Plan[/bold]",
+        "x" * 80,
     ],
 )
 def test_close_and_quit_label_a_tab_the_same_way(
-    stored_title: str, expected_label: str | None
+    stored_title: str,
 ) -> None:
     """The close dialog, its failure toasts and the quit list share one label."""
-    from tldw_chatbook.UI.Console_Modules.loss_inventory import tab_display_title
-
     store = SimpleNamespace(
         sessions=lambda: (SimpleNamespace(id="session-1", title=stored_title),)
     )
@@ -187,8 +188,39 @@ def test_close_and_quit_label_a_tab_the_same_way(
 
     close_label = controller._session_close_display_title("session-1")
 
-    assert close_label == tab_display_title(stored_title)
-    if expected_label is None:
-        assert 0 < len(close_label) <= 60
-    else:
-        assert close_label == expected_label
+    assert close_label == "Tab 1"
+
+
+def test_loss_labels_count_loss_free_tabs_and_never_copy_any_title() -> None:
+    from tldw_chatbook.UI.Console_Modules.loss_inventory import (
+        console_quit_impact,
+        quit_dialog_message,
+    )
+
+    sessions = [
+        SimpleNamespace(
+            id=str(index), title=f"private title {index}", pending_attachments=[]
+        )
+        for index in range(3)
+    ]
+    store = SimpleNamespace(
+        sessions=lambda: sessions,
+        all_messages_for_session=lambda _id: [],
+        session_draft=lambda session_id: "private draft" if session_id == "1" else "",
+    )
+    runtime = SimpleNamespace(
+        chat_controller=SimpleNamespace(
+            store=store,
+            lifecycle_impact=lambda **_kwargs: _idle_lifecycle(),
+            pending_round_kinds=lambda _id: frozenset(),
+        ),
+        recoveries_for_session=lambda _id: (),
+    )
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._chat_store_accessor = lambda: store
+    impact = console_quit_impact(runtime)
+    assert [(title, loss.session_id) for title, loss in impact.tabs] == [("Tab 2", "1")]
+    assert controller._session_close_display_title("1") == "Tab 2"
+    assert controller._session_close_display_title("gone") == "Tab"
+    assert "private" not in repr(impact)
+    assert "private" not in quit_dialog_message(impact)

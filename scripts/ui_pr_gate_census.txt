@@ -1795,3 +1795,6 @@ Tests/UI/test_console_attachment_vision_block.py::test_with_no_model_chosen_setu
 Tests/UI/test_console_quit_loss_guard.py::test_ctrl_q_with_only_a_composer_draft_asks_and_stay_keeps_it
 Tests/UI/test_console_quit_loss_guard.py::test_ctrl_q_counts_a_temporary_chat_with_a_parked_unsent_turn
 Tests/UI/test_console_quit_loss_guard.py::test_tab_close_reports_a_parked_unsent_turn
+
+# PR3303: no prompt-derived or explicitly renamed title in app quit from Home.
+Tests/UI/test_console_quit_loss_guard.py::test_ctrl_q_from_home_keeps_short_and_renamed_titles_private

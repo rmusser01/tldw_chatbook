@@ -13,8 +13,8 @@ and the quit inventory is that same projection over every open tab, summed by
 ``ConsoleLossTotals.of``. One renderer writes both dialogs' lists, so they
 cannot drift apart again.
 
-Only counts and tab labels leave this module, never draft, message or file
-content (TASK-14806 AC#7). It is imported lazily from the close and quit
+Only counts and positional tab labels leave this module, never titles, draft,
+message or file content (TASK-14806 AC#7). It is imported lazily from the close and quit
 paths, which keeps it off the boot path (ADR-097 UI-ready census).
 """
 
@@ -32,8 +32,7 @@ from ...Chat.console_chat_models import (
     CONSOLE_PENDING_SKILL_SCRIPT_KIND,
     CONSOLE_PENDING_WORKTREE_MERGE_KIND,
 )
-from ..character_display_text import sanitize_character_display_label
-from .session import _SESSION_CLOSE_TITLE_MAX_CHARACTERS, ConsoleSessionCloseImpact
+from .session import ConsoleSessionCloseImpact
 
 #: The shelf calls one parked recovery "Unsent turn needs attention".
 UNSENT_TURNS_LABEL = "Unsent turns needing attention"
@@ -43,6 +42,7 @@ QUIT_TABS_NOTE = (
 )
 #: How many affected tabs the quit dialog names before "and N more".
 QUIT_TAB_NAME_LIMIT = 5
+TAB_NUMBER_NOTE = "Tab numbers follow the Console tab strip from left to right."
 
 _ROUND_LINES = (
     (CONSOLE_PENDING_APPROVAL_KIND, "Tool approvals: denied; runs cancelled."),
@@ -111,14 +111,9 @@ class ConsoleQuitImpact:
         return bool(self.tabs)
 
 
-def tab_display_title(title: str) -> str:
-    """A tab's label in the close and quit dialogs and close toasts."""
-    return (
-        sanitize_character_display_label(
-            title, max_characters=_SESSION_CLOSE_TITLE_MAX_CHARACTERS
-        )
-        or "Untitled"
-    )
+def tab_display_title(tab_number: int | None) -> str:
+    """Identify a tab without copying a possibly prompt-derived title."""
+    return "Tab" if tab_number is None else f"Tab {tab_number}"
 
 
 def visible_composer_draft(owner: Any) -> tuple[str, str] | None:
@@ -180,12 +175,12 @@ def console_quit_impact(runtime: Any) -> ConsoleQuitImpact:
     store = controller.store
     live_draft = visible_composer_draft(getattr(runtime, "view", None))
     tabs = []
-    for session in store.sessions():
+    for tab_number, session in enumerate(store.sessions(), start=1):
         impact = session_close_impact(
             store, controller, runtime, session.id, live_draft=live_draft
         )
         if impact is not None and impact.has_loss_risk:
-            tabs.append((tab_display_title(session.title), impact))
+            tabs.append((tab_display_title(tab_number), impact))
     return ConsoleQuitImpact(revision=revision, tabs=tuple(tabs))
 
 
@@ -222,7 +217,7 @@ def _loss_lines(totals: ConsoleLossTotals, *, one_tab: bool) -> list[str]:
 
 def close_dialog_message(impact: ConsoleSessionCloseImpact) -> str:
     """The close dialog's body: only what closing this one tab would lose."""
-    message = "Saved history stays in Library."
+    message = f"Saved history stays in Library.\n{TAB_NUMBER_NOTE}"
     lines = _loss_lines(ConsoleLossTotals.of((impact,)), one_tab=True)
     if lines:
         message += "\nClosing will discard or cancel:\n" + "\n".join(lines)
@@ -239,5 +234,5 @@ def quit_dialog_message(impact: ConsoleQuitImpact) -> str:
     return (
         "Quitting Chatbook will cancel or discard:\n\n"
         + "\n".join(lines)
-        + f"\n\nAffected tabs: {named}\n\n{QUIT_TABS_NOTE}"
+        + f"\n\nAffected tabs: {named}\n{TAB_NUMBER_NOTE}\n\n{QUIT_TABS_NOTE}"
     )

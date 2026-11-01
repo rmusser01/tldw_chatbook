@@ -207,6 +207,25 @@ Unsent queue state must be absent from database persistence, prompt history,
 screen snapshots, and logs. Once an entry is accepted as a real turn, normal
 message persistence and prompt history apply.
 
+## Loss-dialog label clarification (2026-10-31, TASK-33628.17)
+
+The content-free close and quit projections must not include session titles.
+An automatic title can be the complete first prompt; a manually renamed title
+can also contain private message text. Sanitization and truncation do not make
+either content-free.
+
+Identify affected sessions as **Tab N**, counting all open Console tabs in
+their current tab-strip order, including tabs with no loss. Use the same label
+for close, its failure notice, and quit; explain the numbering in the dialog.
+The strip keeps its normal titles. If a close target is no longer available,
+use **Tab** without exposing its former title. Session IDs and controller
+revisions remain the revalidation authority; ordinal labels grant no authority.
+
+This deliberately avoids a new stored or inferred title-provenance flag.
+Allowing explicitly renamed labels was considered, but the label alone cannot
+prove that it is free of private content. No persistence or restart behavior
+changes. See TASK-33628.1 AC2 and TASK-14806 AC7.
+
 ## Links
 
 - [Console Prompt Queue Design](../../Docs/superpowers/specs/2026-08-09-console-prompt-queue-design.md)
