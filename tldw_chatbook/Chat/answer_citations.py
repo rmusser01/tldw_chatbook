@@ -33,6 +33,30 @@ CONSOLE_CITATION_INSTRUCTIONS = (
     "- Do not invent citation labels; unknown labels are untrusted.",
 )
 
+#: TASK-33620.8 (AC#4): the same mixed-source grounding for Library evidence
+#: that no citation record will cover, without asking for [S#] labels.
+CONSOLE_UNRECORDED_EVIDENCE_INSTRUCTIONS = (
+    "- Ground claims in relevant available Library references or workspace file evidence obtained through authorized tools.",
+    "- These Library references are not saved as citations for this reply. Refer to each one by its title, and do not add bracketed labels such as [S1].",
+    "- Identify workspace file evidence by its binding label, relative path, and line range when available.",
+    "- Unrelated or insufficient Library evidence does not rule out workspace file evidence. Say when the available sources are insufficient instead of guessing.",
+)
+
+
+def unrecorded_evidence_text(blocks: list[str]) -> str:
+    """Join unlabelled evidence blocks under the unrecorded-evidence guidance.
+
+    Args:
+        blocks: One text block per Library reference, already formatted.
+
+    Returns:
+        The guidance and blocks, or an empty string when there are no blocks.
+    """
+    if not blocks:
+        return ""
+    guidance = "\n".join(CONSOLE_UNRECORDED_EVIDENCE_INSTRUCTIONS)
+    return f"[Citation instructions]\n{guidance}\n\n" + "\n---\n".join(blocks)
+
 
 @dataclass(frozen=True)
 class AnswerCitationValidation:
@@ -211,6 +235,31 @@ def format_console_evidence_for_cited_answer(value: Any) -> str:
     return _format_evidence_for_cited_answer(
         value,
         instructions=CONSOLE_CITATION_INSTRUCTIONS,
+    )
+
+
+def format_console_evidence_without_labels(value: Any) -> str:
+    """Render available Library evidence for a reply that has no citation record.
+
+    TASK-33620.8 (AC#4): a send that cannot save a citation record (the
+    dispatch-retry path, or an Automatic send with no app to capture through)
+    must not ask the model for [S#] labels nobody can trace. The available
+    references go out by title, under the unrecorded-evidence guidance.
+
+    Args:
+        value: Existing evidence bundle or serialized evidence bundle payload.
+
+    Returns:
+        The unlabelled evidence text, or an empty string when there is none.
+    """
+    bundle = evidence_bundle_from_value(value)
+    references = () if bundle is None else bundle.available_references()
+    return unrecorded_evidence_text(
+        [
+            f"{reference.title}\n{reference.snippet}".strip()
+            for reference in references
+            if reference.title or reference.snippet
+        ]
     )
 
 

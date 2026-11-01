@@ -1908,3 +1908,10 @@ Tests/UI/test_console_conversation_inspector.py::test_focused_section_list_paint
 Tests/UI/test_console_conversation_inspector.py::test_context_and_exchange_lists_wrap_rather_than_clip_their_labels
 Tests/UI/test_trace_export_ui.py::test_validation_failure_shows_plain_recovery_copy_and_logs_the_error
 Tests/UI/test_trace_export_ui.py::test_validation_failure_copy_survives_a_snapshot_it_cannot_log
+
+# PR3323: key-await target fences and short Sources modal regressions.
+# Long real-send/restart variants remain local; TASK-33620.8.9 stays open.
+Tests/UI/test_console_citation_readiness.py
+Tests/UI/test_console_citation_sources.py::test_ready_key_modal_hydrates_after_eager_mount
+Tests/UI/test_console_citation_sources.py::test_changed_record_after_hydration_has_deterministic_unavailable_copy
+Tests/UI/test_console_citation_sources.py::test_denied_or_incomplete_hydration_shows_one_unavailable_state

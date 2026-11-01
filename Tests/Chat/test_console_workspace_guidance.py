@@ -13,6 +13,7 @@ from Tests.Chat.test_console_automatic_library_preparation import (
     _PolicyCoordinator,
     _RagService,
     _StreamingFence,
+    _capture_app,
     _row,
 )
 from Tests.Chat.test_console_dispatch_recovery import (
@@ -114,8 +115,17 @@ async def _project_case(tmp_path, monkeypatch, *, native, automatic=1, access=0)
     bridge = ConsoleAgentBridge(
         agent_runs_db=runs, store=store, provider_gateway=gateway
     )
+    # TASK-33620.8: Automatic evidence is authorized against the turn's own
+    # session before it is sent, so the Library hit must be a real note
+    # inside the owning tab's scope.
+    db.add_note(
+        title="Exact note", content="owned Library evidence", note_id="owned-note"
+    )
     service = _RagService(
-        {"runtime_backend": "local", "results": [_row("owned Library evidence")]}
+        {
+            "runtime_backend": "local",
+            "results": [_row("owned Library evidence", source_id="owned-note")],
+        }
     )
     controller = ConsoleChatController(
         store=store,
@@ -128,6 +138,7 @@ async def _project_case(tmp_path, monkeypatch, *, native, automatic=1, access=0)
     )
     controller.app = SimpleNamespace(
         workspace_registry_service=registry,
+        chachanotes_db=db,
         library_rag_search_service=service,
         unified_mcp_service=SimpleNamespace(
             get_kill_switch=lambda: False,
@@ -286,7 +297,11 @@ async def test_pending_project_turn_stays_with_owning_tab(
 def _assert_mixed_grounding(messages) -> None:
     context = "\n".join(row["content"] for row in messages)
     assert "workspace file evidence" in context
-    assert "[S#] labels only for the supplied Library references" in context
+    # TASK-33620.8 (AC#4): no citation record can cover these replies (the
+    # app has no citation repository; a dispatch retry never seals one), so
+    # the mixed-source guidance names sources by title, without [S#] labels.
+    assert "not saved as citations for this reply" in context
+    assert "[S#] labels only for the supplied Library references" not in context
     assert "binding label, relative path, and line range when available" in context
     assert "needle body" in context
     assert (
@@ -304,7 +319,7 @@ async def test_automatic_evidence_provider_payload_allows_workspace_grounding():
         {"runtime_backend": "local", "results": [_row("needle body")]}
     )
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
-    controller.app = SimpleNamespace(library_rag_search_service=service)
+    controller.app = _capture_app(service, "note-1")
 
     result = await controller.submit_draft("Explain this project")
 

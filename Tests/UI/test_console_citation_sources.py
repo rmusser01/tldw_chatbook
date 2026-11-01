@@ -90,6 +90,7 @@ from tldw_chatbook.UI.Console_Modules.review_selection import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
+    CITATION_SOURCES_UNAVAILABLE_COPY,
     ConsoleCitationSourceRow,
     ConsoleCitationSourcesModal,
     build_console_citation_source_rows,
@@ -742,6 +743,50 @@ async def test_discovery_requires_active_summary_and_repository_verification(
     assert screen._console_citation_counts == {"assistant": 0}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("seeded", "found", "reopens_gate"),
+    [
+        ({}, "cited", True),  # a new row: the only change the gate can't see
+        ({}, "uncited", False),  # zero-only: no row to paint
+        ({"assistant": 2}, "cited", False),  # the same row again
+    ],
+)
+async def test_count_discovery_reopens_the_transcript_gate_only_for_a_new_row(
+    seeded: dict[str, int], found: str, reopens_gate: bool
+) -> None:
+    """TASK-33620.8: counts bypass TASK-34958's sync gate only when one shows.
+
+    A count found after a run has settled changes nothing the gate keys on,
+    so discovery clears the gate's token to paint the row. A result that
+    changes no visible count leaves the gate shut.
+    """
+    result = (
+        _active_result(_trace())
+        if found == "cited"
+        else SimpleNamespace(state=ActiveCitationTraceState.NOT_FOUND, summary=None)
+    )
+    repository = _FakeRepository(result)
+    messages = [_message("assistant", persisted_message_id="persisted")]
+    screen = _bare_screen(messages, repository)
+    screen._console_citation_counts = dict(seeded)
+    signature = screen._console_citation_signature(messages)
+    screen._console_citation_input_signature = signature
+    screen._console_citation_request_generation = 1
+    settled_gate = ("settled-run",)
+    screen._console_transcript_sync_token = settled_gate
+    tokens_at_sync: list[object] = []
+
+    async def record_sync() -> None:
+        tokens_at_sync.append(screen._console_transcript_sync_token)
+
+    screen._sync_native_console_chat_ui = record_sync
+
+    await screen._discover_console_citation_counts(repository, signature, 1)
+
+    assert tokens_at_sync == [None if reopens_gate else settled_gate]
+
+
 def test_stable_repository_and_identical_signature_dispatch_only_one_worker() -> None:
     repository = _FakeRepository(_active_result(_trace()))
     messages = [_message("assistant", persisted_message_id="persisted")]
@@ -1080,6 +1125,10 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
     screen._console_image_preparing = set()
     screen._native_console_transcript_fingerprint = lambda _messages: ("stable",)
     screen._sync_console_transcript_guidance = lambda: None
+    # The transcript sync reads the session's conversation id (task-16815's
+    # screen delegation); this detached session has none.
+    screen._session._current_console_conversation_id = lambda: None
+    screen._sync_console_rate_chip = lambda _messages: None  # not this test's
     # `_sync_native_console_transcript` publishes Library-activity footer
     # counts through the controller (task-19900.5). This test is about the
     # CITATION count cache, and the `_FakeStore` above has no activity
@@ -1435,6 +1484,23 @@ async def test_footer_activation_opens_same_lazy_modal_at_narrow_and_wide_sizes(
 
 
 @pytest.mark.asyncio
+async def test_ready_key_modal_hydrates_after_eager_mount() -> None:
+    from Tests.UI.test_console_send_acknowledgement import eager_tasks, until
+
+    app, _screen, repository, _message = _citation_harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        with eager_tasks():
+            app.query_one("#console-citation-sources-assistant-1", Button).press()
+            await until(
+                lambda: isinstance(app.screen, ConsoleCitationSourcesModal)
+                and bool(app.screen.display_rows),
+                timeout=2,
+            )
+        assert len(repository.hydrate_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_modal_authorization_and_revalidation_are_exact_and_ordered() -> None:
     app, _screen, repository, _message = _citation_harness()
 
@@ -1616,15 +1682,22 @@ async def test_citation_unsupported_source_renders_no_open_source_action() -> No
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "hydration",
+    ("hydration", "cause"),
     [
-        _hydration_result(state=CitationHydrationState.PROFILE_DENIED),
-        _hydration_result(omitted_snapshot_ordinals=frozenset({1})),
+        (
+            _hydration_result(state=CitationHydrationState.PROFILE_DENIED),
+            "sources_removed",
+        ),
+        (
+            _hydration_result(omitted_snapshot_ordinals=frozenset({1})),
+            "record_incomplete",
+        ),
     ],
 )
 async def test_denied_or_incomplete_hydration_shows_one_unavailable_state(
-    hydration: CitationHydrationResult,
+    hydration: CitationHydrationResult, cause: str
 ) -> None:
+    """TASK-33620.8 (AC#5): the one unavailable state names a cause."""
     app, _screen, _repository, _message = _citation_harness(hydration=hydration)
 
     async with app.run_test() as pilot:
@@ -1634,16 +1707,45 @@ async def test_denied_or_incomplete_hydration_shows_one_unavailable_state(
 
         modal = app.screen
         assert isinstance(modal, ConsoleCitationSourcesModal)
+        assert modal.unavailable_cause == cause
         states = [
             widget
             for widget in modal.query(".console-citation-sources-state")
-            if isinstance(widget, Static) and widget.renderable == "Sources unavailable"
+            if isinstance(widget, Static)
+            and widget.renderable == CITATION_SOURCES_UNAVAILABLE_COPY[cause]
         ]
         assert len(states) == 1
+        assert modal.unavailable_cause == cause
         assert (
             len(modal.query_one("#console-citation-source-list", ListView).children)
             == 0
         )
+
+
+@pytest.mark.asyncio
+async def test_changed_record_after_hydration_has_deterministic_unavailable_copy(
+    monkeypatch,
+):
+    app, _screen, repository, _message = _citation_harness()
+    checks = []
+
+    def verify(result):
+        checks.append(result)
+        return len(checks) == 1
+
+    monkeypatch.setattr(repository, "verify_active_trace_result", verify)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#console-citation-sources-assistant-1")
+        await pilot.pause(0.1)
+        modal = app.screen
+        assert len(checks) == 2
+        assert modal.unavailable_cause == "record_changed"
+        assert (
+            modal.query_one("#console-citation-sources-state", Static).renderable
+            == CITATION_SOURCES_UNAVAILABLE_COPY["record_changed"]
+        )
+        assert not modal.display_rows
 
 
 @pytest.mark.asyncio
@@ -1658,7 +1760,7 @@ async def test_hydration_exception_shows_content_free_unavailable_state() -> Non
         modal = app.screen
         assert isinstance(modal, ConsoleCitationSourcesModal)
         state = modal.query_one("#console-citation-sources-state", Static)
-        assert state.renderable == "Sources unavailable"
+        assert state.renderable == CITATION_SOURCES_UNAVAILABLE_COPY["load_failed"]
         assert "private" not in str(state.renderable).lower()
 
 

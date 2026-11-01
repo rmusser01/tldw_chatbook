@@ -1271,6 +1271,48 @@ async def test_real_atomic_direct_controller_persists_exact_body_and_trace_on_re
         reopened.close_connection()
 
 
+async def test_sealed_reply_settles_its_checkpoint_so_the_next_send_is_accepted(
+    real_citation_stack_factory,
+) -> None:
+    """TASK-33620.8 (AC#7): a citation-sealed reply must not block the chat.
+
+    The TASK-22302 terminal path wrote the body and the trace but never
+    settled the turn's durable dispatch checkpoint, so the next send was
+    refused with "Conversation already has an active dispatch checkpoint."
+    Hidden while citation records shipped off; on by default it blocked every
+    conversation after its first cited reply.
+    """
+
+    stack = real_citation_stack_factory("sealed-then-next")
+    builder, prompt_id = _real_captured_builder(stack.repository)
+    controller = _real_controller(stack, builder, prompt_id)
+
+    first = await controller.submit_draft("question")
+    session_id = stack.store.active_session_id
+
+    assert first.accepted is True
+    assert _citation_row_counts(stack.db)["rag_message_trace_owners"] == 1
+    assert stack.store.dispatch_recovery_for_session(session_id) is None
+
+    controller._rag_capture_provider = None  # an ordinary follow-up turn
+    second = await controller.submit_draft("follow-up")
+
+    assert second.accepted is True, second.visible_copy
+    assistants = [
+        message
+        for message in stack.store.messages_for_session(session_id)
+        if message.role is ConsoleMessageRole.ASSISTANT
+    ]
+    assert [message.status for message in assistants] == ["complete", "complete"]
+    owner = stack.db.get_connection().execute(
+        "SELECT message_revision, state FROM rag_message_trace_owners"
+    ).fetchone()
+    persisted = stack.db.get_message_by_id(assistants[0].id)
+    assert owner["state"] == "active"
+    assert owner["message_revision"] == persisted["version"]
+    assert persisted["content"] == assistants[0].content
+
+
 @pytest.mark.integration
 def test_terminal_selected_answer_citations_survive_restart(
     real_citation_stack_factory,

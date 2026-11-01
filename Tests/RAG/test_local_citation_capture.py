@@ -60,6 +60,7 @@ from tldw_chatbook.RAG_Search.local_citation_capture import (
     SEMANTIC_SCORE_KIND_KEY,
     SEMANTIC_SCORE_KIND_VECTOR_SIMILARITY,
     format_local_evidence_context,
+    format_unrecorded_console_evidence,
     normalize_local_result,
 )
 from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events as cre
@@ -593,6 +594,34 @@ def test_formatter_truncates_multibyte_snapshot_inside_utf8_and_character_budget
     assert len(snapshot.encode("utf-8")) <= SNAPSHOT_TEXT_UTF8_BYTES_MAX
     assert formatted.entries[0].transformations == ("content_truncated",)
     assert formatted.omitted_candidate_ranks == ()
+
+
+def test_unrecorded_evidence_keeps_the_canonical_per_block_byte_cap():
+    """TASK-33620.8: an unlabelled send carries no more than a labelled one.
+
+    With no citation record (records off, or no key), evidence goes out
+    without [S#] headers. Each block keeps the canonical formatter's UTF-8
+    cap, truncated on a whole codepoint with an ellipsis.
+    """
+    header = "MEDIA — Title\n"
+    at_cap = _multibyte_content_for_snapshot_bytes(header, SNAPSHOT_TEXT_UTF8_BYTES_MAX)
+    exact = normalize_local_result(_result(content=at_cap), candidate_rank=1)
+    oversized = normalize_local_result(
+        _result(result_id="m2", content=at_cap + ("é" * 2048)), candidate_rank=2
+    )
+    small = normalize_local_result(
+        _result(result_id="m3", title="Other", content="short body"), candidate_rank=3
+    )
+
+    text = format_unrecorded_console_evidence([exact, oversized, small])
+
+    blocks = text.split("\n\n", 1)[1].split("\n---\n")
+    assert blocks[0] == header + at_cap  # exactly at the cap: kept whole
+    assert len(blocks[0].encode("utf-8")) == SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    assert len(blocks[1].encode("utf-8")) <= SNAPSHOT_TEXT_UTF8_BYTES_MAX
+    assert blocks[1].startswith(header) and blocks[1].endswith("…")
+    assert blocks[2] == "MEDIA — Other\nshort body"
+    assert not any(block.startswith("[S") for block in blocks)
 
 
 @pytest.mark.parametrize(
@@ -1410,11 +1439,16 @@ async def test_console_send_adapter_preserves_chunk_lineage_score_and_rank():
 
 
 @pytest.mark.asyncio
-async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> None:
+@pytest.mark.parametrize("requested_top_k", [None, 1])
+async def test_console_estimate_stays_pre_authority_while_send_rechecks(
+    tmp_path,
+    requested_top_k,
+) -> None:
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
         title="staged evidence",
         payload={
+            "requested_top_k": requested_top_k,
             "evidence_bundle": EvidenceBundle(
                 bundle_id="bundle-authority-shrink",
                 query="question",
@@ -1439,7 +1473,10 @@ async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> Non
             ).to_payload(),
         },
     )
-    app = _CaptureApp(media_ids=())
+    # TASK-33620.8: [S#] ordinals (and the repair contract) exist only when a
+    # citation record can cover the reply, so this send has a repository.
+    db, repository = _real_capture_repository(tmp_path, "ready")
+    app = _CaptureApp(media_ids=(), repository=repository)
     media_db = _InMemoryMediaDB("m2")
     app.media_db = media_db
     try:
@@ -1455,11 +1492,24 @@ async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> Non
             user_message="question",
         )
         assert media_db.query_count >= 1
+        if requested_top_k == 1:
+            # The surviving rank is still 2. An inconsistent bound must fail
+            # capture, never rewrite the source identity into rank 1.
+            assert captured.citation_builder is None
+            assert captured.prompt_evidence_set_id is None
+            assert captured.citation_repair_contract is None
+            assert "Source 2" in captured.context and "Body 2" in captured.context
+            assert "[S1] MEDIA" not in captured.context
+            assert "Source 1" not in captured.context
+            return
+        assert captured.citation_builder is not None
+        assert captured.prompt_evidence_set_id is not None
         assert captured.context == "[S1] MEDIA — Source 2\nBody 2"
         assert captured.citation_repair_contract is not None
         assert captured.citation_repair_contract.allowed_ordinals == (1,)
     finally:
         media_db.close()
+        db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -1516,8 +1566,12 @@ async def test_console_prompt_evidence_set_id_uses_record_method_return(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
+@pytest.mark.parametrize(
+    "record_method", ["record_retrieval_run", "record_prompt_evidence_set"]
+)
+async def test_console_canonical_capture_failure_sends_unlabelled_without_repair(
     monkeypatch,
+    record_method,
 ):
     query = "CONSOLE_PRIVATE_PROMPT_FAILURE_QUERY_SENTINEL"
     title = "CONSOLE_PRIVATE_PROMPT_FAILURE_TITLE_SENTINEL"
@@ -1552,7 +1606,7 @@ async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
 
     monkeypatch.setattr(
         CitationTraceBuilder,
-        "record_prompt_evidence_set",
+        record_method,
         _raise_recording_failure,
     )
     captured_logs = []
@@ -1570,18 +1624,12 @@ async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
     finally:
         loguru_logger.remove(sink_id)
 
-    expected_context = f"[S1] MEDIA — {title}\n{content}"
-    assert captured == cre.LocalRagContextResult(
-        context=expected_context,
-        citation_builder=None,
-        citation_repair_contract=CitationRepairContract(
-            schema_version=1,
-            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
-            allowed_ordinals=(1,),
-            evidence_context=expected_context,
-            require_markers=False,
-        ),
-    )
+    assert title in captured.context and content in captured.context
+    assert "[S1] MEDIA" not in captured.context
+    assert "- Use [S#] labels" not in captured.context
+    assert "Refer to each one by its title" in captured.context
+    assert captured.citation_builder is None
+    assert captured.citation_repair_contract is None
     assert captured.prompt_evidence_set_id is None
     rendered_logs = "".join(str(message) for message in captured_logs)
     assert "reason=canonical_capture_failure" in rendered_logs
@@ -1592,7 +1640,71 @@ async def test_console_canonical_capture_failure_keeps_exact_repair_contract(
 
 
 @pytest.mark.asyncio
-async def test_console_builder_unavailable_returns_exact_repair_contract():
+@pytest.mark.parametrize("adapter", ["staged", "automatic"])
+@pytest.mark.parametrize("failure", ["scope_exception", "incomplete_rows"])
+async def test_console_authority_failure_never_formats_or_captures_evidence(
+    monkeypatch,
+    adapter,
+    failure,
+):
+    repository = _CaptureRepository()
+    app = _CaptureApp(repository=repository)
+    bundle = EvidenceBundle(
+        bundle_id="failed-authority",
+        query="Question",
+        references=(
+            EvidenceReference(
+                evidence_id="S1",
+                source_id="m1",
+                source_type="media",
+                title="Private title",
+                snippet="Private body",
+                authority_label="local",
+            ),
+        ),
+    )
+
+    async def scope_error(*args, **kwargs):
+        raise RuntimeError("authority unavailable")
+
+    async def incomplete_rows(*args, **kwargs):
+        return None
+
+    if failure == "scope_exception":
+        monkeypatch.setattr(cre, "resolve_scope_for_session", scope_error)
+    else:
+        monkeypatch.setattr(cre, "_current_local_evidence_ids", incomplete_rows)
+    if adapter == "staged":
+        launch = ConsoleLiveWorkLaunch.from_values(
+            source="Library Search/RAG",
+            title="Evidence",
+            payload={"evidence_bundle": bundle.to_payload()},
+        )
+        result = await cre.capture_console_staged_evidence_for_chat(
+            app,
+            launch,
+            user_message="Question",
+        )
+    else:
+        result = await cre.capture_console_prepared_evidence_for_chat(
+            app,
+            bundle,
+            user_message="Question",
+        )
+    assert result.context is None
+    assert result.citation_builder is None
+    assert result.prompt_evidence_set_id is None
+    assert result.citation_repair_contract is None
+    assert repository.builders == []
+
+
+@pytest.mark.asyncio
+async def test_console_builder_unavailable_sends_evidence_without_labels():
+    """TASK-33620.8 (AC#4): no citation record can cover this reply.
+
+    The evidence still goes to the model, by title and without [S#] labels
+    nobody could trace, and no repair contract asks for markers.
+    """
     title = "Legacy staged source"
     launch = ConsoleLiveWorkLaunch.from_values(
         source="Library Search/RAG",
@@ -1624,17 +1736,15 @@ async def test_console_builder_unavailable_returns_exact_repair_contract():
         user_message="ordinary prompt",
     )
 
+    from tldw_chatbook.Chat.answer_citations import unrecorded_evidence_text
+
     assert captured == cre.LocalRagContextResult(
-        context="[S1] MEDIA — Legacy staged source\nlegacy body",
+        context=unrecorded_evidence_text(["MEDIA — Legacy staged source\nlegacy body"]),
         citation_builder=None,
-        citation_repair_contract=CitationRepairContract(
-            schema_version=1,
-            marker_namespace=MarkerNamespace.CHATBOOK_S_V1,
-            allowed_ordinals=(1,),
-            evidence_context="[S1] MEDIA — Legacy staged source\nlegacy body",
-            require_markers=False,
-        ),
+        citation_repair_contract=None,
     )
+    assert "[S1] MEDIA" not in captured.context
+    assert "not saved as citations for this reply" in captured.context
     assert captured.prompt_evidence_set_id is None
 
 

@@ -646,6 +646,31 @@ focus-coloured highlight) and single-line rows fixed it.
 widget's region (`screen._compositor.render_strips()`). An outline occupies no
 layout space, so geometry and scroll offsets look correct while a row is hidden.
 
+## Turning a fail-closed default on exposes everything it hid (TASK-33620.8, 2026-10-29)
+
+**Incident.** Citation records shipped off. TASK-33620.8 turned them on, and
+the owner asked for a check in a running app. Two defects then appeared that
+dev had been hiding behind the off switch. They showed up in different ways.
+- With records forced on, a mounted send wrote its trace and the screen
+  counted one source. The "Cited sources" row never appeared. The TASK-34958
+  transcript tick gate (c6d91555a4) keys on the store's display token. A
+  count found after the run had settled changed nothing the gate could see,
+  so the follow-up sync was skipped.
+- In the live check, the second send after a cited reply was refused with
+  "Couldn't save the prepared turn". The cause was "Conversation already has
+  an active dispatch checkpoint". TASK-22302's terminal path writes the
+  sealed citation but never settled the turn's checkpoint. Every suite that
+  pinned records on stopped after one send. A mounted probe on origin/dev
+  with records on reproduced it.
+
+**What to do.** Before flipping a default that gates a whole path, run that
+path end to end with the flag on, through at least two turns. That means
+the real screen sync and the next send, not only the write. For any state a
+worker pushes after the run settles, check that it gets through the tick
+gate. When a probe against dev shows the defect, write the test first:
+here, the mounted test's second send and the store-level test both failed
+without the fix.
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
@@ -797,6 +822,12 @@ setting native_tools alone does not override provider capability policy.
 **Incident.** TASK-37000's mounted send test counted layout requests from inside the collapsed Inspector rail and read zero on the branch. Its harness sets `[console] agent_runtime = false`, as most Console send harnesses do. The live paired spot-check (pf2probe, 160x45) still found one in-rail request per launch, on base and branch alike: a chat's first agent run calls `_publish_mcp_inspector_counts`, and the sync tick then re-wrote the readiness card's MCP row with a layout. The harness never ran `_compose_mcp_provider`, so the test could not see the write it was meant to forbid.
 
 **What to do.** When a test switches off a subsystem that the live path runs, list what that subsystem publishes to the UI during the window the test measures. Drive each of those seams in the test (here the controller's own publish call), and confirm the count once live.
+
+## A test that claims the shipped config must not switch the dispatcher off (TASK-33620.8 review, 2026-10-30)
+
+**Incident.** TASK-33620.8's AC#6 test said it ran "the shipped default config", but a fixture set `[console] agent_runtime = false` so that sends would stay on the provider-gateway double. The default is on, and with a file-backed DB every send runs through `ConsoleAgentBridge`, so neither send path the test covered was the one users get. The independent review caught the mismatch. The override was never needed: the bridge's model adapter streams from the same gateway double. The fix ran the staged and Automatic tests at the default, with a spy on `ConsoleAgentBridge.run_reply` that still runs each turn and asserts every send took it, plus a provider-direct variant. Mutating the checkpoint settle and the transcript-gate reset turned the agent-runtime variants red too.
+
+**What to do.** Before switching a production default off to keep a double in reach, check whether the double is reachable on the default path. If a test has to override a default, its AC and docstring must say so. Assert the path each send took, so the claim is checked rather than assumed.
 
 ## A held rebuild makes later updates skip the path a test meant to cover (TASK-37000, 2026-10-27)
 
@@ -23956,3 +23987,11 @@ blocked under every profile alike, because field names survive all scrubbing.
 error with real inputs under each option the copy would suggest, and keep only
 advice that turned a failure into a success in that probe. When nothing does,
 say what stopped the operation and where the details are; do not offer a retry.
+
+### PR3323: eager Mount and replacement services must be exercised in the real fixture (2026-11-01)
+
+The persisted Sources test initially timed out even though a direct reply and its citation record had saved. A focused eager-task control (r-509ec561) reproduced the cause: a worker launched from on_mount could run before Textual set is_mounted, so its new liveness guard silently skipped hydration. Waiting for the actual mounted event preserved dismissal/generation fences and made the focused case plus real Sources/restart journey pass (r-2b034421); sleeping for an arbitrary interval was unnecessary.
+
+The same mounted fixture replaced the factory's absent ChaChaNotes DB with a file DB but rewired only conversation services. Its dictionary participant still referred to the original missing owner. Rebinding the real dictionary service to that same DB restored the production composition; a legacy conversation-service stub was also removed. A full reply arriving before a terminal timeout did not prove a citation bug: native stack observations located guarded Windows admission, and the same agent operation later completed. Capture phase/timing evidence before changing watchdogs, and retain the distinction between functional completion and latency qualification.
+
+Final preservation found a second concrete composition trap in `test_console_runtime_rag_capture_wiring.py`: its helper passed a store to `ensure_chat_controller` but never called `runtime.set_chat_store(store)`. Four cases stopped at required hook initialization on both the integrated candidate (r-cf89449e) and pinned a9c base (r-0bcbb613). The hook owner guard compared the controller's store with the runtime's unset store. Adding the real composition call, without replacing hooks or weakening assertions, passed all four cases (r-306266a0). A swallowed initialization message alone did not identify the cause; the exact owner path and controlled fixture correction did. Keep unrelated base-reproduced trace/Stop failures explicit rather than using this fixture fix to imply they passed.

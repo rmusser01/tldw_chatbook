@@ -14,7 +14,6 @@ from tldw_chatbook.Chat.citation_provenance_runtime import (
 )
 from tldw_chatbook.Chat.citation_trace_identity import (
     CitationFingerprintKeyProvider,
-    CitationFingerprintKeyUnavailable,
     KeyringCitationFingerprintKeyProvider,
 )
 from tldw_chatbook.Chat.citation_trace_repository import (
@@ -30,63 +29,40 @@ def build_local_citation_conversation_service(
     policy: CitationProvenanceRuntimePolicy | None = None,
     key_provider: CitationFingerprintKeyProvider | None = None,
     repository: CitationTraceRepository | None = None,
+    defer_key: bool = False,
 ) -> tuple[
     ChatConversationService,
     CitationTraceRepository,
     CitationLegacyMigrationService,
 ]:
-    """Compose one policy/identity/key context for local citation reads and writes."""
+    """Compose one policy/identity/key context for local citation reads and writes.
+
+    Args:
+        db: The ChaChaNotes database that owns messages and citation records.
+        sidecar_path: The legacy RAG-context sidecar read during migration.
+        policy: The canonical-write switch; read from config when omitted.
+        key_provider: The fingerprint key source; the system keyring by default.
+        repository: An already composed repository to reuse as-is.
+        defer_key: Compose without touching the key provider. The app's boot
+            composition passes ``True`` (TASK-33620.8): the key is acquired,
+            or provisioned, on first use through
+            ``CitationTraceRepository.ensure_local_fingerprint_key``. Batch
+            callers (Chatbook export/import) keep the eager default.
+
+    Returns:
+        The conversation service, its citation repository and its migration.
+    """
 
     if repository is None:
-        runtime_policy = policy or CitationProvenanceRuntimePolicy.from_config()
-        identity_context = load_local_citation_identity_context(db)
-        runtime_key_provider = key_provider or KeyringCitationFingerprintKeyProvider()
-        repository = CitationTraceRepository.from_key_provider(
+        repository = CitationTraceRepository(
             db,
-            policy=runtime_policy,
-            identity_context=identity_context,
-            key_provider=runtime_key_provider,
+            policy=policy or CitationProvenanceRuntimePolicy.from_config(),
+            identity_context=load_local_citation_identity_context(db),
+            fingerprint_codec=None,
+            key_provider=key_provider or KeyringCitationFingerprintKeyProvider(),
         )
-        if (
-            runtime_policy.canonical_writes_enabled
-            and identity_context is not None
-            and isinstance(
-                runtime_key_provider,
-                KeyringCitationFingerprintKeyProvider,
-            )
-            and not repository.local_citation_writes_ready
-        ):
-            with db.transaction() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE rag_identity_context
-                    SET fingerprint_key_id = fingerprint_key_id
-                    WHERE context_name = 'default'
-                    """
-                )
-                repository = CitationTraceRepository.from_key_provider(
-                    db,
-                    policy=runtime_policy,
-                    identity_context=identity_context,
-                    key_provider=runtime_key_provider,
-                )
-                if (
-                    not repository.local_citation_writes_ready
-                    and not repository.fingerprint_bearing_rows_exist()
-                ):
-                    try:
-                        runtime_key_provider.provision_key(
-                            identity_context.fingerprint_key_id
-                        )
-                    except CitationFingerprintKeyUnavailable:
-                        pass
-                    else:
-                        repository = CitationTraceRepository.from_key_provider(
-                            db,
-                            policy=runtime_policy,
-                            identity_context=identity_context,
-                            key_provider=runtime_key_provider,
-                        )
+        if not defer_key:
+            repository.ensure_local_fingerprint_key()
     migration = CitationLegacyMigrationService(
         db=db,
         repository=repository,

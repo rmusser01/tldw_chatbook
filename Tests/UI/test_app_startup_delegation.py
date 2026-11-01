@@ -26,7 +26,9 @@ def test_startup_wiring_preserves_live_delays_and_callback_order(monkeypatch):
         _reconcile_citation_artifact_ownership=lambda: "citations",
         _migrate_legacy_citations_idle_unit=lambda: "migration",
         citation_artifact_ownership_coordinator=SimpleNamespace(writes_enabled=True),
-        citation_legacy_migration_service=SimpleNamespace(ready=True),
+        citation_legacy_migration_service=SimpleNamespace(
+            ready=True, writes_enabled=True
+        ),
         _schedule_launch_wake=lambda: calls.append("wake"),
     )
     monkeypatch.setattr(

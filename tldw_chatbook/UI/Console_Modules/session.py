@@ -2948,6 +2948,16 @@ class ConsoleSessionController:
             return
 
         store = self._ensure_console_chat_store()
+        from ...Chat.citation_key_first_use import ensure_fingerprint_key_off_loop
+
+        await ensure_fingerprint_key_off_loop(
+            getattr(store.persistence, "citation_repository", None)
+        )
+        if not self._fork_request_is_current(request, generation):
+            return
+        if self._ensure_console_chat_store() is not store:
+            request.modal.show_stale_source()
+            return
         prefix = self._fork_prefix_messages(store, request.fence)
         if (
             prefix is None

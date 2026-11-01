@@ -2832,6 +2832,9 @@ class ConsoleMessageController:
     ) -> None:
         """Open the dedicated transcript edit modal for one Console message."""
         store = self._ensure_console_chat_store()
+        from ...Chat.citation_key_first_use import ensure_fingerprint_key_off_loop
+
+        session_id = store.active_session_id
         try:
             message = store.get_message(message_id)
         except KeyError:
@@ -2839,6 +2842,25 @@ class ConsoleMessageController:
                 "Console message action target no longer exists.",
                 severity="error",
             )
+            return
+        controller = self._console_chat_controller
+
+        def target_is_current() -> bool:
+            if (
+                self._console_chat_store is not store
+                or self._console_chat_controller is not controller
+                or store.active_session_id != session_id
+            ):
+                return False
+            try:
+                return store.get_message(message_id) == message
+            except KeyError:
+                return False
+
+        await ensure_fingerprint_key_off_loop(
+            getattr(store.persistence, "citation_repository", None)
+        )
+        if not target_is_current():
             return
         can_resend = message.role is ConsoleMessageRole.USER
         clears_generation_provenance = bool(
@@ -2851,7 +2873,7 @@ class ConsoleMessageController:
         )
 
         def _apply_edit(result: ConsoleEditResult | None) -> None:
-            if result is None:
+            if result is None or not target_is_current():
                 return
             self._clear_console_original_attempt_preview(message_id)
             if not result.resend:

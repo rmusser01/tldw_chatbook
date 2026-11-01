@@ -1099,10 +1099,45 @@ nothing has actually been sent yet.
 
 ### Citations
 
-When a reply is grounded in sources, a **Sources (N)** button appears
-under it, opening the **Sources** window: `[S1]`-numbered rows, a detail
-pane with the matched snippet, an **Open in Library** button (shown when
-the source can be opened), and **Close**.
+When a reply cites Library evidence, staged by hand or found by
+**Automatic** retrieval, a **Cited sources (N)** button appears under it.
+N is the number of sources the reply cites. The button opens the **Cited
+sources** window: `[S1]`-numbered rows, a detail pane with the exact
+snippet the model saw, an **Open in Library** button (shown when the source
+can be opened), and **Close**. The labels are numbered per reply, so `[S1]`
+in one reply and `[S1]` in the next can be different documents. The window
+is the map from a label to its document.
+
+Chatbook saves which sources each reply cited, so the button and the
+window still work after you restart the app or reopen the chat. These
+citation records are protected by a key that Chatbook creates in your
+system keyring (Keychain, Secret Service or KWallet) the first time it
+needs one, when you send a reply with Library evidence. Until then
+Chatbook doesn't touch the keyring. Once records exist, it reads the key
+in the background just after startup to maintain them.
+
+When citation records can't be saved, Chatbook sends the evidence without
+`[S1]` labels and asks the model to refer to each source by its title.
+The model may still produce labels; these have no saved source map.
+This happens when no secure system keyring is
+available, or when records are turned off (`canonical_writes_enabled =
+false` under `[rag_citations]` in `config.toml`). A reply whose saved
+record can no longer be checked, for example because the keyring was
+reset, shows **Cited sources unavailable**. Its window says why and what to
+do next, such as unlocking or restoring the keyring and restarting
+Chatbook. Chatbook never creates a new key for records that already
+exist.
+
+Two cases work differently for now:
+
+- **Temporary chats** aren't saved, so their replies have no citation
+  records. A reply in a Temporary chat can still show `[S1]` labels, but no
+  **Cited sources** button.
+- **Older installs** may keep citation records off. Chatbook writes its
+  default settings into `config.toml` when a profile is first set up, so a
+  profile set up before records were on by default can have
+  `canonical_writes_enabled = false` there. To turn records on, change it
+  to `true` under `[rag_citations]` and restart Chatbook.
 
 Dim notices under the reply track verification: "Checking citations…",
 then "Citations repaired" or "Citations repaired · View original attempt"
@@ -1144,8 +1179,8 @@ Inspector shows what's in play:
 5. **Narrow RAG to two documents** — expand the Inspector, press
    **Narrow…** on the scope row, pick the **Media** tab, filter by title,
    click the two items, press **Save**. The strip shows **Scope: 2**.
-6. **Open a citation's source in Library** — click **Sources (N)** under
-   the reply, select an `[S1]` row, press **Open in Library**.
+6. **Open a citation's source in Library** — click **Cited sources (N)**
+   under the reply, select an `[S1]` row, press **Open in Library**.
 7. **Have ordinary sends ground themselves automatically** — click the
    **Library** chip, choose **Automatic** under Auto, and press **Save**.
    This changes only the active conversation; new conversations default to

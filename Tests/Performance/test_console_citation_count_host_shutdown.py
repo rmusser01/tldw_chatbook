@@ -30,6 +30,9 @@ async def test_original_citation_count_worker_retires_before_host_drain(
     from tldw_chatbook.Chat.citation_trace_repository import CitationTraceRepository
     from tldw_chatbook.DB import base_db
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.UI.Console_Modules.citation_counts import (
+        _read_with_first_use_key,
+    )
     from tldw_chatbook.UI.Console_Modules.view_workers import (
         capture_console_view_workers,
         drain_console_view_workers,
@@ -99,8 +102,10 @@ async def test_original_citation_count_worker_retires_before_host_drain(
             assert invocation is not None
             assert invocation.f_globals is base_db.run_owned_db_call.__globals__
             assert invocation.f_locals["database"] is database
-            assert invocation.f_locals["operation"] is query
-            assert invocation.f_locals["args"] == (repository, eligible)
+            # TASK-33620.8: the reader runs inside the first-use key wrapper,
+            # in the same owned worker call.
+            assert invocation.f_locals["operation"] is _read_with_first_use_key
+            assert invocation.f_locals["args"] == (query, repository, eligible)
             assert invocation.f_locals["kwargs"] == {}
             invocation = None
             assert ancestor is not None
@@ -218,3 +223,91 @@ async def test_original_citation_count_worker_retires_before_host_drain(
         assert held["connection"] not in held["participant"].connections
     assert selected, "Host drain omitted the original citation-count worker"
     assert retained, "Host drain released original native-live citation-count query"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_count_host_closes_while_key_only_thread_remains_observable(
+    request, tmp_path
+):
+    from Tests.Chat.test_citation_key_first_use import _Keyring, _compose
+    from tldw_chatbook.Chat.citation_trace_repository import (
+        load_local_citation_identity_context,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.UI.Console_Modules.view_workers import (
+        capture_console_view_workers,
+        drain_console_view_workers,
+    )
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    entered, release = threading.Event(), threading.Event()
+    database = CharactersRAGDB(tmp_path / "key-host.db", "key-host")
+    original_identity = load_local_citation_identity_context(database)
+
+    class HeldKeyring(_Keyring):
+        __module__ = "keyring.backends.macOS"
+
+        def get_password(self, service, account):
+            # The physical key target has no owned SQLite callback ancestor.
+            frame = sys._getframe()
+            while frame:
+                assert frame.f_code.co_name != "invoke"
+                frame = frame.f_back
+            assert getattr(database._local, "conn", None) is None
+            entered.set()
+            assert release.wait(10)
+            return super().get_password(service, account)
+
+    repository = _compose(database, tmp_path, HeldKeyring())
+    host, screen = App(), Screen()
+    read, published = [], []
+    controller = SimpleNamespace(
+        _read_console_citation_counts=lambda *_: read.append(True) or {},
+        _apply_console_citation_counts=lambda *args: published.append(args),
+    )
+    worker = drain = None
+    with host._context():
+        try:
+            worker = screen.run_worker(
+                ChatScreen._discover_console_citation_counts(
+                    controller,
+                    repository,
+                    ("conversation", ()),
+                    1,
+                    repository_token=("ready", 1, 1, 1),
+                ),
+                group="console-citation-counts",
+                exit_on_error=False,
+            )
+            assert await asyncio.to_thread(entered.wait, 5)
+            database.add_note(
+                title="Concurrent writer", content="Key has no DB custody"
+            )
+            worker.cancel()
+            worker.cancel()
+            drain = asyncio.create_task(
+                drain_console_view_workers(capture_console_view_workers(host))
+            )
+            done, _ = await asyncio.wait({drain}, timeout=0.2)
+            assert drain in done
+            assert worker._task.done()
+            assert repository._key_acquisition.thread.is_alive()
+            assert not repository._key_acquisition.future.done()
+            assert not read and not published
+        finally:
+            release.set()
+            if repository._key_acquisition is not None:
+                await asyncio.to_thread(repository._key_acquisition.thread.join, 5)
+                assert not repository._key_acquisition.thread.is_alive()
+            await asyncio.gather(
+                *(
+                    item
+                    for item in (drain, worker._task if worker else None)
+                    if item is not None
+                ),
+                return_exceptions=True,
+            )
+            assert load_local_citation_identity_context(database) == original_identity
+            assert not read and not published
+            database.close()

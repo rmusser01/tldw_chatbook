@@ -3161,8 +3161,26 @@ async def test_media_handoff_evidence_bundle_reaches_capture_as_real_context(
     )
     from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
 
+    from tldw_chatbook.Chat.citation_provenance_runtime import (
+        CitationProvenanceRuntimePolicy,
+    )
+    from tldw_chatbook.Chat.citation_trace_identity import CitationFingerprintCodec
+    from tldw_chatbook.Chat.citation_trace_repository import (
+        CitationTraceRepository,
+        load_local_citation_identity_context,
+    )
+
     app = _build_test_app()
-    attach_chachanotes_db(app)
+    db = attach_chachanotes_db(app)
+    # TASK-33620.8 (AC#4): evidence carries [S#] labels and a repair
+    # contract only when a citation record can cover the reply, so this
+    # canonical round trip needs a ready repository (key already loaded).
+    app.citation_trace_repository = CitationTraceRepository(
+        db,
+        policy=CitationProvenanceRuntimePolicy(canonical_writes_enabled=True),
+        identity_context=load_local_citation_identity_context(db),
+        fingerprint_codec=CitationFingerprintCodec(b"k" * 32),
+    )
     app.media_db = _ExistingMediaDBDouble("media-77")
     captured = []
 
