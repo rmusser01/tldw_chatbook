@@ -26,3 +26,6 @@ Reason: source already records the CI ordering and bounded cancellation policy.
 - [ ] Diagnose failures against exact base; preserve guards and evidence. Run scoped AST/lint/diff checks.
 - [ ] Record QA and task evidence with hosted limits, commit, obtain independent immutable-head review, then exact-lease publish and authorized merge after refreshed eligibility/threads.
 - [ ] Confirm actual merge and identical branch-protection restoration before next backlog item.
+## Integration ledger
+
+Ruling: prepare and test the independent CI delta on frozen PR3315 head 5d7cad1c8598495e398cf25cd976352c8689b23a while its UI run completes. Publication remains ordered after PR3315; rebase onto its confirmed merge and repeat any validation affected by later repairs before final review. This overlaps local preparation only, not merges.
