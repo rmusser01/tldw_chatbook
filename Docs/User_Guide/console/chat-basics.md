@@ -416,10 +416,14 @@ statistics tools.
   marked **Sending…**, while Console prepares the turn: the header reads
   **Running**, the tab shows **●**, the status row shows **Run: Sending…** and
   Send reads **Sending...** (its strip: "Queue opens once this turn is
-  accepted"). The draft stays in the composer until the turn is accepted, then
-  clears; if the turn is refused before that, the **Sending…** row disappears
-  and the draft is kept, or offered back on the shelf as `Not sent: <reason>`
-  with **Restore**.
+  accepted"). The draft stays in the composer until Console takes the turn,
+  then clears; while it stays, the composer keeps its height, so text the
+  strip narrows is cut to its row rather than wrapped. A **Sending…** row
+  keeps its mark until the reply's row (or a notice) appears beneath it, so
+  the two arrive together. If the turn is refused before that, the
+  **Sending…** row disappears and the draft is kept (wrapped to its full
+  height again), or offered back on the shelf as `Not sent: <reason>` with
+  **Restore**.
   Slash commands, typed `! ` commands, Enter during a run (which queues) and
   a send behind a **Blocked** turn (which is refused) skip this step.
 - Console stays responsive while it prepares the turn. Enter sends exactly

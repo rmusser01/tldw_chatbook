@@ -34,6 +34,12 @@ checking only the model written to the origin misses the navigation failure.
 
 ---
 
+## A mark set where a send starts outlives a send refused by any other exit (TASK-33620.15.26 review, 2026-10-29)
+
+**Incident.** To stop the composer re-wrapping the text a send was taking, `send_acknowledgement._schedule` marked the draft (`ConsoleComposerBar.note_draft_sending`) and the composer kept its rows while that draft showed unedited. Only one refusal cleared the mark: the received-intent path's synchronous `""`. A visible send has many other exits that keep the draft: an unknown `/command`'s hint, a needs-review skill, the `_dispatch_console_draft_send` gates, a stock turn refused after admission. The review sent an unknown command at 160x45, resized to 90 columns, and the draft that needed 3 rows showed 1 until the user typed. Live on that head, the same steps cut it to one row; the mounted reproduction failed 1 vs 3.
+
+**What to do.** When a send's start sets state that changes what the user sees, do not chase every way the send can end. Gate the effect on state the UI already shows for a send in flight: here the composer keeps its rows only while Send refuses for the turn being prepared, so any refusal that returns Send to idle hands the draft its rows back. Then test one refusal that never clears the mark.
+
 ## Moving a stale-scope check onto the worker leaves the hop to the UI loop open (TASK-33620.15.1.6, 2026-10-27)
 
 **Incident.** The Console Environment panel's `_land` used to read the

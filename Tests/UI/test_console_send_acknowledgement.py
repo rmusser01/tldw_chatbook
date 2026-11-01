@@ -449,9 +449,16 @@ def test_acknowledgement_row_stands_in_until_the_store_echo_lands():
 
     _admit(ack, token)
     echo = _message(Role.USER, "echo")
-    assert ack.project("s1", [old, echo]) == [old, echo]
+    # TASK-33620.15.20: the echo alone releases the send (Send, the Run chip
+    # and the tab read the turn's own state), but its row stands in for the
+    # echo until the turn writes its next row, so both land in one layout.
+    assert ack.project("s1", [old, echo]) == [old, pending[-1]]
     assert not ack.active_for("s1")
-    assert released == []  # the projection that saw the echo renders it
+    assert released == []  # nothing is owed: the projection renders it
+    reply = _message(Role.ASSISTANT, "reply")
+    assert ack.project("s1", [old, echo, reply]) == [old, echo, reply]
+    assert ack.project("s1", [old, echo]) == [old, echo]  # it stood in once
+    assert released == []
 
 
 def test_only_the_sends_own_echo_releases_its_row():
@@ -475,8 +482,50 @@ def test_only_the_sends_own_echo_releases_its_row():
     # Admitted, its echo not written yet: the sibling is still not it.
     assert ack.project("s1", [sibling])[-1].status == "pending"
     echo = _message(Role.USER, "echo")
-    assert ack.project("s1", [sibling, echo]) == [sibling, echo]
+    reply = _message(Role.ASSISTANT, "reply")
+    assert ack.project("s1", [sibling, echo, reply]) == [sibling, echo, reply]
     assert not ack.active_for("s1") and released == []
+
+
+def test_a_standing_in_row_leaves_when_its_echo_fails_goes_or_custody_ends():
+    """TASK-33620.15.20: the stand-in never outlives what it stands in for.
+
+    It goes once the echo is no longer a plain row (a send-blocked echo shows
+    at once), once the echo is gone, and once the turn's custody ends with
+    the echo still alone (a refusal after the echo); only that last release
+    is outside a projection, so only it asks for a repaint.
+    """
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole as Role
+
+    old = _message(Role.USER, "old-user")
+    echo = _message(Role.USER, "echo")
+
+    def standing_in():
+        ack, released = _ack({"s1": ["old-user"]})
+        token = ack.begin("s1", DRAFT)
+        callback = _admit(ack, token)
+        stand_in = ack.project("s1", [old, echo])[-1]
+        assert stand_in.status == "pending" and stand_in.content == DRAFT
+        return ack, released, callback
+
+    ack, released, _ = standing_in()
+    failed = replace(echo, status="failed")
+    assert ack.project("s1", [old, failed]) == [old, failed]
+    assert ack.project("s1", [old, echo]) == [old, echo] and released == []
+
+    ack, released, _ = standing_in()
+    assert ack.project("s1", [old]) == [old]
+    assert ack.project("s1", [old, echo]) == [old, echo] and released == []
+
+    ack, released, callback = standing_in()
+    assert ack.project("other-session", [old, echo]) == [old, echo]
+    callback(False)
+    assert released == [1]
+    assert ack.project("s1", [old, echo]) == [old, echo]
+    callback(False)
+    assert released == [1]  # a stale token releases nothing
 
 
 def test_acknowledgement_released_when_custody_ends_without_an_echo():
@@ -659,3 +708,59 @@ def test_only_an_idle_chat_draft_is_acknowledged(monkeypatch):
         module, "blocked_turn_reason", lambda _controller: "trace capture blocked"
     )
     assert text_for(_stash(DRAFT)) is None
+
+
+@pytest.mark.parametrize("prior_ack", [False, True])
+@pytest.mark.parametrize(
+    "activity",
+    [
+        {"queued_count": 10},
+        {"occupies_slot": True},
+        {"occupies_slot": True, "preparing_before_acceptance": True},
+    ],
+    ids=["queue-full", "run-hold", "another-preparing"],
+)
+def test_refused_press_never_owns_the_composer_height(activity, prior_ack):
+    """A refused edited capture cannot replace an earlier send's geometry owner."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
+
+    marked = []
+    callbacks = []
+    composer = SimpleNamespace(note_draft_sending=marked.append)
+
+    def enqueue(*args):
+        callbacks.append(args)
+        return True
+
+    async def send(**_kwargs):
+        return False
+
+    screen = SimpleNamespace(
+        _console_chat_controller=_Controller(),
+        _console_composer_or_none=lambda: composer,
+        _send_console_message_from_visible_action=send,
+        call_later=enqueue,
+        app=SimpleNamespace(call_later=enqueue),
+    )
+    original = _stash(DRAFT)
+    if prior_ack:
+        module._schedule(
+            screen, module._SendFlight(), module._Request("s1", original, None)
+        )
+        assert marked == [original], "an acknowledged send must hold its own draft"
+    previous = list(marked)
+    ack = module.acknowledgement_for(screen)
+    previous_row = ack.pending_row_id("s1")
+    screen._console_chat_controller = _Controller(**activity)
+    newer = replace(
+        original, text="New unsent draft", edit_serial=original.edit_serial + 1
+    )
+    module._schedule(screen, module._SendFlight(), module._Request("s1", newer, None))
+    assert callbacks, "the refused press must still follow normal dispatch"
+    assert ack.pending_row_id("s1") == previous_row
+    assert (
+        marked == previous
+    ), "a refused capture replaced the actual send's height owner"

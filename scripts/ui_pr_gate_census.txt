@@ -1815,3 +1815,16 @@ Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_failed_commit_s
 Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_saved_chat_without_its_library_policy_row_sends_and_repairs_it
 # TASK-33620.3 AC#4 negative control: a missing-row chat whose session stages a broader policy still refuses, and no Automatic row is written (one mounted case, about 12 s at load average 30).
 Tests/UI/test_console_durable_commit_failure_recovery.py::test_a_saved_chat_with_an_unsafe_staged_policy_still_refuses_the_repair
+# TASK-33620.15.26 (2026-10-29): a later send keeps the composer one row tall
+# and moves the transcript at most twice: a stock (received-intent) send and
+# an acknowledged-path send (one private-profile app run each, about 15-25 s
+# locally at load 5-25), and the composer's kept-rows rule (one widget case,
+# a few seconds), appended at the tail as node ids; existing slots stay fixed.
+Tests/UI/test_console_send_window_reflows.py::test_a_stock_later_send_keeps_the_composer_one_row_tall
+Tests/UI/test_console_send_window_reflows.py::test_an_acknowledged_later_send_lands_its_echo_with_the_placeholder
+Tests/UI/test_console_send_window_reflows.py::test_the_composer_keeps_its_rows_while_a_send_takes_its_text
+# TASK-33620.15.26 review fix (2026-10-29): a refused send's draft gets its
+# rows back (one widget case, a few seconds; one mounted unknown-command send
+# and resize, about 10 s locally at load 5), appended at the tail as node ids.
+Tests/UI/test_console_send_window_reflows.py::test_a_refused_send_gives_its_draft_its_rows_back
+Tests/UI/test_console_send_window_reflows.py::test_an_unknown_command_keeps_its_draft_and_its_rows

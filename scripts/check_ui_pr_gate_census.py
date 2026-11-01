@@ -684,7 +684,17 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.3 review follow-up (2026-10-29) appends the repair's negative
 # control at the tail (a broader staged policy still refuses and writes no
 # row; one mounted case, about 5-12 s locally): 1149 -> 1150.
-MINIMUM_FILES = 1263
+# TASK-33620.15.26 (2026-10-29) appends 3 node ids at the tail: a later send
+# keeps the composer one row tall and moves the transcript at most twice (a
+# stock send and an acknowledged-path send, one private-profile app run each)
+# and the composer's kept-rows rule (one widget case), so no existing entry
+# changes shard: dev's 1145 entries + 3 = 1148.
+# TASK-33620.15.26 review fix (2026-10-29) appends 2 more node ids at the
+# tail (a refused send's draft gets its rows back: a widget case and a
+# mounted unknown-command resize), so no existing entry changes shard:
+# 1148 + 2 = 1150.
+# PR3310, 2026-11-01: retain all1263 current-dev entries and append five reviewed nodes.
+MINIMUM_FILES = 1268
 
 
 def read_census(path: Path) -> list[str]:
