@@ -16,7 +16,7 @@
 
 **Baseline:** finalized design commit `8f989edc9f`. Source mapping was inspected in the current dirty checkout; unrelated staged additions are not implied to be committed prerequisites. Recheck the integrated source, symbols and schema before execution.
 
-**Status:** Implementation in progress. Task 1 passed its independent review gate; Tasks 2–10 remain pending. Runtime/UI delivery is incomplete.
+**Status:** Implementation in progress. Tasks 1–2 passed their independent review gates; Tasks 3–10 remain pending. Runtime/UI delivery is incomplete.
 
 ```text
 ADR required: no
@@ -169,9 +169,9 @@ def test_duplicate_start_preserves_identity_and_no_dispatch(tmp_path):
 
 **Consumes:** Task 1 state and native automatic reservations. **Produces:** `ConsoleSubmissionOrigin.WORKFLOW_PHASE`; `AutomaticWorkContext.attempt_kind == "workflow_phase"`; immutable-origin `policy_kind == "workflow_phase"`. Add ledger APIs `prepare_workflow_phase(workflow_id, *, revision_id, phase_id, owner_id, session_id, command_id) -> WorkflowPhaseAttempt`, `accept_workflow_phase(attempt_id, *, owner_id) -> bool`, and `claim_workflow_task(attempt_id, *, task_id, owner_id) -> WorkflowTaskAttempt`. The attempt values contain exact workflow/revision/phase/chain/session/owner/state and stable identities. `WorkflowPhaseAuthorization` is private process-local custody issued only after native owner validation and FULL acceptance; an accepted database ID alone is not its constructor.
 
-- [ ] **1. Add failing duplicate-acceptance, wrong-owner and active-time tests** using real SQLite and injected wall/monotonic clocks, following `Tests/DB/test_automatic_work_deadlines.py`. Check identical decisions return the original attempt, conflicting payloads refuse, revocation wins before effect dispatch, and prepared/uncertain work never grants replay.
-- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/DB/test_workflow_attempts.py Tests/DB/test_workflow_active_time.py Tests/Agents/test_workflow_policy.py`. Inspect failure cause before implementation.
-- [ ] **3. Extend every automatic-kind reader/acceptance/recovery branch together.** Audit the controller's origin-specific handling, `_read_attempt`, `policy_kind`, enabled-setting selection, SQL attempt-kind constraints, active-per-conversation index, admission guards and restore activation. Reuse physical attempt storage without inventing child completion claims. Workflow calls/children charge their one workflow allowance; manual requests stay manual. Example required policy assertion:
+- [x] **1. Add failing duplicate-acceptance, wrong-owner and active-time tests** using real SQLite and injected wall/monotonic clocks, following `Tests/DB/test_automatic_work_deadlines.py`. Check identical decisions return the original attempt, conflicting payloads refuse, revocation wins before effect dispatch, and prepared/uncertain work never grants replay.
+- [x] **2. Run red:** `.venv/bin/python -m pytest -q Tests/DB/test_workflow_attempts.py Tests/DB/test_workflow_active_time.py Tests/Agents/test_workflow_policy.py`. Inspect failure cause before implementation.
+- [x] **3. Extend every automatic-kind reader/acceptance/recovery branch together.** Audit the controller's origin-specific handling, `_read_attempt`, `policy_kind`, enabled-setting selection, SQL attempt-kind constraints, active-per-conversation index, admission guards and restore activation. Reuse physical attempt storage without inventing child completion claims. Workflow calls/children charge their one workflow allowance; manual requests stay manual. Example required policy assertion:
 
 ```python
 def test_workflow_policy_does_not_inherit_goal_or_wake_settings(monkeypatch):
@@ -185,9 +185,9 @@ def test_workflow_policy_does_not_inherit_goal_or_wake_settings(monkeypatch):
     assert AutomaticWorkLimits.from_settings("goal_iteration").child_launches == 0
 ```
 
-- [ ] **4. Implement workflow-only union-of-active-interval accounting.** Open before attributable dispatch, retain charging through alive/unknown cleanup, and close only after positive drain and durable settlement. Parallel task durations overlap rather than add. Fully drained persisted review/capacity waits exclude time; an unproven permission wait does not. Persist charged time and clock owner; foreign open intervals cannot become zero after restart. No workflow deadline reset through approvals or limits raised later. Keep existing Goal/wake absolute deadlines byte/behavior compatible.
-- [ ] **5. Fold canonical Settings and config into this slice.** Follow `settings_goal_policy.py` draft/Save/Revert/validation patterns using the exact workflow keys/defaults above, labels that distinguish active seconds, and zero-disable behavior. Do not add the retired settings surface. Run new tests plus `Tests/DB/test_automatic_work_budget.py`, `Tests/DB/test_automatic_work_deadlines.py`, `Tests/Agents/test_goal_models.py`, `Tests/UI/test_console_goal_settings.py` and the new workflow Settings tests.
-- [ ] **6. Review and commit.** Include overnight review, two overlapping clocks, live reduction, exhaustion, clock reversal and interrupted interval receipts. Commit `feat: admit workflow phases with retained active-time budgets`.
+- [x] **4. Implement workflow-only union-of-active-interval accounting.** Open before attributable dispatch, retain charging through alive/unknown cleanup, and close only after positive drain and durable settlement. Parallel task durations overlap rather than add. Fully drained persisted review/capacity waits exclude time; an unproven permission wait does not. Persist charged time and clock owner; foreign open intervals cannot become zero after restart. No workflow deadline reset through approvals or limits raised later. Keep existing Goal/wake absolute deadlines byte/behavior compatible.
+- [x] **5. Fold canonical Settings and config into this slice.** Follow `settings_goal_policy.py` draft/Save/Revert/validation patterns using the exact workflow keys/defaults above, labels that distinguish active seconds, and zero-disable behavior. Do not add the retired settings surface. Run new tests plus `Tests/DB/test_automatic_work_budget.py`, `Tests/DB/test_automatic_work_deadlines.py`, `Tests/Agents/test_goal_models.py`, `Tests/UI/test_console_goal_settings.py` and the new workflow Settings tests.
+- [x] **6. Review and commit.** Include overnight review, two overlapping clocks, live reduction, exhaustion, clock reversal and interrupted interval receipts. Commit `feat: admit workflow phases with retained active-time budgets`.
 
 <a id="task-3"></a>
 ## Task 3: Complete runtime worktree activity claims

@@ -1,7 +1,7 @@
 ---
 id: TASK-38525
 title: Admit workflow attempts with cumulative active-time budgets
-status: In Progress
+status: Done
 created_date: 2026-11-01 17:30
 dependencies:
 - TASK-38524
@@ -14,7 +14,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md
 - backlog/decisions/285-native-phased-agent-workflows.md
-updated_date: 2026-11-01 18:53
+updated_date: 2026-11-01 19:15
 ---
 
 ## Description
@@ -25,9 +25,9 @@ Deliver implementation slice 2 of the accepted native shared-worktree workflow d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Typed workflow phase/task claims enforce durable acceptance before billable work and at most one launch per accepted task attempt.
-- [ ] #2 Workflow active time charges parallel execution once and preserves consumed/uncertain charges across review, restart and live reductions.
-- [ ] #3 Workflow-specific settings use canonical validation/Settings and leave Goal/fleet elapsed deadlines and manual capacity policy unchanged.
+- [x] #1 Typed workflow phase/task claims enforce durable acceptance before billable work and at most one launch per accepted task attempt.
+- [x] #2 Workflow active time charges parallel execution once and preserves consumed/uncertain charges across review, restart and live reductions.
+- [x] #3 Workflow-specific settings use canonical validation/Settings and leave Goal/fleet elapsed deadlines and manual capacity policy unchanged.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,12 +54,13 @@ Verification: 163 targeted tests passed (exit 0), including Goal/fleet budgets/d
 Controller-approved boundaries: planning uses explicit purpose without a fake plan; WORKFLOW_PHASE controller submission fails closed until Task8. claim_workflow_task exposes reservation_id for existing AgentService automatic_child_reservation commit and launch_run_id for requested_run_id; duplicate claims never allocate another allowance. Physical drain is currently a trusted coordinator observation parameter, not yet wired to ExecutionOwner (Tasks7/8). Existing passive stop/save-plan evidence guards remain intact; pause/control CAS revokes dispatch. Actual catalog owners were recovery_operations/sqlite_validation; unrelated recovery_core modules were not edited. ADR required: no new ADR; implements backlog/decisions/285-native-phased-agent-workflows.md.
 
 Task remains In Progress with AC pending the controller's independent review. Full implementation, ownership, source-backed deviations and Task5/6/7/8 interface handoff are in task-2-report.md.
+Independent spec/quality gate passed after fix7d9a48f5e0 (base implementation387c79d000). Added durable within-phase quiescence and enforced explicit/provider/child/tool reopening without allowance refill; failed/cancelled planning now settles without obsolete plan publication, retaining charges and successful-publication CAS. Final fix124 covering checks passed, then2 affected test-style checks; zero introduced static findings. Initial163 targeted and final custody41 runs include v26 real archive/restore/rebackup and mounted Settings; original warnings retained. No full suite. Actual ExecutionOwner drain proof and positive scheduling remain Tasks7–8 under ADR-285.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Workflow-specific durable admission, active-time allowance and canonical Settings implemented and independently reviewed. Controller dispatch remains fail-closed until runtime scheduling integration.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
