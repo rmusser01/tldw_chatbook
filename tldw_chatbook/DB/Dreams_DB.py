@@ -9,10 +9,14 @@ import time
 from pathlib import Path
 from typing import ClassVar, Union
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_closing,
+)
+
 from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel
-from tldw_chatbook.Backup_Recovery.participants import _core_closing  # close() override keeps its retirement gate
 
 #: Upper bound for any list read the UI pages through.
 MAX_LIST_LIMIT = 200
@@ -93,7 +97,6 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
     #: per-call path under the db.base owner; participants identity
     #: stays db.base, so no per-store policy entry is minted.
     _kernel_sqlite_owner = "db.base"
-
 
     _SCHEMA_DDL = (
         """
@@ -270,7 +273,7 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
             raise
 
     # ------------------------------------------------------------------
-    # Connection handling (Library_Collections_DB idiom)
+    # Connection handling (SQLiteStoreKernel, ADR-228)
     # ------------------------------------------------------------------
 
     def _open_connection(self) -> sqlite3.Connection:
@@ -290,13 +293,21 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
         state; NORMAL under WAL avoids an fsync per commit (task-15465
         lineage); task-3012: the held connection needs true autocommit.
         WAL goes through the retry helper (concurrent-opener tolerance).
+
+        Admission is rechecked before AND after setup (the repaired fleet
+        standard): a pause or retirement beginning between the kernel's
+        entry gate and PRAGMA setup must close the unadmitted handle
+        rather than cache it — the kernel's configure-failure wrapper
+        closes on the raised RecoveryRequired.
         """
+        _core_access(self)
         self._validate_schema_lineage(conn)
         conn.execute("PRAGMA foreign_keys = ON")
         if not self.is_memory_db:
             self._enable_wal(conn)
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.isolation_level = None
+        _core_access(self)
         return conn
 
     def _enable_wal(self, conn: sqlite3.Connection) -> None:
@@ -310,7 +321,6 @@ class DreamsDB(SQLiteStoreKernel, BaseDB):
                 if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
                     raise
                 time.sleep(0.01)
-
 
     def _on_connection_opened(self, conn: sqlite3.Connection) -> None:
         """Register into the cross-thread close_all registry (strong refs
