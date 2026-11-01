@@ -16,7 +16,7 @@
 
 **Baseline:** finalized design commit `8f989edc9f`. Source mapping was inspected in the current dirty checkout; unrelated staged additions are not implied to be committed prerequisites. Recheck the integrated source, symbols and schema before execution.
 
-**Status:** Written for implementation review; all ten implementation tasks remain To Do. This plan authorizes no product execution by itself.
+**Status:** Implementation in progress. Task 1 passed its independent review gate; Tasks 2–10 remain pending. Runtime/UI delivery is incomplete.
 
 ```text
 ADR required: no
@@ -121,7 +121,7 @@ Each task ends with targeted checks, diff/self-review, concise implementation no
 
 **Interfaces produced:** strict `WorkflowRequest`, `WorkflowPlan`, `WorkflowTaskSpec`, `WorkflowDecision`, `WorkflowTaskResult`, `WorkflowSnapshot`, `WorkflowTaskAttempt`, `WorkflowCheck` and `WorkflowPayloadReservation` values. `WorkflowRequest` contains `conversation_id`, `objective`, `binding`, `targets` and `policy`; reuse compatible `GoalBindingRef`, `GoalProviderRef`, and `AutomaticWorkLimits` as structural values, not Goal execution authority. `WorkflowSnapshot` includes `id`, `chain_id`, immutable `request`, `control_revision`, separate `progress_cursor`, `status`, saved revisions/results and accounting. `WorkflowRunsStore(db)` exposes `create(request, *, launch_id) -> WorkflowSnapshot`, `get(workflow_id) -> WorkflowSnapshot`, bounded `list_for_conversation(conversation_id, *, limit, offset)`, result capacity reservation/read/removal and revision CAS. These create no execution capability.
 
-- [ ] **1. Add real failing boundary and SQLite tests.** Reject duplicate JSON keys, boolean/nonfinite limits, more than six phases/twelve tasks/64 scopes, invalid earlier dependencies and multibyte overflow. Prove duplicate launch identity and all-or-nothing chain creation. Define the following small shared test factory; it grants no live authority:
+- [x] **1. Add real failing boundary and SQLite tests.** Reject duplicate JSON keys, boolean/nonfinite limits, more than six phases/twelve tasks/64 scopes, invalid earlier dependencies and multibyte overflow. Prove duplicate launch identity and all-or-nothing chain creation. Define the following small shared test factory; it grants no live authority:
 
 ```python
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits
@@ -154,11 +154,11 @@ def test_duplicate_start_preserves_identity_and_no_dispatch(tmp_path):
         assert first.status == "awaiting_plan"
 ```
 
-- [ ] **2. Run the two new focused modules red.** Expected failure is absent workflow behavior, not bootstrap, an invalid fixture or unrelated source import. Run `.venv/bin/python -m pytest -q Tests/Agents/test_workflow_models.py Tests/DB/test_workflow_runs.py`.
-- [ ] **3. Implement storage behind the existing transaction owner.** Use immutable plan rows, separate control/progress revisions, unique workflow/phase/task identities and parameterized SQL. Create the chain and workflow structural rows in one existing connection-taking FULL transaction; never nest independent commits. Reserve required payload storage before dispatch, refuse overflow without truncating success, and retain tombstones after settled payload removal. Check exact run/workflow/attempt ownership before result publication. Missing required payload is a failure, not empty success.
-- [ ] **4. Migrate and qualify recovery in this slice.** Choose the next actual version; preserve every shipped migration and existing catalog. Capture exact installed SQL via the current recovery catalog pattern; add workflow tables/indices/triggers, row validation, staging and inert-import handling. Cover actual old-schema data, upgrade, reopen, duplicate migration, malformed/cross-owned rows, active evidence retention, capacity refusal, and complete backup/rebackup. Required payload storage stays within the existing admitted private store; do not introduce another root.
-- [ ] **5. Run new tests plus** `Tests/DB/test_automatic_work_migration.py`, `Tests/DB/test_goal_runs_migration.py`, `Tests/Backup_Recovery/test_agent_runs_recovery_schema.py`, `Tests/Backup_Recovery/test_goal_recovery_schema.py`. Expected: all named checks execute the real SQLite/catalog paths and pass.
-- [ ] **6. Review and commit only this slice.** Confirm ordinary DB opens create no new runtime or global recovery sweep. Record exact chosen migration/catalog changes, tested archive paths and payload limits; commit message `feat: persist bounded native workflow state`.
+- [x] **2. Run the two new focused modules red.** Expected failure is absent workflow behavior, not bootstrap, an invalid fixture or unrelated source import. Run `.venv/bin/python -m pytest -q Tests/Agents/test_workflow_models.py Tests/DB/test_workflow_runs.py`.
+- [x] **3. Implement storage behind the existing transaction owner.** Use immutable plan rows, separate control/progress revisions, unique workflow/phase/task identities and parameterized SQL. Create the chain and workflow structural rows in one existing connection-taking FULL transaction; never nest independent commits. Reserve required payload storage before dispatch, refuse overflow without truncating success, and retain tombstones after settled payload removal. Check exact run/workflow/attempt ownership before result publication. Missing required payload is a failure, not empty success.
+- [x] **4. Migrate and qualify recovery in this slice.** Choose the next actual version; preserve every shipped migration and existing catalog. Capture exact installed SQL via the current recovery catalog pattern; add workflow tables/indices/triggers, row validation, staging and inert-import handling. Cover actual old-schema data, upgrade, reopen, duplicate migration, malformed/cross-owned rows, active evidence retention, capacity refusal, and complete backup/rebackup. Required payload storage stays within the existing admitted private store; do not introduce another root.
+- [x] **5. Run new tests plus** `Tests/DB/test_automatic_work_migration.py`, `Tests/DB/test_goal_runs_migration.py`, `Tests/Backup_Recovery/test_agent_runs_recovery_schema.py`, `Tests/Backup_Recovery/test_goal_recovery_schema.py`. Expected: all named checks execute the real SQLite/catalog paths and pass.
+- [x] **6. Review and commit only this slice.** Confirm ordinary DB opens create no new runtime or global recovery sweep. Record exact chosen migration/catalog changes, tested archive paths and payload limits; commit message `feat: persist bounded native workflow state`.
 
 <a id="task-2"></a>
 ## Task 2: Workflow admission, accounting, active intervals and Settings

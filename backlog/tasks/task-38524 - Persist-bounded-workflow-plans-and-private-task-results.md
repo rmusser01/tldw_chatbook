@@ -1,7 +1,7 @@
 ---
 id: TASK-38524
 title: Persist bounded workflow plans and private task results
-status: In Progress
+status: Done
 created_date: 2026-11-01 17:30
 dependencies:
 - TASK-38523
@@ -16,7 +16,7 @@ documentation:
 - backlog/decisions/285-native-phased-agent-workflows.md
 assignee:
 - '@codex'
-updated_date: 2026-11-01 18:19
+updated_date: 2026-11-01 18:34
 ---
 
 ## Description
@@ -27,9 +27,9 @@ Deliver implementation slice 1 of the accepted native shared-worktree workflow d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Strict plans enforce ordered dependencies, captured scope/targets, byte and count limits without execution authority.
-- [ ] #2 Workflow creation, revision control and private result reservations are durable, scoped, idempotent and preserve accounting tombstones.
-- [ ] #3 Real migrations/reopen and exact recovery/backup schema validation preserve existing run/Goal/fleet data and keep restored workflows inert.
+- [x] #1 Strict plans enforce ordered dependencies, captured scope/targets, byte and count limits without execution authority.
+- [x] #2 Workflow creation, revision control and private result reservations are durable, scoped, idempotent and preserve accounting tombstones.
+- [x] #3 Real migrations/reopen and exact recovery/backup schema validation preserve existing run/Goal/fleet data and keep restored workflows inert.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,13 +54,15 @@ Actual AgentRuns recovery ownership is DB/recovery_operations.py plus Backup_Rec
 
 Verification: 137 targeted checks passed in 57.40s (all new modules, all four named migration/recovery regressions, existing Goal models/store/attempts). Post-format/import annotation checks: 38 passed in 0.93s. Real complete capture -> isolated restore -> selected-profile reopen -> complete rebackup passed with unchanged native watchdog/child defaults; archived workflow rows match exactly and both archived copies pass foreign_key_check. New/affected contract modules pass scoped ruff lint/format; shared legacy files have no introduced per-file lint findings against task base 13ded554. Detailed commands, RED/GREEN receipts, catalog/archive proof and limitations are in .superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-1-report.md.
 
-Updated Docs/Architecture/database-layer.md for passive storage only and recorded the demonstrated recovery-import trap in lessons-testing-evidence.md. Left In Progress and acceptance checkboxes pending independent controller review; no full suite or product phase execution was run.
+Updated Docs/Architecture/database-layer.md for passive storage only and recorded the demonstrated recovery-import trap in lessons-testing-evidence.md. Independent review is recorded below; no full suite or product phase execution was run.
+
+Independent spec/quality gate passed after fix c3b8a44115: attempt-based mandatory evidence validation now rejects missing result/reservation pairs and invalid active/undrained tombstones. Fix RED16 failed/4 passed; final covering run46 passed,1 deselected; lint/format pass. Initial cfde251667 and fix c3b8a44115. Existing cleanup warnings/original unmarked prerequisite failures remain recorded. No full suite. Trusted drain provenance and live execution remain Tasks7–8 of ADR-285.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Passive workflow storage/results implemented and independently reviewed. ADR-285 applies; no live workflow capability is enabled by this slice.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
