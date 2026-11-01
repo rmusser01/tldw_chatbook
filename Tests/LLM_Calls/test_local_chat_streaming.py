@@ -222,3 +222,30 @@ async def test_local_stop_during_control_only_stream_closes_active_transport(
         await stream.aclose()
         await asyncio.wait_for(asyncio.gather(*workers, return_exceptions=True), 3)
         await gateway.aclose()
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_json_response_closes_on_consumer_stop_or_decode_error(monkeypatch, malformed):
+    body = (
+        "{broken"
+        if malformed
+        else json.dumps({"choices": [{"message": {"content": "first"}}]})
+    )
+    response, posted = _wire_response(monkeypatch, body)
+    response.headers["Content-Type"] = "application/json; charset=utf-8"
+    releases = []
+    response.raw.release_conn = lambda: releases.append(True)
+    stream = _local_stream()
+    try:
+        normalized = ConsoleProviderGateway.normalize_provider_response(stream)
+        if malformed:
+            with pytest.raises(RuntimeError, match="Provider stream error"):
+                next(normalized)
+        else:
+            assert next(normalized) == "first"
+    finally:
+        stream.close()
+    # Requests releases a fully consumed JSON response back to its pool.
+    assert response._content_consumed
+    assert releases == [True]
+    assert len(posted) == 1

@@ -105,6 +105,23 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_voice_trace_promotion import (
         PostDispatchTraceImportResult,
     )
+def _retry_generation_matches(
+    previous: Mapping[str, object],
+    current: Mapping[str, object],
+    overlays: tuple[ProviderOverlayProvenance, ...],
+) -> bool:
+    """Allow only a verified stream fallback's True-to-False transport change."""
+    if _artifact_bytes(previous) == _artifact_bytes(current):
+        return True
+    if (
+        previous.get("streaming") is not True
+        or current.get("streaming") is not False
+        or ProviderOverlayProvenance("llama_fallback_retry", "structural") not in overlays
+    ):
+        return False
+    return _artifact_bytes({**previous, "streaming": False}) == _artifact_bytes(current)
+
+
 TRACE_VALUE_NORMALIZATION_VERSION = "canonical-json-v1"
 TRACE_VALUE_MEDIA_TYPE = "application/json"
 TRACE_CRITICAL_WRITE_WAL_AUTOCHECKPOINT_PAGES = 0
@@ -2421,8 +2438,11 @@ class ConsoleTraceService:
                     prior_header.provider_name != header.provider_name
                     or prior_header.model_name != header.model_name
                     or prior_header.endpoint_identity != header.endpoint_identity
-                    or _artifact_bytes(prior_header.generation_parameters)
-                    != _artifact_bytes(header.generation_parameters)
+                    or not _retry_generation_matches(
+                        prior_header.generation_parameters,
+                        header.generation_parameters,
+                        bundle.overlays,
+                    )
                     or _artifact_bytes(prior_header.response_format)
                     != _artifact_bytes(header.response_format)
                     or _artifact_bytes(prior_header.reasoning_controls)
@@ -2451,6 +2471,8 @@ class ConsoleTraceService:
                     # Compare the sanitized request at the final dispatch
                     # boundary. The route may advance AGENT_FIRST -> TOOL_LOOP;
                     # the provider target, settings and schemas may not change.
+                    # A verified stream fallback may change only streaming=True
+                    # to False, as proven by its structural adapter overlay.
                     raise ValueError("trace_tool_chain_unavailable")
         if child_state is not None:
             root = _ProjectionRoot(

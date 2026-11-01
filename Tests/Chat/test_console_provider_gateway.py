@@ -1149,6 +1149,274 @@ async def test_llamacpp_fallback_reserves_and_authorizes_a_distinct_call() -> No
 
 
 @pytest.mark.asyncio
+async def test_self_hosted_refused_stream_retry_is_its_own_traced_call() -> None:
+    """TASK-37421: a Custom server's retry is traced like the llama.cpp one.
+
+    The refused streamed call settles as an error with no usage; the retry
+    reserves its own call on the LLAMA_FALLBACK route, is dispatched without
+    streaming, gets its own capture, and its usage is recorded exactly once.
+    """
+    routes: list[ConsoleRequestRoute | None] = []
+    adapter_streaming: list[bool] = []
+    persisted_routes: list[ConsoleRequestRoute] = []
+    persisted_streaming: list[bool] = []
+
+    class Boundary:
+        def __init__(self) -> None:
+            self.settlements: list[tuple[object | None, TraceCallState, object]] = []
+
+        def reserve(self) -> None:
+            return None
+
+        def mark_dispatch_started(self, bundle, provenance) -> None:
+            persisted_routes.append(
+                next(
+                    item.route
+                    for item in provenance.metadata
+                    if isinstance(item, gateway_module.RequestRouteTraceProvenance)
+                )
+            )
+            persisted_streaming.append(bundle.boundary_kwargs["streaming"])
+
+        def mark_response_started(self) -> None:
+            return None
+
+        def settle_response(self, response, outcome, usage=None) -> None:
+            self.settlements.append((response, outcome, usage))
+
+    boundaries: list[Boundary] = []
+
+    def boundary_factory(_request, _resolution, route):
+        routes.append(route)
+        boundaries.append(Boundary())
+        return boundaries[-1]
+
+    def adapter(**kwargs):
+        adapter_streaming.append(kwargs["streaming"])
+        if kwargs["streaming"]:
+            raise ChatBadRequestError(
+                provider="custom-openai-api",
+                message="Streaming is not supported by this server.",
+                status_code=400,
+            )
+        return {
+            "choices": [{"message": {"content": "fallback"}}],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9},
+        }
+
+    retries: list[str] = []
+    signals = ConsoleProviderStreamSignals(
+        exchange_capture_enabled=True,
+        model_retry_callback=lambda: retries.append("model_retry"),
+    )
+    resolution = ConsoleProviderResolution(
+        provider="custom",
+        base_url="http://127.0.0.1:8080/v1",
+        model="local-model",
+        ready=True,
+        readiness_key="custom",
+        execution_key="custom-openai-api",
+        streaming=True,
+    )
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter, trace_call_boundary_factory=boundary_factory
+    )
+    prepared = _capture_on_prepared_request(gateway, resolution)
+    output = [
+        item
+        async for item in gateway.stream_chat(
+            resolution,
+            prepared,
+            signals=signals,
+            route=ConsoleRequestRoute.FRESH,
+            capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+        )
+    ]
+
+    assert output == ["fallback"]
+    assert routes == [ConsoleRequestRoute.FRESH, ConsoleRequestRoute.LLAMA_FALLBACK]
+    assert persisted_routes == routes
+    assert adapter_streaming == persisted_streaming == [True, False]
+    assert retries == ["model_retry"]
+    assert boundaries[0].settlements == [(None, TraceCallState.ERROR, None)]
+    [(response, outcome, usage)] = boundaries[1].settlements
+    assert response == {"role": "assistant", "content": "fallback"}
+    assert outcome is TraceCallState.COMPLETE
+    assert usage["prompt_tokens"] == 7 and usage["completion_tokens"] == 2
+    captures = signals.exchange_captures()
+    assert [capture.status for capture in captures] == ["error", "complete"]
+    assert "retry_of" not in captures[0].request
+    assert "retry_of" in captures[1].request
+    assert captures[1].response["content"] == "fallback"
+    assert len(signals.usage_payloads()) == 1
+
+
+@pytest.mark.asyncio
+async def test_cloud_refused_stream_is_not_retried_by_the_gateway() -> None:
+    """TASK-37421 AC#3: the same refusal from a cloud provider is one call."""
+    calls: list[bool] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs["streaming"])
+        raise ChatBadRequestError(
+            provider="openai", message="bad request", status_code=400
+        )
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        readiness_key="openai",
+        execution_key="openai",
+        streaming=True,
+    )
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    with pytest.raises(ChatBadRequestError) as raised:
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "q"}]
+            )
+        ]
+
+    assert calls == [True]
+    assert "turn Streaming off" in raised.value.console_copy
+
+
+def _self_hosted_streaming_resolution() -> ConsoleProviderResolution:
+    return ConsoleProviderResolution(
+        provider="custom",
+        base_url="http://127.0.0.1:8080/v1",
+        model="local-model",
+        ready=True,
+        readiness_key="custom",
+        execution_key="custom-openai-api",
+        streaming=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_self_hosted_stream_refused_after_text_is_not_retried() -> None:
+    """TASK-37421 review: text already shown means the stream worked.
+
+    A 400 that ends a stream after its first text is a failure of that reply,
+    not a refusal to stream: asking again would show the reply twice, and
+    Streaming is not the fix, so the copy does not name it.
+    """
+    calls: list[bool] = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs["streaming"])
+
+        def stream():
+            yield 'data: {"choices": [{"delta": {"content": "partial"}}]}'
+            raise ChatBadRequestError(
+                provider="custom-openai-api",
+                message="Streaming is not supported by this server.",
+                status_code=400,
+            )
+
+        return stream()
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    output: list[object] = []
+    with pytest.raises(ChatBadRequestError) as raised:
+        async for item in gateway.stream_chat(
+            _self_hosted_streaming_resolution(), [{"role": "user", "content": "q"}]
+        ):
+            output.append(item)
+
+    assert calls == [True]
+    assert output == ["partial"]
+    assert "turn Streaming off" not in (raised.value.console_copy or "")
+
+
+@pytest.mark.asyncio
+async def test_self_hosted_retry_failure_is_not_chained_to_the_refused_stream() -> (
+    None
+):
+    """TASK-37421 review: the retry runs after the refusal is handled.
+
+    A retry that fails raises its own error, not one "during handling of" the
+    internal refused-stream signal, so logs and tracebacks show one failure.
+    """
+
+    def adapter(**kwargs):
+        raise ChatBadRequestError(
+            provider="custom-openai-api",
+            message="bad request",
+            status_code=400,
+        )
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    with pytest.raises(ChatBadRequestError) as raised:
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                _self_hosted_streaming_resolution(),
+                [{"role": "user", "content": "q"}],
+            )
+        ]
+
+    chain: list[BaseException] = []
+    link: BaseException | None = raised.value
+    while link is not None and len(chain) < 10:
+        chain.append(link)
+        link = link.__cause__ or link.__context__
+    assert not any(
+        isinstance(item, gateway_module._StreamFallbackRequired) for item in chain
+    ), chain
+
+
+@pytest.mark.asyncio
+async def test_self_hosted_empty_stream_and_retry_keep_separate_usage() -> (
+    None
+):
+    """TASK-37421 review: two calls' usage is never key-merged.
+
+    The empty stream reported its prompt with a cache read; the retry its
+    own prompt and output. Physical traces retain each call; the logical
+    bridge view and aggregate retain both without key-merging cache fields.
+    """
+    retry_usage = {"prompt_tokens": 50, "completion_tokens": 5, "total_tokens": 55}
+
+    def adapter(**kwargs):
+        if kwargs["streaming"]:
+            return iter(
+                (
+                    'data: {"choices": [], "usage": {"prompt_tokens": 50, '
+                    '"completion_tokens": 0, "total_tokens": 50, '
+                    '"prompt_tokens_details": {"cached_tokens": 40}}}',
+                    "data: [DONE]",
+                )
+            )
+        return {
+            "choices": [{"message": {"content": "fallback"}}],
+            "usage": dict(retry_usage),
+        }
+
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    aggregate = ConsoleProviderStreamSignals()
+    call_view = aggregate.new_usage_call()
+    items = [
+        item
+        async for item in gateway.stream_chat(
+            _self_hosted_streaming_resolution(),
+            [{"role": "user", "content": "q"}],
+            signals=call_view,
+        )
+    ]
+
+    assert items == ["fallback"]
+    first_usage = {"prompt_tokens": 50, "completion_tokens": 0, "total_tokens": 50,
+                   "prompt_tokens_details": {"cached_tokens": 40}}
+    assert call_view.usage_snapshot() == first_usage
+    assert call_view.logical_usage_snapshots() == (first_usage, retry_usage)
+    assert aggregate.usage_payloads() == [first_usage, retry_usage]
+
+
+@pytest.mark.asyncio
 async def test_auxiliary_always_uses_explicit_capture_off_admission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

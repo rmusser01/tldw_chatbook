@@ -304,6 +304,78 @@ the hosted runner's extra invocation was not stack-traced.
 
 **What to do.** When a change hides or disables a focus target, grep every caller of its focus helper and every footer or hint string that names it. Give each caller a new destination, or drop the hint. Add a mounted test that presses each surviving key and asserts both where focus lands and what the footer says.
 
+## A second traced call in one turn is only proven with trace capture on (TASK-37421 review, 2026-10-29)
+
+**Incident.** TASK-37421's one-time non-streaming retry reserves its own
+trace call on the `llama_fallback` route. Thirteen tests drove it through the
+real gateway, `chat_api_call`, the real adapters and a mounted ChatScreen,
+for Custom, vLLM and a named custom endpoint (`custom-ep:box`), and an
+independent review re-ran them red and green. All of those harnesses run with
+trace capture off (the loopback bridge tests use a capture-off admission, and
+the screen harness sets `exchange_capture = false` because it has no full
+trace schema). Live, with capture on (the default), the custom-ep retry ended
+"Run: Blocked — capture failed": the hosted engine's calls record their
+traced surface as a `provider_overlay` omission (`alignment_mismatch`, on dev
+too), so the retry's reservation raised `surface_replacement_checkpoint_unavailable`.
+Custom and vLLM recorded the saved revision and their retry traced fine. The
+log only names `exception_type=ValueError`; the message came from a temporary
+diagnostic write in the worktree, reverted by edit before any commit.
+
+**What to do.** When a change adds a provider call inside a turn (a retry, a
+fallback, a repair), prove it once with capture on, for each adapter family
+it covers (legacy handler, hosted engine, llama.cpp): live through
+`tools/launch.sh`, or in `Tests/Chat/test_console_project_instruction_traces.py`'s
+`_project_console` harness, which uses the real `ConsoleTraceBoundaryFactory`.
+Then read `console_trace_surface_nodes` and `console_trace_calls` for the run.
+A green capture-off test says nothing about the second call's trace
+reservation.
+
+## One provider call's usage has three readers; a saved-row test sees one (TASK-37421, 2026-10-29)
+
+**Incident.** TASK-37421's non-streaming retry is a second provider call
+inside one `stream_chat`. A mounted ChatScreen test asserted the retried
+reply's usage in the store and in `messages.usage_json`, and stayed green
+under a mutation that closed the retry's usage on its own call view instead
+of handing it to the call it replaced. The controller saves the message row
+from the aggregate's `usage_payloads()`, which counts every call view, so
+the row was right either way. The same mutation turned two other readers
+red: the loopback `ConsoleAgentBridge` tests (the bridge reads only the call
+view it handed `stream_chat`, so the run's `total_tokens` fell from the
+server's 26 to the bridge's own estimate, 411) and the gateway trace test
+(the retry's trace call settled with no usage). The opposite mutation
+(publish on both views) doubled the saved row to (42, 10), which every kind
+of test caught.
+
+**What to do.** Console usage is read three ways: the aggregate (the saved
+row and the cost chip), the agent bridge's call view (the run's tokens and
+live usage) and the trace call's settlement. When a change moves usage
+between calls, pin each reader, at least one through the real
+`ConsoleAgentBridge`, and mutate the hand-over both ways.
+
+## A new key in the shipped config template lands in every new test file, not only in every load (TASK-33620.10, 2026-10-29)
+
+**Incident.** TASK-33620.10 added `[chat_defaults] streaming = true` to
+`CONFIG_TOML_CONTENT`. Its first three commits passed their two new test
+files and the config suites. They also guarded the merge seam, so the
+template key could not shadow a file's legacy `enable_streaming`. A by-id
+sweep of about 170 related files against origin/dev still found
+`test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_value[legacy-off-only]`
+and `[unset]` red. Both are ui-fast-lane census entries, so the PR gate would
+have failed. The test's private profile calls
+`load_cli_config_and_ensure_existence()`, which writes a missing file from the
+whole template. The "nothing saved" and "only `enable_streaming`" states it
+seeded no longer existed, because the file itself now said `streaming = true`.
+The merge-seam guard could not help: the key was in the user's file, not only
+in the merged view.
+
+**What to do.** A key added to the shipped template lands in two places: under
+every load (the merge) and inside every new file (`ensure_existence` writes the
+template). Before calling the change green, grep `Tests/` for the key next to
+`ensure_existence`, `private_profile_test` and its section name, and run those
+files. A test that needs "an older file" must delete the key after the file is
+created. Expect `load_settings()` to merge the shipped value back in anyway
+(see the `chat_defaults.model` entry below).
+
 ## Screen budgets do not cover the App composition root (TASK-37300, 2026-10-28)
 
 **Incident.** PR #3291 passed its focused Console/Notes journeys and screen
@@ -23518,3 +23590,10 @@ The same repair also produced a mixed-source RED attempt when production edits
 started before the remaining cases finished. That receipt is explicitly
 unqualified. Subsequent campaigns freeze the source and record start/end hashes;
 the independent frozen single-case RED remains the causal omission evidence.
+
+
+## PR3304: physical retry accounting needs real trace and lifecycle owners (2026-11-01)
+
+The streaming-default integration's real Custom/vLLM probes found that an empty generation plus retry shared one automatic admission and discarded first-call usage. Restoring separate physical legs then exposed trace failures hidden by boundary doubles: a new actorless fallback broke tool continuation, and a same-chain retry was rejected by the final generation-settings comparison. Real SQLite/factory tests now cover usage on both calls, accepted-owner rollback recovery, tool work before/after retry, and strict rejection of every change except the verified transport True-to-False transition. A usage-view test alone cannot prove durable accounting or continuation authority.
+
+The unset Settings case also passed its assertions but repeatedly failed the three-second native retirement guard. Content-free thread stacks identified `_backfill_chachanotes_messages_fts` seeding built-in cards while a spend read awaited storage initialization. The no-save early-return path now observes that specific key leaving the existing open boot gate's pending/in-flight sets. Its focused rerun passes teardown without changing the grace period or profile guards. Do not replace this evidence with a broad quiet wait or with suppressing cleanup errors. Receipts and limits: `Docs/superpowers/qa/2026-11-01-pr3304-backlog-integration.md`.

@@ -510,6 +510,36 @@ def request_route_provenance(
     )
 
 
+def stream_fallback_route_provenance(
+    original: RequestRouteTraceProvenance,
+    *,
+    provider: str,
+    execution_key: str,
+    has_tools: bool,
+) -> RequestRouteTraceProvenance:
+    """Keep generic agent retries on the existing failed-call continuation.
+
+    Direct llama and plain requests retain their established fallback route.
+    The TOOL_LOOP admission still proves the settled prior call and unchanged
+    request surface; this projection grants no adapter authority by itself.
+    """
+    generic = (
+        bool(execution_key)
+        and execution_key != "custom-hosted"
+        and not (provider in {"llama_cpp", "local_llamacpp"} and not has_tools)
+    )
+    if generic and original.route in {
+        ConsoleRequestRoute.AGENT_FIRST,
+        ConsoleRequestRoute.TOOL_LOOP,
+    }:
+        return request_route_provenance(
+            ConsoleRequestRoute.TOOL_LOOP,
+            actor_id=original.actor_id,
+            chain_id=original.chain_id,
+        )
+    return request_route_provenance(ConsoleRequestRoute.LLAMA_FALLBACK)
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderArtifactTraceProvenance:
     """Intent to store one provider-only value under a frozen trace policy."""

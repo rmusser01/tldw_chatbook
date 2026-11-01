@@ -1420,10 +1420,13 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   other Console preferences. **Settings ▸ Privacy & Security** owns the saved
   raw CLI unlock plus independent per-launch Arm/Disarm controls for raw CLI
   and Terminal.
-- `config.toml`: `[chat_defaults]` (default provider/model/sampling),
-  `[api_settings.*]` (per-provider keys, endpoints, streaming — the modern
+- `config.toml`: `[chat_defaults]` (default provider/model/sampling, and
+  `streaming`, on by default for every provider — see
+  [Turning streaming off](console/chat-basics.md#sending-streaming-and-stopping)),
+  `[api_settings.*]` (per-provider keys and endpoints — the modern
   form; an explicit key here now outranks that provider's environment
-  variable), `[API]` (legacy `<provider>_api_key` values — still honored,
+  variable; for Console, `[chat_defaults] streaming` outranks its
+  `streaming`), `[API]` (legacy `<provider>_api_key` values — still honored,
   lowest precedence of the three, normalized once at load into the same
   credential both this screen's readiness check and Library's RAG Answer
   gate use), `[console]` and `[console.background_effects]` (paste

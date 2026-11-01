@@ -87,6 +87,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceProvenanceAlignmentError,
     TraceProvenance,
     request_route_provenance,
+    stream_fallback_route_provenance,
 )
 from tldw_chatbook.Chat.console_trace_final_values import (
     ProviderOverlayProvenance,
@@ -389,6 +390,17 @@ class _ProvisionalVoiceTraceRecord:
 
 class _ProviderAdapterEntryCancelled(Exception):
     """Internal signal that stream cancellation won the adapter-entry claim."""
+
+
+class _StreamFallbackRequired(Exception):
+    """A retried stream was refused, or ended, before anything arrived."""
+
+
+#: The stream-to-complete retry's trace overlay and capture marker. llama.cpp
+#: introduced them; since TASK-37421 every self-hosted server's one-time
+#: retry without streaming shares them, and the ``LLAMA_FALLBACK`` route.
+_STREAM_FALLBACK_OVERLAY = ProviderOverlayProvenance("llama_fallback_retry", "structural")
+_STREAM_FALLBACK_RETRY_OF = "stream refused or produced no content; retried non-streaming"
 
 
 class ConsoleProviderCallPurpose(str, Enum):
@@ -1138,6 +1150,7 @@ class ConsoleProviderCallSignals:
     # shared across every call this signals object ever makes; this one is
     # per-call and self-clearing, so only the ONE chunk actually generated
     # as fallback UI copy gets labeled, never a later real answer).
+    _retry_call: ConsoleProviderCallSignals | None = field(default=None, init=False, repr=False)
     _synthetic_pending: bool = field(default=False, init=False, repr=False)
     _synthetic_emitted: bool = field(default=False, init=False, repr=False)
 
@@ -1254,6 +1267,27 @@ class ConsoleProviderCallSignals:
                 self._aggregate._complete_scoped_usage_call(self._token, payload)
             else:
                 self._aggregate._discard_scoped_usage_call(self._token)
+
+    def begin_retry_usage_call(self) -> "ConsoleProviderCallSignals":
+        """Finish this physical call and retain its single fallback's view.
+
+        Tokens and capture identities stay attached to their physical calls.
+        The bridge holds this original view; only its logical usage reader
+        follows the fallback. Trace and automatic-budget readers stay physical.
+        """
+        self.close_usage_call()
+        with self._usage_lock:
+            if self._retry_call is not None:
+                raise RuntimeError("a fallback call already exists")
+            self._retry_call = self._aggregate.new_usage_call()
+            return self._retry_call
+
+    def logical_usage_snapshots(self) -> tuple[dict[str, Any] | None, ...]:
+        """Return raw physical legs for strict normalization by the bridge."""
+        with self._usage_lock:
+            payload = dict(self._usage_payload) if self._usage_payload is not None else None
+            retry = self._retry_call
+        return (payload,) if retry is None else (payload, retry.usage_snapshot())
 
     def usage_snapshot(self) -> dict[str, Any] | None:
         """Return a defensive copy of this call's current usage.
@@ -1836,6 +1870,7 @@ def _provider_error_copy_with_model_recovery(
     status_code: int | None,
     provider_message: str = "",
     tools: Sequence[Mapping[str, Any]] | None = None,
+    refused_stream: bool = False,
 ) -> str:
     """Add safe recovery to provider bad-request copy.
 
@@ -1843,8 +1878,17 @@ def _provider_error_copy_with_model_recovery(
     ``_tool_definition_rejection_copy``); any other 400 names the model. A
     404 names the model and says what to check: Fireworks, SambaNova, Nous
     and GMI answer an unknown model, or one the key cannot use, that way
-    (no-key probes 2026-09-30, TASK-33640).
+    (no-key probes 2026-09-30, TASK-33640). A streamed request refused before
+    any text (``refused_stream``, see ``refused_stream.is_refused_stream``)
+    also names the Streaming setting (TASK-37180).
     """
+    if refused_stream and not _tool_definition_rejection_copy(provider_message, tools):
+        from tldw_chatbook.Chat.refused_stream import REFUSED_STREAM_ADVICE
+
+        copy = _provider_error_copy_with_model_recovery(
+            copy, model=model, status_code=status_code, provider_message=provider_message
+        )
+        return f"{copy} {REFUSED_STREAM_ADVICE}"
     if status_code == 404:
         model_id = _safe_model_id(model)
         named = f" Selected model: {escape_markup(model_id)}." if model_id else ""
@@ -6070,8 +6114,8 @@ class ConsoleProviderGateway:
             or route is not ConsoleRequestRoute.FRESH
         ):
             raise TraceProvenanceAlignmentError("provisional trace admission failed")
-        # ONE invocation of this method == ONE provider call. A turn (agent
-        # runs especially) makes N of them through the SAME signals object,
+        # Each physical call owns a signal view; a local fallback gets a
+        # second view. Turns may share the SAME aggregate signals object,
         # so the in-flight usage payload is closed out here, at the only
         # seam that knows where a call ends -- never in the consumer, which
         # cannot see the boundary at all.
@@ -6185,7 +6229,30 @@ class ConsoleProviderGateway:
                 ),
             )
             capture_off_admission: _ProviderAdapterAdmission | None = None
+            resuming_stream_fallback = False
             if capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+                scope = self._trace_preparation_scope(call_signals)
+                pending = scope.boundary if scope is not None else None
+                if (
+                    pending is not None
+                    and not scope.claimed
+                    and provisional_trace_attempt is None
+                    and route in {ConsoleRequestRoute.FRESH, ConsoleRequestRoute.AGENT_FIRST}
+                    and resolution.execution_key
+                    and not (
+                        resolution.provider in {"llama_cpp", "local_llamacpp"}
+                        and not prepared.tools
+                    )
+                    and getattr(getattr(pending, "admission", None), "route_identity", None)
+                    in {ConsoleRequestRoute.LLAMA_FALLBACK.value, ConsoleRequestRoute.TOOL_LOOP.value}
+                ):
+                    # The original AGENT_FIRST request binding was validated
+                    # above. Resume only its reserved nonstreaming leg; the
+                    # factory still verifies the exact owner, request, incoming
+                    # resolution and route before granting adapter authority.
+                    effective_resolution = replace(effective_resolution, streaming=False)
+                    route = ConsoleRequestRoute.LLAMA_FALLBACK
+                    resuming_stream_fallback = True
                 if provisional_trace_attempt is not None:
                     trace_call_boundary = self._begin_provisional_voice_trace_call(
                         provisional_trace_attempt
@@ -6201,6 +6268,49 @@ class ConsoleProviderGateway:
                     _bind_legacy_capture_to_trace_call(call_signals, trace_call_boundary)
             else:
                 capture_off_admission = self._capture_off_admission(route)
+
+            # The stream-to-complete retry's two trace steps, shared by the
+            # llama.cpp path and every self-hosted server's retry (TASK-37421):
+            # the refused/empty streamed call settles as an error, then the
+            # retry reserves its own call on the LLAMA_FALLBACK route.
+            async def settle_failed_stream_call(_stream_failed: bool = True) -> None:
+                nonlocal trace_call_boundary
+                initial_boundary = trace_call_boundary
+                trace_call_boundary = None
+                await _settle_trace_response(
+                    initial_boundary,
+                    (),
+                    outcome=TraceCallState.ERROR,
+                    usage=call_signals.usage_snapshot() if call_signals is not None else None,
+                    signals=call_signals,
+                )
+
+            def reserve_stream_fallback_call() -> (
+                tuple[object, ProviderRequestProvenance] | None
+            ):
+                nonlocal trace_call_boundary
+                if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+                    return None
+                fallback_resolution = replace(effective_resolution, streaming=False)
+                fallback_provenance = self._provenance_for_route(
+                    prepared.provenance,
+                    ConsoleRequestRoute.LLAMA_FALLBACK,
+                )
+                if provisional_trace_attempt is None:
+                    fallback_boundary = self._reserve_trace_call(
+                        prepared,
+                        fallback_resolution,
+                        ConsoleRequestRoute.LLAMA_FALLBACK,
+                        signals=call_signals,
+                    )
+                else:
+                    fallback_boundary = self._begin_provisional_voice_trace_call(
+                        provisional_trace_attempt
+                    )
+                    fallback_boundary.reserve()
+                trace_call_boundary = fallback_boundary
+                return fallback_boundary, fallback_provenance
+
             if (
                 resolution.provider in {"llama_cpp", "local_llamacpp"}
                 and not prepared.tools
@@ -6533,27 +6643,16 @@ class ConsoleProviderGateway:
                     endpoint: str,
                     wire_payload: Mapping[str, Any],
                 ) -> _ProviderAdapterAdmission:
-                    nonlocal trace_call_boundary
-                    if capture_mode is ConsoleTraceCaptureMode.CAPTURE_OFF:
+                    reserved = reserve_stream_fallback_call()
+                    if reserved is None:
                         return self._capture_off_admission(
                             ConsoleRequestRoute.LLAMA_FALLBACK
                         )
+                    fallback_boundary, fallback_provenance = reserved
                     fallback_resolution = replace(
                         effective_resolution,
                         streaming=False,
                     )
-                    fallback_provenance = self._provenance_for_route(
-                        prepared.provenance,
-                        ConsoleRequestRoute.LLAMA_FALLBACK,
-                    )
-                    fallback_boundary = self._reserve_trace_call(
-                        prepared, fallback_resolution, ConsoleRequestRoute.LLAMA_FALLBACK,
-                    ) if provisional_trace_attempt is None else self._begin_provisional_voice_trace_call(
-                        provisional_trace_attempt
-                    )
-                    if provisional_trace_attempt is not None:
-                        fallback_boundary.reserve()
-                    trace_call_boundary = fallback_boundary
                     fallback_kwargs = self._trace_surface_kwargs(
                         fallback_boundary,
                         self._chat_api_kwargs_from_prepared(
@@ -6568,11 +6667,7 @@ class ConsoleProviderGateway:
                         literal_payload=wire_payload,
                         endpoint_identity=endpoint,
                         route=ConsoleRequestRoute.LLAMA_FALLBACK,
-                        extra_overlays=(
-                            ProviderOverlayProvenance(
-                                "llama_fallback_retry", "structural"
-                            ),
-                        ),
+                        extra_overlays=(_STREAM_FALLBACK_OVERLAY,),
                         trace_call_boundary=fallback_boundary,
                         provenance_override=fallback_provenance,
                     )
@@ -6581,20 +6676,6 @@ class ConsoleProviderGateway:
                         fallback_bundle,
                         fallback_provenance,
                         route=ConsoleRequestRoute.LLAMA_FALLBACK,
-                    )
-
-                async def _transition_to_llamacpp_fallback(
-                    _stream_failed: bool,
-                ) -> None:
-                    nonlocal trace_call_boundary
-                    initial_boundary = trace_call_boundary
-                    trace_call_boundary = None
-                    await _settle_trace_response(
-                        initial_boundary,
-                        (),
-                        outcome=TraceCallState.ERROR,
-                        usage=None,
-                        signals=call_signals,
                     )
 
                 try:
@@ -6627,7 +6708,7 @@ class ConsoleProviderGateway:
                             if isinstance(signals, ConsoleProviderStreamSignals)
                             else None
                         ),
-                        on_fallback_transition=_transition_to_llamacpp_fallback,
+                        on_fallback_transition=settle_failed_stream_call,
                         on_fallback_request=None,
                         before_fallback_adapter=_authorize_llamacpp_fallback,
                         on_fallback_retry=_capture_llamacpp_fallback,
@@ -6665,21 +6746,60 @@ class ConsoleProviderGateway:
                 completed = True
                 return
             if resolution.execution_key:
+                from tldw_chatbook.Chat.refused_stream import retries_refused_stream
+
                 with _automatic_generation(prepared, call_signals):
-                    async for emission in self._stream_generic_chat(
-                        effective_resolution,
-                        prepared,
-                        signals=call_signals,
-                        capture_mode=capture_mode,
-                        trace_call_boundary=trace_call_boundary,
-                        capture_off_admission=capture_off_admission,
-                        route=route,
-                        before_provider_dispatch=before_provider_dispatch,
-                        dispatch_purpose=dispatch_purpose,
-                    ):
-                        observe_response(emission.item, synthetic=emission.synthetic)
-                        observe_emission(emission.synthetic)
-                        yield emission.item
+                    stream_refused = False
+                    try:
+                        async for emission in self._stream_generic_chat(
+                            effective_resolution,
+                            prepared,
+                            signals=call_signals,
+                            capture_mode=capture_mode,
+                            trace_call_boundary=trace_call_boundary,
+                            capture_off_admission=capture_off_admission,
+                            route=route,
+                            before_provider_dispatch=before_provider_dispatch,
+                            dispatch_purpose=dispatch_purpose,
+                            stream_fallback=retries_refused_stream(effective_resolution),
+                            fallback_retry=resuming_stream_fallback,
+                        ):
+                            observe_response(emission.item, synthetic=emission.synthetic)
+                            observe_emission(emission.synthetic)
+                            yield emission.item
+                    except _StreamFallbackRequired:
+                        # The retry runs after this handler, so its own
+                        # failure is not chained to the internal signal.
+                        stream_refused = True
+                if stream_refused:
+                    # Each physical request owns its own admission, usage,
+                    # trace and exchange. The logical bridge observes both.
+                    if call_signals is not None:
+                        call_signals._aggregate.mark_model_retry()
+                        call_signals.close_exchange(status="error")
+                    await settle_failed_stream_call()
+                    reserved = reserve_stream_fallback_call()
+                    fallback_boundary = reserved[0] if reserved else None
+                    if call_signals is not None:
+                        call_signals = call_signals.begin_retry_usage_call()
+                    _bind_legacy_capture_to_trace_call(call_signals, fallback_boundary)
+                    with _automatic_generation(prepared, call_signals):
+                        async for emission in self._stream_generic_chat(
+                            replace(effective_resolution, streaming=False),
+                            prepared,
+                            signals=call_signals,
+                            capture_mode=capture_mode,
+                            trace_call_boundary=fallback_boundary,
+                            capture_off_admission=None
+                            if reserved
+                            else self._capture_off_admission(ConsoleRequestRoute.LLAMA_FALLBACK),
+                            route=ConsoleRequestRoute.LLAMA_FALLBACK,
+                            dispatch_purpose=dispatch_purpose,
+                            fallback_retry=True,
+                        ):
+                            observe_response(emission.item, synthetic=emission.synthetic)
+                            observe_emission(emission.synthetic)
+                            yield emission.item
                 completed = True
                 return
         except Exception:
@@ -6737,8 +6857,17 @@ class ConsoleProviderGateway:
         route: ConsoleRequestRoute | None = None,
         before_provider_dispatch: Callable[[], Awaitable[None]] | None = None,
         dispatch_purpose: ConsoleProviderCallPurpose = ConsoleProviderCallPurpose.CONVERSATION,
+        stream_fallback: bool = False,
+        fallback_retry: bool = False,
     ) -> AsyncIterator[_ProviderStreamEmission]:
-        """Bridge synchronous chat_api_call responses into async Console chunks."""
+        """Bridge synchronous chat_api_call responses into async Console chunks.
+
+        ``stream_fallback`` (TASK-37421): the caller retries a refused or empty
+        stream without streaming, so one that delivers nothing ends in
+        ``_StreamFallbackRequired`` instead of failure or synthetic copy.
+        ``fallback_retry``: this call IS that retry, traced on the
+        stream-to-complete route the llama.cpp fallback uses.
+        """
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         stop_event = threading.Event()
@@ -6819,8 +6948,11 @@ class ConsoleProviderGateway:
                     delivery_pending = False
                     delivery_condition.notify_all()
 
+        delivered = False
+
         def enqueue(item: _QueueItem) -> None:
-            nonlocal delivery_pending
+            nonlocal delivery_pending, delivered
+            delivered = delivered or item.kind in {"content", "thinking", "tool_calls"}
             if not await_delivery():
                 return
             if voice_bounded:
@@ -6865,12 +6997,25 @@ class ConsoleProviderGateway:
             try:
                 kwargs = self._chat_api_kwargs_from_prepared(resolution, request)
                 kwargs = self._trace_surface_kwargs(trace_call_boundary, kwargs)
+                provenance = request.provenance
+                fallback_shadow: dict[str, Any] = {}
+                if fallback_retry and capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON:
+                    provenance = self._provenance_for_route(
+                        request.provenance, ConsoleRequestRoute.LLAMA_FALLBACK,
+                        resolution=resolution, has_tools=bool(request.tools),
+                    )
+                    fallback_shadow = {
+                        "route": ConsoleRequestRoute.LLAMA_FALLBACK,
+                        "extra_overlays": (_STREAM_FALLBACK_OVERLAY,),
+                        "provenance_override": provenance,
+                    }
                 bundle = self._verify_trace_shadow(
                     resolution,
                     request,
                     kwargs,
                     capture_mode=capture_mode,
                     trace_call_boundary=trace_call_boundary,
+                    **fallback_shadow,
                 )
                 if signals is not None and signals.exchange_capture_enabled:
                     try:
@@ -6929,6 +7074,8 @@ class ConsoleProviderGateway:
                             omitted = tuple(
                                 sorted(set(omitted).union({"api_base_url", "endpoint"}))
                             )
+                        if fallback_retry:
+                            capture_request["retry_of"] = _STREAM_FALLBACK_RETRY_OF
                         signals.begin_exchange(
                             provider=str(resolution.provider or ""),
                             model=str(resolution.model or ""),
@@ -6952,7 +7099,7 @@ class ConsoleProviderGateway:
                 admission = self._trace_dispatch_admission(
                     trace_call_boundary,
                     bundle,
-                    request.provenance,
+                    provenance,
                     route=route,
                     capture_off_admission=capture_off_admission,
                 )
@@ -7003,13 +7150,15 @@ class ConsoleProviderGateway:
                 # tools= runs: fallback UI copy must never leak into agent
                 # history, so it is suppressed at GENERATION (not filtered
                 # by string equality — review minor m4: a real answer that
-                # happens to equal the copy text now flows through).
+                # happens to equal the copy text now flows through). A stream
+                # the caller retries (TASK-37421) has no copy either: an
+                # empty one is retried, not answered with "no content".
                 normalization_signals = (
                     signals or ConsoleProviderStreamSignals().new_usage_call()
                 )
                 normalized_response = self.normalize_provider_response(
                     response,
-                    suppress_fallback_copy=accumulator is not None,
+                    suppress_fallback_copy=accumulator is not None or stream_fallback,
                     signals=normalization_signals,
                 )
                 while not stop_event.is_set():
@@ -7101,6 +7250,8 @@ class ConsoleProviderGateway:
                     metadata = _provider_turn_metadata(provider_response)
                     if calls or metadata is not None:
                         enqueue(_QueueItem.native_tool_calls(calls, metadata))
+                    elif not delivered and stream_fallback:
+                        enqueue(_QueueItem("stream_fallback"))
                     elif not emitted_content:
                         # PR #648 review Minor 1: the turn produced NEITHER
                         # visible content NOR tool-calls. On the fence path
@@ -7130,6 +7281,8 @@ class ConsoleProviderGateway:
                                 status_code=no_content_exc.status_code,
                             )
                         )
+                elif not delivered and stream_fallback:
+                    enqueue(_QueueItem("stream_fallback"))
             except TraceCallPersistenceError as exc:
                 enqueue(_QueueItem.trace_persistence_error(exc.boundary))
             except TraceProvenanceAlignmentError:
@@ -7141,6 +7294,16 @@ class ConsoleProviderGateway:
 
                 if isinstance(exc, PRE_EFFECT_ERRORS):
                     enqueue(_QueueItem("error", adapter_error=exc))
+                    return
+                from tldw_chatbook.Chat.refused_stream import is_refused_stream
+
+                refused_stream = (
+                    resolution.streaming and not delivered and is_refused_stream(exc)
+                )
+                if refused_stream and stream_fallback:
+                    if signals is not None:
+                        signals.close_exchange(status="error")
+                    enqueue(_QueueItem("stream_fallback"))
                     return
                 raw_status = getattr(exc, "status_code", None)
                 status_code = raw_status if type(raw_status) is int else None
@@ -7160,6 +7323,7 @@ class ConsoleProviderGateway:
                     status_code=status_code,
                     provider_message=provider_message,
                     tools=request.tools,
+                    refused_stream=refused_stream,
                 )
                 error_copy = _sanitized_provider_diagnostic(
                     error_copy,
@@ -7205,6 +7369,8 @@ class ConsoleProviderGateway:
                 item = await queue.get()
                 if item.kind == "done":
                     break
+                if item.kind == "stream_fallback":
+                    raise _StreamFallbackRequired()
                 if item.kind == "error":
                     if item.adapter_error is not None:
                         raise item.adapter_error
@@ -7474,6 +7640,7 @@ class ConsoleProviderGateway:
     def _provenance_for_route(
         provenance: ProviderRequestProvenance | None,
         route: ConsoleRequestRoute,
+        *, resolution: ConsoleProviderResolution | None = None, has_tools: bool = False,
     ) -> ProviderRequestProvenance:
         """Replace the single route descriptor for an internal provider call."""
 
@@ -7489,6 +7656,11 @@ class ConsoleProviderGateway:
                 if route_replaced:
                     raise TraceProvenanceAlignmentError(
                         "provider request trace verification failed"
+                    )
+                if route is ConsoleRequestRoute.LLAMA_FALLBACK and resolution is not None:
+                    descriptor = stream_fallback_route_provenance(
+                        item, provider=resolution.provider,
+                        execution_key=resolution.execution_key or "", has_tools=has_tools,
                     )
                 metadata.append(descriptor)
                 route_replaced = True
