@@ -89,6 +89,7 @@ class WorkflowTaskAuthorization:
     binding: RunAdmittedWorkspaceRoot = field(repr=False)
     registry: ToolCatalogRegistry = field(repr=False)
     footprint: WorktreeFootprint = field(repr=False)
+    physical_footprint: WorktreeFootprint = field(repr=False)
     _runtime: ConsoleRuntime = field(repr=False)
     _binding_state: list = field(repr=False)
     _native_preparation: list = field(repr=False)
@@ -99,7 +100,17 @@ class WorkflowTaskAuthorization:
     _owners: tuple = field(repr=False)
 
     def __init__(
-        self, *, phase, claim, task, binding, registry, footprint, runtime, _key
+        self,
+        *,
+        phase,
+        claim,
+        task,
+        binding,
+        registry,
+        footprint,
+        physical_footprint,
+        runtime,
+        _key,
     ):
         if _key is not _KEY:
             _refuse("private_custody_required")
@@ -145,7 +156,7 @@ class WorkflowTaskAuthorization:
         _check_hooks(self._runtime, self.claim.session_id)
         if not self.binding.guard(False):
             _refuse("binding_changed")
-        root = self.footprint.reads + self.footprint.writes
+        root = self.physical_footprint.reads + self.physical_footprint.writes
         if (
             root
             and capture_directory_chain(root[0].root.canonical_root) != root[0].root
@@ -169,7 +180,7 @@ class WorkflowTaskAuthorization:
         ):
             _refuse("native_owner_required")
         self._runtime.worktree_activity.validate_claim(
-            activity_claim, owner=owner, footprint=self.footprint
+            activity_claim, owner=owner, footprint=self.physical_footprint
         )
         ledger = self.phase._ledger
         from .activation import execution
@@ -214,7 +225,7 @@ class WorkflowTaskAuthorization:
         if current_execution_owner() is not owner:
             _refuse("owner_mismatch")
         self._runtime.worktree_activity.validate_claim(
-            claim, owner=owner, footprint=self.footprint
+            claim, owner=owner, footprint=self.physical_footprint
         )
         from .activation import execution
 
@@ -224,7 +235,11 @@ class WorkflowTaskAuthorization:
                 "JOIN agent_runs r ON r.id=t.run_id WHERE t.id=?",
                 (self.claim.id,),
             ).fetchone()
-            if row is None or tuple(row) != ("accepted", self.claim.launch_run_id, "running"):
+            if row is None or tuple(row) != (
+                "accepted",
+                self.claim.launch_run_id,
+                "running",
+            ):
                 _refuse("task_settled")
 
     def permits_name(self, name: str) -> bool:
@@ -366,6 +381,7 @@ def _prepare_task(
             )
             if not _covered(target, False, footprint.reads + footprint.writes):
                 _refuse("input_outside_scope")
+        physical_footprint = _physical_footprint(footprint, binding, chain)
         claim = phase._ledger.claim_workflow_task(
             phase.attempt.id, task_id=task_id, owner_id=phase.attempt.owner_id
         )
@@ -383,9 +399,42 @@ def _prepare_task(
         binding=binding,
         registry=registry,
         footprint=footprint,
+        physical_footprint=physical_footprint,
         runtime=runtime,
         _key=_KEY,
     )
+
+
+def _physical_footprint(footprint, binding, chain) -> WorktreeFootprint:
+    """Protect native root-to-target guidance without granting model file access.
+
+    Both override and standard candidates matter even when absent: creation can
+    change the resolver's fallback. Existing subtree scopes already cover lazy
+    discovery below their boundary; only their ancestor candidates are added.
+    """
+    from .project_instruction_resolver import path_is_excluded
+
+    excluded = frozenset(
+        binding.exclusions_provider() if binding.exclusions_provider else ()
+    )
+    root = chain.canonical_root
+    directories = {root}
+    for scope in footprint.reads + footprint.writes:
+        directory = scope.path if scope.subtree else scope.path.parent
+        while directory.is_relative_to(root):
+            directories.add(directory)
+            if directory == root:
+                break
+            directory = directory.parent
+    reads = list(footprint.reads)
+    for directory in sorted(directories):
+        for filename in ("AGENTS.override.md", "AGENTS.md"):
+            candidate = directory / filename
+            if path_is_excluded(candidate, excluded):
+                continue
+            if not _covered(candidate, False, footprint.reads + footprint.writes):
+                reads.append(WorktreeScope(candidate, False, chain))
+    return WorktreeFootprint(tuple(reads), footprint.writes, footprint.opaque)
 
 
 def _covered(path: Path, subtree: bool, scopes: tuple[WorktreeScope, ...]) -> bool:

@@ -34,6 +34,18 @@ if TYPE_CHECKING:
     from .workflow_task_scope import WorkflowTaskAuthorization
 
 
+def _workflow_root_identity(chain) -> str:
+    """Content-free captured directory identity for native plan provenance."""
+    return "directory-chain:" + digest(
+        json.dumps(
+            (
+                str(chain.canonical_root),
+                [(i.device, i.inode, i.mode, i.reparse) for i in chain.identities],
+            )
+        )
+    )
+
+
 def _manifest(root, paths, *, authorization=None, validate_path=None):
     from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
 
@@ -274,6 +286,7 @@ class WorkflowRunService:
             WorkflowRunService.prepare_quality_review,
             WorkflowRunService.validate_decision,
             WorkflowRunService.project_recovery,
+            WorkflowRunService.recovery_protections,
             WorkflowRunService.resume,
             WorkflowRunService.review_quality,
             WorkflowRunService.resolve_recovery,
@@ -890,6 +903,74 @@ class WorkflowRunService:
                     (status, workflow_id, revision),
                 )
             return tuple(self.get(workflow_id) for workflow_id, _, _ in audit.workflows)
+
+    @goal_storage_operation
+    def recovery_protections(self, audit: RuntimeRecoveryResult) -> tuple:
+        """Read denial footprints only for the original completed startup audit.
+
+        Review closure is not physical cleanup. Unrepresentable roots and opaque
+        effects conservatively protect this runtime without creating an owner.
+        """
+        from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+        from tldw_chatbook.Workspaces.worktree_activity import (
+            WorktreeFootprint,
+            WorktreeScope,
+        )
+
+        if audit is None or audit is not getattr(
+            self.db.automatic_work, "recovery_result", None
+        ):
+            raise ValueError("untrusted_recovery_audit")
+        with self.db.connection() as conn:
+            self.db.automatic_work._check_runtime_owner(conn, audit.owner_id)
+            ids = tuple(
+                row[0]
+                for row in conn.execute("SELECT id FROM workflow_runs")
+                if self.db.workflow_runs._active(conn, row[0])
+            )
+        protections = []
+        for workflow_id in ids:
+            snapshot = self.get(workflow_id)
+            footprint = WorktreeFootprint(opaque=True)
+            with self.db.connection() as conn:
+                phases = tuple(
+                    conn.execute(
+                        "SELECT plan_revision,phase_id FROM workflow_phase_attempts "
+                        "WHERE workflow_id=? AND (status IN ('prepared','accepted','uncertain') OR retirement!='drained')",
+                        (workflow_id,),
+                    )
+                )
+                tasks = tuple(
+                    conn.execute(
+                        "SELECT plan_revision,task_id FROM workflow_task_attempts "
+                        "WHERE workflow_id=? AND (status IN ('prepared','accepted','uncertain') OR retirement!='drained')",
+                        (workflow_id,),
+                    )
+                )
+            phases = set(map(tuple, phases))
+            tasks = set(map(tuple, tasks))
+            opaque = not (phases or tasks) or any(
+                task.execution_mode == "exclusive"
+                for revision, plan in enumerate(snapshot.plans, 1)
+                for phase in plan.phases
+                for task in phase.tasks
+                if (revision, phase.id) in phases or (revision, task.id) in tasks
+            )
+            if not opaque and self._binding_reason(snapshot) is None:
+                try:
+                    chain = capture_directory_chain(
+                        Path(snapshot.request.binding.locator)
+                    )
+                    if snapshot.plans and snapshot.plans[
+                        -1
+                    ].root_identity == _workflow_root_identity(chain):
+                        footprint = WorktreeFootprint(
+                            writes=(WorktreeScope(chain.canonical_root, True, chain),)
+                        )
+                except (OSError, ValueError):
+                    pass
+            protections.append((workflow_id, footprint))
+        return tuple(protections)
 
     @goal_storage_operation
     def resume(

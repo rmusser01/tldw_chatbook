@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +17,8 @@ from threading import Lock
 from typing import TYPE_CHECKING
 from unicodedata import normalize
 from uuid import uuid4
+
+from loguru import logger
 
 from tldw_chatbook.Utils.filesystem_identity import (
     DirectoryChain,
@@ -199,6 +201,47 @@ class WorktreeActivity:
         self._lock = Lock()
         self._claims: dict[str, _ClaimState] = {}
         self._members: dict[str, _OwnerState] = {}
+        self._recovery: dict[str, WorktreeFootprint] = {}
+        self._observers: set[Callable[[], None]] = set()
+
+    def protect_recovery(self, workflow_id: str, footprint: WorktreeFootprint) -> None:
+        """Retain startup uncertainty for this runtime; this only denies admission."""
+        if not workflow_id or not isinstance(footprint, WorktreeFootprint):
+            raise ValueError("recovery identity and complete footprint required")
+        with self._lock:
+            previous = self._recovery.get(workflow_id)
+            if previous is not None and previous != footprint:
+                raise ValueError("recovery protection cannot be replaced")
+            self._recovery[workflow_id] = footprint
+
+    def recovery_blockers(self, footprint: WorktreeFootprint) -> tuple[str, ...]:
+        """Return body-free identities of unresolved startup protection."""
+        with self._lock:
+            return tuple(
+                key
+                for key, protected in self._recovery.items()
+                if footprint._conflicts(protected)
+            )
+
+    def subscribe(self, callback: Callable[[], None]) -> Callable[[], None]:
+        """Observe released activity; callbacks run outside the admission lock."""
+        with self._lock:
+            self._observers.add(callback)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                self._observers.discard(callback)
+
+        return unsubscribe
+
+    def _notify_released(self) -> None:
+        with self._lock:
+            observers = tuple(self._observers)
+        for callback in observers:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - observers cannot prevent claim retirement
+                logger.warning("Worktree activity observer failed")
 
     @contextmanager
     def prelaunch(
@@ -214,18 +257,28 @@ class WorktreeActivity:
             raise TypeError("footprint must be a WorktreeFootprint")
         claim = WorktreeActivityClaim(uuid4().hex, self)
         with self._lock:
-            if any(footprint._conflicts(s.footprint) for s in self._claims.values()):
+            if any(
+                footprint._conflicts(protected)
+                for protected in (
+                    *(s.footprint for s in self._claims.values()),
+                    *self._recovery.values(),
+                )
+            ):
                 claim = None
             else:
                 self._claims[claim.id] = _ClaimState(footprint, claim)
         try:
             yield claim
         finally:
+            released = False
             if claim is not None:
                 with self._lock:
                     state = self._claims.get(claim.id)
                     if state is not None and not state.members:
                         del self._claims[claim.id]
+                        released = True
+            if released:
+                self._notify_released()
 
     def try_acquire(
         self, *, owner: ExecutionOwner, footprint: WorktreeFootprint
@@ -319,7 +372,9 @@ class WorktreeActivity:
             if member is None or member.drained is not None:
                 return
             member.drained = proven is True
-            self._retire_if_settled(member.claim_id)
+            released = self._retire_if_settled(member.claim_id)
+        if released:
+            self._notify_released()
 
     def _settle(self, member_id: str, *, durable: bool) -> None:
         if type(durable) is not bool:
@@ -331,9 +386,11 @@ class WorktreeActivity:
                     raise ValueError("bind actual execution before settlement")
                 return
             member.durable = member.durable or durable
-            self._retire_if_settled(member.claim_id)
+            released = self._retire_if_settled(member.claim_id)
+        if released:
+            self._notify_released()
 
-    def _retire_if_settled(self, claim_id: str) -> None:
+    def _retire_if_settled(self, claim_id: str) -> bool:
         state = self._claims[claim_id]
         if all(
             member.drained is True and member.durable
@@ -342,3 +399,5 @@ class WorktreeActivity:
             for member_id in state.members:
                 del self._members[member_id]
             del self._claims[claim_id]
+            return True
+        return False

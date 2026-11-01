@@ -40,6 +40,7 @@ def task_host(tmp_path, monkeypatch):
         configure=None,
         sibling=False,
         plan_edit=None,
+        exclusions=(),
     ):
         from tldw_chatbook.Agents.workflow_task_scope import _prepare_workflow_task
 
@@ -105,6 +106,7 @@ def task_host(tmp_path, monkeypatch):
             binding_id="b",
             allow_write=not readonly,
             guard=lambda write: live["allowed"] and (not write or not readonly),
+            exclusions_provider=lambda: tuple(root / path for path in exclusions),
         )
         provider = make_provider(root=root, admitted_roots=(binding,), allow_write=True)
         registry = ToolCatalogRegistry()
@@ -123,7 +125,9 @@ def task_host(tmp_path, monkeypatch):
             child=True,
         )
         owners.append(owner)
-        claim = activity.try_acquire(owner=owner, footprint=authorization.footprint)
+        claim = activity.try_acquire(
+            owner=owner, footprint=authorization.physical_footprint
+        )
         assert claim is not None
         host = SimpleNamespace(
             root=root,
@@ -166,7 +170,7 @@ def task_host(tmp_path, monkeypatch):
             )
             owners.append(second_owner)
             second_claim = activity.try_acquire(
-                owner=second_owner, footprint=second.footprint
+                owner=second_owner, footprint=second.physical_footprint
             )
             db.create_run(
                 conversation_id=snapshot.request.conversation_id,
@@ -494,7 +498,9 @@ def test_activity_claim_query_rejects_wrong_footprint_and_drained_owner(task_hos
     host.owner.finish_root()
     with pytest.raises(ValueError, match="claim"):
         host.activity.validate_claim(
-            host.claim, owner=host.owner, footprint=host.authorization.footprint
+            host.claim,
+            owner=host.owner,
+            footprint=host.authorization.physical_footprint,
         )
 
 
@@ -791,7 +797,7 @@ def _prepare_native_binding(host, *, row="matching"):
     host.owner.bind_run(claim.launch_run_id)
     host.authorization.check_preparation()
     host.activity.validate_claim(
-        host.claim, owner=host.owner, footprint=host.authorization.footprint
+        host.claim, owner=host.owner, footprint=host.authorization.physical_footprint
     )
 
 
@@ -878,11 +884,11 @@ def test_native_binding_rejects_other_runtime_valid_custody(
     try:
         other.bind_run(host.owner.run_id)
         claim = runtime.worktree_activity.try_acquire(
-            owner=other, footprint=host.authorization.footprint
+            owner=other, footprint=host.authorization.physical_footprint
         )
         assert claim is not None
         runtime.worktree_activity.validate_claim(
-            claim, owner=other, footprint=host.authorization.footprint
+            claim, owner=other, footprint=host.authorization.physical_footprint
         )
         assert other.is_admitted and other.capacity is not host.owner.capacity
         reached = []
@@ -1022,3 +1028,54 @@ def test_outside_call_cannot_trigger_lazy_instruction_reads_or_review(task_host)
         )
     assert discovered == []
     assert reviewed == []
+
+
+def test_native_guidance_candidates_are_physical_reads_without_model_grants(task_host):
+    host = task_host()
+    auth = host.authorization
+    candidates = {host.root / "AGENTS.md", host.root / "AGENTS.override.md"}
+    assert candidates <= {scope.path for scope in auth.physical_footprint.reads}
+    assert not candidates & {scope.path for scope in auth.footprint.reads}
+    host.bind()
+    (host.root / "AGENTS.md").write_text("untrusted guidance")
+    result = invoke(host, "fs_read", {"path": "AGENTS.md"})
+    assert not result.ok
+
+
+def test_native_guidance_claim_protects_absent_candidate_creation(task_host):
+    from tldw_chatbook.Workspaces.worktree_activity import (
+        WorktreeFootprint,
+        WorktreeScope,
+    )
+
+    host = task_host()
+    auth = host.authorization
+    candidate = host.root / "AGENTS.override.md"
+    assert not candidate.exists()
+    root = auth.physical_footprint.reads[0].root
+    with host.activity.prelaunch(
+        footprint=WorktreeFootprint(writes=(WorktreeScope(candidate, False, root),))
+    ) as contender:
+        assert contender is None
+
+
+def test_native_guidance_includes_ancestors_for_exact_nested_output(task_host):
+    def nested(data, root):
+        (root / "nested" / "deep").mkdir(parents=True)
+        task = data["phases"][0]["tasks"][0]
+        task["footprint"] = [
+            {"path": "nested/deep/result.py", "access": "write", "subtree": False}
+        ]
+        task["outputs"] = ["nested/deep/result.py"]
+
+    host = task_host(plan_edit=nested)
+    reads = {scope.path for scope in host.authorization.physical_footprint.reads}
+    for directory in (host.root, host.root / "nested", host.root / "nested" / "deep"):
+        assert {directory / "AGENTS.md", directory / "AGENTS.override.md"} <= reads
+
+
+def test_native_guidance_excludes_hidden_candidate(task_host):
+    host = task_host(exclusions=("AGENTS.override.md",))
+    reads = {s.path for s in host.authorization.physical_footprint.reads}
+    assert host.root / "AGENTS.override.md" not in reads
+    assert host.root / "AGENTS.md" in reads

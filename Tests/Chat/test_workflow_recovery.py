@@ -283,3 +283,116 @@ async def test_actual_startup_owner_projects_workflows_once_before_ready(
         wake.dispose()
         await wake.drain_recovery()
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "closed,opaque,replaced_root",
+    [
+        (False, False, False),
+        (True, False, False),
+        (True, True, False),
+        (True, False, True),
+    ],
+)
+async def test_startup_protects_actual_unknown_work_even_after_review_close(
+    tmp_path, monkeypatch, closed, opaque, replaced_root
+):
+    import json
+
+    from Tests.Agents.test_workflow_run_service import _history_persistence
+    from Tests.Agents.workflow_support import make_workflow_request, plan_data
+    from tldw_chatbook.Agents import run_log
+    from tldw_chatbook.Agents.workflow_models import (
+        WorkflowExecutionRecovery,
+        WorkflowPlan,
+    )
+    from tldw_chatbook.Agents.workflow_run_service import WorkflowRunService
+    from tldw_chatbook.Chat.console_fleet_wake import ConsoleFleetWakeCoordinator
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Utils.filesystem_identity import capture_directory_chain
+    from tldw_chatbook.Workspaces.worktree_activity import (
+        WorktreeFootprint,
+        WorktreeScope,
+    )
+
+    monkeypatch.setattr(
+        run_log,
+        "_setting",
+        lambda key, default: True if key == "workflow_runs_enabled" else default,
+    )
+    root = tmp_path / "project"
+    root.mkdir()
+    db = AgentRunsDB(tmp_path / "recovery-protection.db")
+    snapshot = db.workflow_runs.create(make_workflow_request(root), launch_id="start")
+    data = plan_data(root)
+    from tldw_chatbook.Agents.workflow_run_service import _workflow_root_identity
+
+    data["root_identity"] = _workflow_root_identity(capture_directory_chain(root))
+    if opaque:
+        data["phases"][0]["tasks"][0]["execution_mode"] = "exclusive"
+    snapshot = db.workflow_runs.save_plan(
+        snapshot.id,
+        WorkflowPlan.model_validate_json(json.dumps(data)),
+        expected_control_revision=1,
+    )
+    db.automatic_work.recover(current_owner_id="old")
+    attempt = db.automatic_work.prepare_workflow_phase(
+        snapshot.id,
+        revision_id=1,
+        phase_id="phase-1",
+        owner_id="old",
+        session_id="session",
+        command_id="approve",
+    )
+    assert db.automatic_work.accept_workflow_phase(attempt.id, owner_id="old")
+    persistence = _history_persistence(root)
+    service = WorkflowRunService(db, persistence)
+    if closed:
+        db.automatic_work.recover(current_owner_id="intermediate")
+        snapshot = service.get(snapshot.id)
+        service.resolve_recovery(
+            snapshot.id,
+            expected_control_revision=snapshot.control_revision,
+            decision=WorkflowExecutionRecovery(reason="acknowledged_unknown"),
+        )
+    controller = SimpleNamespace(
+        _agent_bridge=SimpleNamespace(runs_db=db),
+        store=SimpleNamespace(persistence=persistence, sessions=list),
+    )
+    runtime = ConsoleRuntime(None)
+    runtime.set_chat_controller(controller)
+    wake = ConsoleFleetWakeCoordinator(controller)
+    wake._recovery_projection = runtime._project_workflow_recovery
+    if replaced_root:
+        root.rename(tmp_path / "old-project")
+        root.mkdir()
+    try:
+        assert not runtime.worktree_activity.recovery_blockers(
+            WorktreeFootprint(opaque=True)
+        )
+        wake.start_recovery()
+        assert await wake.wait_for_recovery()
+        chain = capture_directory_chain(root)
+        footprint = WorktreeFootprint(
+            reads=(WorktreeScope(root / "source.py", False, chain),)
+        )
+        assert runtime.worktree_activity.recovery_blockers(footprint) == (snapshot.id,)
+        with runtime.worktree_activity.prelaunch(footprint=footprint) as claim:
+            assert claim is None
+        unrelated = tmp_path / "scratch"
+        unrelated.mkdir()
+        scratch = WorktreeFootprint(
+            writes=(WorktreeScope(unrelated, True, capture_directory_chain(unrelated)),)
+        )
+        with runtime.worktree_activity.prelaunch(footprint=scratch) as claim:
+            assert (claim is None) is (opaque or replaced_root)
+        assert db.list_runs(snapshot.request.conversation_id) == []
+        assert runtime.execution_capacity.snapshot().executions == ()
+        assert service.get(snapshot.id).status == (
+            "closed" if closed else "recovery_required"
+        )
+    finally:
+        wake.dispose()
+        await wake.drain_recovery()
+        db.close()

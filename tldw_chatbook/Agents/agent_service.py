@@ -4788,7 +4788,7 @@ class AgentService:
             bound = False
             dispatched = False
             try:
-                with activity.prelaunch(footprint=authorization.footprint) as claim:
+                with activity.prelaunch(footprint=authorization.physical_footprint) as claim:
                     if claim is None:
                         raise _WorkflowChildWait(
                             "worktree_activity", "workflow worktree activity busy"

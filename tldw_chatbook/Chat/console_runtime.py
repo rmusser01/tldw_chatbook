@@ -5567,10 +5567,13 @@ class ConsoleRuntime:
 
     async def _project_workflow_recovery(self, audit):
         controller = self._chat_controller
-        if self._disposed or controller is None or not audit.workflows:
+        if self._disposed or controller is None:
             return
         service = self.ensure_workflow_service()
         await service.call(service.project_recovery, audit)
+        protections = await service.call(service.recovery_protections, audit)
+        for workflow_id, footprint in protections:
+            self.worktree_activity.protect_recovery(workflow_id, footprint)
 
     def ensure_goal_coordinator(self):
         """Attach goal execution to the existing startup audit and runtime owner."""
