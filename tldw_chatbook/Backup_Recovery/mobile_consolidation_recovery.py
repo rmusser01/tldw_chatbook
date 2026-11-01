@@ -96,7 +96,7 @@ def _verify_terminal_owners(session, journal, terminal, budget, cancel):
     ):
         budget.container(20)
         with (
-            _preview_reads()
+            _preview_reads(_read_budget=budget)
             if session is None
             else session._discovery_reads(private_sqlite=True, _read_budget=budget),
             closing(

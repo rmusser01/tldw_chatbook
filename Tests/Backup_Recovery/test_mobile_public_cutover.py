@@ -85,11 +85,11 @@ def test_public_service_completes_same_native_target(tmp_path, monkeypatch):
                 assert len(chat.get_all_conversation_ids()) == 2
             finally:
                 chat.close_connection()
-            from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
-                require_mobile_cutover,
+            from Tests.Backup_Recovery.test_mobile_cutover_budget import (
+                assert_original_observer_accounting,
             )
 
-            assert require_mobile_cutover(preview.source_dir, stores) is None
+            assert_original_observer_accounting(tmp_path, monkeypatch, preview, stores)
         finally:
             service.close()
         from tldw_chatbook.Backup_Recovery.recovery_copies import list_recovery_copies
