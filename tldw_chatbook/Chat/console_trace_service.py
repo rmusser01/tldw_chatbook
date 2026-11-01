@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_semantic_revision import (
     project_semantic_revision_provider_continuations,
     project_semantic_revision_provider_message,
     project_semantic_revision_provider_messages,
+    response_projection_profile,
 )
 from tldw_chatbook.Chat.console_trace_continuation import (
     CONTINUATION_DELTA_COMPONENT,
@@ -6452,39 +6453,10 @@ def _surface_reference_domain(key: SurfaceReferenceKey) -> str:
 
 
 def _response_projection_profile(resolution: object | None) -> dict[str, object] | None:
-    """Freeze only the existing supported typed-thinking response contract."""
-    if (
-        getattr(resolution, "thinking_stream_disposition", None)
-        not in {"displayable", "proprietary"}
-        or getattr(resolution, "thinking_round_trip_version", None) != 1
-    ):
-        return None
-    from tldw_chatbook.Chat.console_provider_gateway import (
-        _thinking_protocol,
-        resolve_finish_policy,
+    """Freeze the response contract using the existing call-time format resolver."""
+    return response_projection_profile(
+        resolution, source_formats_for=local_thinking_response_source_formats
     )
-
-    execution_key = getattr(resolution, "execution_key", "")
-    disposition = getattr(resolution, "thinking_stream_disposition", None)
-    model = getattr(resolution, "model", None)
-    profile = {
-        "version": 1,
-        "thinking_stream_disposition": disposition,
-        "thinking_round_trip_version": 1,
-        "provider": execution_key,
-        "model": model,
-        "protocol": _thinking_protocol(resolution),
-    }
-    if disposition == "displayable":
-        source_formats = local_thinking_response_source_formats(execution_key, model)
-        if source_formats is None:
-            return None
-        return {**profile, "version": 2, "source_formats": source_formats}
-    # Resolve through dev's generic engine/preset seam, preserving hosted policies.
-    hosted_policy = resolve_finish_policy(execution_key)
-    if hosted_policy is None or hosted_policy.reasoning_disposition != "proprietary":
-        return None
-    return {**profile, "source_format": "reasoning_content"}
 
 
 def _saved_reference_key(

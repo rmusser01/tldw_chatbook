@@ -454,3 +454,31 @@ def test_hosted_profiles_remain_v1_and_unknown_local_profiles_are_not_admitted(
         "protocol": "chat_completions",
         "source_format": "reasoning_content",
     }
+
+
+def test_trace_projection_uses_the_service_call_time_format_resolver(monkeypatch):
+    from tldw_chatbook.Chat import console_trace_service
+
+    calls = []
+
+    def formats(provider, model):
+        calls.append((provider, model))
+        return ["reasoning_content"]
+
+    monkeypatch.setattr(
+        console_trace_service, "local_thinking_response_source_formats", formats
+    )
+    profile = console_trace_service._response_projection_profile(
+        ConsoleProviderResolution(
+            provider="llama_cpp",
+            execution_key="llama_cpp",
+            base_url="http://127.0.0.1:9099",
+            ready=True,
+            model="private-model",
+            thinking_stream_disposition="displayable",
+            thinking_round_trip_version=1,
+        )
+    )
+    assert calls == [("llama_cpp", "private-model")]
+    assert profile is not None
+    assert profile["source_formats"] == ["reasoning_content"]

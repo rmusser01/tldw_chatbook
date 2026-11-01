@@ -1498,3 +1498,25 @@ def test_startup_recovery_leaves_recent_cross_process_call_open(
     )
     assert [record.call_id for record in recovered] == [call_id]
     assert recovered[0].state is TraceCallState.DISPATCH_UNKNOWN
+
+
+def test_runtime_recovery_honors_explicit_grace_and_timestamp(
+    db: CharactersRAGDB,
+) -> None:
+    repository = ConsoleTraceRepository()
+    _conversation_id, _segment_id, call_id = _call(
+        db, repository, state=TraceCallState.DISPATCH_STARTED
+    )
+    timestamp = "2026-08-30T01:00:10Z"
+    assert (
+        recover_console_trace_calls(
+            db, occurred_at=timestamp, repository=repository, recovery_grace_seconds=300
+        )
+        == ()
+    )
+    recovered = recover_console_trace_calls(
+        db, occurred_at=timestamp, repository=repository, recovery_grace_seconds=1
+    )
+    assert [record.call_id for record in recovered] == [call_id]
+    assert recovered[0].state is TraceCallState.DISPATCH_UNKNOWN
+    assert recovered[0].settled_at == timestamp

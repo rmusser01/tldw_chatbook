@@ -218,7 +218,7 @@ async def _write_off_loop(screen: Any, state: EmergencyStopState) -> bool:
     is cancelled; a later instruction must retry after that write finishes.
     """
     app = screen.app_instance
-    if getattr(app, "_console_emergency_stop_write", None) is not None:
+    if app.console_emergency_stop_write is not None:
         app.notify(
             "Emergency stop is already being changed; wait for it to finish, then retry.",
             severity="warning",
@@ -258,7 +258,7 @@ async def _write_off_loop(screen: Any, state: EmergencyStopState) -> bool:
         return False
     finally:
         submission.set()
-    app._console_emergency_stop_write = future
+    app.console_emergency_stop_write = future
     cancelled = False
     success = False
     try:
@@ -279,8 +279,8 @@ async def _write_off_loop(screen: Any, state: EmergencyStopState) -> bool:
             if error is not None:
                 _report_write_failure(screen, verb, error, recorded)
     finally:
-        if app._console_emergency_stop_write is future:
-            app._console_emergency_stop_write = None
+        if app.console_emergency_stop_write is future:
+            app.console_emergency_stop_write = None
     if cancelled:
         raise asyncio.CancelledError
     return success

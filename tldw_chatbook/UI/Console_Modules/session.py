@@ -2811,23 +2811,11 @@ class ConsoleSessionController:
     def _fork_conversation_kwargs(
         snapshot: ConsoleChatForkSnapshot,
     ) -> dict[str, object]:
-        configuration = snapshot.configuration
-        global_scope = configuration.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
-        return {
-            "conversation_title": snapshot.title,
-            "scope_type": "global" if global_scope else "workspace",
-            "workspace_id": None if global_scope else configuration.workspace_id,
-            "system_prompt": configuration.settings.system_prompt,
-            "runtime_backend": configuration.runtime_backend,
-            "assistant_kind": configuration.assistant_kind,
-            "assistant_id": configuration.assistant_id,
-            "assistant_authority_id": configuration.assistant_authority_id,
-            "persona_memory_mode": configuration.persona_memory_mode,
-            "character_id": configuration.character_id,
-            "character_name": configuration.character_name,
-            "speech_preferences": configuration.speech_preferences,
-            "thinking_history_policy": configuration.thinking_history_policy,
-        }
+        from tldw_chatbook.Chat.console_chat_fork import fork_conversation_kwargs
+
+        return fork_conversation_kwargs(
+            snapshot, global_workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID
+        )
 
     def _registered_fork_exists(
         self,
@@ -5662,11 +5650,10 @@ class ConsoleSessionController:
                 finally:
                     composer._authored_draft_observer = observer
             self._restore_banked_raw_cli_stashes_fn(active_session_id, composer)
-            if visible_session_id is not None:
-                try:
-                    store.set_session_draft(visible_session_id, composer.draft_text())
-                except KeyError:
-                    pass
+            try:
+                store.set_session_draft(visible_session_id, composer.draft_text())
+            except KeyError:
+                pass
             if self._initial_composer_sync_pending:
                 self._sync_console_command_popup()
                 if self._on_draft_session_changed is not None:
@@ -5679,27 +5666,28 @@ class ConsoleSessionController:
         save_text = live_text
         typed_suffix = ""
         resident_draft_changed = False
-        if snapshot is not None and snapshot[0] == visible_session_id:
-            snap_text, snap_serial = snapshot[1], snapshot[2]
-            if composer.edit_serial != snap_serial and live_text.startswith(snap_text):
-                # User typed during the settle window: the old session keeps
-                # what it actually had at the keypress; the new typing rides
-                # into the new session below. (Non-append edits — e.g.
-                # backspacing into the old draft — fall back to today's
-                # save-the-live-text semantics.)
-                save_text = snap_text
-                typed_suffix = live_text[len(snap_text) :]
-            known_revision = self._console_visible_draft_revision
-            if live_text.startswith(snap_text) and known_revision is not None:
-                current = store.session_input_snapshot(visible_session_id)
-                if current.draft_revision != known_revision:
-                    save_text = current.draft
-                    resident_draft_changed = True
-        if visible_session_id is not None:
-            try:
+        try:
+            if snapshot is not None and snapshot[0] == visible_session_id:
+                snap_text, snap_serial = snapshot[1], snapshot[2]
+                has_prefix = live_text.startswith(snap_text)
+                if composer.edit_serial != snap_serial and has_prefix:
+                    # User typed during the settle window: the old session keeps
+                    # what it actually had at the keypress; the new typing rides
+                    # into the new session below. (Non-append edits — e.g.
+                    # backspacing into the old draft — fall back to today's
+                    # save-the-live-text semantics.)
+                    save_text = snap_text
+                    typed_suffix = live_text[len(snap_text) :]
+                known_revision = self._console_visible_draft_revision
+                if has_prefix and known_revision is not None:
+                    current = store.session_input_snapshot(visible_session_id)
+                    if current.draft_revision != known_revision:
+                        save_text, resident_draft_changed = current.draft, True
+            if visible_session_id is not None:
                 store.set_session_draft(visible_session_id, save_text)
-            except KeyError:
-                pass
+        except KeyError:
+            resident_draft_changed = True
+        if visible_session_id is not None:
             # TASK-1281: this composer is about to start showing a DIFFERENT
             # session's draft -- bank its undo/redo history under the
             # session it actually belongs to before the swap below discards
@@ -5867,7 +5855,7 @@ class ConsoleSessionController:
             True when the action was refused.
         """
         if self._conversation_activation_depth > 0:
-            monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
+            monitor = self.app_instance.ui_responsiveness_monitor
             if monitor is not None:
                 monitor.record_diagnostic(
                     "console",
@@ -6830,157 +6818,9 @@ class ConsoleSessionController:
     ) -> object:
         """Route a pre-dispatch card action; a cancelled hold refills the composer."""
 
-        from ...Chat.console_unsent_turn import (
-            card_action_finished,
-            card_action_started,
-            card_owned_pause,
-            clear_answered_draft,
-            own_draft_takes_it_back,
-            shelf_releasable,
-            trace_card_returns_draft,
-        )
+        from .provider_continuation_recovery import dispatch_session_recovery
 
-        controller = self._ensure_console_chat_controller()
-        held = controller.trace_call_recovery_preparation()
-        # TASK-33621.20: a paused send the unsent-turn shelf also lists (a
-        # Library pause, or a send that re-paused): one surface at a time.
-        releasable = shelf_releasable(held, preparation_id)
-        # TASK-33621.18: a capture pause's unsent turn is kept, held off the
-        # shelf, so Cancel can give back what the send took (its attachments).
-        card_owned = card_owned_pause(held, preparation_id)
-        kept = releasable or card_owned
-        runtime = self._console_runtime_accessor() if kept else None
-        # TASK-34350: read the held text BEFORE the action: the UI sync that
-        # follows it mirrors the (empty) composer back into the session draft.
-        trace_card = trace_card_returns_draft(held, preparation_id)  # TASK-33621.6
-        held_text = (
-            held.executed_draft
-            if held is not None
-            and held.preparation_id == preparation_id
-            and (
-                kept
-                or trace_card
-                or controller.context_compaction_hold(preparation_id) is not None
-            )
-            else ""
-        )
-        original_inputs = None
-        if held is not None and held.preparation_id == preparation_id:
-            candidate = controller.store.session_input_snapshot(held.session_id)
-            if candidate.draft_revision == held.input_draft_revision:
-                original_inputs = candidate
-        completed_result = None
-
-        def retain_result(value):
-            nonlocal completed_result
-            completed_result = value
-
-        sync_ui = self._read_trace_recovery_finished()
-        try:
-            if releasable:
-                # Inside the try: a failed or cancelled repaint still unholds.
-                card_action_started(runtime, preparation_id)
-                await sync_ui()  # the shelf stops offering the send right away
-            result = await self._read_trace_recovery_dispatch()(
-                controller,
-                action,
-                preparation_id,
-                on_started=self._read_trace_recovery_started(),
-                on_result=retain_result,
-                on_finished=self._read_trace_recovery_finished(),
-                restore_draft=not (
-                    kept and getattr(held, "input_draft_revision", None) is None
-                ),
-            )
-        except BaseException:
-            if kept:
-                # TASK-33621.20: the card may be gone (a center swap cancels its
-                # worker), so the shelf offers the turn again, repainted from
-                # the screen rather than from this ending task (passed uncalled,
-                # so a worker a teardown never starts leaves no coroutine).
-                card_action_finished(
-                    runtime,
-                    controller,
-                    preparation_id,
-                    accepted=bool(getattr(completed_result, "accepted", False)),
-                    return_to_composer=False,
-                    interrupted=True,
-                )
-                if held is not None and getattr(completed_result, "accepted", False):
-                    clear_answered_draft(
-                        controller.store, held.session_id, held.executed_draft,
-                        inputs=original_inputs,
-                    )
-                self.run_worker(sync_ui, exclusive=False, group="console-sync")
-            raise
-        composer = self._console_composer_or_none()
-        # By id: after a tab switch the active session's pause is another's.
-        now_held = controller.store.preparation_by_id(preparation_id)
-        settled = (bool(held_text) or card_owned) and (
-            not shelf_releasable(now_held, preparation_id)
-            if releasable
-            else not trace_card_returns_draft(now_held, preparation_id)
-            if trace_card
-            else not card_owned_pause(now_held, preparation_id)
-            if card_owned
-            else controller.context_compaction_hold(preparation_id) is None
-        )
-        # TASK-33621.20: a tab switch during the action leaves the composer on
-        # another conversation; the turn goes back to its own draft instead.
-        shown = (
-            held is not None
-            and composer is not None
-            and controller.store.active_session_id == held.session_id
-            and self._console_visible_draft_session_id == held.session_id
-        )
-        cancelled = action == "cancel" and settled
-        # A composer send keeps showing its own text until the turn is accepted;
-        # that is no follow-up to protect (as in `own_draft_takes_it_back`), so
-        # Cancel still takes the turn off the shelf with its attachments.
-        typed = composer.draft_text().strip() if shown else ""
-        refill = (
-            cancelled
-            and shown
-            and (not typed or (kept and typed == held_text.strip()))
-        )
-        # Only a kept unsent turn can be sent back there.
-        to_own_draft = (
-            kept
-            and cancelled
-            and not shown
-            and own_draft_takes_it_back(controller.store, held.session_id, held_text)
-        )
-        returned = None
-        if kept:
-            returned = card_action_finished(
-                runtime,
-                controller,
-                preparation_id,
-                accepted=bool(getattr(result, "accepted", False)),
-                return_to_composer=refill or to_own_draft,
-                cancelled_draft_revision=(
-                    getattr(result, "cancelled_draft_revision", None)
-                    if getattr(result, "session_id", None) == held.session_id
-                    and getattr(result, "preparation_id", None) == preparation_id
-                    else None
-                ),
-            )
-            if returned is not None:
-                held_text = returned.draft  # with its attachments restaged
-            # A trace pause comes after the durable commit: nothing was kept.
-            refill = refill and (trace_card or returned is not None)
-        cleared = False
-        if refill:
-            # Cancel puts the held message back where it came from.
-            composer.load_draft(held_text)
-        elif held is not None and getattr(result, "accepted", False):  # TASK-33621.18
-            sent = held.executed_draft if held.preparation_id == preparation_id else ""
-            cleared = clear_answered_draft(
-                controller.store, held.session_id, sent, inputs=original_inputs
-            )
-        if releasable or returned is not None or cleared:
-            await sync_ui()  # the shelf (and the staged attachments) settled
-        return result
+        return await dispatch_session_recovery(self, action, preparation_id)
 
     def _console_trace_recovery_state(self) -> Any:
         """Project the active pre-dispatch pause, with a context hold's numbers.

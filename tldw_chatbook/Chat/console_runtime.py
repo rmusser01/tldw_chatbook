@@ -122,7 +122,6 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, RLock, get_ident
 from types import MethodType
@@ -336,34 +335,13 @@ def recover_console_trace_calls(
     repository: object | None = None,
     recovery_grace_seconds: int = 300,
 ) -> tuple[object, ...]:
-    """Close normalized provider calls stale at startup.
+    """Recover stale calls through their settlement owner, loaded on demand."""
+    from .console_trace_settlement import recover_console_trace_calls as recover
 
-    Args:
-        database: Trace database to recover.
-        occurred_at: Optional recovery timestamp override.
-        repository: Optional repository override for tests.
-        recovery_grace_seconds: Minimum inactivity before a call is stale.
-
-    Returns:
-        Calls transitioned by the recovery pass.
-    """
-
-    from tldw_chatbook.Chat.console_trace_repository import ConsoleTraceRepository
-    from tldw_chatbook.Chat.console_trace_settlement import (
-        ConsoleTraceSettlementCoordinator,
-    )
-
-    trace_repository = (
-        repository
-        if isinstance(repository, ConsoleTraceRepository)
-        else ConsoleTraceRepository()
-    )
-    timestamp = occurred_at or datetime.now(timezone.utc).isoformat().replace(
-        "+00:00", "Z"
-    )
-    return ConsoleTraceSettlementCoordinator(trace_repository).recover_open_calls(
+    return recover(
         database,
-        occurred_at=timestamp,
+        occurred_at=occurred_at,
+        repository=repository,
         recovery_grace_seconds=recovery_grace_seconds,
     )
 
@@ -1296,6 +1274,11 @@ class ConsoleRuntime:
     def chat_controller(self) -> "ConsoleChatController | None":
         """The built chat controller, or `None`."""
         return self._chat_controller
+
+    def selected_tool_count(self, session_id: str | None) -> int | None:
+        """Read the built controller's publication without constructing one."""
+        controller = self._chat_controller
+        return None if controller is None else controller.selected_tool_count(session_id)
 
     @property
     def run_hooks_engine(self) -> "RunHooksEngine | None":
@@ -3334,32 +3317,10 @@ class ConsoleRuntime:
         )
 
     def _turn_recovery_offered(self, entry: ConsoleTurnRecoveryEntry) -> bool:
-        """Whether an unsent turn may be restored or discarded right now.
+        """Read the shelf/card owner's current recovery offer decision."""
+        from tldw_chatbook.Chat.console_unsent_turn import turn_recovery_offered
 
-        Not while its paused send's card is acting on it (held), and not once
-        that send has been accepted: either way Restore would send it twice.
-        Other states are not a signal: a failed durable commit is paused, or
-        COMMITTING under another owner, and its turn must stay restorable.
-        """
-        preparation_id = entry.preparation_id
-        if preparation_id is None:
-            return True
-        if preparation_id in self._card_held_preparations:
-            return False
-        store = getattr(self._chat_controller, "store", None)
-        lookup = getattr(store, "preparation_by_id", None)
-        preparation = lookup(preparation_id) if callable(lookup) else None
-        if preparation is None:
-            return True
-        from tldw_chatbook.Chat.console_turn_preparation import (
-            ConsoleTurnPreparationState as State,
-        )
-
-        return preparation.state not in {
-            State.ACCEPTED,
-            State.DISPATCH_STARTED,
-            State.DISPATCHED,
-        }
+        return turn_recovery_offered(self, entry)
 
     def restore_turn_recovery(self, turn_id: str) -> ConsoleTurnRecoveryEntry:
         """Re-stage one exact recovery into its still-live owning session."""
@@ -3463,42 +3424,12 @@ class ConsoleRuntime:
         Returns:
             The returned unsent turn, or None when the send had none.
         """
-        entry = next(
-            (
-                entry
-                for entry in self._turn_recoveries.values()
-                if entry.preparation_id == preparation_id
-            ),
-            None,
-        )
-        store = self._chat_store
-        if entry is None or store is None:
-            return None
-        from .console_received_intent import _replace_session_draft_locked
-        from .console_received_turn import ConsoleReceivedTurnClaim
 
-        with store._preparation_lock:
-            session = store._sessions.get(entry.session_id)
-            claim = entry.source_claim
-            if (
-                not isinstance(expected_draft_revision, int)
-                or isinstance(expected_draft_revision, bool)
-                or type(claim) is not ConsoleReceivedTurnClaim
-                or claim._store_ref() is not store
-                or session is None
-                or claim._session_ref() is not session
-                or claim._session_incarnation != session.incarnation_id
-                or session.draft_revision != expected_draft_revision
-            ):
-                self.unhold_turn_recoveries_for_preparation(preparation_id)
-                return None
-            store.restore_transferred_pending_attachments(
-                entry.session_id, entry.attachments
-            )
-            _replace_session_draft_locked(session, entry.draft)
-            self.forget_turn_recoveries_for_preparation(preparation_id)
-        store._publish_session_draft_handoff(session, entry.draft)
-        return entry
+        from .console_unsent_turn import return_turn_recovery_to_draft
+
+        return return_turn_recovery_to_draft(
+            self, preparation_id, expected_draft_revision=expected_draft_revision
+        )
 
     def _record_turn_recovery(
         self,
@@ -5139,7 +5070,12 @@ class ConsoleRuntime:
             # turned on Full agent tools; read per send, so a switch flipped
             # in setup or the MCP hub applies on the next send.
             light_tool_surface=light_surface_configured,
-            tool_kill_switch=functools.partial(tool_kill_switch_engaged, self._app),
+            tool_kill_switch=functools.partial(
+                tool_kill_switch_engaged,
+                lambda: self._app.unified_mcp_service
+                if self._app is not None
+                else None,
+            ),
         )
         # PR3a-2 Task 4: the survivor-completion attention consumer (durable
         # unseen mark + app-wide toast + deep link), registered NEXT TO

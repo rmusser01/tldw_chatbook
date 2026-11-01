@@ -201,7 +201,12 @@ async def test_real_local_dispatcher_preserves_native_schema_and_reasoning(
     def respond(session, url, **kwargs):
         assert "Authorization" not in kwargs.get("headers", {})
         sent.append((url, kwargs["json"]))
-        response = Mock(status_code=200)
+        response = Mock(
+            status_code=200,
+            headers={
+                "Content-Type": "text/event-stream" if streaming else "application/json"
+            },
+        )
         response.json.return_value = {
             "choices": [{"message": message, "finish_reason": "tool_calls"}]
         }

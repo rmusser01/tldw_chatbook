@@ -1881,9 +1881,7 @@ async def _capture_console_evidence_bundle(
     # its first use, acquired (or provisioned) off the UI loop.
     from ...Chat.citation_key_first_use import ensure_fingerprint_key_off_loop
 
-    await ensure_fingerprint_key_off_loop(
-        getattr(app, "citation_trace_repository", None)
-    )
+    await ensure_fingerprint_key_off_loop(app.citation_trace_repository)
     builder = _create_local_capture_builder(app)
     if builder is None:
         # AC#4: no citation record will cover this reply (records off, or the

@@ -209,3 +209,16 @@ unchanged with 24,604 B headroom. The snapshot was refreshed by
 `scripts/update_boot_budget_snapshots.py --only css`. No exception or budget
 increase was used. This pays the CSS-byte debt; it does not claim a measured
 startup-time improvement or complete TASK-31500's separate modal deferrals.
+
+## Required Stop warm-up and shared refusal dependency (TASK-38268, 2026-11-01)
+
+The integrated first-send probe observes `console_pre_provider_stop` loading from
+`resume_durable_postcommit` on the UI loop. Adding its real warm-up entry measures
+95 added modules, no heavy additions, against the unchanged94 limit. The
+[ADR-134 shared-refusal amendment](134-fleet-admission-and-automatic-work-budgets.md#shared-refusal-model-and-conditional-budget-imports-task-38268-2026-11-01)
+removes the unnecessary automatic-budget-model dependency from manual scope/tool
+execution while preserving its common refusal type and actual automatic checks.
+The same guard must measure94 or fewer; required warm coverage, screen-route
+order and all boot/import/latency gates remain authoritative. This is a dependency
+paydown, not an exception or a raised constant. Final measurements belong in
+TASK-38268 and the PR evidence after actual execution.

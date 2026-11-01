@@ -499,9 +499,14 @@ async def replay_keeps_drain_owned():
 async def cold_full_schedules_its_pending_replay():
     from contextlib import nullcontext
 
+    from tldw_chatbook.UI.Console_Modules.attach_visit import ConsoleAttachVisit
+
     owner = make_screen()
     owner._console_sync_in_progress = False
-    owner._current_console_attach_visit = lambda: object()
+    # No runtime attachment claim; exercise the real visit comparator.
+    owner._current_console_attach_visit = lambda: ConsoleAttachVisit(
+        runtime=None, view=owner, generation=None, visit=0, active=True
+    )
     owner._record_ui_worker_started = owner._record_ui_worker_finished = lambda *_: None
     owner._message = SimpleNamespace(reconcile_console_speech_context=lambda: None)
     owner._image = SimpleNamespace(
@@ -509,6 +514,7 @@ async def cold_full_schedules_its_pending_replay():
         _reconcile_h3_image_edit_completions=lambda *_: None,
     )
     owner._sync_console_chat_core_state = lambda: None
+    owner._sync_console_temporary_chip = lambda: False
     owner._session._sync_console_session_draft = lambda: None
 
     async def settled():

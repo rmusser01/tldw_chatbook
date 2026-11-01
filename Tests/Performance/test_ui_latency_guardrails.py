@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -100,15 +101,16 @@ def _scratch_env(monkeypatch: pytest.MonkeyPatch) -> Path:
 
 async def _wait_for_screen(pilot, expected: str, budget: float) -> tuple[bool, float]:
     """Press-and-wait helper; returns (arrived, elapsed_seconds)."""
+    # Keep Pilot's message barrier without its repeated CPU-idle heuristic.
     deadline = asyncio.get_running_loop().time() + budget
     while asyncio.get_running_loop().time() < deadline:
-        await pilot.pause()
+        await pilot.pause(0)
         if type(pilot.app.screen).__name__ == expected:
             break
     arrived = type(pilot.app.screen).__name__ == expected
     for _ in range(_SETTLE_PASSES):
         await asyncio.sleep(_SETTLE_INTERVAL)
-        await pilot.pause()
+        await pilot.pause(0)
     return arrived, budget - (deadline - asyncio.get_running_loop().time())
 
 
@@ -148,6 +150,45 @@ async def test_destination_tour_stays_under_switch_budgets(
         assert not failures, "Screen-switch latency guardrail tripped:\n" + "\n".join(
             failures
         )
+
+
+@pytest.mark.ui
+@pytest.mark.asyncio
+@private_profile_test
+async def test_switch_budget_includes_slow_screen_mount(
+    request: pytest.FixtureRequest,
+) -> None:
+    """A real slow mount remains over budget through key dispatch and settlement."""
+    from textual.app import App
+    from textual.screen import Screen
+
+    loop = asyncio.get_running_loop()
+    mount_elapsed = 0.0
+
+    class DelayedMountScreen(Screen):
+        async def on_mount(self) -> None:
+            nonlocal mount_elapsed
+            started = loop.time()
+            await asyncio.sleep(SCREEN_SWITCH_BUDGET_SECONDS + 0.1)
+            mount_elapsed = loop.time() - started
+
+    class MountCalibrationApp(App):
+        BINDINGS = [("f4", "delayed_mount", "Delayed mount")]
+
+        def action_delayed_mount(self) -> None:
+            self.push_screen(DelayedMountScreen())
+
+    async with MountCalibrationApp().run_test(size=(170, 48)) as pilot:
+        started = loop.time()
+        await pilot.press("f4")
+        arrived, _ = await _wait_for_screen(
+            pilot, "DelayedMountScreen", SCREEN_SWITCH_BUDGET_SECONDS
+        )
+        elapsed = loop.time() - started
+        assert arrived
+        assert mount_elapsed > SCREEN_SWITCH_BUDGET_SECONDS
+        assert elapsed >= mount_elapsed
+        assert elapsed > SCREEN_SWITCH_BUDGET_SECONDS
 
 
 @pytest.mark.ui
@@ -243,13 +284,23 @@ def _seed_library_profile(home: Path) -> None:
 
 def _point_config_at_seeded_databases(home: Path) -> None:
     """Append explicit database paths so the seed and the app agree."""
+    from toml import dumps
+
     config_file = Path(os.environ["TLDW_CONFIG_PATH"])
     data = home / "library-budget-data"
     config_file.write_text(
-        config_file.read_text()
-        + '\n[general]\nusers_name = "budget"\n\n[database]\n'
-        + f'chachanotes_db_path = "{data / "chachanotes.db"}"\n'
-        + f'media_db_path = "{data / "media.db"}"\n'
+        config_file.read_text(encoding="utf-8")
+        + "\n"
+        + dumps(
+            {
+                "general": {"users_name": "budget"},
+                "database": {
+                    "chachanotes_db_path": str(data / "chachanotes.db"),
+                    "media_db_path": str(data / "media.db"),
+                },
+            }
+        ),
+        encoding="utf-8",
     )
     from tldw_chatbook.config import load_settings
 
@@ -290,11 +341,14 @@ async def test_library_opens_within_budget_on_a_seeded_profile(
         deadline = started + SCREEN_SWITCH_BUDGET_SECONDS
         while not counted and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(_SETTLE_INTERVAL)
-            await pilot.pause()
+            await pilot.pause(0)
             counted = [
                 str(widget.renderable)
                 for widget in app.screen.query(Static)
-                if "Notes (" in str(widget.renderable)
+                if re.search(
+                    r"Notes \(\d+\).*Media \(\d+\).*Conversations \(\d+\)",
+                    str(widget.renderable),
+                )
             ]
         settled = asyncio.get_running_loop().time() - started
         stuck_on = type(app.screen).__name__
@@ -323,4 +377,5 @@ async def test_library_opens_within_budget_on_a_seeded_profile(
     assert (
         f"Notes ({SEEDED_PROFILE_NOTES})" in counted[0]
         and f"Media ({SEEDED_PROFILE_MEDIA})" in counted[0]
+        and f"Conversations ({SEEDED_PROFILE_CONVERSATIONS})" in counted[0]
     ), f"the seeded profile never reached the screen: {counted[:3]}"

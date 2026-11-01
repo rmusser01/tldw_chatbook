@@ -38,9 +38,10 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Chat.console_configuration_preparation",
     "UI.Console_Modules.turn_admission",
     "MCP.console_snapshot",
-    "Chat.console_received_dispatch",
     "Chat.console_send_diagnostics",
+    "Chat.console_plugin_context",
     "Chat.console_hook_preparation",
+    "Agents.hook_permissions",
     "Agents.automatic_work_runtime",
     "Chat.console_references",
     "Agents.hooks_v2.lifecycle",
@@ -491,7 +492,17 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
-            await ready_console(host, pilot, gateway)
+            console, _composer = await ready_console(host, pilot, gateway)
+            resolve_for_send = gateway.resolve_for_send
+
+            async def sync_voice_then_resolve(selection):
+                # Exercise the real safe repaint during provider validation,
+                # independent of the periodic control-bar tick's scheduling.
+                assert _in_send(), "the safe repaint must run inside the real send"
+                console._restore_console_voice_chip()
+                return await resolve_for_send(selection)
+
+            gateway.resolve_for_send = sync_voice_then_resolve
             builtins.__import__ = recording
             try:
                 press(host, "enter", "\r")
@@ -504,9 +515,9 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome)
     lazy = _not_warmed(seen, ready, covered)
     assert not lazy, f"imported on the UI loop by the send, not warmed: {lazy}"
     assert "tldw_chatbook.Agents.hooks_v2.lifecycle" in seen, "the send never ran hooks"
-    # The composer's ``from ...Chat import console_voice_input`` (its
-    # dictation-state sync) is a fromlist submodule import every harness send
-    # makes; seeing it keeps that path of the guard non-vacuous.
-    assert "tldw_chatbook.Chat.console_voice_input" in seen, (
-        "the guard no longer records `from package import submodule`"
-    )
+    # The real dictation-state repaint above imports ``console_voice_input``
+    # with ``from ...Chat import``; seeing it keeps fromlist recording
+    # non-vacuous without relying on a timer tick to overlap the send.
+    assert (
+        "tldw_chatbook.Chat.console_voice_input" in seen
+    ), "the guard no longer records `from package import submodule`"

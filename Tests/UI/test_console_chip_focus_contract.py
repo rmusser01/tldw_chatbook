@@ -20,6 +20,7 @@ _CSS_ROOT = ROOT / "tldw_chatbook" / "css"
 CONSOLE_SOURCES = (
     _CSS_ROOT / "features" / "_console.tcss",
     _CSS_ROOT / "features" / "_console_panels.tcss",
+    _CSS_ROOT / "features" / "_console_inspector.tcss",
 )
 BUNDLE = _CSS_ROOT / "tldw_cli_modular.tcss"
 

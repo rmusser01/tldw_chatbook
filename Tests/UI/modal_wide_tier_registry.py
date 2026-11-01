@@ -119,6 +119,15 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     # re-sync (TASK-36382) --
     "PortraitCompositionReview": "portrait composition review (base width 120) -- follow-up wave",
     "PortraitRegionEditor": "portrait region editor (base width 120) -- follow-up wave",
+    # -- current dev surfaces found by the 2026-10-31 re-sync (TASK-38268):
+    # existing viewport-sized readers and compact prompts need no wide tier --
+    "ConsoleCodeReviewModal": "uncapped 95%-viewport report reader; already wider than the 85% tier",
+    "NewCardModal": "title-only single-input prompt with no pinned width; default modal geometry",
+    "PluginAuthorityDialog": "compact masked setup/unlock prompt inherited from PasswordDialog (base width 60)",
+    "PluginAuthorityResetModal": "uncapped 90%-viewport authority reset; already wider than the 85% tier",
+    "PluginReviewModal": "uncapped 90%-viewport plugin review; already wider than the 85% tier",
+    "PluginStatusModal": "uncapped 90%-viewport operation/candidate status; already wider than the 85% tier",
+    "PluginVariableDialog": "uncapped 90%-viewport declared-value dialog; already wider than the 85% tier",
 }
 
 #: Whole modules whose ModalScreen subclasses are all outside the tier:

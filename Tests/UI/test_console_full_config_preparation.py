@@ -22,6 +22,9 @@ pytestmark = pytest.mark.bootstrap_profile
 def _full_screen(screen, monkeypatch):
     """Keep original FULL and rail/config entry; omit unrelated UI projections."""
     effects = []
+    # This native-read host is unmounted; no archive or Terminal return exists.
+    screen.app_instance._ui_ready = False
+    screen._console_terminal_return_reading = None
 
     def no_op(*_args, **_kwargs):
         return None
@@ -77,6 +80,7 @@ def _full_screen(screen, monkeypatch):
         "_start_console_attach_reconciliation",
     ):
         setattr(screen, name, no_op)
+    screen._sync_console_temporary_chip = lambda: False
     screen._sync_console_native_session_tabs = async_no_op
     screen._sync_native_console_transcript = async_no_op
     screen._sync_console_control_bar_under_config = lambda _rail: effects.append("rail")

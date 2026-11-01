@@ -55,7 +55,6 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
 from tldw_chatbook.Utils.app_shutdown import (
-    _drain_app_unmount_services,
     arm_exit_watchdog,
     unregister_running_app,
 )
@@ -127,8 +126,20 @@ def _exception_frames(error: BaseException) -> list[tuple[str, str, int | None]]
     return frames
 
 
+async def _drain_app_unmount_services(
+    self, primary_error: BaseException | None
+) -> None:
+    """Keep the lifecycle patch point while loading service cleanup only at exit."""
+    from .app_shutdown_services import _drain_app_unmount_services as drain
+
+    await drain(self, primary_error)
+
+
 class LifecycleMixin:
     """``TldwCli``'s lifecycle, shutdown and quit members (moved from ``app.py``)."""
+
+    # The accepted native write is assigned on the app, across disposable screens.
+    console_emergency_stop_write: asyncio.Future[Any] | None = None
 
     @property
     def recovery_service(self):
@@ -309,52 +320,10 @@ class LifecycleMixin:
         # --- End Stop DB Size Update Timer ---
 
     async def _cancel_and_settle_workers(self, phase: str) -> None:
-        """Cancel every live worker and actually wait for them, bounded.
+        """Settle workers through the app-owned shutdown phase."""
+        from .app_shutdown_services import cancel_and_settle_workers
 
-        task-19561. Both shutdown hooks used to cancel their workers and
-        then ``await asyncio.sleep(0.1)`` -- a flat wait that is
-        simultaneously too long (nothing to wait for on a quiet exit) and
-        far too short (a worker mid-``await`` gets one tick, and a thread
-        worker gets nothing at all), and which never observed the outcome
-        either way. Waiting on the workers themselves is both faster in the
-        common case and honest in the uncommon one; the timeout keeps a
-        worker that ignores cancellation from turning quit into a hang, and
-        says which ones they were.
-        """
-        try:
-            active_workers = [w for w in self.workers if not w.is_finished]
-            if not active_workers:
-                return
-            self.loguru_logger.info(
-                f"Cancelling {len(active_workers)} active workers ({phase})"
-            )
-            for worker in active_workers:
-                worker.cancel()
-            # `asyncio.wait`, NOT `wait_for(...)`: on expiry `wait_for`
-            # cancels what it is waiting on and awaits that cancellation, so
-            # anything that does not honour a cancel hangs the very call
-            # meant to bound it. `wait` returns the stragglers instead.
-            waiters = [asyncio.ensure_future(w.wait()) for w in active_workers]
-            _, unsettled = await asyncio.wait(
-                waiters, timeout=WORKER_CANCELLATION_GRACE_SECONDS
-            )
-            for waiter in waiters:
-                if waiter.done() and not waiter.cancelled():
-                    # WorkerCancelled/WorkerFailed are the expected outcomes
-                    # of cancelling at shutdown; retrieve them so they do not
-                    # resurface as "exception was never retrieved".
-                    waiter.exception()
-                else:
-                    waiter.cancel()
-            if unsettled:
-                stragglers = [w.name for w in active_workers if not w.is_finished]
-                self.loguru_logger.warning(
-                    f"{len(stragglers)} worker(s) did not settle within "
-                    f"{WORKER_CANCELLATION_GRACE_SECONDS}s of cancellation "
-                    f"({phase}): {stragglers}"
-                )
-        except Exception as e:
-            self.loguru_logger.error(f"Error cancelling workers ({phase}): {e}")
+        await cancel_and_settle_workers(self, phase)
 
     async def _close_server_context_provider_cached_client(self) -> None:
         server_context_provider = getattr(self, "server_context_provider", None)
@@ -380,28 +349,10 @@ class LifecycleMixin:
             await client.disconnect_all()
 
     async def _close_local_writing_service(self) -> None:
-        """Release the writing suite's held SQLite connections (TASK-21125).
+        """Close the existing Writing owner off-loop without constructing it."""
+        from .app_shutdown_services import close_local_writing_service
 
-        Peeks the slot rather than reading through any accessor: a service that
-        was never wired must not be constructed purely to close it. A close
-        failure is logged (type name only) and never allowed to abort the rest
-        of unmount.
-
-        Runs on a thread, NOT inline. ``close()`` waits for an autosave still
-        running on a worker thread, and a synchronous call here froze the event
-        loop for the whole settle timeout (measured: 5.00 s during which a 50 ms
-        ticker fired zero times) -- which also starved the very operation it was
-        waiting for.
-        """
-        service = getattr(self, "local_writing_service", None)
-        if service is None:
-            return
-        try:
-            await asyncio.to_thread(service.close)
-        except Exception as exc:
-            self.loguru_logger.error(
-                f"Error closing local writing service: {type(exc).__name__}"
-            )
+        await close_local_writing_service(self)
 
     async def _close_local_research_service(self) -> None:
         """Release the research store's held SQLite connections (TASK-21127).

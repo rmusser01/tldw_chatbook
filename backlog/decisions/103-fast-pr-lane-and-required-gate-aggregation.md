@@ -431,3 +431,26 @@ The [implementation QA](../../Docs/superpowers/qa/2026-10-28-textual-followups-i
 retains source pins, complete-phase timing inputs, selector conservation,
 candidate comparisons, native receipts and Superpowers review. This amendment
 extends the existing gate policy; it adds no required-check owner or dependency.
+
+## Amendment (2026-10-31, TASK-38268) — explicit Linux runner label
+
+The owner approved testing `ubuntu-24.04` for every job in the required
+Derived Artifacts workflow. The rebased PR #3342 recovery matrix completed
+successfully using its explicit Ubuntu 24.04 label, while all 38 prerequisite
+jobs requesting `ubuntu-latest` remained queued without an assigned runner.
+Retiring obsolete runs and one clean retry of the same pull_request event did
+not allocate those jobs. This is an observed scheduling workaround, not proof
+of a GitHub-wide outage or a defect in the rolling image.
+
+Use the existing recovery lane's supported x64 Linux label, `ubuntu-24.04`,
+for this workflow. Preserve its check names, complete selector census,
+shard/parallelism limits, dependency edges, permissions, timeouts and fail-closed
+required aggregation. Existing runner-contract assertions track the explicit
+label. A normal current-head pull_request run must qualify the change; a manual
+workflow_dispatch cannot replace that required check.
+
+Keeping the rolling label and continuing to wait was considered. The approved
+trial selects a label that is already executing this project's recovery tests.
+If it does not improve allocation, do not infer success or remove any gates;
+record the result and reassess the scheduling limitation. Changing other
+workflows or increasing concurrency is outside this amendment.

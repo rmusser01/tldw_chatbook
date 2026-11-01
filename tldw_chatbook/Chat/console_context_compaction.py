@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import image_url_part
-from tldw_chatbook.Chat.console_compaction_hooks import _finish_compaction_hooks
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextCarryForwardMode,
@@ -3872,8 +3871,9 @@ class ConsoleCompactionPreflight:
                 honor_failure_latch=micro_compaction or not manual_action,
                 hooks=hooks,
             )
-            failure = await _finish_compaction_hooks(hooks)
-            if failure is not None:
+            from .console_compaction_hooks import _finish_compaction_hooks
+
+            if (failure := await _finish_compaction_hooks(hooks)) is not None:
                 return provider_messages, blocked(failure)
         finally:
             if hooks is not None:

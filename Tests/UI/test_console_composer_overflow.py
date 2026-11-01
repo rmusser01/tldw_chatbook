@@ -20,7 +20,6 @@ directly in the pure-function tests below.
 
 from __future__ import annotations
 
-import signal
 
 from rich.cells import cell_len
 import pytest
@@ -430,29 +429,18 @@ def test_cell_wrap_line_hard_break_pin_against_the_reviewed_commit():
     assert "".join(rows) == _ZWJ_HARD_BREAK_PIN
 
 
+@pytest.mark.timeout(3, func_only=True)
 def test_cell_wrap_line_does_not_hang_at_width_one_with_double_width_text():
     """LOW 3 RED reproduction: a chunk whose leading grapheme alone exceeds
     the wrap width (only possible at width < 2 with double-width content --
     unreachable via either production call site, both of which floor at 8,
     but `_cell_wrap_line` doesn't itself assume that floor) must still make
     forward progress every call, not spin forever re-appending an empty row.
-    A hard 3s alarm turns a hang into a test failure instead of a stuck
-    suite.
+    A hard 3s function timeout turns a hang into a test failure instead
+    of a stuck suite.
     """
 
-    def _on_alarm(signum, frame):
-        raise AssertionError(
-            "_cell_wrap_line('個個個', 1) did not return within 3s -- "
-            "infinite loop regression"
-        )
-
-    previous_handler = signal.signal(signal.SIGALRM, _on_alarm)
-    signal.alarm(3)
-    try:
-        rows = ConsoleComposerBar._cell_wrap_line("個個個", 1)
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, previous_handler)
+    rows = ConsoleComposerBar._cell_wrap_line("個個個", 1)
 
     assert rows == ["個", "個", "個"]
 
@@ -462,6 +450,7 @@ def test_cell_wrap_line_does_not_hang_at_width_one_with_double_width_text():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bug1_unfocused_insert_keeps_the_sentinel_row_painted():
     """Mounted reproduction of the `cursor_index=None` (unfocused/dictation)
@@ -475,7 +464,7 @@ async def test_bug1_unfocused_insert_keeps_the_sentinel_row_painted():
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         await pilot.pause()
-        composer.blur()
+        host.set_focus(None)
         await pilot.pause()
         assert composer.has_focus_within is False
 
@@ -490,6 +479,7 @@ async def test_bug1_unfocused_insert_keeps_the_sentinel_row_painted():
         assert any(_SENTINEL in row for row in painted_rows), painted_rows
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_expanded_row_grows_with_the_draft_so_the_screen_shows_all_rows():
     """Live-gate RED reproduction: the parent row crops the grown draft.
@@ -535,6 +525,7 @@ async def test_the_expanded_row_grows_with_the_draft_so_the_screen_shows_all_row
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_home_on_a_long_draft_keeps_the_caret_and_leading_text_painted():
     """MEDIUM RED reproduction, mounted: caret at the draft's true start
@@ -566,6 +557,7 @@ async def test_home_on_a_long_draft_keeps_the_caret_and_leading_text_painted():
         ), row0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_bug2_cjk_insert_keeps_the_tail_painted():
     """Mounted reproduction of the char-vs-cell wrap bug: 40 double-width CJK
@@ -588,3 +580,32 @@ async def test_bug2_cjk_insert_keeps_the_tail_painted():
             for row in range(visible_draft.size.height)
         ]
         assert any(_CJK_TAIL in row for row in painted_rows), painted_rows
+
+
+def test_cell_wrap_uses_the_live_original_width_measure(monkeypatch):
+    from importlib import import_module
+
+    from tldw_chatbook.Widgets.Console import console_composer_bar as composer
+
+    # Import the existing destination before replacing the original namespace:
+    # a frozen copy there would incorrectly keep two Xs on the same row.
+    import_module("tldw_chatbook.Widgets.Console.compose_delta")
+    measure = composer.cell_len
+    monkeypatch.setattr(
+        composer, "cell_len", lambda text: measure(text.replace("X", "XX"))
+    )
+    assert ConsoleComposerBar._cell_wrap_line("XX", 2) == ["X", "X"]
+
+
+def test_cell_wrap_keeps_the_calling_subclass_hard_break_override(monkeypatch):
+    class ShortBites(ConsoleComposerBar):
+        pass
+
+    # Keep the subclass selected after the original class and owner loaded.
+    monkeypatch.setattr(
+        ShortBites,
+        "_extend_fitting_cells",
+        staticmethod(lambda prefix, text, width: text[:1]),
+    )
+    assert ShortBites._cell_wrap_line("abcd", 2) == ["a", "b", "cd"]
+    assert ConsoleComposerBar._cell_wrap_line("abcd", 2) == ["ab", "cd"]

@@ -25,6 +25,7 @@ from tldw_chatbook.Chat.citation_trace_repository import (
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.citation_trace_repository import _ActiveTraceProof
     from tldw_chatbook.Chat.citation_payload_lifecycle import (
         CitationCollectionBarriers,
     )
@@ -556,6 +557,71 @@ def _validate_shared_database_contract(
         raise ValueError("shared_database_owner_contract_required")
 
 
+def verify_artifact_owner_request(
+    repository: CitationTraceRepository,
+    request: CitationArtifactOwnerRequest,
+) -> _ActiveTraceProof | None:
+    """Verify an exact issued artifact request against its current message owner."""
+    from . import citation_trace_repository as source
+
+    if not isinstance(request, source.CitationArtifactOwnerRequest):
+        return None
+    issued = repository._issued_artifact_owner_requests.get(id(request))
+    if issued is None or issued[0]() is not request:
+        return None
+    try:
+        digest = source._artifact_owner_request_digest(request)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not source.hmac.compare_digest(issued[1], digest):
+        return None
+    proof = issued[2]
+    codec = repository._fingerprint_codec
+    if codec is None or repository.identity_context != proof.identity_context:
+        return None
+    message = (
+        repository.db.get_connection()
+        .execute(
+            """
+            SELECT message.version, message.content, owner.state,
+                   owner.body_fingerprint, trace.visibility_state
+            FROM messages AS message
+            JOIN rag_message_trace_owners AS owner
+              ON owner.message_id = message.id
+             AND owner.message_revision = message.version
+            JOIN rag_citation_traces AS trace
+              ON trace.profile_id = owner.profile_id
+             AND trace.trace_id = owner.trace_id
+            WHERE message.id = ? AND message.deleted = 0
+              AND owner.profile_id = ? AND owner.trace_id = ?
+            """,
+            (
+                proof.message_id,
+                proof.identity_context.profile_id,
+                proof.trace_id,
+            ),
+        )
+        .fetchone()
+    )
+    if (
+        message is None
+        or message["version"] != proof.message_revision
+        or message["state"] != "active"
+        or message["visibility_state"] != "active"
+    ):
+        return None
+    current = codec.fingerprint(
+        source.CitationFingerprintDomain.MESSAGE_BODY,
+        message["content"],
+    )
+    if not (
+        source.hmac.compare_digest(message["body_fingerprint"], proof.body_fingerprint)
+        and source.hmac.compare_digest(current, proof.body_fingerprint)
+    ):
+        return None
+    return proof
+
+
 __all__ = [
     "ARTIFACT_PROVENANCE_OUTBOX_MAX_ENTRIES",
     "ARTIFACT_RECONCILIATION_BATCH_MAX",
@@ -568,4 +634,5 @@ __all__ = [
     "ArtifactReconciliationResult",
     "CitationArtifactOwnershipCoordinator",
     "SharedDatabaseArtifactOwnershipStore",
+    "verify_artifact_owner_request",
 ]

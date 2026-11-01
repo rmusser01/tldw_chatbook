@@ -76,6 +76,9 @@ make intent visible:
 
 ### 2.3 Control sizing
 
+- `$ds-setup-provider-choice-max-height: 40vh`
+  caps the first-run provider choice list relative to the terminal height.
+
 - `$ds-note-folder-picker-max-height: 50vh` — folder choices leave room for the filter, pager, and actions.
 
 - `$ds-control-height: 3` — standard action control (buttons, selects,

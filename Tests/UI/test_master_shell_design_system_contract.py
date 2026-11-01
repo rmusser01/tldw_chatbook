@@ -121,6 +121,7 @@ def test_agentic_terminal_tcss_module_is_implemented_and_imported():
         for rel in (
             "features/_console.tcss",
             "features/_console_panels.tcss",
+            "features/_console_inspector.tcss",
             "features/_library.tcss",
             "features/_library_panels.tcss",
             "features/_library_notes_panels.tcss",
@@ -256,6 +257,7 @@ def test_disabled_menu_rows_survive_textuals_compounded_dim():
         for path in (
             Path("tldw_chatbook/css/features/_console.tcss"),
             Path("tldw_chatbook/css/features/_console_panels.tcss"),
+            Path("tldw_chatbook/css/features/_console_inspector.tcss"),
         )
     )
 
@@ -293,6 +295,7 @@ def test_console_action_row_disabled_rules_still_clear_dim():
         for path in (
             Path("tldw_chatbook/css/features/_console.tcss"),
             Path("tldw_chatbook/css/features/_console_panels.tcss"),
+            Path("tldw_chatbook/css/features/_console_inspector.tcss"),
         )
     )
     rules = re.findall(r"(\.console-action-disabled[^{]*)\{([^}]*)\}", source, re.S)

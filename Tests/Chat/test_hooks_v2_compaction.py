@@ -652,3 +652,43 @@ async def test_previous_manual_handoff_does_not_keep_failed_operation_live(
         await runtime.close_hooks_v2()
         await runtime.dispose()
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_controller_preflight_finishes_no_command_hook_owner():
+    """The actual preflight completes a real hook scope without command support."""
+    from Tests.Chat.test_console_context_compaction import _controller_preflight_fixture
+    from tldw_chatbook.Chat.console_context_policy import ContextCompactionMode
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    controller, store, session, assistant, gateway, messages = (
+        _controller_preflight_fixture(ContextCompactionMode.AUTOMATIC)
+    )
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(store)
+    runtime.set_chat_controller(controller)
+    engine = runtime.ensure_hooks_v2(session.id, (), lambda *_: True)
+    try:
+        output, result = await controller._apply_conversation_memory_preflight(
+            session_id=session.id,
+            resolution=_resolution(),
+            provider_messages=messages,
+            assistant_message_id=assistant.id,
+            agent_tools_enabled=False,
+        )
+        assert result is None
+        assert gateway.calls == 1
+        assert any("_tldw_context_owner" in row for row in output)
+        lifecycle = runtime._hooks_v2_lifecycles[session.id]
+        assert engine.definitions == ()
+        assert lifecycle.live
+        # This direct preflight owns a subordinate manual scope; only actual
+        # CompactionHooks.finish installs its exact committed-memory handoff.
+        assert lifecycle._handoff is not None
+        assert lifecycle._handoff[1]()
+        assert lifecycle.turn_scope is None
+        assert not controller._hooks_v2_submissions
+        assert not engine.processes.records
+        assert not any(engine.budget_owner.snapshot().values())
+    finally:
+        await runtime.dispose()

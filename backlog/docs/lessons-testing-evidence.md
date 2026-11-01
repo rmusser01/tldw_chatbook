@@ -37,6 +37,72 @@ accepted or uncertain attempt. The final focused checks also found that FAILED
 was published before the transcript replaced its Waiting row: visible-copy
 tests must wait for the actual painted text, not a fixed delay after model state.
 
+## An optional old-record read needs the same absence boundary as its write (TASK-38268, 2026-11-01)
+
+**Incident.** PR#3342's rules journey timed out opening `/rules`, then reported
+an unknown-session worker failure. The stack read an old visible chat's revision
+after the journey had deliberately closed it; the later draft write already
+tolerated that absence. Runtime disposal was not what removed that chat. Two
+real-state regressions reproduced the exact lookup failure, while live-revision
+and undo controls pinned the ownership behavior. Extending only the old-record
+boundary also kept closed undo history from being banked again. A profiled run
+failed earlier at a close guard, so its valid metadata did not diagnose the
+original phenotype.
+
+**What to do.** Trace the first relevant failing operation to its actual owner.
+Keep optional old-state reads and writes consistent, retain strict current-state
+checks, and prove draft/undo attribution with real state. Check the full failure
+location before treating a diagnostic run as the original reproduction.
+
+
+## A finished sync can still leave its replay owning the next manual tick (TASK-38268, 2026-10-31)
+
+**Incident.** Qualifying PR#3342's restored pressed-send acceptance marker made
+an existing durable-commit test intermittently count zero projections on its
+first manually driven poll. Its setup waited for sync_in_progress=False, but
+minimal callback snapshots showed replay_whole_sync=True and sync_scheduled=True
+at both entry and return. The paused timer task was sleeping; the whole-sync
+replay, rather than an active callback, still owned presentation. The production
+gate correctly retained a request instead of projecting. Waiting for both the
+running sync and replay ownership to settle kept the same30-second deadline and
+every exact tick/count assertion; all11 quiet-gap, durable-window and Notes-focus
+cases then passed uninstrumented in128.59s. Global profiling and per-event writes
+had delayed the tick enough to hide the failure and were removed.
+
+**What to do.** Before manually driving a callback, settle all owners that can
+legitimately refuse it, including a deferred replay. Capture a failed edge with
+minimal metadata; a slower instrumented green does not establish a fix. Preserve
+the production refusal and the test's behavioral assertions.
+
+## HOME redirection leaves Windows native AppData ambient (TASK-38268, 2026-10-31)
+
+**Incident.** Qualifying PR #3287's full eval recovery lane with a populated
+Windows account captured existing pet state through APPDATA even though HOME,
+USERPROFILE and XDG roots were private. Restore correctly refused the fixture's
+incorrect pet destination. The recovery fixture now owns private APPDATA and
+LOCALAPPDATA roots; both regressions failed against the ambient paths before
+that change, and complete backup/restore/reopen then passed. Production restart
+filtering continues to drop ambient native app-data selectors.
+
+**What to do.** Isolate the platform selectors that installed stores actually
+use. A fresh HOME alone does not isolate Windows applications. Preserve recovery
+refusals and give tests private native roots instead of broadening restart
+inheritance or relaxing the destination checks.
+
+## Autouse fixture directories can collide with older test-owned paths (TASK-38268, 2026-10-31)
+
+**Incident.** PR #3287 added an autouse recovery fixture that creates
+`tmp_path/private-temp`. The existing launch-environment test independently
+created the same path. Ubuntu, macOS and Windows each failed all three TEMP,
+TMP and TMPDIR cases with FileExistsError before any selector assertions ran.
+Using `selected-temp` for the test-owned directory preserved the private
+fixture and restored all five launch-environment cases locally.
+
+**What to do.** When introducing an autouse fixture that creates paths, check
+existing tests for the same names and run the complete affected CI selection.
+Keep test-owned paths distinct instead of hiding unexpected existing paths
+with exist_ok or removing the security fixture.
+
 
 ## A daemon thread cannot enforce its subprocess timeout after interpreter exit (PR #3155, 2026-10-31)
 
@@ -24034,3 +24100,17 @@ by `_ui_ready` (the Console controller, `chat_screen.py`, the widgets it
 mounts), run `Tests/Performance/test_ui_ready_module_census.py` yourself; it
 takes about 15 seconds. Its failure names the new residents. A green preflight
 says nothing about this census.
+
+
+## Counterfactual restoration must survive a failed write (TASK-38268, 2026-11-01)
+
+A Windows original-code comparison completed its two tests, then the first
+`Path.write_bytes` in its restoration finally-block returned EINVAL. The cause
+was not established. Because the loop stopped there, all eight source files
+still held the original baseline; the saved reviewed bytes existed only in the
+exiting process. Reviewed patch artifacts plus recorded formatting/docstring
+proofs reconstructed the files; atomic replacement and full hashes verified
+restoration before five core controls passed. Keep durable restoration bytes
+before a counterfactual, restore each target independently and atomically, and
+verify every hash after physical child retirement. A finally-block alone is
+not evidence that the reviewed source was restored.

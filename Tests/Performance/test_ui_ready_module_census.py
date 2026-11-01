@@ -190,6 +190,8 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Compaction hook completion is operation work, not first-paint work (ADR-097).
+    "tldw_chatbook.Chat.console_compaction_hooks",
     # Schema composition is first-send work; its frozen data type is already resident.
     "tldw_chatbook.Agents.first_request_schemas",
     # Local transcription failure attribution is first-failure work.

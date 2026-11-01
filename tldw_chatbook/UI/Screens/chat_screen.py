@@ -10491,16 +10491,8 @@ class ChatScreen(BaseAppScreen):
         composer.set_voice_status(session.controller.state, message=message)
 
     def _restore_console_voice_chip(self) -> None:
-        """Repaint the chip from the REAL one-shot dictation state.
-
-        Same idiom (and same reason) as `_teardown_console_hands_free_
-        loop`'s closing lines: the realtime states are not lifecycle states
-        `sync_dictation_state` knows, so only a fresh call with the actual
-        current state clears the borrowed text.
-        """
-        composer = self._console_composer_or_none()
-        if composer is not None:
-            composer.sync_dictation_state(self._console_dictation_state)
+        """Repaint the chip from the current one-shot dictation state."""
+        run_controls.restore_voice_chip(self)
 
     def _request_console_dictation_stop(self) -> None:
         """Stop the live capture and insert its transcript.
@@ -10673,8 +10665,8 @@ class ChatScreen(BaseAppScreen):
             staged_source_count=console_staged_source_count(pending_launch),
             tool_count=self._console_tool_count(),
             tools_estimate=True,
-            selected_tool_count=getattr(self.app_instance, "console_selected_tool_counts", {}).get(
-                getattr(active_session, "id", None)
+            selected_tool_count=self._console_runtime().selected_tool_count(
+                active_session.id if active_session else None
             ),
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
@@ -17845,7 +17837,7 @@ class ChatScreen(BaseAppScreen):
                 await self._sync_native_console_transcript()
                 if not poll_is_current():
                     return False
-                if getattr(self.app_instance, "_ui_ready", True):
+                if self.app_instance._ui_ready:
                     await self._archive_recovery_view().sync()
                 if not poll_is_current():
                     return False

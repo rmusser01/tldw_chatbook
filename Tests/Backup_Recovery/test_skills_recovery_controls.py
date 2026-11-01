@@ -54,6 +54,9 @@ scope=SkillsScopeService(local_service=local)
 context=asyncio.run(scope.get_context(mode='local'))
 notices=[]
 instance=SimpleNamespace(app_config={},local_skill_trust_service=trust,skills_scope_service=scope,notify=lambda message,**kwargs:notices.append(message))
+# This Skills-only stand-in has no Notes sync owner or build failure.
+instance.peek_notes_sync_runtime=lambda:(None,False)
+instance.read_notes_sync_runtime_owner=lambda:None
 class Subject(LibraryScreen):
  def compose(self):
   yield LibrarySkillsListCanvas(state=self._build_library_skills_state(),trust_posture=self._skills_state.trust_posture,id='library-skills-canvas')

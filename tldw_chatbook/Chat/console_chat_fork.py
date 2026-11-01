@@ -1595,3 +1595,25 @@ def validate_console_fork_video_projection(
     )
     if message.content != expected_content:
         raise ValueError("Console fork video marker is unavailable.")
+
+
+def fork_conversation_kwargs(
+    snapshot: ConsoleChatForkSnapshot, *, global_workspace_id: str
+) -> dict[str, object]:
+    configuration = snapshot.configuration
+    global_scope = configuration.workspace_id == global_workspace_id
+    return {
+        "conversation_title": snapshot.title,
+        "scope_type": "global" if global_scope else "workspace",
+        "workspace_id": None if global_scope else configuration.workspace_id,
+        "system_prompt": configuration.settings.system_prompt,
+        "runtime_backend": configuration.runtime_backend,
+        "assistant_kind": configuration.assistant_kind,
+        "assistant_id": configuration.assistant_id,
+        "assistant_authority_id": configuration.assistant_authority_id,
+        "persona_memory_mode": configuration.persona_memory_mode,
+        "character_id": configuration.character_id,
+        "character_name": configuration.character_name,
+        "speech_preferences": configuration.speech_preferences,
+        "thinking_history_policy": configuration.thinking_history_policy,
+    }

@@ -15,11 +15,16 @@ This document describes the Console (`chat` destination): the screen layout, the
 | Data models | `Chat/console_chat_models.py` | `ConsoleMessageRole`, `ConsoleRunStatus`, `ConsoleRunState`, `ConsoleChatMessage`, `ConsoleVariantSet`, `ConsoleDispatchRecoveryState` |
 | Store (state + persistence) | `Chat/console_chat_store.py` | `ConsoleChatStore`, `ConsoleChatSession`, `append_message()`, `append_stream_chunk()`, `persist_message_if_needed()` |
 | Agent bridge | `Chat/console_agent_bridge.py` | `ConsoleAgentBridge.run_reply()`, the `_StreamingModelAdapter`, fleet coordination, tool marker projection |
+| Trace settlement/recovery | `Chat/console_trace_settlement.py` | Settlement coordinator and cold-call recovery; the runtime retains its lazy recovery delegate and public patch point |
 | Persistence service | `Chat/chat_persistence_service.py` | `ChatPersistenceService.commit_durable_turn()` — the durable turn boundary |
 | Transcript grouping | `Chat/console_turn_grouping.py` | `group_console_transcript_messages()`, `ConsoleAssistantTurn` |
 | Compaction | `Chat/console_context_compaction.py`, `console_context_policy.py`, `console_context_repository.py` | `CompactionPlan`, `ResolvedConsoleContextPolicy`, memory records |
 
 Supporting modules: `console_chat_fork.py` (fork/branch), `console_prompt_queue_coordinator.py` (bounded prompt queue, ADR-098), `console_fleet_wake.py`, `console_interrupt_rounds.py`, `console_dispatch_checkpoint.py` (crash recovery).
+
+Selected tool counts belong to `ConsoleChatController`, keyed by session. `ConsoleRuntime.selected_tool_count()` reads only an existing controller and returns no count before construction or for an unknown session, without falling back to another session; composition clears only its named session. The MCP kill-switch adapter borrows a current service reader on every call: an absent service retains the no-switch contract, while reader/getter failures fail closed. These projections grant no tool or folder authority (ADR-036).
+
+Successful received-intent and pressed-input acceptance both mark the send-start window. It ends at provider entry or the existing three-second limit; the marker does not replay a captured-draft commit or alter runtime custody. Durable-commit polling retains its existing first-sync/one-held-tick behavior, including whole-sync replay ownership (ADR-230/231).
 
 Frozen automatic Library preparation is delegated to `Chat/console_library_preparation.py` through the controller's unchanged entry point. Controller and runtime retain ownership of preparation transitions, timeout configuration and recovery.
 
@@ -133,6 +138,10 @@ final disabled, tooltip, queue and setup states (TASK-35614).
 Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech controls; hidden legacy compat statics kept for contract tests; a dispatch-recovery callout; the dense `ConsoleControlBar`; then the main grid — left `ConsoleRailHandle` → `ConsoleLeftRail` (3fr) → center column (13fr, hosting either the transcript region or the embedded terminal workspace) → `ConsoleInspectorRail` (4fr) → right handle. Below the grid: status chips (position from `[console] status_chips_position`), staged evidence strip, dispatch-recovery region, prompt-queue region, the `ConsoleComposerBar`, command popup, and setup modal.
 
 Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). Streamed transcript and background-run activity are projected by `_sync_native_console_chat_ui`, including its `set_interval(0.2 s)` poll; the timer deliberately does not stop while any session still has an in-flight run. Session switches call `UI/Console_Modules/session.py::_bind_composer_to_active_session()` before the first await: they save the outgoing draft, load the selected chat's draft, and update the active-tab highlight and title immediately. The shared tab/switcher activation path also focuses the composer before awaiting; background switches preserve keyboard focus.
+
+A deferred draft swap can retain a snapshot of a chat that has since closed. `session.py::_sync_console_session_draft()` treats that old record as optional across its snapshot read and draft write, and keeps its discarded undo history out of the bank. Reads of the active chat remain strict. A live old chat still keeps any newer resident revision; only the existing edit-serial and prefix rules carry switch-window typing into the selected chat (TASK-38268).
+
+Stock context-presentation callbacks share each exact finite read with their controller and bound runtime so session close waits for native retirement. The captured nullable runtime must remain bound to the same controller/store, and disposal or existing admission/close fences refuse further stock reads. Attaching or rebinding a runtime during the first probe rejects the stale result before lineage work. Custom and explicit action readers retain their existing contracts (ADR-230, TASK-38268).
 
 Character-picker creation and character/persona Start Chat handoffs align the
 workspace registry with the selected conversation through
@@ -275,6 +284,8 @@ For a later native batch, `console_trace_service` proves the unchanged raw prefi
 Explicit Resume projects only assistant text, exact native calls and existing results through `ConsoleProviderGateway.expand_provider_continuation`. After existing target, runtime and permission checks, `begin_generation_attempt` rechecks the active checkpoint and persisted owner version under the generation scope before resetting live attempt bookkeeping; it preserves partial text, private bytes and durable versions. Executing, foreign or stale owners refuse. It does not retry or activate automatically. A final-only response without prior native state still follows ordinary text settlement.
 
 The recovery subtree in `UI/Console_Modules/provider_continuation_recovery.py` defers `ProviderContinuationTranscriptRegion.sync_recovery()` until mounted. Its `on_mount` queues a fresh builder read after Textual sets `is_mounted`, so a partial-mount poll cannot query pending action buttons or leave an old recovery state behind.
+
+The same recovery module owns trace-card dispatch through `dispatch_session_recovery`; the session method remains an awaited delegate with live callbacks. `Chat/console_unsent_turn.py` owns temporary-capture cancellation and receipt-owned draft/attachment return behind the controller/runtime entry points. The original preparation lock, source/session/incarnation/revision checks, interrupted-action cleanup and physical work owners remain in force.
 
 ## Config keys (`[console]`, parsed in `config.py`)
 

@@ -125,6 +125,46 @@ def local_thinking_response_source_formats(
     )
 
 
+def response_projection_profile(
+    resolution: object | None,
+    *,
+    source_formats_for: Callable[[object, object], list[str] | None],
+) -> dict[str, object] | None:
+    """Freeze only the existing supported typed-thinking response contract."""
+    if (
+        getattr(resolution, "thinking_stream_disposition", None)
+        not in {"displayable", "proprietary"}
+        or getattr(resolution, "thinking_round_trip_version", None) != 1
+    ):
+        return None
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _thinking_protocol,
+        resolve_finish_policy,
+    )
+
+    execution_key = getattr(resolution, "execution_key", "")
+    disposition = getattr(resolution, "thinking_stream_disposition", None)
+    model = getattr(resolution, "model", None)
+    profile = {
+        "version": 1,
+        "thinking_stream_disposition": disposition,
+        "thinking_round_trip_version": 1,
+        "provider": execution_key,
+        "model": model,
+        "protocol": _thinking_protocol(resolution),
+    }
+    if disposition == "displayable":
+        source_formats = source_formats_for(execution_key, model)
+        if source_formats is None:
+            return None
+        return {**profile, "version": 2, "source_formats": source_formats}
+    # Resolve through dev's generic engine/preset seam, preserving hosted policies.
+    hosted_policy = resolve_finish_policy(execution_key)
+    if hosted_policy is None or hosted_policy.reasoning_disposition != "proprietary":
+        return None
+    return {**profile, "source_format": "reasoning_content"}
+
+
 def _project_revision_response_envelope(
     cursor: sqlite3.Cursor,
     revision: SemanticRevisionRecord,

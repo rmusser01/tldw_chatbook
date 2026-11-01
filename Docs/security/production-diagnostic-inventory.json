@@ -4096,8 +4096,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 31,
-      "diagnostic_digest": "551e1295f5a23c9f2633",
+      "call_count": 7,
+      "diagnostic_digest": "7c686df399f7fd7e5e24",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Utils/app_shutdown.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4901,8 +4901,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 116,
-      "diagnostic_digest": "767e891c8167d0a2ddc3",
+      "call_count": 115,
+      "diagnostic_digest": "bfdfa3bcadb262b23e85",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4957,8 +4957,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 65,
-      "diagnostic_digest": "5e0d3bcbc0435c924383",
+      "call_count": 61,
+      "diagnostic_digest": "dfcee0a6a7482cc3d766",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_lifecycle.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4972,16 +4972,37 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "eaa327e0d6ba17c07969",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_notes_sync_lifecycle.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "69c427ce329637e2dbeb",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_served.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 24,
-      "diagnostic_digest": "47b464a778d06baf7530",
+      "call_count": 23,
+      "diagnostic_digest": "3097653c356e80d30bc5",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_service_wiring.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 28,
+      "diagnostic_digest": "a8712a5b44fbac56fc4f",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_shutdown_services.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "4cf444e5a0f0a46b2a97",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/app_skill_wiring.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {

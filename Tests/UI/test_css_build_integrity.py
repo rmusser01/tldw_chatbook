@@ -55,7 +55,10 @@ _LIBRARY_SCREEN_SOURCE = _REPO_ROOT / "tldw_chatbook/UI/Screens/library_screen.p
 #: split sheet was dissolved into the bundle).
 _CONSOLE_SOURCES = (
     _CSS_ROOT / "features/_console.tcss",
+    _CSS_ROOT / "features/_console_archive_recovery.tcss",
     _CSS_ROOT / "features/_console_panels.tcss",
+    _CSS_ROOT / "features/_console_inspector.tcss",
+    _CSS_ROOT / "features/_console_attachment_block.tcss",
 )
 #: The library vocabulary's source sheets (the split's modules).
 _LIBRARY_SOURCES = (
@@ -425,7 +428,10 @@ def _generated_agentic_css() -> str:
     parts = [
         _bundled_module(bundle, "components/_agentic_terminal.tcss"),
         _bundled_module(bundle, "features/_console.tcss"),
+        _bundled_module(bundle, "features/_console_archive_recovery.tcss"),
         _bundled_module(bundle, "features/_console_panels.tcss"),
+        _bundled_module(bundle, "features/_console_inspector.tcss"),
+        _bundled_module(bundle, "features/_console_attachment_block.tcss"),
     ]
     for filename in css_builder.AGENTIC_SPLIT_SHEETS.values():
         parts.append((_CSS_ROOT / filename).read_text(encoding="utf-8"))

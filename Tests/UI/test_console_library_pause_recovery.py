@@ -12,8 +12,8 @@ unsent-turn shelf (Restore / Discard) -- disagreed:
    did nothing while the message went out anyway.
 3. The card's Cancel put the text back but dropped the staged attachments.
 
-These drive the real ChatScreen, controller, store and runtime. Only the
-provider gateway and the Library search service are doubles.
+These drive the real ChatScreen, controller, store and runtime. The provider
+gateway, Library search service and unrelated local discovery are doubles.
 """
 
 from __future__ import annotations
@@ -77,6 +77,12 @@ class _HeldGateway(_Gateway):
 
 def _build_with(gateway):
     app = _build_console_send_test_app()
+
+    async def no_local_discovery(_config):
+        return ()
+
+    # Recovery uses the supplied gateway, not an unrelated localhost service.
+    app.console_local_server_discovery = no_local_discovery
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     host = ConsoleHarness(app)
@@ -202,7 +208,14 @@ async def test_the_shelf_never_offers_a_send_the_card_is_sending(phase):
             with pytest.raises(RuntimeError):
                 runtime.restore_turn_recovery(entry.turn_id)
             await until(lambda: not _shelf_offers_unsent_turn(console))
-            assert composer.draft_text() == ""
+            if phase == "search":
+                # A held search has not accepted the send or consumed its draft.
+                preparation = controller.store.preparation_by_id(entry.preparation_id)
+                assert preparation is not None
+                assert preparation.state is ConsoleTurnPreparationState.PREPARING
+                assert preparation.executed_draft == composer.draft_text() == FIRST
+            else:
+                assert composer.draft_text() == ""
 
             library.release.set()
             gateway.release.set()

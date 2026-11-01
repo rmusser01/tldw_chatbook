@@ -282,15 +282,92 @@ def _send(case, route):
         case.console.query_one("#console-send-message", Button).press()
 
 
+def _attribute_original_received_read(case, record_property):
+    """Record one original first hit without changing which reader is held."""
+    from tldw_chatbook.Chat import console_configuration_preparation as capture
+    from tldw_chatbook.Chat import console_preparation_reads as reads
+    from tldw_chatbook.Chat.console_received_dispatch import run_received_intent
+    from tldw_chatbook.UI.Console_Modules.turn_admission import capture_authority
+
+    def nested(function, name):
+        return next(
+            code
+            for code in function.__code__.co_consts
+            if isinstance(code, type(function.__code__)) and code.co_name == name
+        )
+
+    origins = {
+        nested(
+            capture.capture_console_turn_configuration_owned, "capture"
+        ): "owned_configuration",
+        capture_authority.__code__: "mounted_authority",
+        type(case.controller)._hook_authority_values.__code__: "hook_authority",
+        type(
+            case.controller
+        ).resolve_turn_configuration_snapshot.__code__: "synchronous_configuration",
+    }
+    invoke = nested(reads.run_preparation_read, "invoke")
+    case.read_attribution = {}
+    case.read_attribution_report = record_property
+
+    def observe(frame):
+        categories, read = [], None
+        for _ in range(40):
+            if frame is None:
+                break
+            if frame.f_code in origins:
+                categories.append(origins[frame.f_code])
+            if frame.f_code is invoke:
+                read = frame.f_locals.get("read")
+            frame = frame.f_back
+        claim = case.store.received_turn_for_session(case.session.id)
+        records = tuple(
+            row
+            for row in case.runtime._turn_custody.values()
+            if row.session_id == case.session.id and row.store is case.store
+        )
+        task = read.task if read is not None else None
+        coroutine = task.get_coro() if task is not None else None
+        case.read_attribution.update(
+            origins=categories,
+            ancestry_truncated=frame is not None,
+            main_thread=threading.current_thread() is threading.main_thread(),
+            claim_present=claim is not None,
+            custody_count=len(records),
+            claim_matches_custody=claim is not None
+            and any(row.received_claim is claim for row in records),
+            finite_read_present=read is not None,
+            finite_read_session_matches=read is not None
+            and read.session_id == case.session.id,
+            finite_read_creator_matches=read is not None
+            and read.creator is case.controller,
+            finite_read_task_matches_custody=task is not None
+            and any(row.task is task for row in records),
+            received_task_root=getattr(coroutine, "cr_code", None)
+            is run_received_intent.__code__,
+            task_done=task.done() if task is not None else None,
+            task_cancelling=task.cancelling() if task is not None else None,
+        )
+
+    case.probe.observe_entry = observe
+
+
 async def _held_received_record(case):
     # Import inside the test path so the original RED still collects before
     # the implementation's detached intent model exists.
     from tldw_chatbook.Chat.console_received_intent import ConsoleReceivedTurnIntent
 
     assert await _until(case.probe.entered.is_set, 10)
+    attribution = getattr(case, "read_attribution", None)
+    if attribution is not None:
+        attribution["observer_error"] = case.probe.entry_observation_error
+        case.read_attribution_report(
+            "original_configuration_first_hit", json.dumps(attribution, sort_keys=True)
+        )
+    assert case.probe.entry_observation_error is None, attribution
     assert case.probe.live_at_entry and not case.probe.release_timed_out
     claim = case.store.received_turn_for_session(case.session.id)
-    assert claim is not None
+    assert claim is not None, attribution
     record = case.runtime._turn_custody[claim.request_id]
     assert record.received_claim is claim and record.request is None
     assert isinstance(record.received_intent, ConsoleReceivedTurnIntent)

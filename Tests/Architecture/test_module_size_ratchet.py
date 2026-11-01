@@ -76,7 +76,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # owners pinned to exact measured sizes, with no spare budget.
 _BUDGETS: dict[str, int] = {
     # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
-    "tldw_chatbook/Utils/app_shutdown.py": 776,
+    "tldw_chatbook/Utils/app_shutdown.py": 554,
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 2873 -> 2899.
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     "tldw_chatbook/Chat/console_display_state.py": 2908,
@@ -109,7 +109,7 @@ _BUDGETS: dict[str, int] = {
     # ``_notes_sync_runtime_lazy_start_task`` slot beside the start-task
     # slot, so the Library's bounded settle wait can tell the task it
     # scheduled from boot's own (M-1).
-    "tldw_chatbook/app.py": 5704,
+    "tldw_chatbook/app.py": 5700,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -135,13 +135,14 @@ _BUDGETS: dict[str, int] = {
     # while the owner still reports "starting" (M-2), tolerates a sync or
     # Future-returning ``start`` (M-3), records the lazy task (M-1); three
     # module helpers carry those predicates.
-    "tldw_chatbook/app_service_wiring.py": 3701,
+    "tldw_chatbook/app_service_wiring.py": 3678,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
     # into app_keep_alive.py).
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
-    "tldw_chatbook/app_lifecycle.py": 2147,
+    # PR3342: cohesive worker settlement extraction lowers the combined owner.
+    "tldw_chatbook/app_lifecycle.py": 2098,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -188,7 +189,8 @@ _BUDGETS: dict[str, int] = {
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29323,
+    # PR3342 retains its16-line reduction against the incoming stored row.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29294,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
@@ -651,7 +653,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Chat/console_agent_bridge.py": 12092,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Agents/agent_service.py": 9715,
+    "tldw_chatbook/Agents/agent_service.py": 9714,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9541,
@@ -692,7 +694,7 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-29: re-measured after rebasing onto dev ed7481a30c (owner rule: the row is the exact measurement): 7043 -> 7058.
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     # PR3310, 2026-11-01: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7195,
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7192,
     # TASK-33628.1 moves tab-close loss projection/copy into shared loss_inventory.
     # PR3303, 2026-10-31: explicit user size waiver; exact integrated measurement.
     # PR3312 integration: explicit user size waiver; measured 2026-11-01.
@@ -713,13 +715,13 @@ _BUDGETS: dict[str, int] = {
     # carries card_held) instead of dropped, so Cancel loses no attachment.
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6990 -> 7001.
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
-    "tldw_chatbook/UI/Console_Modules/session.py": 7005,
+    "tldw_chatbook/UI/Console_Modules/session.py": 6884,
     "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
     # 2026-10-31: re-measured after rebasing onto dev 198eca8b93 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6686 -> 6701.
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 6751 -> 6766.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_runtime.py": 7091,
+    "tldw_chatbook/Chat/console_runtime.py": 7064,
     # 2026-10-27 (TASK-33621.29 / TASK-33621.7, owner decision 2026-10-19,
     # "expand limits, never contort code"): +56 for the rewritten-tail
     # transition (ADR-097 amendment 2026-10-27). The proof itself lives in
@@ -731,7 +733,7 @@ _BUDGETS: dict[str, int] = {
     # live row count (dead sequences inside the range count too).
     # 2026-10-31, PR3298 user size waiver: +31 to select the completed proof
     # by exact descriptors and its permitted start before full validation.
-    "tldw_chatbook/Chat/console_trace_service.py": 6765,
+    "tldw_chatbook/Chat/console_trace_service.py": 6759,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
     "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,
@@ -750,7 +752,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Model_Artifacts/service.py": 4896,
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     "tldw_chatbook/DB/Prompts_DB.py": 4760,
-    "tldw_chatbook/Chat/citation_trace_repository.py": 4719,
+    "tldw_chatbook/Chat/citation_trace_repository.py": 4712,
     # 2026-10-29, TASK-34000.28/.40 polish-1a (PR #3259), rebased onto dev
     # 38c9d2edcf: 4,646 -> 4,736 (+90: the filter fast path, kept draft and
     # one-hop link-back on the Notes canvas). Owner rule "expand limits,

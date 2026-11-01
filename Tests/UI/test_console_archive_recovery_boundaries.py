@@ -44,6 +44,8 @@ def recovery_app():
         local_chat_conversation_service=service,
         workspace_registry_service=registry,
         pending_handoffs=PendingHandoffStore(),
+        screen_stack=(),
+        screen=None,
         notify=Mock(),
         post_message=Mock(),
         push_screen=Mock(),

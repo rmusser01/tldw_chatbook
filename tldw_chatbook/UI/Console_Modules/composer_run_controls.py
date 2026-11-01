@@ -89,6 +89,11 @@ _MENU_ACTION_ABSENT_COPY = {
 
 
 
+def _app_ui_ready(screen: Any) -> bool:
+    """Read the live first-paint gate shared by deferred Console presenters."""
+    return getattr(screen.app, "_ui_ready", True)
+
+
 def sync_dictation_presentation(screen: Any, composer: ConsoleComposerBar) -> None:
     """Keep a cold stock idle projection off first paint; actions remain live."""
     state = screen._console_dictation_state
@@ -96,7 +101,7 @@ def sync_dictation_presentation(screen: Any, composer: ConsoleComposerBar) -> No
         state == "idle"
         and type(composer) is ConsoleComposerBar
         and composer._dictation_state == "idle"
-        and not getattr(screen.app, "_ui_ready", True)
+        and not _app_ui_ready(screen)
         and "tldw_chatbook.Chat.console_voice_input" not in sys.modules
     ):
         callbacks = [
@@ -698,7 +703,7 @@ def schedule_emergency_stop_refresh(screen: Any) -> None:
         import asyncio
 
         # ADR-097: the stop's module and its disk read start after first paint.
-        while not getattr(screen.app, "_ui_ready", True):
+        while not _app_ui_ready(screen):
             await asyncio.sleep(0.1)
         from . import emergency_stop_hold
 
@@ -1500,3 +1505,16 @@ def _project_console_saved_input(
         _captured_stash=_captured_stash,
         _captured_inputs=_captured_inputs,
     )
+
+
+def restore_voice_chip(self: Any) -> None:
+    """Repaint the chip from the REAL one-shot dictation state.
+
+    Same idiom (and same reason) as `_teardown_console_hands_free_
+    loop`'s closing lines: the realtime states are not lifecycle states
+    `sync_dictation_state` knows, so only a fresh call with the actual
+    current state clears the borrowed text.
+    """
+    composer = self._console_composer_or_none()
+    if composer is not None:
+        composer.sync_dictation_state(self._console_dictation_state)

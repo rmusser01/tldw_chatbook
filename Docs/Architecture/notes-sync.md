@@ -6,6 +6,7 @@ This document describes the lasting file↔DB notes sync: the runtime owner, the
 
 | File | Role |
 | --- | --- |
+| `app_service_wiring.py`, `app_notes_sync_lifecycle.py` | App-owned cached peek and off-loop safe construction reader, preserving coalescing and sticky build failures |
 | `Notes/notes_sync_runtime.py` | `NotesSyncRuntimeOwner` — app-owned runtime: `start`, `_reconcile`, `review_setup`, `check_root`, `request_sync_now`, `apply_reviewed`, `pause_root`/`resume_root`/`activate_root`, `shutdown` |
 | `Notes/notes_sync_reconciler.py` | `plan_reconciliation()` — classifies immutable observations **without selecting winners** |
 | `Notes/notes_sync_executor.py` | `NotesSyncExecutor` — durable, recovery-first execution of reviewed actions |
@@ -20,6 +21,8 @@ This document describes the lasting file↔DB notes sync: the runtime owner, the
 | `Notes/file_notes_git_*.py`, `git_process_containment.py` | Guarded session git commit/push (ADR-038/039) |
 
 There is no single `Notes/sync_engine.py` — that name is legacy; the "lasting sync" engine is the module set above.
+
+Library attention calls `peek_notes_sync_runtime()` to read only the cached owner and build-failure flag; this preview never invokes the constructing property. Cold preparation calls `read_notes_sync_runtime_owner()` through the existing service-worker seam. Its private safe-reader patch point retains serialized construction and sticky failure reporting, so a failed build is not presented as an unavailable future feature. Runtime queries retain their producer-fence and previous-answer behavior (ADR-036/250).
 
 ## The model: review-first, not LWW
 

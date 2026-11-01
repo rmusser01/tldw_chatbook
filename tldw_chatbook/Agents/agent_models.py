@@ -622,6 +622,39 @@ class RunTerminationReason(str, Enum):
 
 
 
+class AutomaticWorkRefused(RuntimeError):
+    """Admission refused with a stable reason, never a model or tool body."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+    @property
+    def termination_reason(self):
+        from .agent_models import RunTerminationReason
+
+        if self.reason == "cancelled":
+            return RunTerminationReason.CANCELLED
+        if self.reason in {
+            "generation_budget",
+            "child_launch_budget",
+            "model_call_budget",
+            "tokens_budget",
+            "output_tokens_budget",
+            "wall_budget",
+            "iteration_wall_budget",
+        }:
+            return RunTerminationReason.AUTOMATIC_LIMIT
+        if self.reason in {
+            "history_unavailable",
+            "review_required",
+            "clock_unknown",
+            "clock_reversed",
+        }:
+            return RunTerminationReason.UNKNOWN_EFFECT
+        return RunTerminationReason.AUTHORITY_CHANGED
+
+
 @dataclass(frozen=True)
 class ToolResult:
     ok: bool

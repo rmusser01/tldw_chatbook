@@ -255,11 +255,15 @@ async def _choose(
     Returns the mutation the choice ran.
     """
     ran = len(outcomes)
-    await _open_picker(host, pilot, button_id)
+    picker = await _open_picker(host, pilot, button_id)
     await pilot.press(*query)
     await _wait(
         pilot,
-        lambda: _picker_rows(host) == rows and total in _painted(host),
+        lambda: picker._shown_query == query
+        and picker._rows_answer_the_filter()
+        and not picker._loading
+        and _picker_rows(host) == rows
+        and total in _painted(host),
         lambda: f"the list narrowed to {rows} ({total}): {_picker_rows(host)} "
         f"{_painted(host)}",
     )

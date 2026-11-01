@@ -10,14 +10,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
-from .automatic_work_budget import (
-    AutomaticWorkLimits,
-    AutomaticWorkRefused,
-    AutomaticWorkSnapshot,
-)
+from .agent_models import AutomaticWorkRefused
 from .run_log import _setting
 
 if TYPE_CHECKING:
+    from .automatic_work_budget import AutomaticWorkSnapshot
+
     from tldw_chatbook.Chat.console_goal_runs import GoalIterationAuthorization
     from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
 
@@ -147,6 +145,8 @@ class AutomaticWorkContext:
             raise AutomaticWorkRefused(reason)
         if self.goal is not None:
             self.goal.check_binding()
+        from .automatic_work_budget import AutomaticWorkLimits
+
         limits = AutomaticWorkLimits.from_settings(self.policy_kind())
         if is_goal and limits.output_tokens <= 0:
             self.ledger.pause(self.chain_id, "output_tokens_budget")
@@ -167,6 +167,8 @@ class AutomaticWorkContext:
     def output_cap(self, requested: int | None) -> int:
         """Narrow an ordinary output limit without replenishing chain limits."""
         snapshot = self.check()
+        from .automatic_work_budget import AutomaticWorkLimits
+
         cap = min(
             snapshot.limits.output_tokens,
             AutomaticWorkLimits.from_settings(self.policy_kind()).output_tokens,
@@ -182,6 +184,8 @@ class AutomaticWorkContext:
     def begin_call(self, input_tokens: int, output_tokens: int) -> str:
         """Durably admit one physical provider generation and its token budget."""
         self.check()
+        from .automatic_work_budget import AutomaticWorkLimits
+
         reservation = self.ledger.admit_call(
             self.chain_id,
             call_id=uuid4().hex,

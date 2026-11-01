@@ -250,7 +250,7 @@ class KanbanBoardScreen(BaseAppScreen):
 
     async def _default_snapshot_loader(self) -> BoardSnapshot:
         """Map ``LocalKanbanService`` rows onto the board view-models."""
-        service = getattr(self.app_instance, "local_kanban_service", None)
+        service = self.app_instance.local_kanban_service
         if service is None:
             return BoardSnapshot(
                 board_id=None, board_name="Kanban", statuses=(), columns={}
@@ -491,7 +491,7 @@ class KanbanBoardScreen(BaseAppScreen):
         self._run_mutation(self._create_card_operation(list_id, title), title)
 
     async def _create_card_operation(self, list_id: int, title: str) -> None:
-        service = getattr(self.app_instance, "local_kanban_service", None)
+        service = self.app_instance.local_kanban_service
         if service is not None:
             await service.create_card(
                 list_id, {"title": title, "client_id": str(uuid4())}
@@ -516,7 +516,7 @@ class KanbanBoardScreen(BaseAppScreen):
         self._run_mutation(self._move_card_operation(card.id, target_list_id), card.id)
 
     async def _move_card_operation(self, card_id: int, target_list_id: int) -> None:
-        service = getattr(self.app_instance, "local_kanban_service", None)
+        service = self.app_instance.local_kanban_service
         if service is not None:
             await service.move_card(card_id, {"target_list_id": target_list_id})
 
@@ -533,7 +533,7 @@ class KanbanBoardScreen(BaseAppScreen):
         self._run_mutation(self._bootstrap_first_board_operation(), None)
 
     async def _bootstrap_first_board_operation(self) -> None:
-        service = getattr(self.app_instance, "local_kanban_service", None)
+        service = self.app_instance.local_kanban_service
         if service is None:
             return
         board = await service.create_board(

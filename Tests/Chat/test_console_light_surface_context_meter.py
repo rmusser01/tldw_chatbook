@@ -22,6 +22,7 @@ from Tests.Chat.test_console_light_tool_surface import (
     _production_bridge,
     _send,
 )
+from Tests.uat_project_chat_support import disclosed_schemas
 from tldw_chatbook.Chat.console_agent_bridge import build_console_first_request_plan
 from tldw_chatbook.Chat.console_context_compaction import ConsoleCompactionPreflight
 from tldw_chatbook.config import save_setting_to_cli_config
@@ -137,16 +138,22 @@ def test_a_window_too_small_for_the_light_set_counts_what_the_plan_sends(tmp_pat
     """A llama.cpp server whose window nobody verified is planned as 4,096
     tokens, where the light set does not fit and the request carries no
     tools. The meter agrees with the planner either way."""
-    bridge, _gateway, _session, _assistant = _production_bridge(tmp_path, [])
+    bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
     resolution = _llama(ContextWindowResolution(32_000, "application fallback", False))
 
     rows = _preflight_tools(bridge, resolution)
     # The same window with a verified, roomy size: the set fits, so the
     # all-or-nothing comparison below is not vacuous.
-    roomy = _preflight_tools(
-        bridge, _llama(ContextWindowResolution(32_768, "server metadata", True))
+    roomy_rows, roomy_tools = _capacity_request(
+        bridge,
+        _llama(ContextWindowResolution(32_768, "server metadata", True)),
+        session.id,
+        [{"role": "user", "content": "Reply with just: hi"}],
     )
-    assert _row_names(roomy) == LIGHT
+    assert roomy_tools == []
+    assert (
+        set(disclosed_schemas({"messages": roomy_rows, "tools": roomy_tools})) == LIGHT
+    )
     plan = build_console_first_request_plan(
         shared_registry=bridge._registry,
         shared_allowed_tools=bridge._allowed_tools,
@@ -206,9 +213,15 @@ def test_a_local_reasoning_resolution_still_counts_the_light_set(tmp_path):
         reasoning_replay=resolve_reasoning_policy("auto", template=None),
     )
 
-    rows = _preflight_tools(bridge, resolution, session_id=session.id)
+    rows, tools = _capacity_request(
+        bridge,
+        resolution,
+        session.id,
+        [{"role": "user", "content": "Reply with just: hi"}],
+    )
 
-    assert _row_names(rows) == LIGHT
+    assert tools == []
+    assert set(disclosed_schemas({"messages": rows, "tools": tools})) == LIGHT
 
 
 def _roomy_native():
@@ -1437,3 +1450,88 @@ def test_review_remembered_prompt_delta_uses_prepared_raw_and_rendered_cost(
     )
     assert changed.next_request_tokens == state.next_request_tokens + 2000
     assert changed.breakdown_rows == state.breakdown_rows
+
+
+def test_selected_tool_count_before_controller_construction_is_absent():
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    runtime = ConsoleRuntime(SimpleNamespace())
+    assert runtime.chat_controller is None
+    assert runtime.selected_tool_count("not-created") is None
+    assert runtime.selected_tool_count(None) is None
+    assert runtime.chat_controller is None
+    assert runtime.agent_bridge is None
+
+
+@pytest.mark.parametrize("attached", [False, True])
+def test_selected_tool_count_is_session_owned_and_cleared_by_composition(
+    tmp_path, attached
+):
+    from Tests.Chat.test_console_light_tool_surface import (
+        ChatScreen,
+        _attach_real_dbs,
+        _build_test_app,
+    )
+
+    app = _build_test_app()
+    _attach_real_dbs(app, tmp_path)
+    screen = ChatScreen(app)
+    controller = screen._ensure_console_chat_controller()
+    runtime = screen._console_runtime()
+    if not attached:
+        controller.app = None
+
+    controller._publish_selected_tool_count("one", 3)
+    controller._publish_selected_tool_count("two", 7)
+    assert runtime.selected_tool_count("one") == 3
+    assert runtime.selected_tool_count("two") == 7
+    assert runtime.selected_tool_count("other") is None
+    assert runtime.selected_tool_count(None) is None
+
+    controller._publish_mcp_inspector_counts(None, None, session_id="one")
+    assert runtime.selected_tool_count("one") is None
+    assert runtime.selected_tool_count("two") == 7
+    controller._publish_selected_tool_count("one", 0)
+    assert runtime.selected_tool_count("one") == 0
+
+
+def test_meter_reads_replacement_mcp_service_for_each_preview(tmp_path):
+    from Tests.Chat.test_console_light_tool_surface import (
+        ChatScreen,
+        _attach_real_dbs,
+        _build_test_app,
+    )
+
+    app = _build_test_app()
+    _attach_real_dbs(app, tmp_path)
+    app.unified_mcp_service = SimpleNamespace(get_kill_switch=lambda: False)
+    bridge = ChatScreen(app)._ensure_console_agent_bridge()
+    roomy = _openai(ContextWindowResolution(1_047_576, "model catalog", True))
+    assert _row_names(_preflight_tools(bridge, roomy)) == LIGHT
+
+    app.unified_mcp_service = SimpleNamespace(get_kill_switch=lambda: True)
+    assert _row_names(_preflight_tools(bridge, roomy)) == LIGHT - {"ask_user"}
+    app.unified_mcp_service = SimpleNamespace(get_kill_switch=lambda: False)
+    assert _row_names(_preflight_tools(bridge, roomy)) == LIGHT
+
+
+@pytest.mark.parametrize("boundary", ["service-reader", "switch-reader"])
+def test_tool_switch_reader_errors_fail_closed(boundary):
+    from tldw_chatbook.Agents.plain_chat_tool_surface import tool_kill_switch_engaged
+
+    def refused():
+        raise RuntimeError("synthetic unavailable service read")
+
+    reader = (
+        refused
+        if boundary == "service-reader"
+        else lambda: SimpleNamespace(get_kill_switch=refused)
+    )
+    assert tool_kill_switch_engaged(reader) is True
+
+
+@pytest.mark.parametrize("service", [None, SimpleNamespace()])
+def test_absent_mcp_service_or_switch_retains_the_no_service_contract(service):
+    from tldw_chatbook.Agents.plain_chat_tool_surface import tool_kill_switch_engaged
+
+    assert tool_kill_switch_engaged(lambda: service) is False

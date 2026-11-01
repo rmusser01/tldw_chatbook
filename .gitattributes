@@ -28,3 +28,6 @@ tldw_chatbook/assets/skills/** -text
 # The offline tokenizer manifest verifies exact upstream bytes (ADR-093).
 # Line-ending conversion would invalidate every BPE table on Windows.
 tldw_chatbook/assets/tiktoken_cache/** -text
+
+# Generated terminal styles keep canonical bytes through native checkout.
+tldw_chatbook/css/*.tcss text eol=lf
