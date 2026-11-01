@@ -328,3 +328,59 @@ async def test_checker_runs_before_blocked_reason_gate_and_counts_intent():
         "typed intent counts even when the send is later refused"
     )
     assert calls["staged"] == []
+
+
+@pytest.mark.asyncio
+async def test_redacted_press_preserves_newer_identical_hidden_draft():
+    """Guardian changes the sent body, never the original cleanup generation."""
+    import asyncio
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.UI.Console_Modules.sent_draft import take_out_sent_draft
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    store.set_session_draft(session.id, "original", authored_token=(1, 1))
+    captured = store.session_input_snapshot(session.id)
+    stash = ConsoleDraftStash([], "original", False, edit_serial=1, generation=1)
+    entered, release = asyncio.Event(), asyncio.Event()
+    accepted = []
+    notices = []
+
+    class Checker:
+        async def check(self, draft, *, session_id):
+            entered.set()
+            await release.wait()
+            return {"action": "redact", "redacted_draft": "redacted"}
+
+    dispatcher = _seam_controller(lambda: Checker())
+    controller = _FakeChatController()
+    controller.store = store
+    dispatcher._chat_controller_accessor = lambda: controller
+
+    def cleanup(session_id, stash, *, captured_inputs=None):
+        take_out_sent_draft(
+            session_id, stash, composer=None, visible_session_id="other",
+            store=store, undo_histories={}, notify=notices.append,
+            captured_inputs=captured_inputs,
+        )
+
+    async def launch(draft, session_id, stash, owner, **kwargs):
+        accepted.append((draft, kwargs.get("_captured_inputs")))
+        cleanup(session_id, stash, captured_inputs=kwargs.get("_captured_inputs"))
+        return "turn-a"
+
+    dispatcher._launch_chain_async = launch
+    dispatcher._async_launch_sync_source = dispatcher._launch_chain
+    dispatcher._commit_captured_draft = cleanup
+    task = asyncio.create_task(dispatcher.dispatch(
+        "original", session_id=session.id, stash=stash, _captured_inputs=captured
+    ))
+    await entered.wait()
+    store.set_session_draft(session.id, "original", authored_token=(2, 2))
+    release.set()
+    result = await task
+    assert result.status is ConsolePromptDispatchStatus.SENT
+    assert store.session_draft(session.id) == "original"
+    assert accepted == [("redacted", captured)]
+    assert notices

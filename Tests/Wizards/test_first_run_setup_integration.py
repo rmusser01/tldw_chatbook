@@ -269,7 +269,22 @@ def _assert_locked_precondition(precondition) -> None:
     assert precondition(get_atomic_config_snapshot())
 
 
-@pytest.mark.usefixtures("temp_config")
+@pytest.fixture
+def atomic_handoff_config(tmp_path, monkeypatch):
+    """Select a real private source before constructing the commit owner."""
+    from Tests.Backup_Recovery.config_test_support import select_config_source
+    from tldw_chatbook.Chat import provider_setup_persistence
+
+    path = tmp_path / "handoff-profile" / "config.toml"
+    path.parent.mkdir(mode=0o700)
+    module = select_config_source(
+        monkeypatch, path, globals(), vars(provider_setup_persistence)
+    )
+    module.load_cli_config_and_ensure_existence(force_reload=True)
+    return path
+
+
+@pytest.mark.usefixtures("atomic_handoff_config")
 class TestWizardAtomicProviderHandoff:
     @pytest.mark.asyncio
     async def test_concurrent_identical_model_commits_share_one_writer(
@@ -969,9 +984,10 @@ async def test_start_chatting_lands_setup_choice_when_a_config_write_beats_the_h
     """AC#3 in the order the live app runs on a fresh profile.
 
     Start chatting stages the first-chat handoff at the config generation its
-    commit published. Console's first mount then writes the missing rail
+    commit published. Console's first mount used to write the missing rail
     scope to the config file (``_ensure_console_rail_scope_seed``) before
-    ``on_mount`` consumes the handoff (tmux capture, 2026-09-26). That write
+    ``on_mount`` consumed the handoff (tmux capture, 2026-09-26; TASK-36385
+    stopped that write), so this test makes the write itself. That write
     leaves the saved provider and model alone, and the handoff is fenced on
     those values (TASK-34100.5), so it applies: its own target is created
     and shows setup's pair, with nothing left pending.

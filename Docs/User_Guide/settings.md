@@ -318,9 +318,19 @@ replace the new form’s results or Model value.
 For koboldcpp at its shipped endpoint, KoboldAI's native
 `http://localhost:5001/api/v1/generate`, **Discover models** lists what the
 server serves at `http://localhost:5001/v1/models`, the list Switch model
-shows; the endpoint you send to stays the native one. An endpoint with an API
-path before `/api/v1/generate` (such as `/v1/api/v1/generate`) is ambiguous
-and is not discovered.
+shows; the endpoint you send to stays the native one. For other koboldcpp
+endpoints that pass discovery's URL checks, **Discover models** lists from the
+URL Switch model checks: a bare root such as `http://localhost:5001` lists at
+`http://localhost:5001/v1/models`, and a root under a path such as
+`http://localhost:5001/kobold` lists at `http://localhost:5001/kobold/v1/models`.
+Discovery's URL checks still refuse a few paths Switch model checks, such as one
+over 2,000 characters or one with a request path in the middle
+(`/chat/completions/x`). An endpoint Switch model cannot check is not
+discovered either, and the line beside **Discover models** gives the reason and
+a fix. For an API path before `/api/v1/generate` (such as
+`/v1/api/v1/generate`) it reads "Endpoint path has ambiguous API suffixes. Use
+the server's /api/v1/generate route, such as
+http://localhost:5001/api/v1/generate."
 
 The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 saved lists start empty and
 fill through **Discover models**. A config file written by an older version
@@ -409,10 +419,13 @@ endpoint key that is set, and so does their listing. A missing, placeholder
 or blank key is reported as missing
 and nothing is sent. If the listing cannot run at all (for example while
 Chatbook uses a server), the result says "Key not checked" and records
-nothing. The result's rows appear in the inspector's **Key** block, under
-its "Provider readiness: *provider* / *model* — *word*" line (the word is the
-Key check row's) and what **t** checks, so a result never pushes the card
-down. The result leads
+nothing. The inspector's **Key** block starts, for a provider that needs a
+key, with where to get one — the same line first-run setup shows, as in
+"New keys: platform.openai.com/api-keys." (or "Get a key from your
+*provider* account dashboard." where that page is not yet known). The
+result's rows appear in the **Key** block, under its "Provider readiness:
+*provider* / *model* — *word*" line (the word is the Key check row's) and
+what **t** checks, so a result never pushes the card down. The result leads
 with a **Readiness** row, which the Key check row repeats, in the same
 words the Console uses for that connection ("Ready · not tested",
 "Ready · reachable 14:01", "Ready · verified 14:01" or "Not ready ·
@@ -1519,6 +1532,7 @@ Most controls are drafted. Groups marked **applies immediately** save as you edi
 | **Local reasoning history** | How much earlier reasoning a local model gets back, on one **Default replay** row: **Automatic (recommended)**, **Current exchange**, **All available** or **Off**. **Reasoning replay override** (collapsed) remembers a different choice in **This model's replay**, and **Native tool support**, for the local model Console is using now; its first line names that provider, model and endpoint, and **Use default** clears the override. With no local model in Console it holds only "Select a local model in Console to set a remembered override." |
 | **Conversation context & memory** | Automatic/custom context budget; Ask/Automatic/Off compaction; summary representation; **Compact at (%)** and **Reduce context to (%)**; summary token limit; failure behavior and carry-forward mode. **Summary prompt** ▸ **Edit in Internal Prompts…** opens the matching Internal Prompts entry. |
 | **Background effects** | An Enabled/Disabled toggle, **Background effect** (None / Snow / Rain / Matrix), **Scope**, **Intensity**, and **Frame rate** (1–12). |
+| **OS notifications** | **Enable OS notifications** is off by default; turning it on also enables the three per-type toggles below it (**Notify: run finished**, **Notify: run failed**, **Notify: needs approval**), each of which can be turned off individually. When the terminal window is buried, a desktop notification fires for background Console events — a run finishing, a run failing, or a parked approval — matching the in-app toasts' one-per-event cadence. The notification body carries only the conversation name and the outcome category, never message content or tool output. macOS uses `osascript` and Linux uses `notify-send`; other platforms skip silently. |
 
 The **Show model thinking** result stays beside its checkbox when you reopen
 Settings. A failed save restores the previous value; fix the config-file problem

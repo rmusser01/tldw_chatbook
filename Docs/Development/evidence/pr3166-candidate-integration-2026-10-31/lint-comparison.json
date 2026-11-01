@@ -1,0 +1,1019 @@
+[
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/console_spend_projection.py",
+    "arms": {
+      "candidate": [
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 62,
+            "row": 690
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\console_spend_projection.py",
+          "fix": null,
+          "location": {
+            "column": 37,
+            "row": 690
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 690,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        }
+      ],
+      "reviewed": [
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 62,
+            "row": 796
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\console_spend_projection.py",
+          "fix": null,
+          "location": {
+            "column": 37,
+            "row": 796
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 796,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        }
+      ],
+      "integrated": [
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 62,
+            "row": 798
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Console_Modules\\console_spend_projection.py",
+          "fix": null,
+          "location": {
+            "column": 37,
+            "row": 798
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 798,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        }
+      ]
+    },
+    "new_diagnostics": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "arms": {
+      "candidate": [
+        {
+          "cell": null,
+          "code": "F401",
+          "end_location": {
+            "column": 33,
+            "row": 131
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from ..Console_Modules.agent import (\n    CONSOLE_AGENT_CANCEL_ALL_ID,\n    CONSOLE_AGENT_FLEET_SECTION_ID,\n    apply_console_agent_status_state,\n)",
+                "end_location": {
+                  "column": 2,
+                  "row": 135
+                },
+                "location": {
+                  "column": 1,
+                  "row": 130
+                }
+              }
+            ],
+            "message": "Remove unused import: `..Console_Modules.agent.project_console_run_feedback`"
+          },
+          "location": {
+            "column": 5,
+            "row": 131
+          },
+          "message": "`..Console_Modules.agent.project_console_run_feedback` imported but unused",
+          "noqa_row": 131,
+          "url": "https://docs.astral.sh/ruff/rules/unused-import"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 23,
+            "row": 2719
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 13,
+            "row": 2716
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 2716,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 35,
+            "row": 3651
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 17,
+            "row": 3651
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 3651,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 42,
+            "row": 3835
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 20,
+            "row": 3835
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 3835,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 40,
+            "row": 4061
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 23,
+            "row": 4061
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 4061,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 39,
+            "row": 5842
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 5842
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 5842,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 68,
+            "row": 5842
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 43,
+            "row": 5842
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 5842,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 39,
+            "row": 5891
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 5891
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 5891,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 62,
+            "row": 15867
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 25,
+            "row": 15867
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 15867,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 62,
+            "row": 15980
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 21,
+            "row": 15980
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 15980,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 46,
+            "row": 16375
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 16375
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16375,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 53,
+            "row": 16389
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 16,
+            "row": 16389
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16389,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 44,
+            "row": 16416
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 16,
+            "row": 16416
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16416,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 74,
+            "row": 16416
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 48,
+            "row": 16416
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16416,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 44,
+            "row": 16648
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 26,
+            "row": 16648
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16648,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 38,
+            "row": 16973
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 20,
+            "row": 16973
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16973,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 40,
+            "row": 17280
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 23,
+            "row": 17280
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 17280,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 40,
+            "row": 20360
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 13,
+            "row": 20360
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 20360,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        }
+      ],
+      "reviewed": [
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 23,
+            "row": 2728
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 13,
+            "row": 2725
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 2725,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 35,
+            "row": 3660
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 17,
+            "row": 3660
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 3660,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 42,
+            "row": 3844
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 20,
+            "row": 3844
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 3844,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 40,
+            "row": 4070
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 23,
+            "row": 4070
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 4070,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 39,
+            "row": 5851
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 5851
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 5851,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 68,
+            "row": 5851
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 43,
+            "row": 5851
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 5851,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 39,
+            "row": 5900
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 5900
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 5900,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 62,
+            "row": 16025
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 25,
+            "row": 16025
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16025,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 62,
+            "row": 16138
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 21,
+            "row": 16138
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16138,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 46,
+            "row": 16533
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 16533
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16533,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 53,
+            "row": 16547
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 16,
+            "row": 16547
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16547,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 44,
+            "row": 16574
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 16,
+            "row": 16574
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16574,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 74,
+            "row": 16574
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 48,
+            "row": 16574
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16574,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 44,
+            "row": 16806
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 26,
+            "row": 16806
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16806,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 38,
+            "row": 17159
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 20,
+            "row": 17159
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 17159,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 40,
+            "row": 17479
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 23,
+            "row": 17479
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 17479,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 40,
+            "row": 20567
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 13,
+            "row": 20567
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 20567,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        }
+      ],
+      "integrated": [
+        {
+          "cell": null,
+          "code": "F401",
+          "end_location": {
+            "column": 33,
+            "row": 131
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": {
+            "applicability": "safe",
+            "edits": [
+              {
+                "content": "from ..Console_Modules.agent import (\n    CONSOLE_AGENT_CANCEL_ALL_ID,\n    CONSOLE_AGENT_FLEET_SECTION_ID,\n    apply_console_agent_status_state,\n)",
+                "end_location": {
+                  "column": 2,
+                  "row": 135
+                },
+                "location": {
+                  "column": 1,
+                  "row": 130
+                }
+              }
+            ],
+            "message": "Remove unused import: `..Console_Modules.agent.project_console_run_feedback`"
+          },
+          "location": {
+            "column": 5,
+            "row": 131
+          },
+          "message": "`..Console_Modules.agent.project_console_run_feedback` imported but unused",
+          "noqa_row": 131,
+          "url": "https://docs.astral.sh/ruff/rules/unused-import"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 23,
+            "row": 2720
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 13,
+            "row": 2717
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 2717,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 35,
+            "row": 3652
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 17,
+            "row": 3652
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 3652,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 42,
+            "row": 3836
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 20,
+            "row": 3836
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 3836,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 40,
+            "row": 4062
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 23,
+            "row": 4062
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 4062,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 39,
+            "row": 5843
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 5843
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 5843,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 68,
+            "row": 5843
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 43,
+            "row": 5843
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 5843,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 39,
+            "row": 5892
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 5892
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 5892,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 62,
+            "row": 15927
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 25,
+            "row": 15927
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 15927,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 62,
+            "row": 16040
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 21,
+            "row": 16040
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16040,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 46,
+            "row": 16435
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 12,
+            "row": 16435
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16435,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 53,
+            "row": 16449
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 16,
+            "row": 16449
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16449,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 44,
+            "row": 16476
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 16,
+            "row": 16476
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16476,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 74,
+            "row": 16476
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 48,
+            "row": 16476
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16476,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 44,
+            "row": 16708
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 26,
+            "row": 16708
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 16708,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 38,
+            "row": 17061
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 20,
+            "row": 17061
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 17061,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 40,
+            "row": 17367
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 23,
+            "row": 17367
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 17367,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        },
+        {
+          "cell": null,
+          "code": "E721",
+          "end_location": {
+            "column": 40,
+            "row": 20464
+          },
+          "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3166-resync\\tldw_tui\\tldw_chatbook\\UI\\Screens\\chat_screen.py",
+          "fix": null,
+          "location": {
+            "column": 13,
+            "row": 20464
+          },
+          "message": "Do not compare types, use `isinstance()`",
+          "noqa_row": 20464,
+          "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+        }
+      ]
+    },
+    "new_diagnostics": []
+  },
+  {
+    "path": "Tests/UI/test_console_native_transcript.py",
+    "arms": {
+      "candidate": [],
+      "reviewed": [],
+      "integrated": []
+    },
+    "new_diagnostics": []
+  }
+]

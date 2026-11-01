@@ -49,6 +49,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import (
     fetch_keywords_for_media_batch,
 )
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+from tldw_chatbook.Notes.note_import_parsers import split_frontmatter
 
 # ``bootstrap_profile``: the creator and importer resolve their private temp
 # roots through ``get_user_data_dir()`` at construction, a config read that
@@ -236,8 +237,12 @@ def test_note_keywords_survive_export_and_import(tmp_path):
     [item] = _manifest_items(bundle, ContentType.NOTE)
     assert item["tags"] == ["meeting", "moc"]
     markdown = _read_text(bundle, item["file_path"])
-    frontmatter = markdown.split("---", 2)[1]
-    assert "tags: meeting, moc" in frontmatter.splitlines()
+    # TASK-34000.31: the block is real YAML and ``tags`` is a list, read with
+    # the same splitter Add from files… uses (it used to be the comma line
+    # ``tags: meeting, moc``).
+    metadata, _body = split_frontmatter(markdown)
+    assert metadata is not None
+    assert metadata["tags"] == ["meeting", "moc"]
 
     dest = _db_trio(tmp_path / "dest", "kw-dest")
     _import(dest, bundle)
@@ -299,8 +304,9 @@ def test_items_without_keywords_export_empty_lists_and_import_cleanly(tmp_path):
     assert "keywords" in conversation
     assert conversation["keywords"] == []
     [note_item] = _manifest_items(bundle, ContentType.NOTE)
-    frontmatter = _read_text(bundle, note_item["file_path"]).split("---", 2)[1]
-    assert not any(line.startswith("tags:") for line in frontmatter.splitlines())
+    metadata, _body = split_frontmatter(_read_text(bundle, note_item["file_path"]))
+    assert metadata is not None
+    assert "tags" not in metadata
 
     dest = _db_trio(tmp_path / "dest", "kw-dest")
     status = _import(dest, bundle)
@@ -668,9 +674,9 @@ def test_a_keyword_that_would_break_the_frontmatter_stays_out_of_that_line(tmp_p
     [item] = _manifest_items(bundle, ContentType.NOTE)
     assert sorted(item["tags"]) == sorted(["safe", unsafe_fence, unsafe_newline])
     markdown = _read_text(bundle, item["file_path"])
-    frontmatter = markdown.split("---", 2)[1]
-    tag_lines = [line for line in frontmatter.splitlines() if line.startswith("tags:")]
-    assert tag_lines == ["tags: safe"]
+    metadata, _body = split_frontmatter(markdown)
+    assert metadata is not None
+    assert metadata["tags"] == ["safe"]
 
     dest = _db_trio(tmp_path / "dest", "kw-dest")
     _import(dest, bundle)

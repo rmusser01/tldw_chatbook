@@ -17,26 +17,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 
 from loguru import logger
 
-from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
-)
+from tldw_chatbook.Backup_Recovery.participants import _core_access
 
 from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
+from .store_kernel import SQLiteStoreKernel
 
 #: Action ladder rungs, lowest to highest (spec §Rules engine: thresholds
 #: replace the base action notify -> redact -> block).
@@ -99,7 +90,7 @@ def _utc_now_iso() -> str:
     return utc_now_iso()
 
 
-class GuardianDB(BaseDB):
+class GuardianDB(SQLiteStoreKernel, BaseDB):
     """Database wrapper for the Guardian subsystem (rules, alerts, escalation).
 
     Schema v1 (spec §Data model): ``guardian_rules``,
@@ -118,7 +109,7 @@ class GuardianDB(BaseDB):
 
     _CURRENT_SCHEMA_VERSION = 2
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
-    _LIVENESS_PING_IDLE_SECONDS = 30.0
+    _kernel_sqlite_owner = "db.base"
 
     _SCHEMA_DDL = (
         """
@@ -213,7 +204,7 @@ class GuardianDB(BaseDB):
                 "GuardianDB needs a file path; ':memory:' is not shared "
                 "across its per-thread connections"
             )
-        self._thread_local = threading.local()
+        self._init_store_kernel()
         try:
             super().__init__(database_path, client_id if client_id is not None else "default")
         except BaseException:
@@ -224,21 +215,24 @@ class GuardianDB(BaseDB):
     # Connection handling (Dreams_DB idiom)
     # ------------------------------------------------------------------
 
-    @_core_getter
-    def _get_connection(self) -> sqlite3.Connection:
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open through BaseDB's db.base path (ADR-228 provenance section)."""
+        return BaseDB._get_connection(self)
+
+    def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
+        """Guardian per-connection policy (kernel wraps registration/gating).
+
+        NORMAL under WAL is app-crash-safe and avoids an fsync per commit
+        (task-15465 lineage); task-3012: the held connection needs true
+        autocommit. WAL goes through the retry helper so a concurrent
+        opener briefly holding the file cannot fail the first conversion.
+        """
         _core_access(self)
-        conn = super()._get_connection()
-        _register_core_connection(self, conn)
-        try:
-            _core_access(self)
-            conn.execute("PRAGMA foreign_keys = ON")
-            self._enable_wal(conn)
-            conn.execute("PRAGMA synchronous = NORMAL")
-            conn.isolation_level = None
-            _core_access(self)
-        except BaseException:
-            conn.close()
-            raise
+        conn.execute("PRAGMA foreign_keys = ON")
+        self._enable_wal(conn)
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.isolation_level = None
+        _core_access(self)
         return conn
 
     def _enable_wal(self, conn: sqlite3.Connection) -> None:
@@ -252,69 +246,9 @@ class GuardianDB(BaseDB):
                     raise
                 time.sleep(0.01)
 
-    @_core_getter
-    def _held_connection(self) -> sqlite3.Connection:
-        _core_access(self)
-        conn = _core_cached_connection(self, getattr(self._thread_local, "conn", None))
-        if conn is not None:
-            last_used = getattr(self._thread_local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    # A failed probe alone cannot retire a live borrower.
-                    try:
-                        sqlite3.Connection.in_transaction.__get__(conn)
-                    except sqlite3.ProgrammingError:
-                        conn.close()
-                    else:
-                        raise
-                    conn = None
-        if conn is None:
-            conn = self._get_connection()
-            self._thread_local.conn = conn
-        self._thread_local.conn_last_used = time.monotonic()
-        return conn
 
-    @_core_transaction
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        yield self._held_connection()
 
-    @_core_transaction
-    @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield conn
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
-
-    def close(self) -> None:
-        """Retire this thread's cache only after its native owner permits close."""
-        conn = getattr(self._thread_local, "conn", None)
-        if conn is not None:
-            with _core_closing(self, conn) as allowed:
-                if not allowed:
-                    return
-                try:
-                    conn.close()
-                except Exception as exc:  # noqa: BLE001 - retain uncertain retirement
-                    logger.debug("Guardian native close failed ({})", type(exc).__name__)
-                    return
-                self._thread_local.conn = None
-
-    # ------------------------------------------------------------------
     # Schema + seeding
-    # ------------------------------------------------------------------
 
     @classmethod
     @lru_cache(maxsize=2)

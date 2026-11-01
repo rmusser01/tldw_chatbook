@@ -123,6 +123,11 @@ _RUNTIME_MODULE = "tldw_chatbook/Chat/console_runtime.py"
 
 _VIEW_HOOK_OWNERSHIP = {
     "response_rules_changed": "view-projection",
+    "prepare_view": "view-projection",
+    "present_results": "view-projection",
+    "present_confirmation": "view-projection",
+    "is_answerable": "view-projection",
+    "on_settled": "view-projection",
     "_chat_dictionary_applier": "app-owned-domain",
     "_world_info_applier": "app-owned-domain",
     "_rag_capture_provider": "runtime-custody",
@@ -679,6 +684,7 @@ def test_view_hook_inventory_contains_only_disposable_projections():
 
     assert set(_VIEW_HOOK_OWNERSHIP) == {
         "response_rules_changed",
+        "prepare_view", "present_results", "present_confirmation", "is_answerable", "on_settled",
         "_chat_dictionary_applier",
         "_world_info_applier",
         "_rag_capture_provider",
@@ -1548,6 +1554,8 @@ async def test_persistent_modal_mount_failure_exhausts_until_session_rederivatio
 
 
 def _attach_reconciliation_screen(sync, *, start=None, resume_pending=False):
+    from contextlib import nullcontext
+
     scheduled: list[tuple[float, object]] = []
     # TASK-32873: reconciliation now also reaches the runtime's
     # chat_controller (screen._console_chat_controller property); give the
@@ -1574,6 +1582,12 @@ def _attach_reconciliation_screen(sync, *, start=None, resume_pending=False):
     screen._sync_native_console_chat_ui = sync
     screen._console_runtime = lambda: runtime
     screen._start_console_view_after_reconciliation = start or (lambda: None)
+    screen._workspace = SimpleNamespace(
+        prepare_console_workspace_reconciliation=nullcontext,
+    )
+    # These isolated phase/retry tests await the body directly. Mounted tests
+    # cover the real synchronous launcher and its managed worker custody.
+    screen._start_console_attach_reconciliation = screen._reconcile_console_after_attach
     screen.set_timer = lambda delay, callback: scheduled.append((delay, callback))
     return screen, runtime, scheduled
 
@@ -2020,6 +2034,7 @@ def test_detach_releases_the_old_chat_screen_from_every_runtime_hook():
     assert any(
         inspect.ismethod(getattr(runtime._hook_target(slot.target), slot.name))
         for slot in CONSOLE_VIEW_HOOK_SLOTS
+        if runtime._hook_target(slot.target) is not None
     )
 
     dead_screen = weakref.ref(screen)
@@ -3821,3 +3836,50 @@ async def test_native_acceptance_consumes_only_open_target_revision(
         if not rig_registered:
             runs.close()
             store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [RuntimeError, asyncio.CancelledError])
+async def test_image_retirement_failure_cannot_skip_terminal_and_speech_cleanup(failure):
+    calls = []
+
+    async def ready():
+        pass
+
+    async def close_images():
+        calls.append("images")
+        raise failure("image retirement")
+
+    screen = SimpleNamespace(
+        _hooks=SimpleNamespace(cancel_pending=lambda: None),
+        _release_claimed_conversation_settings_return=lambda: None,
+        _console_runtime=lambda: SimpleNamespace(detach_view=lambda *_: calls.append("detach")),
+        _flush_sidebar_state_now=ready,
+        _finalize_guardian_visit=ready,
+        _terminal=SimpleNamespace(detach_workspace=lambda: calls.append("terminal")),
+        _message=SimpleNamespace(invalidate_console_speech_context=lambda: calls.append("speech")),
+        _console_auto_speak=SimpleNamespace(unmount=lambda: calls.append("auto-speak")),
+        _image=SimpleNamespace(
+            _recovered_images_close_admission=lambda: calls.append("sealed"),
+            _recovered_images_close=close_images,
+            _h3_image_edit_registry=lambda: SimpleNamespace(),
+        ),
+    )
+    screen._console_chat_store = None
+    screen.app_instance = SimpleNamespace()
+    screen._video = SimpleNamespace(_drain_pending_console_videos=lambda: None)
+    screen._fleet = SimpleNamespace(_stop_console_fleet_survivor_tick=lambda: None)
+    screen._context_spend = SimpleNamespace(_stop_console_cost_ttl_timer=lambda: None)
+    screen._stop_console_transcript_sync_timer = lambda: None
+    screen._stop_console_environment_poll_timer = lambda: None
+    screen._stop_console_credential_poll_timer = lambda: None
+    screen._console_draft_spend_refresh = SimpleNamespace(stop=lambda: None)
+    screen._teardown_console_roleplay_persistence = ready
+    screen._hands_free = SimpleNamespace(teardown=lambda: None, uninstall_console_hands_free_store_tap=lambda: None)
+    screen._realtime = SimpleNamespace(teardown=ready)
+    screen._dictation = SimpleNamespace(teardown=ready)
+    screen._console_original_attempt_previews = {}
+    with pytest.raises(failure, match="image retirement"):
+        await ChatScreen.on_unmount(screen)
+    assert calls[:2] == ["detach", "sealed"]
+    assert all(calls.index(name) < calls.index("images") for name in ("terminal", "speech", "auto-speak"))

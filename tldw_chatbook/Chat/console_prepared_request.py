@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from tldw_chatbook.Agents.agent_models import FENCE_TOOL_RESULT_PREFIX
 from tldw_chatbook.Agents.agent_runtime import split_visible_text_and_tool_call
+from tldw_chatbook.Agents.project_instruction_runtime import PROJECT_INSTRUCTION_ROW_KEY
 from tldw_chatbook.Chat.attachment_core import image_url_part
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_PER_IMAGE_TOKENS,
@@ -74,7 +75,9 @@ MEMORY_SAFETY_COPY = (
 
 RequestOwner = Literal["system", "memory", "mandatory", "compactable", "active"]
 WireStyle = Literal["distinct_roles", "single_preamble"]
-LimitSource = Literal["detected", "estimated", "provider_input_cap", "user_override", "unknown"]
+LimitSource = Literal[
+    "detected", "estimated", "provider_input_cap", "user_override", "unknown"
+]
 
 
 def freeze_json(value: Any) -> Any:
@@ -613,6 +616,8 @@ class PreparedProviderRequest:
     effective_thinking_policy: EffectiveThinkingHistoryPolicy = "auto"
     provenance: ProviderRequestProvenance | None = field(default=None, repr=False)
 
+    live_native_custody: object | None = field(default=None, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         if not isinstance(self.semantic, PreparedConsoleRequest):
             raise TypeError("semantic must be a PreparedConsoleRequest.")
@@ -913,6 +918,23 @@ def build_console_request(
         groups_by_owner
     ):
         raise ValueError("Every continuation group must attach to one request owner.")
+    replay_plan = _completed_replay_plan(copied, groups)
+    replay_indices = {
+        index
+        for owner, (_rows, start) in replay_plan.items()
+        for index in range(start, owner)
+    }
+    if replay_indices:
+        # Runtime carries provider rows; budgeting retains one saved semantic owner.
+        copied = [
+            row for index, row in enumerate(copied) if index not in replay_indices
+        ]
+        if capture_on:
+            message_descriptors = tuple(
+                item
+                for index, item in enumerate(message_descriptors)
+                if index not in replay_indices
+            )
     thinking = tuple(thinking_groups)
     thinking_by_owner = {group.owner_message_id: group for group in thinking}
     if len(thinking_by_owner) != len(thinking):
@@ -1199,6 +1221,93 @@ def _project_runtime_guidance(
     return rows, origins
 
 
+def _completed_replay_plan(messages, groups):
+    """Expand only a collapsed, exact completed owner under an engine contract."""
+    from tldw_chatbook.Chat.provider_continuation import project_provider_continuation
+    from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+    engine_keys = {record.key for record in ENGINE_RECORDS}
+    projected = {}
+    for group in groups:
+        if (
+            group.checkpoint.state != "complete"
+            or group.checkpoint.provider not in engine_keys
+        ):
+            continue
+        canonical = tuple(project_provider_continuation(group.checkpoint))
+        index = next(
+            i
+            for i, row in enumerate(messages)
+            if row.get(CONTINUATION_OWNER_KEY) == group.owner_message_id
+        )
+
+        def visible(row):
+            return {
+                key: thaw_json(value)
+                for key, value in row.items()
+                if key
+                not in {
+                    MEMORY_OWNER_KEY,
+                    CONTINUATION_OWNER_KEY,
+                    THINKING_OWNER_KEY,
+                    IDLE_REQUEST_OWNER_KEY,
+                    PERSISTED_MESSAGE_ID_KEY,
+                    PERSISTED_CONVERSATION_ID_KEY,
+                    EXCHANGE_CONTINUATION_KEY,
+                    LOCAL_TOOL_RESULT_KEY,
+                }
+            }
+
+        terminal = visible(messages[index])
+        call_ids = {call.call_id for round_ in group.rounds for call in round_.calls}
+        owner_call_ids = {
+            call.get("id")
+            for call in terminal.get("tool_calls") or ()
+            if isinstance(call, Mapping)
+        }
+        if owner_call_ids and owner_call_ids <= call_ids:
+            # Native rows are already inline with the owner on its batch (the
+            # pre-replay shape); the adapter matches those rows itself.
+            continue
+        if (
+            terminal.get("role") != "assistant"
+            or type(terminal.get("content")) is not str
+            or set(terminal) != {"role", "content"}
+        ):
+            raise ValueError("completed continuation owner changed")
+        canonical = (*canonical, terminal)
+        native_indices = [
+            i
+            for i, row in enumerate(messages)
+            if row.get("tool_call_id") in call_ids
+            or any(call.get("id") in call_ids for call in row.get("tool_calls", ()))
+        ]
+        start = index - len(canonical) + 1
+        if native_indices and (
+            start < 0
+            or tuple(visible(row) for row in messages[start : index + 1]) != canonical
+            or any(i < start or i > index for i in native_indices)
+        ):
+            raise ValueError("completed continuation replay is partial or duplicated")
+        projected[index] = (canonical, start if native_indices else index)
+    return projected
+
+
+def _completed_replays(semantic: PreparedConsoleRequest):
+    groups = (
+        tuple(
+            group for unit in semantic.compactable for group in unit.continuation_groups
+        )
+        + semantic.active_continuation_groups
+    )
+    return {
+        index: rows
+        for index, (rows, _start) in _completed_replay_plan(
+            semantic.flattened_messages(), groups
+        ).items()
+    }
+
+
 def _serialize_messages(
     semantic: PreparedConsoleRequest, wire_style: WireStyle
 ) -> tuple[str | None, tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
@@ -1225,6 +1334,7 @@ def _serialize_messages(
                 IDLE_REQUEST_OWNER_KEY,
                 PERSISTED_MESSAGE_ID_KEY,
                 PERSISTED_CONVERSATION_ID_KEY,
+                PROJECT_INSTRUCTION_ROW_KEY,
                 EXCHANGE_CONTINUATION_KEY,
                 LOCAL_TOOL_RESULT_KEY,
             }
@@ -1238,8 +1348,17 @@ def _serialize_messages(
             # Semantic ownership remains "memory" for accounting and safety.
             row["role"] = "user"
         serialized.append(row)
-    transformed, _origins = _project_runtime_guidance(semantic, tuple(serialized))
-    all_messages = tuple(transformed)
+    transformed, origins = _project_runtime_guidance(semantic, tuple(serialized))
+    replays = _completed_replays(semantic)
+    all_messages = tuple(
+        row
+        for value, (indices, changed) in zip(transformed, origins, strict=True)
+        for row in (
+            replays[indices[0]]
+            if len(indices) == 1 and not changed and indices[0] in replays
+            else (value,)
+        )
+    )
     if wire_style == "distinct_roles":
         return None, all_messages, all_messages
 
@@ -1426,6 +1545,38 @@ def _serialize_provenance(
         else flattened[indices[0]]
         for indices, changed in origins
     )
+    replays = _completed_replays(semantic)
+    if replays:
+        expanded = []
+        expanded_tools = []
+        for index, (descriptor, (indices, changed)) in enumerate(
+            zip(flattened_values, origins, strict=True)
+        ):
+            replay = (
+                replays.get(indices[0]) if len(indices) == 1 and not changed else None
+            )
+            if replay is None:
+                if index in tool_loop:
+                    expanded_tools.append(len(expanded))
+                expanded.append(descriptor)
+                continue
+            attachment = next(
+                item for item in continuations if item.inputs == (descriptor,)
+            )
+            derived = DerivedTraceProvenance(
+                TraceTransformKind.MESSAGE_REWRITE,
+                (descriptor, attachment),
+                artifact=ProviderArtifactTraceProvenance(
+                    TraceProvenanceSource.PROVIDER_OVERLAY, capture_policy
+                ),
+            )
+            for row in replay[:-1]:
+                if _is_tool_loop_row(row):
+                    expanded_tools.append(len(expanded))
+                expanded.append(derived)
+            expanded.append(descriptor)
+        flattened_values = tuple(expanded)
+        tool_loop = expanded_tools
     if wire_style == "distinct_roles":
         return ProviderRequestProvenance(
             messages=flattened_values,
@@ -1488,8 +1639,17 @@ def _count_wire(
         )
         + semantic.active_continuation_groups
     )
+    replay_owners = {
+        semantic.flattened_messages()[index][CONTINUATION_OWNER_KEY]
+        for index in _completed_replays(semantic)
+    }
     total += sum(
-        count_provider_continuation_tokens(group, model=model, count_fn=count_fn)
+        count_provider_continuation_tokens(
+            group,
+            model=model,
+            count_fn=count_fn,
+            wire_replayed=group.owner_message_id in replay_owners,
+        )
         for group in groups
     )
     return total
@@ -1801,3 +1961,127 @@ def prepare_provider_request(
         effective_thinking_policy=selected.effective_thinking_policy,
         provenance=provider_provenance,
     )
+
+
+def _is_current_user_text_transform(
+    source: Mapping[str, Any], visible: Mapping[str, Any]
+) -> bool:
+    """Admit text-only changes; retain every role, attachment and sidecar."""
+    if source.get("role") != "user" or {
+        key: value for key, value in source.items() if key != "content"
+    } != {key: value for key, value in visible.items() if key != "content"}:
+        return False
+    before, after = source.get("content"), visible.get("content")
+    if type(before) is str and type(after) is str:
+        return True
+    if (
+        type(before) is not list
+        or type(after) is not list
+        or len(before) != len(after)
+    ):
+        return False
+    for original, transformed in zip(before, after, strict=True):
+        if original == transformed:
+            continue
+        if (
+            type(original) is not dict
+            or type(transformed) is not dict
+            or original.get("type") != "text"
+            or type(original.get("text")) is not str
+            or type(transformed.get("text")) is not str
+            or {key: value for key, value in original.items() if key != "text"}
+            != {key: value for key, value in transformed.items() if key != "text"}
+        ):
+            return False
+    return True
+
+
+def _reseal_archive_followup_trace_request(
+    self,
+    request: PreparedConsoleRequest,
+    before: list[dict[str, Any]],
+    after: list[dict[str, Any]],
+    current_user_id: str | None,
+) -> PreparedConsoleRequest:
+    """Bind authorized selection text to its exact admitted current source."""
+    from . import console_chat_controller as _controller
+
+    try:
+        if (
+            type(request) is not _controller.PreparedConsoleRequest
+            or request.provenance is None
+            or len(request.active_request) != 1
+            or not before
+            or len(before) != len(after)
+            or before[:-1] != after[:-1]
+            or not self._is_current_user_text_transform(before[-1], after[-1])
+        ):
+            raise ValueError("archive_trace_current_text")
+        # Native owner annotations are not provider values. Keep them
+        # unchanged above, then compare the same shape admission froze.
+        owner_keys = {
+            _controller.NATIVE_MESSAGE_ID_KEY,
+            _controller.PERSISTED_MESSAGE_ID_KEY,
+            _controller.PERSISTED_CONVERSATION_ID_KEY,
+        }
+        visible = tuple(
+            {key: value for key, value in row.items() if key not in owner_keys}
+            for row in before
+        )
+        admitted = tuple(
+            {key: value for key, value in row.items() if key not in owner_keys}
+            for row in _controller._flatten_preflight_messages(request)
+        )
+        if admitted and admitted[0].get("role") == "system":
+            admitted = admitted[1:]
+        if _controller.freeze_json(visible) != _controller.freeze_json(admitted):
+            raise ValueError("archive_trace_admitted_rows")
+        descriptor = request.provenance.active_request[0]
+        source_id = _controller.current_turn_source_revision_id(descriptor)
+        if source_id is None or current_user_id is None:
+            raise ValueError("archive_trace_source")
+        current = self.store.get_message(current_user_id)
+        session_id = self.store.session_id_for_message(current_user_id)
+        session = next(
+            item for item in self.store.sessions() if item.id == session_id
+        )
+        persistence = self.store.persistence
+        with persistence.db.transaction() as cursor:
+            source = persistence.console_trace_repository.get_semantic_revision(
+                cursor, source_id
+            )
+        if (
+            current.role is not _controller.ConsoleMessageRole.USER
+            or source is None
+            or source.normalized_role != "user"
+            or source.source_message_id != current.persisted_message_id
+            or source.source_conversation_id != session.persisted_conversation_id
+        ):
+            raise ValueError("archive_trace_source_owner")
+        saved = (
+            descriptor
+            if type(descriptor) is _controller.SavedRevisionTraceProvenance
+            else descriptor.inputs[0]
+        )
+        transformed = _controller.DerivedTraceProvenance(
+            _controller.TraceTransformKind.CURRENT_TURN_TEXT,
+            inputs=(saved,),
+            artifact=_controller.ProviderArtifactTraceProvenance(
+                _controller.TraceProvenanceSource.ACTIVE_REQUEST,
+                request.provenance.capture_policy,
+            ),
+        )
+        row = {
+            key: value for key, value in after[-1].items() if key not in owner_keys
+        }
+        return _controller.replace(
+            request,
+            active_request=(row,),
+            provenance=_controller.replace(request.provenance, active_request=(transformed,)),
+        )
+    except Exception:  # noqa: BLE001 - failed source proof must refuse capture
+        # This seam precedes the bridge's first trace reservation. Use the
+        # ordinary controlled capture recovery path, never an unowned send.
+        raise _controller.TraceCallPersistenceError(
+            reservation_status="not_established"
+        ) from None

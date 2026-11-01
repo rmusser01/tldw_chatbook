@@ -161,17 +161,16 @@ class CharacterBenchEditor(Vertical):
     docstring."""
 
     class Saved(Message, namespace="character_bench_editor"):
-        """Posted after ``save_character_bench`` succeeds. Carries the
-        bench's own ``eval_tasks`` id (unchanged across a save -- this is
-        always an edit, never a create) so a future routing handler
-        (Task 5) can re-select it the same way ``BenchEditor.Saved`` is
-        handled today, without this widget reaching into ``self.screen``
-        itself.
+        """Successful write and its originating raw form, for conditional reload.
+
+        The snapshot is ephemeral UI state, never persisted or logged.
         """
 
-        def __init__(self, bench_id: str) -> None:
+        def __init__(self, editor: CharacterBenchEditor) -> None:
             super().__init__()
-            self.bench_id = bench_id
+            self.bench_id = editor._bench_id
+            self.editor = editor
+            self.form_state = editor.save_publication_state()
 
     def __init__(
         self,
@@ -202,6 +201,7 @@ class CharacterBenchEditor(Vertical):
         #: this task. `None` only when `compose()` bailed out before
         #: reaching the form (no db, or an unreadable row).
         self._loaded_config: Optional[CharacterProbeConfig] = None
+        self._publication_revision = 0
 
     def compose(self) -> ComposeResult:
         db = self._view_model.db
@@ -283,6 +283,20 @@ class CharacterBenchEditor(Vertical):
                 classes="console-action-secondary",
                 tooltip="Discard unsaved changes and reload this bench.",
             )
+
+    def on_mount(self) -> None:
+        # Synchronous reactive watches see accepted changes before queued messages.
+        for field in self.query(Input):
+            self.watch(field, "value", self._advance_publication_revision, init=False)
+            self.watch(
+                field, "selection", self._advance_publication_revision, init=False
+            )
+        self.watch(
+            self.screen, "focused", self._advance_publication_revision, init=False
+        )
+
+    def _advance_publication_revision(self) -> None:
+        self._publication_revision += 1
 
     def is_dirty(self) -> bool:
         """True when the mounted form differs from ``self._loaded_config``
@@ -401,6 +415,14 @@ class CharacterBenchEditor(Vertical):
             return True
 
         return False
+
+    def save_publication_state(self) -> tuple[Any, ...]:
+        """Fence later Saves, input and editing context as well as raw values."""
+        return (
+            self._publication_revision,
+            tuple((field.id, field.value) for field in self.query(Input)),
+            self.query_one(CardPicker).selected_ids(),
+        )
 
     def _build_probe_set_section(
         self, db: EvalsDB, config: CharacterProbeConfig
@@ -673,7 +695,10 @@ class CharacterBenchEditor(Vertical):
             self._show_form_error(str(exc))
             return
 
-        self.post_message(self.Saved(self._bench_id))
+        # Later edits compare against this submitted config even without a reload.
+        self._loaded_config = config
+        self._advance_publication_revision()
+        self.post_message(self.Saved(self))
 
     @on(Button.Pressed, "#evals-cb-revert")
     def _on_revert_pressed(self, event: Button.Pressed) -> None:

@@ -1002,6 +1002,24 @@ class SkillServiceWiringMixin:
             reduced_rollback_protection=reduced_rollback_protection,
         )
 
+    @property
+    def plugin_operations(self) -> Any:
+        """Retain one lazy presentation state over the existing plugin owner."""
+        from tldw_chatbook.UI.Plugins_Modules.operations import app_operations
+
+        return app_operations(self, self._build_plugin_service())
+
+    @property
+    def plugin_source_service(self) -> Any:
+        """One lazy source facade, with no construction-time storage or fetching."""
+        service = getattr(self, "_plugin_source_service", None)
+        if service is None:
+            from tldw_chatbook.Plugins.source_service import SourceService
+
+            service = SourceService(self._build_plugin_service())
+            self._plugin_source_service = service
+        return service
+
     def _build_plugin_service(self) -> Any:
         """Build one IO-free facade; its worker starts on explicit plugin use."""
         service = getattr(self, "_plugin_service", None)
@@ -1011,6 +1029,7 @@ class SkillServiceWiringMixin:
                 _source_wiring.get_user_data_dir(),
                 workspace_lookup=self.workspace_registry_service.get_workspace,
                 mcp_mapping_owner=self.local_mcp_control_service,
+                model_mapping_owner=self.local_llm_provider_catalog_service,
             )
             self._plugin_service = service
         return service

@@ -459,6 +459,22 @@ def build_field_search_index() -> None:
                     "settings-console-background-effect-fps",
                     "Background effect frame rate",
                 ),
+                # TASK-18925: the OS-notifications group's four toggles,
+                # indexed like the background-effects rows above them.
+                ("settings-console-os-notifications-enabled", "OS notifications"),
+                (
+                    "settings-console-os-notifications-enabled",
+                    "Enable OS notifications",
+                ),
+                (
+                    "settings-console-os-notifications-run-finished",
+                    "Notify run finished",
+                ),
+                ("settings-console-os-notifications-run-failed", "Notify run failed"),
+                (
+                    "settings-console-os-notifications-needs-approval",
+                    "Notify needs approval",
+                ),
                 # Review finding 5: a toggle with no labeled row (a Checkbox
                 # since capture finding 12), indexed by hand.
                 (

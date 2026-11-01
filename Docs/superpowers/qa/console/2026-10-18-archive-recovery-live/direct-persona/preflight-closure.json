@@ -1,0 +1,9 @@
+{
+  "native_quit": true,
+  "attached_pty_exit_code": 0,
+  "requests_used": 0,
+  "global_used": 15,
+  "remaining": 5,
+  "display_routing_restart_pty_exit_code": 0,
+  "server_idle_not_measured": "slots endpoint 404"
+}

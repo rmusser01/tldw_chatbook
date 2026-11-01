@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import stat
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -14,8 +14,14 @@ from .qualification import _qualified_identity, native_identity, qualified_for
 
 
 @contextmanager
-def pinned_directory(root: Path) -> Iterator[int]:
-    """Pin a trusted absolute directory with no symlink components."""
+def pinned_directory(
+    root: Path, *, _visit: Callable[[int], None] | None = None
+) -> Iterator[int]:
+    """Pin a trusted directory; optionally visit each validated ancestor.
+
+    The internal visitor borrows each descriptor only during its call. It must
+    not close or retain it. Visitor failures propagate through native cleanup.
+    """
     if not root.is_absolute() or ".." in root.parts:
         raise OSError("absolute_directory_required")
     if not all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_DIRECTORY")):
@@ -28,6 +34,8 @@ def pinned_directory(root: Path) -> Iterator[int]:
                 info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX
             ):
                 raise OSError("unsafe_directory")
+            if _visit is not None:
+                _visit(fd)
             child = os.open(
                 component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
             )
@@ -38,6 +46,8 @@ def pinned_directory(root: Path) -> Iterator[int]:
             info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX
         ):
             raise OSError("unsafe_directory")
+        if _visit is not None:
+            _visit(fd)
         yield fd
     finally:
         os.close(fd)

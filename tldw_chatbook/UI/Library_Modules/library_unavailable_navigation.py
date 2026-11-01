@@ -772,6 +772,7 @@ def _apply_navigation_context_state(
             self._library_note_session.close_session()
             self._notes_state.selected_note_id = note_id
             self._notes_state.view = "editor"
+            self._notes_state.link_origin = None  # TASK-34000.28: a plain open
             self._notes_state.load_state = "loading"
             self._notes_state.load_message = ""
             self._notes_state.autosave_state = "idle"

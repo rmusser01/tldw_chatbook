@@ -19,6 +19,7 @@ pytestmark = pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     "group",
     [
+        "console-attach-reconciliation",
         "console-readiness-config",
         "console-flat-conversation-search",
         "console-agent-history",
@@ -26,6 +27,7 @@ pytestmark = pytest.mark.bootstrap_profile
         "console-subagent-count-publication",
         "console-citation-counts",
         "console-library-activity",
+        "console-library-outcome",  # TASK-33621.51
         "console-workspace-display-reads",
         "console-context-publication",
         "console-hook-refresh",
@@ -79,7 +81,7 @@ async def test_host_drain_retains_finite_presentation_worker(group):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("group", ["console-agent-history", "console-subagent-counts", "console-hook-refresh"])
+@pytest.mark.parametrize("group", ["console-agent-history", "console-subagent-counts", "console-hook-refresh", "console-attach-reconciliation"])
 async def test_original_app_runtime_shutdown_waits_for_selected_native_callback(group):
     from tldw_chatbook.app_lifecycle import LifecycleMixin
 

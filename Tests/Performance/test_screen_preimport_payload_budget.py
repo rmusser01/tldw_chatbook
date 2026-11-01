@@ -125,7 +125,10 @@ MAX_PASS_ADDED_MODULES = 558
 
 #: TASK-31552 pinned 378,740 (363,740 + 15,000 slack). TASK-33260 re-pin:
 #: 410,347 measured + 15,000 standard slack; TASK-33276 pays it down.
-MAX_PASS_ADDED_LOC = 425_347
+#: 2026-10-26 TASK-34000.28/.40 polish-1a (PR #3259): +1,188 LOC over dev, owner-approved
+#: 2026-10-29; re-measured after the rebase onto dev 38c9d2edcf (paired arms: dev
+#: 425,011 -> head 426,199, the same +1,188): 425,347 -> 426,199; ADR-097 ledger.
+MAX_PASS_ADDED_LOC = 426_199
 
 #: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
 #: re-pin: Library 125,111 measured + 10,000 slack; TASK-33276 pays it down.

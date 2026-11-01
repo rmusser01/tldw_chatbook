@@ -831,14 +831,7 @@
     text-style: bold;
 }
 
-#library-notes-status {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    color: $ds-text-muted;
-}
-
+#library-notes-status,
 #library-notes-empty {
     width: $ds-width-full;
     height: auto;
@@ -1904,14 +1897,8 @@
    Horizontal clipped Undo to "Und" at the Items pane's real width (live
    2026-09-04) -- the one recovery control was unreadable exactly where it
    renders. Same multi-row grammar as the toolbars (task-30043). */
-#library-media-canvas .library-media-receipt {
-    width: $ds-width-full;
-    height: auto;
-}
-#library-media-canvas .library-media-receipt > .library-media-receipt-copy {
-    width: $ds-width-full;
-    height: auto;
-}
+#library-media-canvas .library-media-receipt,
+#library-media-canvas .library-media-receipt > .library-media-receipt-copy,
 #library-media-canvas .library-media-receipt > .library-media-receipt-actions {
     width: $ds-width-full;
     height: auto;

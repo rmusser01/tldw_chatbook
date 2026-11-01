@@ -1,0 +1,23 @@
+{
+  "args": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "pytest",
+    ".test-tmp/textual-after3283/notes/test_note_export.py",
+    "-p",
+    "pytest_asyncio.plugin",
+    "-p",
+    "pytest_timeout",
+    "-q",
+    "--tb=short",
+    "--timeout=180",
+    "-o",
+    "cache_dir=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\book3283-notes-03\\cache",
+    "--basetemp=C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-20708dc7bc614b2aa7900ac712c9244a\\pytest",
+    "--junitxml=C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui\\.test-tmp\\textual-37031-37034\\book3283-notes-03\\result.xml"
+  ],
+  "private_profile_root": "C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-20708dc7bc614b2aa7900ac712c9244a",
+  "source_root": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\textual-settings-patterns\\tldw_tui"
+}

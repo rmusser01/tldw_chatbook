@@ -4,13 +4,15 @@ panel's population from a scratch config.
 
 Harness mirrors ``Tests/UI/test_internal_prompts_search_survives_save.py``:
 ``DestinationHarness`` + ``_open_settings_category`` (both from
-``test_destination_shells``/``test_settings_configuration_hub``) plus the
-shared ``scratch_config`` fixture (``Tests/UI/conftest.py`` re-exports it
-from ``Tests/Internal_Prompts/conftest.py``).
+``test_destination_shells``/``test_settings_configuration_hub``). The
+module-local ``scratch_config`` fixture seeds the already-selected private
+profile through the real config writer.
 """
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 import threading
 import time
 import tomllib
@@ -27,6 +29,7 @@ from Tests.UI.test_destination_shells import (
     _visible_text,
 )
 from Tests.UI.test_settings_configuration_hub import (
+    _click_scrolled_settings_button,
     _open_settings_category,
     _wait_for_settings_search_focus,
     _wait_for_settings_text,
@@ -59,6 +62,26 @@ _ALL_SECRET_ENV_VARS = (
     "QWEN_API_KEY",
     "SWARMUI_TOKEN",
 )
+
+
+def _seed_selected_image_config(text):
+    """Seed only image defaults in the already-selected private child profile."""
+    from tldw_chatbook import config
+
+    path = Path(os.environ["TLDW_CONFIG_PATH"])
+    with path.open("rb") as stream:
+        current = tomllib.load(stream)
+    assert config.delete_settings_from_cli_config(
+        "image_generation", list(current.get("image_generation", {}))
+    )
+    assert config.save_settings_to_cli_config(tomllib.loads(text))
+    reset_image_generation_config_cache()
+
+
+@pytest.fixture
+def scratch_config():
+    """Return the selected-profile writer without seeding in the parent."""
+    return _seed_selected_image_config
 
 
 @pytest.fixture(autouse=True)
@@ -140,7 +163,8 @@ async def _open_real_settings_destination(app, pilot, *, timeout: float = 5.0):
 
 
 @pytest.mark.asyncio
-async def test_image_gen_category_in_rail_and_search(scratch_config):
+@private_profile_test
+async def test_image_gen_category_in_rail_and_search(request, scratch_config):
     scratch_config("")
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -163,7 +187,8 @@ async def test_image_gen_category_in_rail_and_search(scratch_config):
 
 
 @pytest.mark.asyncio
-async def test_panel_populates_from_scratch_config(scratch_config):
+@private_profile_test
+async def test_panel_populates_from_scratch_config(request, scratch_config):
     scratch_config(
         """
 [image_generation]
@@ -241,7 +266,10 @@ default_model = "m-x"
 
 
 @pytest.mark.asyncio
-async def test_fresh_config_shows_placeholder_not_merged_default_value(scratch_config):
+@private_profile_test
+async def test_fresh_config_shows_placeholder_not_merged_default_value(
+    request, scratch_config
+):
     """Set-vs-default blur regression (Fix Round 1).
 
     A config file with NO ``[image_generation]`` section at all (the
@@ -273,7 +301,8 @@ default_theme = "textual-dark"
 
 
 @pytest.mark.asyncio
-async def test_secret_input_never_echoes_saved_key(scratch_config):
+@private_profile_test
+async def test_secret_input_never_echoes_saved_key(request, scratch_config):
     saved_key = "sk-should-never-render-in-the-ui"
     scratch_config(
         f"""
@@ -302,7 +331,8 @@ api_key = "{saved_key}"
 
 
 @pytest.mark.asyncio
-async def test_env_key_shows_env_source_line(scratch_config, monkeypatch):
+@private_profile_test
+async def test_env_key_shows_env_source_line(request, scratch_config, monkeypatch):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "env-secret-value-not-rendered")
@@ -328,7 +358,8 @@ async def test_env_key_shows_env_source_line(scratch_config, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_save_revert_disabled_test_buttons_enabled(scratch_config):
+@private_profile_test
+async def test_save_revert_disabled_test_buttons_enabled(request, scratch_config):
     """Save/Revert stay disabled with nothing staged, but the eight Test
     buttons (task 6: wired to `probe_backend`) are clickable regardless of
     dirty state -- a probe reads the CURRENT form values, so it is useful
@@ -354,10 +385,10 @@ async def test_save_revert_disabled_test_buttons_enabled(scratch_config):
 # ---------------------------------------------------------------------------
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_edit_marks_dirty_and_save_writes_nested_toml(scratch_config, tmp_path):
-    scratch_config(
-        """
+async def test_edit_marks_dirty_and_save_writes_nested_toml(request, tmp_path):
+    _seed_selected_image_config("""
 [image_generation]
 default_backend = "openrouter"
 enabled_backends = ["openrouter"]
@@ -383,10 +414,12 @@ default_model = "old-model"
         assert "*" in str(rail_button.label)
         assert not panel.query_one("#settings-imagegen-save", Button).disabled
 
+        panel.query_one("#settings-imagegen-save", Button).scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-        config_path = tmp_path / "config.toml"
+        config_path = Path(os.environ["TLDW_CONFIG_PATH"])
         with open(config_path, "rb") as f:
             saved = tomllib.load(f)
         assert (
@@ -402,7 +435,8 @@ default_model = "old-model"
 
 
 @pytest.mark.asyncio
-async def test_save_blocked_when_default_disabled(scratch_config, tmp_path):
+@private_profile_test
+async def test_save_blocked_when_default_disabled(request, scratch_config, tmp_path):
     scratch_config(
         """
 [image_generation]
@@ -410,7 +444,7 @@ default_backend = "openrouter"
 enabled_backends = ["openrouter"]
 """
     )
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     before = config_path.read_text(encoding="utf-8")
 
     app = _build_test_app()
@@ -426,7 +460,7 @@ enabled_backends = ["openrouter"]
         enabled_checkbox.value = False
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await pilot.pause()
         await pilot.pause()
 
@@ -437,7 +471,8 @@ enabled_backends = ["openrouter"]
 
 
 @pytest.mark.asyncio
-async def test_revert_discards_draft(scratch_config, tmp_path):
+@private_profile_test
+async def test_revert_discards_draft(request, scratch_config, tmp_path):
     scratch_config(
         """
 [image_generation]
@@ -464,7 +499,9 @@ default_model = "original-model"
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" in str(rail_button.label)
 
-        await pilot.click("#settings-imagegen-revert")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-imagegen-revert"
+        )
         await pilot.pause()
         await _wait_for_image_gen_loaded(pilot)
 
@@ -477,18 +514,18 @@ default_model = "original-model"
         )
         assert model_input.value == "original-model"
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert saved["image_generation"]["openrouter"]["default_model"] == "original-model"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_clear_key_deletes_not_blanks(scratch_config, tmp_path, monkeypatch):
+async def test_clear_key_deletes_not_blanks(request, tmp_path, monkeypatch):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
-    scratch_config(
-        """
+    _seed_selected_image_config("""
 [image_generation]
 default_backend = "openrouter"
 enabled_backends = ["openrouter"]
@@ -524,18 +561,21 @@ api_key = "sk-saved-key"
         )
         assert str(source_line.renderable) == "missing"
 
+        panel.query_one("#settings-imagegen-save", Button).scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert "api_key" not in saved["image_generation"].get("openrouter", {})
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_clear_swarmui_token_also_deletes_legacy_api_key(
-    scratch_config, tmp_path, monkeypatch
+    request, scratch_config, tmp_path, monkeypatch
 ):
     """Clear on swarmui's token must delete BOTH spellings: the loader
     resolves legacy ``api_key`` as a back-compat fallback, so leaving it
@@ -564,10 +604,10 @@ api_key = "fake-stale-legacy-token"
         panel.query_one("#settings-imagegen-clear-swarmui-swarm_token", Button).press()
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     swarmui_section = saved["image_generation"].get("swarmui", {})
@@ -576,7 +616,10 @@ api_key = "fake-stale-legacy-token"
 
 
 @pytest.mark.asyncio
-async def test_pasted_key_saves_and_input_resets(scratch_config, tmp_path, monkeypatch):
+@private_profile_test
+async def test_pasted_key_saves_and_input_resets(
+    request, scratch_config, tmp_path, monkeypatch
+):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     scratch_config(
@@ -599,7 +642,7 @@ enabled_backends = ["openrouter"]
         key_input.value = "sk-pasted-key"
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
@@ -613,15 +656,16 @@ enabled_backends = ["openrouter"]
         )
         assert str(source_line.renderable) == "local config key saved"
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert saved["image_generation"]["openrouter"]["api_key"] == "sk-pasted-key"
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_unedited_baked_field_produces_empty_diff_on_save(
-    scratch_config, tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     """Pin (carry-note 1): a FRESH config (no ``[image_generation]`` section
     at all -- every backend field is baked-default-only) must NOT write any
@@ -635,8 +679,7 @@ async def test_unedited_baked_field_produces_empty_diff_on_save(
     """
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
-    scratch_config(
-        """
+    _seed_selected_image_config("""
 [general]
 default_theme = "textual-dark"
 """
@@ -654,10 +697,12 @@ default_theme = "textual-dark"
         model_input.value = "openai/gpt-5-image-mini"
         await pilot.pause()
 
+        panel.query_one("#settings-imagegen-save", Button).scroll_visible(animate=False)
+        await pilot.pause()
         await pilot.click("#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
 
@@ -682,7 +727,10 @@ default_theme = "textual-dark"
 
 
 @pytest.mark.asyncio
-async def test_revert_action_shortcut_recomposes_panel(scratch_config, tmp_path):
+@private_profile_test
+async def test_revert_action_shortcut_recomposes_panel(
+    request, scratch_config, tmp_path
+):
     """IMPORTANT fix: the footer `r` shortcut calls
     ``action_settings_revert_category`` directly (not the panel's own
     Revert button) -- before the fix, IMAGE_GENERATION fell through to the
@@ -731,14 +779,17 @@ default_model = "original-model"
         )
         assert model_input.value == "original-model"
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert saved["image_generation"]["openrouter"]["default_model"] == "original-model"
 
 
 @pytest.mark.asyncio
-async def test_default_backend_select_mount_refire_is_suppressed(scratch_config):
+@private_profile_test
+async def test_default_backend_select_mount_refire_is_suppressed(
+    request, scratch_config
+):
     """MINOR 1 fix: constructing the default-backend Select with its own
     current (non-blank) value fires a Select.Changed the moment it mounts
     (verified empirically -- a fresh Select's reactive default IS blank,
@@ -774,8 +825,9 @@ enabled_backends = ["openrouter"]
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_invalid_global_int_field_blocks_save_with_inline_error(
-    scratch_config, tmp_path
+    request, scratch_config, tmp_path
 ):
     """MINOR 2 fix: typing non-numeric text into a global int field (e.g.
     ``default_batch``) must behave like the per-backend int fields --
@@ -790,7 +842,7 @@ default_backend = "openrouter"
 enabled_backends = ["openrouter"]
 """
     )
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     before = config_path.read_text(encoding="utf-8")
 
     app = _build_test_app()
@@ -809,7 +861,7 @@ enabled_backends = ["openrouter"]
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" in str(rail_button.label)
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await pilot.pause()
         await pilot.pause()
 
@@ -841,7 +893,8 @@ _ALL_BACKEND_IDS = BACKEND_IDS
 
 
 @pytest.mark.asyncio
-async def test_probe_uses_current_form_values(scratch_config, monkeypatch):
+@private_profile_test
+async def test_probe_uses_current_form_values(request, scratch_config, monkeypatch):
     """Test gathers the CURRENT form values: an edited-but-unsaved Input
     wins over the saved config value, and a field the user never touched
     (timeout_seconds) falls back to the resolved effective value rather
@@ -900,7 +953,10 @@ base_url = "http://original-host:7801"
 
 
 @pytest.mark.asyncio
-async def test_probe_secret_uses_pasted_unsaved_key(scratch_config, monkeypatch):
+@private_profile_test
+async def test_probe_secret_uses_pasted_unsaved_key(
+    request, scratch_config, monkeypatch
+):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     scratch_config(
@@ -943,8 +999,9 @@ api_key = "sk-saved-key"
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_probe_secret_falls_back_to_effective_when_nothing_pasted(
-    scratch_config, monkeypatch
+    request, scratch_config, monkeypatch
 ):
     for var in _ALL_SECRET_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
@@ -980,7 +1037,10 @@ api_key = "sk-saved-key"
 
 
 @pytest.mark.asyncio
-async def test_probe_renders_badge_and_reenables_buttons(scratch_config, monkeypatch):
+@private_profile_test
+async def test_probe_renders_badge_and_reenables_buttons(
+    request, scratch_config, monkeypatch
+):
     """All eight Test buttons disable for the duration of one probe (gated
     via a real `threading.Event` on the probe's own worker thread) and
     re-enable once it completes; the result badge lands on the right
@@ -1046,8 +1106,9 @@ base_url = "http://localhost:7801"
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_probe_escaped_exception_renders_probe_error_badge(
-    scratch_config, monkeypatch, caplog
+    request, scratch_config, monkeypatch, caplog
 ):
     """Any exception `probe_backend` fails to catch itself must degrade to
     the closed-set "Unreachable: probe error" badge -- never propagate
@@ -1099,7 +1160,10 @@ base_url = "http://localhost:7801"
 
 
 @pytest.mark.asyncio
-async def test_probe_badge_resets_on_category_reopen(scratch_config, monkeypatch):
+@private_profile_test
+async def test_probe_badge_resets_on_category_reopen(
+    request, scratch_config, monkeypatch
+):
     """Probe state is ephemeral -- leaving Image Gen and coming back must
     show the normal Configured/Not-configured badge again, never a probe
     result from the prior visit."""
@@ -1148,7 +1212,10 @@ base_url = "http://localhost:7801"
 
 
 @pytest.mark.asyncio
-async def test_emptying_a_saved_field_deletes_not_blanks(scratch_config, tmp_path):
+@private_profile_test
+async def test_emptying_a_saved_field_deletes_not_blanks(
+    request, scratch_config, tmp_path
+):
     """Important 1, end-to-end: selecting-all-and-deleting a saved field's
     text (not the dedicated Clear button, which only exists for secrets)
     must delete the key from config.toml, never write "" over it.
@@ -1179,18 +1246,19 @@ default_model = "old-model"
         rail_button = screen.query_one("#settings-category-image_generation", Button)
         assert "*" in str(rail_button.label)
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert "default_model" not in saved["image_generation"].get("openrouter", {})
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_swarmui_token_saves_and_resolves_end_to_end(
-    scratch_config, tmp_path, monkeypatch
+    request, scratch_config, tmp_path, monkeypatch
 ):
     """CRITICAL fix, end-to-end: a pasted swarmui token must both persist
     to config.toml AND actually resolve (key_sources == "config", input
@@ -1219,7 +1287,7 @@ enabled_backends = ["swarmui"]
         token_input.value = "fake-swarm-token"
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
@@ -1231,7 +1299,7 @@ enabled_backends = ["swarmui"]
         source_line = panel.query_one("#settings-imagegen-key-source-swarmui", Static)
         assert str(source_line.renderable) == "local config key saved"
 
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     with open(config_path, "rb") as f:
         saved = tomllib.load(f)
     assert saved["image_generation"]["swarmui"]["swarm_token"] == "fake-swarm-token"
@@ -1569,7 +1637,9 @@ async def test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row(s
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_clearing_default_backend_select_clears_all_row_markers(
+    request,
     scratch_config,
 ):
     """Fix 1: clearing the default-backend Select to Select.NULL must
@@ -1610,8 +1680,9 @@ enabled_backends = ["openrouter"]
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_raw_section_cache_reused_and_invalidated_at_exactly_three_points(
-    scratch_config, monkeypatch
+    request, scratch_config, monkeypatch
 ):
     """Fix 3: `_image_gen_raw_section()` must load the merged config ONCE
     per category session (lazily, on first access), never once per
@@ -1692,7 +1763,7 @@ enabled_backends = ["openrouter"]
         # line itself, independent of whatever happens to repopulate it.
         sentinel = {"__sentinel__": True}
         screen._image_gen_raw_section_cache = sentinel
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
         assert screen._image_gen_raw_section_cache != sentinel, (
             "a successful Save must invalidate the cache"
@@ -1707,7 +1778,9 @@ enabled_backends = ["openrouter"]
         model_input.value = "yet-another-model"
         await pilot.pause()
         screen._image_gen_raw_section_cache = sentinel
-        await pilot.click("#settings-imagegen-revert")
+        await _click_scrolled_settings_button(
+            screen, pilot, "#settings-imagegen-revert"
+        )
         await pilot.pause()
         await _wait_for_image_gen_loaded(pilot)
         assert screen._image_gen_raw_section_cache != sentinel, (
@@ -1736,7 +1809,10 @@ enabled_backends = ["openrouter"]
 
 
 @pytest.mark.asyncio
-async def test_comfyui_panel_fields_disclosure_and_narrow_geometry(scratch_config):
+@private_profile_test
+async def test_comfyui_panel_fields_disclosure_and_narrow_geometry(
+    request, scratch_config
+):
     scratch_config("")
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -1778,8 +1854,9 @@ async def test_comfyui_panel_fields_disclosure_and_narrow_geometry(scratch_confi
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_comfyui_optional_fields_render_packaged_placeholder_and_clear_on_save(
-    scratch_config, tmp_path
+    request, scratch_config, tmp_path
 ):
     scratch_config(
         """
@@ -1805,7 +1882,7 @@ default_sampler = "euler"
             field.value = ""
         await pilot.pause()
 
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
@@ -1814,7 +1891,7 @@ default_sampler = "euler"
             assert field.value == ""
             assert field.placeholder == "Use packaged workflow"
 
-    with open(tmp_path / "config.toml", "rb") as stream:
+    with open(Path(os.environ["TLDW_CONFIG_PATH"]), "rb") as stream:
         saved = tomllib.load(stream)
     comfyui = saved["image_generation"].get("comfyui", {})
     assert "default_seed" not in comfyui
@@ -1823,8 +1900,9 @@ default_sampler = "euler"
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_failed_image_gen_persistence_does_not_reset_runtime(
-    scratch_config, monkeypatch
+    request, scratch_config, monkeypatch
 ):
     scratch_config("")
     resets: list[None] = []
@@ -1851,7 +1929,7 @@ async def test_failed_image_gen_persistence_does_not_reset_runtime(
         field = screen.query_one("#settings-imagegen-field-comfyui-base_url", Input)
         field.value = "http://127.0.0.1:8288"
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(
             screen, pilot, "Failed to save Image Gen defaults."
         )
@@ -1860,8 +1938,9 @@ async def test_failed_image_gen_persistence_does_not_reset_runtime(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mixed_image_gen_write_delete_failure_is_atomic_and_does_not_reset(
-    scratch_config, monkeypatch, tmp_path
+    request, scratch_config, monkeypatch, tmp_path
 ):
     scratch_config(
         """
@@ -1921,12 +2000,12 @@ default_seed = 7
             "#settings-imagegen-field-comfyui-default_seed", Input
         ).value = ""
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(
             screen, pilot, "Failed to save Image Gen defaults."
         )
 
-    with open(tmp_path / "config.toml", "rb") as stream:
+    with open(Path(os.environ["TLDW_CONFIG_PATH"]), "rb") as stream:
         saved = tomllib.load(stream)
     comfyui = saved["image_generation"]["comfyui"]
     assert comfyui == {
@@ -1943,8 +2022,9 @@ default_seed = 7
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_post_replace_cache_failure_refreshes_image_runtime_and_reports_failure(
-    scratch_config, monkeypatch, tmp_path
+    request, scratch_config, monkeypatch, tmp_path
 ):
     import tldw_chatbook.config as app_config
 
@@ -1976,7 +2056,7 @@ base_url = "http://127.0.0.1:8188"
             "#settings-imagegen-field-comfyui-base_url", Input
         ).value = "http://127.0.0.1:8288"
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(
             screen, pilot, "Failed to save Image Gen defaults."
         )
@@ -1984,14 +2064,15 @@ base_url = "http://127.0.0.1:8188"
         assert after is not before
         assert after.comfyui_image_base_url == "http://127.0.0.1:8288"
 
-    with open(tmp_path / "config.toml", "rb") as stream:
+    with open(Path(os.environ["TLDW_CONFIG_PATH"]), "rb") as stream:
         saved = tomllib.load(stream)
     assert saved["image_generation"]["comfyui"]["base_url"] == ("http://127.0.0.1:8288")
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_successful_image_gen_persistence_resets_runtime_exactly_once(
-    scratch_config, monkeypatch
+    request, scratch_config, monkeypatch
 ):
     scratch_config("")
     resets: list[None] = []
@@ -2010,7 +2091,7 @@ async def test_successful_image_gen_persistence_resets_runtime_exactly_once(
         field = screen.query_one("#settings-imagegen-field-comfyui-base_url", Input)
         field.value = "http://127.0.0.1:8288"
         await pilot.pause()
-        await pilot.click("#settings-imagegen-save")
+        await _click_scrolled_settings_button(screen, pilot, "#settings-imagegen-save")
         await _wait_for_settings_text(screen, pilot, "Image Gen defaults saved.")
 
     assert resets == [None]

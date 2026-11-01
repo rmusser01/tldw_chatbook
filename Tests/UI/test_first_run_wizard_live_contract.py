@@ -1178,6 +1178,10 @@ async def test_partial_appearance_restore_preserves_absent_splash_sibling(
 
 
 @pytest.mark.asyncio
+# TASK-34100.4 review v5r1: a real-app mount reading the guarded config; without
+# the bootstrap profile it stops at RecoveryRequired("raw_source_selection_changed")
+# in _build_test_app (as this file's other mounts do on dev 0923ec0ca2).
+@pytest.mark.bootstrap_profile
 async def test_resumed_target_restores_then_clears_attempt_after_mount(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
@@ -1189,6 +1193,22 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
     app._initial_tab_value = "chat"
     draft = read_setup_draft(app.app_config)
     assert draft is not None
+
+    # This short resume journey can finish while native startup is still
+    # initializing ChaChaNotes. Retain the real worker before the app removes
+    # its completed handle, and let it finish before the mount shuts down.
+    from textual.worker import WorkerState
+
+    startup_workers = []
+    start_boot_worker = app._start_boot_worker
+
+    def observe_boot_worker(key):
+        worker = start_boot_worker(key)
+        if key == "chachanotes_fts_backfill" and worker is not None:
+            startup_workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(app, "_start_boot_worker", observe_boot_worker)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
@@ -1251,15 +1271,33 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
             ]
             assert selected_splash == ["Surprise me (random)"]
 
+            # TASK-34100.4 review v5r1 (F1): the checkpoint's
+            # encryption_enabled = true is not restored as an "Encryption
+            # enabled." line; Protect re-reads config.toml, which holds no key
+            # and no [encryption] table here, and its record follows the file.
             protect_step = container.steps[container._step_index_for_id(STEP_PROTECT)]
-            assert protect_step.get_step_data() == {"encryption_enabled": True}
-            assert "Encryption enabled" in str(
+            await _wait_until(
+                pilot,
+                lambda: protect_step.get_step_data().get("protect_state") == "nothing",
+            )
+            assert protect_step.get_step_data() == {
+                "encryption_enabled": False,
+                "protect_state": "nothing",
+            }
+            assert container.wizard_data[STEP_PROTECT]["encryption_enabled"] is False
+            assert "Encryption enabled" not in str(
                 protect_step.query_one("#setup-protect-status", Static).renderable
             )
             await _wait_until(
                 pilot,
                 lambda: app.app_config["first_run"]["resume_attempted"] is False,
             )
+
+            await _wait_until(
+                pilot,
+                lambda: bool(startup_workers) and startup_workers[0].is_finished,
+            )
+            assert startup_workers[0].state is WorkerState.SUCCESS
 
 
 @pytest.mark.asyncio
@@ -2416,7 +2454,7 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
             rendered_text = "\n".join(
                 "".join(segment.text for segment in strip) for strip in strips
             )
-            assert "Paste your API key" in rendered_text, (
+            assert "Paste the key" in rendered_text, (
                 "key Input's placeholder never reached the rendered frame"
             )
 

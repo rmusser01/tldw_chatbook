@@ -1,0 +1,27 @@
+{
+  "head": "0c39d774c13e0860a0afeb6ed174991dc1afd4cc",
+  "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "private_child_node": "Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]",
+  "command": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "Tests.windows_private_fixture_runner",
+    "Tests/UI/test_console_tab_publication_read_barrier.py::test_actual_close_publishes_real_tabs_before_stock_read_release[after_close]",
+    "-v",
+    "-s",
+    "--tb=short",
+    "-p",
+    "no:cacheprovider",
+    "-p",
+    "Docs.Development.evidence.pr3166-final-integration-2026-10-31.tab_setup_trace",
+    "-p",
+    "pytest_asyncio.plugin",
+    "-p",
+    "pytest_timeout"
+  ],
+  "fixture_root": "C:\\Users\\GDesktop-1\\.tmp-pr3166-final-c35cd5ddedb7",
+  "exit_code": 1,
+  "seconds": 48.28099999995902
+}

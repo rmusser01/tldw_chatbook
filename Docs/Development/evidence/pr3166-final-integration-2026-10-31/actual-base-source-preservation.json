@@ -1,0 +1,266 @@
+{
+  "base": "a0dbc1174c3dbd4d2732b0212786ec9e08bfc3b5",
+  "head": "0c39d774c13e0860a0afeb6ed174991dc1afd4cc",
+  "rows": [
+    {
+      "path": "Tests/Chat/test_archive_recovery_coordinator.py",
+      "actual_merge_blob": "ec4918a486651b572db6c60c8c0af40c20aee8e6",
+      "integrated_blob": "ec4918a486651b572db6c60c8c0af40c20aee8e6"
+    },
+    {
+      "path": "Tests/UI/test_console_archive_recovery_cards.py",
+      "actual_merge_blob": "4be0c5c50c5ddcf914ecf3fb1c50037427c62bb4",
+      "integrated_blob": "4be0c5c50c5ddcf914ecf3fb1c50037427c62bb4"
+    },
+    {
+      "path": "tldw_chatbook/Agents/archive_recovery_tool_provider.py",
+      "actual_merge_blob": "a692cc72d471c1fdb7415c74474ffbdf3a81f30d",
+      "integrated_blob": "a692cc72d471c1fdb7415c74474ffbdf3a81f30d"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/__init__.py",
+      "actual_merge_blob": "386660a5acf73fe9aa116da860363696d371ab0c",
+      "integrated_blob": "386660a5acf73fe9aa116da860363696d371ab0c"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/contracts.py",
+      "actual_merge_blob": "13f4185816ff5a114995d6481a27c069fb35eef2",
+      "integrated_blob": "13f4185816ff5a114995d6481a27c069fb35eef2"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/coordinator.py",
+      "actual_merge_blob": "fdcee307c80925fef2c98f38e1b29ecf6a930266",
+      "integrated_blob": "fdcee307c80925fef2c98f38e1b29ecf6a930266"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/operations.py",
+      "actual_merge_blob": "6eeab291d19b52efdf13334a97de6ddf782b705b",
+      "integrated_blob": "6eeab291d19b52efdf13334a97de6ddf782b705b"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/result_store.py",
+      "actual_merge_blob": "54bf66c041843bb2cffae8737aac91392568722e",
+      "integrated_blob": "54bf66c041843bb2cffae8737aac91392568722e"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/runtime.py",
+      "actual_merge_blob": "03e759b8049b3c30f5bcea5fd9e33cf6f435e50b",
+      "integrated_blob": "03e759b8049b3c30f5bcea5fd9e33cf6f435e50b"
+    },
+    {
+      "path": "tldw_chatbook/Chat/archive_recovery/search_service.py",
+      "actual_merge_blob": "94bbaa18b8d0e69164328a6c8761c1af5f4a8731",
+      "integrated_blob": "94bbaa18b8d0e69164328a6c8761c1af5f4a8731"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_compaction_hooks.py",
+      "actual_merge_blob": "d6779ee72f0bb256efbd39a5e01943675111e869",
+      "integrated_blob": "d6779ee72f0bb256efbd39a5e01943675111e869"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_configuration_capture.py",
+      "actual_merge_blob": "629599c45e0e45506101e6ae19e4310dc4f28ee5",
+      "integrated_blob": "629599c45e0e45506101e6ae19e4310dc4f28ee5"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_configuration_preparation.py",
+      "actual_merge_blob": "883ceaba7b955f4537be9c735c3893e178332816",
+      "integrated_blob": "883ceaba7b955f4537be9c735c3893e178332816"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_plugin_context.py",
+      "actual_merge_blob": "f7ca7f5d3f8f4946b0d37f400ae723022714c1b5",
+      "integrated_blob": "f7ca7f5d3f8f4946b0d37f400ae723022714c1b5"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_plugin_tests.py",
+      "actual_merge_blob": "84a07c38a31052831eeee900c15e936905551005",
+      "integrated_blob": "84a07c38a31052831eeee900c15e936905551005"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_received_dispatch.py",
+      "actual_merge_blob": "0e33075bf7c7425e64ef5b0b2b7ea37767a6f97c",
+      "integrated_blob": "0e33075bf7c7425e64ef5b0b2b7ea37767a6f97c"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_received_intent.py",
+      "actual_merge_blob": "bb0a0ff9dd544abee10d35f8780a6ad1dec8f6f9",
+      "integrated_blob": "bb0a0ff9dd544abee10d35f8780a6ad1dec8f6f9"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_received_turn.py",
+      "actual_merge_blob": "127bd5c3d5e317f4d903a227d4ba692ac8013085",
+      "integrated_blob": "127bd5c3d5e317f4d903a227d4ba692ac8013085"
+    },
+    {
+      "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+      "actual_merge_blob": "fb37cf5da5a1be1b5b3651cd5f6fc03045a76e6e",
+      "integrated_blob": "fb37cf5da5a1be1b5b3651cd5f6fc03045a76e6e"
+    },
+    {
+      "path": "tldw_chatbook/DB/Workspace_DB.py",
+      "actual_merge_blob": "662615e42e561e6eede6cd293e6aab05221ff5b4",
+      "integrated_blob": "662615e42e561e6eede6cd293e6aab05221ff5b4"
+    },
+    {
+      "path": "tldw_chatbook/DB/conversation_archive_queries.py",
+      "actual_merge_blob": "4ff00840ee3fd524d308f580dbbe4078b2f8d456",
+      "integrated_blob": "4ff00840ee3fd524d308f580dbbe4078b2f8d456"
+    },
+    {
+      "path": "tldw_chatbook/DB/migrations/chachanotes_v84_to_v85_archive_chronology.sql",
+      "actual_merge_blob": "aed06550d1fd99d8c02f2f890ddee151ed22d229",
+      "integrated_blob": "aed06550d1fd99d8c02f2f890ddee151ed22d229"
+    },
+    {
+      "path": "tldw_chatbook/DB/migrations/workspaces_v9_to_v10_archive_chronology.sql",
+      "actual_merge_blob": "90027a439f503a2093213a4c644f9ba2b8712728",
+      "integrated_blob": "90027a439f503a2093213a4c644f9ba2b8712728"
+    },
+    {
+      "path": "tldw_chatbook/Plugins/acquisition.py",
+      "actual_merge_blob": "27b05ca5bcedccf38c6086b2baa2bd42c164a860",
+      "integrated_blob": "27b05ca5bcedccf38c6086b2baa2bd42c164a860"
+    },
+    {
+      "path": "tldw_chatbook/Plugins/catalogs.py",
+      "actual_merge_blob": "ac96d8b93e6cd6f76d8f7c14ad95fc686a776bf1",
+      "integrated_blob": "ac96d8b93e6cd6f76d8f7c14ad95fc686a776bf1"
+    },
+    {
+      "path": "tldw_chatbook/Plugins/git_source.py",
+      "actual_merge_blob": "614d4b9f581e8ef8a26359bc7dbe8bfccd4d5ea3",
+      "integrated_blob": "614d4b9f581e8ef8a26359bc7dbe8bfccd4d5ea3"
+    },
+    {
+      "path": "tldw_chatbook/Plugins/imports.py",
+      "actual_merge_blob": "d3fda637a8e2e20fb6562540cf5b8b6f84b09037",
+      "integrated_blob": "d3fda637a8e2e20fb6562540cf5b8b6f84b09037"
+    },
+    {
+      "path": "tldw_chatbook/Plugins/migrations/005_marketplace_sources.sql",
+      "actual_merge_blob": "0c3a60f7423c3fb8462dddbcdf9528b25da8cc8c",
+      "integrated_blob": "0c3a60f7423c3fb8462dddbcdf9528b25da8cc8c"
+    },
+    {
+      "path": "tldw_chatbook/Plugins/retained_inspection.py",
+      "actual_merge_blob": "aa9543e5c0eee253c1fe3d13d53c06981794929b",
+      "integrated_blob": "aa9543e5c0eee253c1fe3d13d53c06981794929b"
+    },
+    {
+      "path": "tldw_chatbook/Plugins/source_service.py",
+      "actual_merge_blob": "bf9d52729e496f707c8bba508bd25c4ea6fbde9b",
+      "integrated_blob": "bf9d52729e496f707c8bba508bd25c4ea6fbde9b"
+    },
+    {
+      "path": "tldw_chatbook/Plugins/variables.py",
+      "actual_merge_blob": "30d86d4e55055fb932247fa9e330744896ce794b",
+      "integrated_blob": "30d86d4e55055fb932247fa9e330744896ce794b"
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/archive_recovery.py",
+      "actual_merge_blob": "b4b6213041120091719ed5d5381ef277c95489ee",
+      "integrated_blob": "b4b6213041120091719ed5d5381ef277c95489ee"
+    },
+    {
+      "path": "tldw_chatbook/UI/Kanban/__init__.py",
+      "actual_merge_blob": "bb5c15c7d33a66d7cf99a5e6e01a963e0f5424e0",
+      "integrated_blob": "bb5c15c7d33a66d7cf99a5e6e01a963e0f5424e0"
+    },
+    {
+      "path": "tldw_chatbook/UI/Kanban/board_models.py",
+      "actual_merge_blob": "3b6173db7088fc2b85cacbad1fb970503d4b9979",
+      "integrated_blob": "3b6173db7088fc2b85cacbad1fb970503d4b9979"
+    },
+    {
+      "path": "tldw_chatbook/UI/Kanban/board_widgets.py",
+      "actual_merge_blob": "0177423ac546e6f3370fa5c8174dd173577da5f3",
+      "integrated_blob": "0177423ac546e6f3370fa5c8174dd173577da5f3"
+    },
+    {
+      "path": "tldw_chatbook/UI/Kanban/kanban_board_screen.py",
+      "actual_merge_blob": "e590afa3e5cb7969a428517d411d2e8fc11c34c8",
+      "integrated_blob": "e590afa3e5cb7969a428517d411d2e8fc11c34c8"
+    },
+    {
+      "path": "tldw_chatbook/UI/MCP_Modules/mcp_profile_actions.py",
+      "actual_merge_blob": "d846d1834836c160f8b14482b77bf74ddccbd4a2",
+      "integrated_blob": "d846d1834836c160f8b14482b77bf74ddccbd4a2"
+    },
+    {
+      "path": "tldw_chatbook/UI/Plugins_Modules/__init__.py",
+      "actual_merge_blob": "c359a960efa003b651372b8384bde3d8722c6dfd",
+      "integrated_blob": "c359a960efa003b651372b8384bde3d8722c6dfd"
+    },
+    {
+      "path": "tldw_chatbook/UI/Plugins_Modules/browse_state.py",
+      "actual_merge_blob": "e2ebb80034b93741814439470fa7eecf5a348037",
+      "integrated_blob": "e2ebb80034b93741814439470fa7eecf5a348037"
+    },
+    {
+      "path": "tldw_chatbook/UI/Plugins_Modules/details.py",
+      "actual_merge_blob": "3fd33c3020078573cb82da2790726357205473b8",
+      "integrated_blob": "3fd33c3020078573cb82da2790726357205473b8"
+    },
+    {
+      "path": "tldw_chatbook/UI/Plugins_Modules/operations.py",
+      "actual_merge_blob": "1572294dd78be533d655be2c4589a86edee654fd",
+      "integrated_blob": "1572294dd78be533d655be2c4589a86edee654fd"
+    },
+    {
+      "path": "tldw_chatbook/UI/Plugins_Modules/review.py",
+      "actual_merge_blob": "b9bb2eada541d9843a314993f8b70ee1e1ae6aef",
+      "integrated_blob": "b9bb2eada541d9843a314993f8b70ee1e1ae6aef"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/plugins_screen.py",
+      "actual_merge_blob": "5bfac18d0f8138ce93e67df02a8b46efa7369bfe",
+      "integrated_blob": "5bfac18d0f8138ce93e67df02a8b46efa7369bfe"
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/settings_category_exports.py",
+      "actual_merge_blob": "7d801b384433ee05a95d11643f916df3c30d7d6e",
+      "integrated_blob": "7d801b384433ee05a95d11643f916df3c30d7d6e"
+    },
+    {
+      "path": "tldw_chatbook/UI/Settings_Modules/workspace_archive.py",
+      "actual_merge_blob": "91f98a1ec287de15f901a572c4800c7c073d561f",
+      "integrated_blob": "91f98a1ec287de15f901a572c4800c7c073d561f"
+    },
+    {
+      "path": "tldw_chatbook/Utils/os_notifications.py",
+      "actual_merge_blob": "9b67f4c1222244708b01c675f5a28c3519e7e96e",
+      "integrated_blob": "9b67f4c1222244708b01c675f5a28c3519e7e96e"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Chat_Widgets/archive_recovery_cards.py",
+      "actual_merge_blob": "8ca055f1de37c41813a7e603cae794074c33d700",
+      "integrated_blob": "8ca055f1de37c41813a7e603cae794074c33d700"
+    },
+    {
+      "path": "tldw_chatbook/Widgets/plugin_review_modal.py",
+      "actual_merge_blob": "8810b77d83d1472246b2a4f270553aa8f6649525",
+      "integrated_blob": "8810b77d83d1472246b2a4f270553aa8f6649525"
+    },
+    {
+      "path": "tldw_chatbook/css/core/_variables.tcss",
+      "actual_merge_blob": "341961c9d1eebd59ca86681f54b6988af567d5e0",
+      "integrated_blob": "341961c9d1eebd59ca86681f54b6988af567d5e0"
+    },
+    {
+      "path": "tldw_chatbook/css/features/_plugins.tcss",
+      "actual_merge_blob": "c693530e0550f4f4116d44f5bf0734c3aa3d9f4b",
+      "integrated_blob": "c693530e0550f4f4116d44f5bf0734c3aa3d9f4b"
+    },
+    {
+      "path": "tldw_chatbook/css/screen_feature_plugins.tcss",
+      "actual_merge_blob": "fe22c116b0dd75d4071b6cc52ff6e33bdecf4117",
+      "integrated_blob": "fe22c116b0dd75d4071b6cc52ff6e33bdecf4117"
+    },
+    {
+      "path": "tldw_chatbook/css/tldw_cli_modular.tcss",
+      "actual_merge_blob": "219279a8cafe95ea7ae9c0db57a6cd43fbb4f038",
+      "integrated_blob": "219279a8cafe95ea7ae9c0db57a6cd43fbb4f038"
+    }
+  ]
+}

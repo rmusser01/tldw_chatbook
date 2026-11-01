@@ -1,0 +1,19 @@
+2026-09-28 08:03:27 [INFO    ] tldw_chatbook.Chat.console_chat_controller:463 - console agent reply start
+2026-09-28 08:03:27 [INFO    ] tldw_chatbook.Chunking.chunking_interop_library:104 - ChunkingInteropService initialized
+2026-09-28 08:03:27 [WARNING ] tldw_chatbook.Chat.console_chat_controller:456 - library_provider_factory failed; running without Library tools
+Traceback (most recent call last):
+  File "~/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py", line 26349, in _run_agent_reply
+    library_selection = self._library_provider_for_context(turn_context)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "~/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py", line 15648, in _library_provider_for_context
+    provider = factory(turn_context)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "~/.codex/worktrees/agent-archive-recovery/tldw_chatbook/tldw_chatbook/Chat/console_runtime.py", line 661, in _library_provider_for_app
+    service = LocalLibraryToolService(
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: LocalLibraryToolService.__init__() got an unexpected keyword argument 'collections_service'
+2026-09-28 08:03:28 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=3812e210bc854fb0956141ad040af3b7 component=console duration_ms=1586 phase=trace_reservation status=entered
+2026-09-28 08:03:29 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=3812e210bc854fb0956141ad040af3b7 component=console duration_ms=1765 phase=trace_reservation status=succeeded
+2026-09-28 08:03:29 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=3812e210bc854fb0956141ad040af3b7 component=console duration_ms=1826 phase=trace_dispatch_commit status=entered
+2026-09-28 08:03:29 [INFO    ] tldw_chatbook.Chat.Chat_Functions:463 - Chat API Call - Routing to endpoint: llama_cpp
+2026-09-28 08:03:29 [INFO    ] tldw_chatbook.diagnostics.console:195 - event=console_send_stage attempt_id=3812e210bc854fb0956141ad040af3b7 component=console duration_ms=1958 phase=provider_entry status=entered

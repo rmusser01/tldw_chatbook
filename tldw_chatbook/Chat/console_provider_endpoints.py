@@ -218,6 +218,21 @@ CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
 )
 
 
+def adapter_api_base_url(execution_key: str, base_url: str | None) -> str | None:
+    """Project the transport base; legacy custom slots accept the full endpoint.
+
+    Args:
+        execution_key: Resolved adapter key.
+        base_url: Resolved destination URL, without changing its durable identity.
+
+    Returns:
+        The API base for the custom engine, otherwise the original nonempty URL.
+    """
+    if execution_key == "custom-hosted" and base_url is not None:
+        base_url = base_url.rstrip("/").removesuffix("/chat/completions")
+    return base_url or None
+
+
 def meaningful_adapter_base_url(execution_key: str, base_url: str | None) -> str | None:
     """Pin the resolved endpoint only when it carries real information.
 

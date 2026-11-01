@@ -167,6 +167,13 @@ def _wizard(monkeypatch, *, failed_discovery: bool) -> FirstRunSetupWizard:
     app_instance.app_config = {
         "api_settings": {"custom": {"api_url": "https://walk.example.test/v1"}}
     }
+    # TASK-34100.4: Protect reads config.toml back (as Summary does). In this
+    # suite the in-memory config IS the disk -- writes are mirrored into it,
+    # no file is touched -- so the read-back returns it too.
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Wizards.first_run_protect_step._load_persisted_config",
+        lambda: (app_instance.app_config, "/walk/config.toml"),
+    )
     app_instance.llm_provider_catalog_scope_service = MagicMock(
         discover_models=AsyncMock(return_value=_discovery(failed=failed_discovery))
     )
@@ -271,7 +278,13 @@ class _Walk:
         # An endpoint provider keeps its key under "Authentication
         # (optional)": Tab to that title, Enter opens it, Tab into the field.
         for _ in range(30):
-            if type(self.app.focused).__name__ == "CollapsibleTitle":
+            # TASK-34100.6: the no-server how-to is a collapsible too, so
+            # look for the Authentication header itself.
+            focused = self.app.focused
+            if (
+                type(focused).__name__ == "CollapsibleTitle"
+                and getattr(focused.parent, "id", None) == "setup-provider-auth-toggle"
+            ):
                 break
             await self.pilot.press("tab")
         await self.pilot.press("enter")

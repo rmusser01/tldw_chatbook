@@ -6,6 +6,7 @@ import asyncio
 import sys
 import threading
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import ExitStack
 from dataclasses import replace
 from functools import partial
 from types import FunctionType, ModuleType
@@ -85,7 +86,23 @@ class ConsoleSkillController:
                         and metadata._source_current(wiring_source)
                         and metadata._source_current(helper_source)
                     ):
-                        prepared = entry[0](self.app_instance, service, current, source)
+                        from tldw_chatbook import config
+
+                        while True:
+                            with ExitStack() as acquired:
+                                for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
+                                    if not lock.acquire(blocking=False):
+                                        break
+                                    acquired.callback(lock.release)
+                                else:
+                                    if (not current() or not metadata._source_current(wiring_source)
+                                        or not metadata._source_current(helper_source)):
+                                        raise RuntimeError("console_skill_trust_source_changed")
+                                    # A rebuild must not invalidate the captured
+                                    # cache and send stock discovery into live IO.
+                                    prepared = entry[0](self.app_instance, service, current, source)
+                                    break
+                            await asyncio.sleep(0.2)
                         if prepared is not None:
                             if (not current() or not metadata._source_current(wiring_source)
                                 or not metadata._source_current(helper_source)):
@@ -99,7 +116,49 @@ class ConsoleSkillController:
                                 or not prepared[1]()
                             ):
                                 raise RuntimeError("console_skill_trust_source_changed")
-            context = await get_context(mode="local")
+            reader = None
+            if (
+                owner is not None
+                and type(wiring) is ModuleType
+                and (
+                    metadata._source_current(wiring_source)
+                    and metadata._source_current(helper_source)
+                )
+            ):
+                # Capture again after cold preparation: it may publish trust or
+                # reload config. The decorated context call owns fresh admission.
+                from tldw_chatbook import config
+
+                while True:
+                    with ExitStack() as acquired:
+                        for lock in (
+                            config._settings_rebuild_lock(), config._config_file_lock()
+                        ):
+                            if not lock.acquire(blocking=False):
+                                break
+                            acquired.callback(lock.release)
+                        else:
+                            if (
+                                not current()
+                                or not metadata._source_current(wiring_source)
+                                or not metadata._source_current(helper_source)
+                            ):
+                                raise RuntimeError("console_skill_trust_source_changed")
+                            reader = _capture_console_skill_context_read(
+                                self.app_instance, service, wiring, metadata
+                            )
+                            break
+                    await asyncio.sleep(0.2)
+            if reader is None:
+                context = await get_context(mode="local")
+            else:
+                context_source, source_current = reader
+                context = await _read_console_skill_context(
+                    get_context,
+                    context_source,
+                    source_current,
+                    lambda: current() and context_source.current(),
+                )
             if owner is not None:
                 if not current():
                     raise RuntimeError("console_skill_trust_owner_changed")
@@ -148,7 +207,12 @@ class ConsoleSkillController:
 
     async def _refresh_console_skill_candidates(self) -> None:
         """Refresh the popup's cached trusted-candidate snapshot."""
+        from tldw_chatbook.config import config_read_would_wait
+
         owner = _capture_console_skill_discovery(self)
+        # TASK-35836: the first trust-service build reads config on the UI loop.
+        while config_read_would_wait():
+            await asyncio.sleep(0.2)
         context = await self._fetch_console_skill_context()
         if owner is not None and not owner[0]():
             return
@@ -307,8 +371,125 @@ def _sync_console_skill_popup(screen: Any) -> None:
     screen._sync_console_command_popup()
 
 
+async def _read_console_skill_context(
+    get_context, source, source_current, owner_current
+):
+    """Finish the original checked call before cancellation or publication."""
+    from ...Chat.console_preparation_reads import run_preparation_read
+
+    def require_source():
+        if not source_current():
+            raise RuntimeError("console_skill_context_changed")
+
+    if not owner_current():
+        raise RuntimeError("console_skill_context_changed")
+    context = await run_preparation_read(
+        lambda: asyncio.run(get_context(mode="local")),
+        creator=source,
+        session_id=None,
+        reads=source.runtime_reads,
+        require_current=require_source,
+    )
+    if not owner_current():
+        raise RuntimeError("console_skill_context_changed")
+    return context
+
+
+def _capture_console_skill_context_read(app, service, wiring, metadata):
+    """Select only resident stock readers; custom callbacks keep loop affinity."""
+    source = wiring._capture_console_skill_trust_source(app, service)
+    if source is None or _CONTEXT_CLASSES is None:
+        return None
+    local_type, trust_type, policy_type, engine_type, context_type = _CONTEXT_CLASSES
+    local = source.local
+    fields = vars(local)
+    policy = fields.get("policy_enforcer")
+    app_trust = vars(app).get("_local_skill_trust_service")
+    trust = fields.get("_trust_service")
+    if trust is None:
+        trust = app_trust
+    if trust is None:
+        return None  # Cold construction stays with its existing App worker owner.
+    loader = fields.get("_builtin_disabled_loader")
+    runtime_policy = vars(app).get("runtime_policy")
+    local_module = sys.modules[local_type.__module__]
+    original_loader = vars(wiring).get("_STOCK_DISABLED_BUILTINS_READER")
+
+    def stock(value, expected, names):
+        return type(value) is expected and not any(
+            name in vars(value) for name in names
+        )
+
+    def source_current():
+        if not (
+            source.source_current()
+            and metadata._source_current(_DISCOVERY_SOURCE)
+            and metadata._source_current(
+                vars(local_module).get("_CONSOLE_SKILL_CATALOG_SOURCE")
+            )
+            and fields.get("policy_enforcer") is policy
+            and (
+                fields.get("_trust_service") is None
+                or fields.get("_trust_service") is trust
+            )
+            and vars(app).get("_local_skill_trust_service") is app_trust
+            and fields.get("_builtin_disabled_loader") is loader
+            and vars(app).get("runtime_policy") is runtime_policy
+            and not any(
+                name in fields
+                for name in (
+                    *vars(local_module)["_CONSOLE_SKILL_CATALOG_METHODS"],
+                    "_enforce",
+                    "_dump",
+                )
+            )
+        ):
+            return False
+        if trust is not None and not stock(
+            trust, trust_type, ("status_for_skill", "_status_for_skill")
+        ):
+            return False
+        if loader is not None and not (
+            type(loader) is partial
+            and type(original_loader) is tuple
+            and len(original_loader) == 2
+            and loader.func is original_loader[0]
+            and loader.func.__code__ is original_loader[1]
+            and len(loader.args) == 1
+            and loader.args[0] is app
+            and not loader.keywords
+        ):
+            return False
+        if policy is None:
+            return True
+        if not stock(policy, policy_type, ("require_allowed", "current_state")):
+            return False
+        engine = vars(policy).get("_engine")
+        provider = vars(policy).get("_state_provider")
+        factory = vars(policy_type)["from_runtime_policy_context"].__func__
+        return (
+            stock(engine, engine_type, ("evaluate", "_deny"))
+            and vars(engine).get("_registry")
+            is factory.__globals__["CAPABILITY_REGISTRY"]
+            and type(runtime_policy) is context_type
+            and type(provider) is FunctionType
+            and any(provider.__code__ is code for code in factory.__code__.co_consts)
+            and provider.__globals__ is factory.__globals__
+            and provider.__defaults__ is None
+            and provider.__kwdefaults__ is None
+            and provider.__closure__ is not None
+            and len(provider.__closure__) == 1
+            and provider.__closure__[0].cell_contents is runtime_policy
+        )
+
+    if not source_current():
+        return None
+    return source, source_current
+
+
 _DISCOVERY_SOURCE = None
 _DISCOVERY_VIEW = None
+_CONTEXT_CLASSES = None
 
 
 def bind_console_skill_discovery(view_type: type, constructor: Callable) -> None:
@@ -318,17 +499,69 @@ def bind_console_skill_discovery(view_type: type, constructor: Callable) -> None
         view_type: Original ChatScreen at its definition boundary.
         constructor: Original controller constructor from Console wiring.
     """
-    global _DISCOVERY_SOURCE, _DISCOVERY_VIEW
+    global _DISCOVERY_SOURCE, _DISCOVERY_VIEW, _CONTEXT_CLASSES
     if _DISCOVERY_SOURCE is not None:
         return
     metadata = sys.modules["tldw_chatbook.Widgets.compact_model_bar"]
     view_namespace = vars(sys.modules[view_type.__module__])
     wiring_namespace = constructor.__globals__
     _DISCOVERY_VIEW = view_type
+    from ...Skills_Interop.local_skills_service import LocalSkillsService
+    from ...Skills_Interop.skill_trust_service import SkillTrustService
+    from ...runtime_policy.bootstrap import RuntimePolicyContext
+    from ...runtime_policy.enforcement import ServicePolicyEnforcer
+    from ...runtime_policy.engine import PolicyEngine
+
+    _CONTEXT_CLASSES = (
+        LocalSkillsService,
+        SkillTrustService,
+        ServicePolicyEnforcer,
+        PolicyEngine,
+        RuntimePolicyContext,
+    )
+    context_bindings = [(globals(), "_CONTEXT_CLASSES", _CONTEXT_CLASSES)]
+    policy_namespace = vars(sys.modules[ServicePolicyEnforcer.__module__])
+    context_bindings.append(
+        (
+            policy_namespace,
+            "CAPABILITY_REGISTRY",
+            policy_namespace["CAPABILITY_REGISTRY"],
+        )
+    )
+    context_functions = []
+    for owner, names in (
+        (LocalSkillsService, ("get_context", "_enforce", "_dump")),
+        (SkillTrustService, ("status_for_skill", "_status_for_skill")),
+        (
+            ServicePolicyEnforcer,
+            ("require_allowed", "current_state", "from_runtime_policy_context"),
+        ),
+        (PolicyEngine, ("evaluate", "_deny")),
+        (RuntimePolicyContext, ("state",)),
+    ):
+        context_bindings.append(
+            (vars(sys.modules[owner.__module__]), owner.__name__, owner)
+        )
+        for name in names:
+            descriptor = vars(owner)[name]
+            context_bindings.append((vars(owner), name, descriptor))
+            function = (
+                descriptor.__func__
+                if isinstance(descriptor, (staticmethod, classmethod))
+                else descriptor.fget
+                if isinstance(descriptor, property)
+                else descriptor
+            )
+            while type(function) is FunctionType:
+                context_functions.append(({"function": function}, "function", function))
+                function = vars(function).get("__wrapped__")
     functions = (
         (globals(), "_sync_console_skill_popup", _sync_console_skill_popup),
         (globals(), "_capture_console_skill_discovery", _capture_console_skill_discovery),
         (globals(), "bind_console_skill_discovery", bind_console_skill_discovery),
+        (globals(), "_capture_console_skill_context_read", _capture_console_skill_context_read),
+        (globals(), "_read_console_skill_context", _read_console_skill_context),
+        *context_functions,
         *((vars(ConsoleSkillController), name, vars(ConsoleSkillController)[name])
           for name in ("__init__", "_fetch_console_skill_context", "_refresh_console_skill_candidates")),
         (vars(ConsoleSkillController), "_console_skill_trusted_candidates_from_context",
@@ -352,9 +585,10 @@ def bind_console_skill_discovery(view_type: type, constructor: Callable) -> None
     _DISCOVERY_SOURCE = (
         globals(), __file__, __spec__, __spec__.origin,
         (
+            *context_bindings,
             (globals(), "ConsoleSkillController", ConsoleSkillController),
             (globals(), "_DISCOVERY_VIEW", view_type),
-            (globals(), "partial", partial),
+            (globals(), "partial", partial), (globals(), "ExitStack", ExitStack),
             (globals(), "asyncio", asyncio), (globals(), "threading", threading),
             (globals(), "sys", sys), (globals(), "FunctionType", FunctionType),
             (globals(), "ModuleType", ModuleType),

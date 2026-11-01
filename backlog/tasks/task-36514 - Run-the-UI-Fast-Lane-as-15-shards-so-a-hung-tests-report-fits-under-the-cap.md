@@ -1,8 +1,9 @@
 ---
 id: TASK-36514
 title: Run the UI Fast Lane as 15 shards so a hung test's report fits under the cap
-status: To Do
+status: Won't Do
 assignee: []
+updated_date: 2026-10-30 03:58
 created_date: 2026-10-23 23:38
 labels:
 - follow-up
@@ -41,3 +42,14 @@ Found by TASK-36512 (2026-10-23).
 - [ ] #4 The comment above ui-fast-lane records the shard count and the measurement it rests on
 - [ ] #5 The re-deal can be reproduced with a tool committed to the repo
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Won't Do, overtaken (2026-10-30).
+- **The work.** PR #3242 built the change: first 16 shards (owner ruling 2026-10-24, after 15 failed the 13-run worst-case gate at 17.38 min against 17.0), then a rebase to keep 17. That rebase was needed because #3228 had moved dev's lane to 17 shards meanwhile; the owner ruled to keep 17 and re-deal with the tool.
+- **Why it was dropped.** Before the rebase finished, dev moved the UI Fast Lane to 28 shards (1,149 entries) through other PRs, which gives far more headroom than this task asked for. #3242 was closed.
+- **What survives.**
+  - The test leak its review found, where the response-rules fixture leaves a llama.cpp endpoint in the shared bootstrap config, was already fixed on dev by TASK-36478 (#3254, 2026-10-26). That change restores the shared bootstrap config after every bootstrap-profile test, and a negative control with that restore disabled reproduced the egress error.
+  - The committed whole-census re-deal mode it built is filed as TASK-37764.
+<!-- SECTION:NOTES:END -->

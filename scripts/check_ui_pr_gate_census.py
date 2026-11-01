@@ -508,7 +508,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-36512 lists four heavy whole-file entries by function (the MCP
 # permissions handoff by parametrize case), so no shard takes one whole:
 # every test still runs once, and the floor follows the entry count.
-# Current UI lane: 28 shards.
+# Current UI lane: 32 shards.
 # TASK-36454..36458 append all 58 exact mounted regressions after dev's
 # measured split-file tail (TASK-36512), preserving its slots and coverage.
 # 2026-10-24, TASK-36479 appends two static node ids at the tail -- the
@@ -622,7 +622,38 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # shard: 1143 + 2 = 1145. Rebased 2026-10-29 onto dev's 1142: 1144 + 2 = 1146.
 # Rebased 2026-10-29 onto dev's 1143: 1145 + 2 = 1147.
 # Rebased 2026-10-29 onto dev's 1145 entries: 1147 + 2 = 1149.
-MINIMUM_FILES = 1149
+# TASK-33622.6 (2026-10-29) appends 5 node ids at the tail: the Console rail
+# filter's typing, binding-letter, titles-only count, painted-row and
+# stale-sync cases, so no existing entry changes shard: dev's 1144 + 5 = 1149.
+# Rebased 2026-10-29 onto dev's 1149 entries: 1149 + 5 = 1154.
+# TASK-33621.51 (2026-10-29) appends 2 whole-file entries at the tail: the
+# Library outcome line on a mounted ChatScreen (four cases, about 24 s
+# locally) and its projection helper (16 cases, about 12 s), so no
+# existing entry changes shard: dev's 1149 + 2 = 1151.
+# TASK-36380 (2026-10-29) appends 1 node entry at the tail: the koboldcpp
+# Discover journey (about 23 s locally), so no existing entry changes shard.
+# An increment of 1 for that entry. The floor now equals the entry count,
+# which also absorbs any lag in dev's floor (tail entries a merge added
+# without raising it).
+# TASK-36382 appends 9 entries at the tail: four Tests/UI files no lane ran
+# (focus contracts, Evals skill eval, the llama.cpp refresh gate, the CSS
+# staleness manifest) and five static contracts of test_modal_wide_tier.py
+# by node id, whose whole file is over the per-file rule; the anchor check
+# among them is one test, ~1 s. The floor now equals the entry count, which
+# also absorbs any lag in dev's floor (tail entries a merge added without
+# raising it).
+# TASK-18925 adds the verified OS-notification Settings journey (+1).
+# Console hook-file qualification remains open after native-worker teardown
+# errors; no existing census entry is removed or replaced (review receipt).
+# PR #3162 (2026-10-31): append the verified archive-card file only.
+# The mounted flow remains outside this addition pending qualification.
+# PR #3166: two independently verified regression nodes; retain all 1175 entries.
+# PR #3173, 2026-10-31: retain all 1177 base entries and append four reviewed nodes.
+# PR #3183: preserve current-base prefix and append five reviewed mount/retry/config-capture controls.
+# PR #3259 (2026-10-31): retain all 1187 current-base entries and append ten reviewed Notes selectors.
+# PR3289 (2026-10-31): retain all1197 current-dev entries and the one mounted rule journey.
+# PR #3290 (2026-10-31): retain all1198 current-dev entries and append44 reviewed Textual nodes.
+MINIMUM_FILES = 1242
 
 
 def read_census(path: Path) -> list[str]:

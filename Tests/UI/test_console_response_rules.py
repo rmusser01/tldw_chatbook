@@ -717,21 +717,336 @@ async def test_console_syncs_never_wait_for_a_config_rebuild(tmp_path, monkeypat
 
 
 async def settle(console):
-    """Wait out the app's own sync and replay, the attach reconcile and skill discovery.
+    """Wait out the app's own sync and replay, and the attach reconcile.
 
     The sync and replay are two of the flags the entry guard checks (nothing
-    awaits between this check and the next sync's entry). Skill discovery,
-    which the mount and the attach reconcile's resume start, still reads
-    config the first time, outside the syncs pinned here (TASK-35836).
+    awaits between this check and the next sync's entry). The attach
+    reconcile's resume is pinned by the recovery-and-resume case; the mount's
+    own refreshes by the test below (TASK-35836).
     """
     async with asyncio.timeout(5):
         while (
             console._console_sync_in_progress
             or getattr(console, "_console_control_bar_replay_whole_sync", False)
             or not console._console_attach_reconciled
-            or any(
-                worker.group == "console-skill-discovery" and not worker.is_finished
-                for worker in console.workers
-            )
         ):
             await asyncio.sleep(0.01)
+
+
+_MOUNT_REBUILD_STARTS = {
+    "mount": "on_mount",
+    "view-start": "_start_console_view_after_reconciliation",
+    "roleplay": "_sync_console_identity_surfaces",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start", list(_MOUNT_REBUILD_STARTS))
+async def test_console_mount_refreshes_never_wait_for_a_config_rebuild(
+    tmp_path, start
+):
+    """TASK-35836: the refreshes a Console mount schedules never wait for a rebuild.
+
+    A config rebuild starts as the mount reaches one step and holds the config
+    while the refreshes after it run: ``on_mount`` itself (the width rail rules
+    of its first resize), the attach reconcile's view start (skill discovery),
+    or the identity-surfaces entry reached by roleplay refresh. Each read config on
+    the UI loop before this task; a rebuild from the start of the mount defers
+    the full sync, and with it the later two, so they get their own start.
+    The watchdog records where the UI thread was waiting. After release, every
+    deferred refresh finishes.
+    """
+    import inspect
+    import itertools
+    import sys
+    import threading
+    import traceback
+
+    from Tests.UI.test_destination_shells import _build_test_app
+    from tldw_chatbook import config
+    from tldw_chatbook.config import save_setting_to_cli_config
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    app = _build_test_app()
+    app.chachanotes_db = CharactersRAGDB(tmp_path / "console-mount.sqlite", "mount-ui")
+    _configure_native_ready_console(app, model="test-model")
+    assert save_setting_to_cli_config("console", "agent_runtime", False)
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
+    hold, held, release = threading.Event(), threading.Event(), threading.Event()
+    blocked = []
+
+    def hold_rebuild():
+        hold.wait()
+        if release.is_set():
+            return
+        with config._settings_rebuild_lock():
+            config._invalidate_config_caches()
+            held.set()
+            release.wait(10)
+
+    def expire():
+        frame = sys._current_frames()[threading.main_thread().ident]
+        blocked.extend(traceback.format_stack(frame))
+        release.set()
+
+    step = getattr(ChatScreen, _MOUNT_REBUILD_STARTS[start])
+    original_step = inspect.unwrap(step)
+    if start == "roleplay":
+        # A lazy mount may have no active chat. Give the native roleplay
+        # projection a real session to refresh instead of observing a no-op.
+        from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
+
+        ensure_console_runtime(app).ensure_chat_store().create_session()
+
+    holder = threading.Thread(target=hold_rebuild)
+    # 5 s, not 2: from on_mount the rest of startup runs inside the hold, and a
+    # loaded runner can take seconds; a UI thread that waits stays blocked
+    # until this fires, since the test cannot run to release it.
+    watchdog = threading.Timer(5, expire)
+    fetches = []  # when skill discovery fetched its context: before, in or after the hold
+    service = app.skills_scope_service
+    get_context = service.get_context
+
+    context_code = get_context.__func__.__code__
+    body_codes = {
+        inspect.unwrap(getattr(ChatScreen, name)).__code__: name
+        for name in ("_sync_console_identity_surfaces", "_adapt_console_workspace_to_width")
+    }
+    bodies = []
+    monitor = None
+    for candidate in range(5, 0, -1):
+        try:
+            sys.monitoring.use_tool_id(candidate, "console-mount-config-rebuild")
+        except ValueError:
+            continue
+        monitor = candidate
+        break
+    assert monitor is not None
+
+    observed_entry = []
+
+    def observe(code, _offset):
+        # Observe just these original entries. Replacing their methods changes
+        # native qualification; a process-wide profiler distorts mount timing.
+        frame = sys._getframe(1)
+        if (
+            code is step.__code__ and not hold.is_set()
+            and frame.f_locals.get("function", step) is original_step
+        ):
+            observed_entry.append(frame.f_locals.get("screen", frame.f_locals.get("self")))
+            hold.set()
+            assert held.wait(3)
+            watchdog.start()
+        if code in body_codes and observed_entry and frame.f_locals.get("self") is observed_entry[0]:
+            bodies.append((body_codes[code], "after" if release.is_set() else "hold"))
+        if code is context_code and frame.f_locals.get("self") is service:
+            fetches.append("after" if release.is_set() else "hold" if held.is_set() else "before")
+
+    entry_event = sys.monitoring.events.PY_START
+    sys.monitoring.register_callback(monitor, entry_event, observe)
+    observed_codes = {step.__code__, context_code, *body_codes}
+    for code in observed_codes:
+        sys.monitoring.set_local_events(monitor, code, entry_event)
+    async def coordinate_hold():
+        # run_test may wait for readiness work blocked by this artificial hold.
+        # Observe loop progress and release independently of entering its body.
+        try:
+            async with asyncio.timeout(30):
+                while not held.is_set():
+                    await asyncio.sleep(0.01)
+            console = observed_entry[0]
+            expected = {
+                "mount": "_adapt_console_workspace_to_width",
+                "roleplay": "_sync_console_identity_surfaces",
+            }.get(start)
+            deferred, discovery_waited = set(), False
+            heartbeats = 0
+            deadline = asyncio.get_running_loop().time() + 2
+            for tick in itertools.count():
+                if held.is_set() and not release.is_set():
+                    heartbeats += 1
+                deferred.update(getattr(console, "_console_config_retries", None) or ())
+                discovery_waited = discovery_waited or any(
+                    worker.group == "console-skill-discovery" and not worker.is_finished
+                    for worker in console.workers
+                )
+                seen = (expected is None or expected in deferred) and (
+                    discovery_waited or start != "view-start"
+                )
+                if (tick >= 15 and seen) or asyncio.get_running_loop().time() > deadline:
+                    break
+                await asyncio.sleep(0.05)
+            assert not release.is_set(), "the Console mount waited for the config rebuild:\n" + "".join(
+                blocked[-14:]
+            )
+            assert heartbeats >= 15, "the UI loop did not progress during the hold"
+            assert expected is None or expected in deferred, deferred
+            assert discovery_waited or start != "view-start"
+            assert "hold" not in fetches, "skill discovery fetched in the hold"
+            assert not bodies, "a display refresh entered its body during the hold"
+            return deferred
+        finally:
+            release.set()
+            watchdog.cancel()
+
+    holder.start()
+    coordinator = asyncio.create_task(coordinate_hold())
+    try:
+        await asyncio.sleep(0)  # the heartbeat runs before mount readiness waits
+        async with ConsoleHarness(app).run_test(size=(120, 35)) as pilot:
+            console = pilot.app.screen_stack[-1]
+            deferred = await coordinator
+            holder.join(3)
+            assert not holder.is_alive()
+            assert observed_entry == [console], "the intended native refresh never started"
+            # Native startup work can reacquire the locks after our holder
+            # releases. Attach, discovery, and readiness own that lifecycle;
+            # their completion is not the display callback delivery budget.
+            # Re-read readiness because startup may issue another projection.
+            async with asyncio.timeout(30):
+                while (
+                    not console._console_attach_reconciled
+                    or not {"before", "after"} & set(fetches)
+                    or any(
+                        worker.group == "console-skill-discovery" and not worker.is_finished
+                        for worker in console.workers
+                    )
+                    or (
+                        (projection := getattr(console, "_console_readiness_config_projection", None))
+                        is not None and projection.pending
+                    )
+                ):
+                    await asyncio.sleep(0.02)
+            # Deferred, not dropped: every original display retry must run
+            # within the unchanged five-second delivery budget.
+            try:
+                async with asyncio.timeout(5):
+                    while (
+                        getattr(console, "_console_config_retries", None)
+                        or not deferred.issubset({name for name, phase in bodies if phase == "after"})
+                    ):
+                        await asyncio.sleep(0.02)
+            except TimeoutError:
+                pytest.fail(
+                    "after-release refreshes did not settle: "
+                    f"retries={getattr(console, '_console_config_retries', None)!r}, "
+                    f"bodies={bodies!r}, "
+                    f"reconciled={console._console_attach_reconciled}, "
+                    f"fetches={fetches!r}, "
+                    f"skill_workers={[str(worker) for worker in console.workers if worker.group == 'console-skill-discovery']!r}, "
+                    f"locks={(config._settings_rebuild_lock(), config._config_file_lock())!r}, "
+                    f"timer_count={len(console._timers)}"
+                )
+            assert console._last_console_workspace_width_band is not None
+            await console._console_runtime().dispose()
+    finally:
+        coordinator.cancel()
+        await asyncio.gather(coordinator, return_exceptions=True)
+        for code in observed_codes:
+            sys.monitoring.set_local_events(monitor, code, 0)
+        sys.monitoring.register_callback(monitor, entry_event, None)
+        sys.monitoring.free_tool_id(monitor)
+        watchdog.cancel()
+        release.set()
+        hold.set()
+        holder.join(3)
+    assert not holder.is_alive()
+
+
+def test_a_deferred_refresh_runs_once_with_its_latest_call(monkeypatch):
+    """TASK-35836: retry_after_config_rebuild defers, then runs; it never drops."""
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+        retry_after_config_rebuild,
+    )
+
+    would_wait = [True]
+    monkeypatch.setattr(config, "config_read_would_wait", lambda: would_wait[0])
+    timers, calls = [], []
+
+    class Screen:
+        def set_timer(self, delay, callback):
+            timers.append((delay, callback))
+
+    @retry_after_config_rebuild
+    def refresh(screen, value):
+        calls.append(value)
+
+    screen = Screen()
+    refresh(screen, "first")
+    refresh(screen, "latest")
+    assert calls == [] and [delay for delay, _ in timers] == [0.2]
+    timers.pop()[1]()  # the rebuild still holds: retried again, nothing ran
+    assert calls == [] and len(timers) == 1
+    would_wait[0] = False
+    timers.pop()[1]()
+    assert calls == ["latest"] and not timers and not screen._console_config_retries
+    refresh(screen, "now")
+    assert calls == ["latest", "now"]
+    # A fresh call after unlock must retire the older queued arguments.
+    would_wait[0] = True
+    refresh(screen, "stale")
+    would_wait[0] = False
+    refresh(screen, "fresh")
+    timers.pop()[1]()
+    assert calls == ["latest", "now", "fresh"]
+    screen._closing = True  # a torn-down screen's retry renders nothing
+    would_wait[0] = True
+    refresh(screen, "late")
+    timers.pop()[1]()
+    assert calls == ["latest", "now", "fresh"]
+
+    # A rebuild may win after the optimistic cache/probe check. The actual
+    # render must acquire both native locks without waiting and retain them.
+    import threading
+
+    locks = (threading.RLock(), threading.RLock())
+    monkeypatch.setattr(config, "_settings_rebuild_lock", lambda: locks[0])
+    monkeypatch.setattr(config, "_config_file_lock", lambda: locks[1])
+    would_wait[0] = False
+    screen._closing = False
+    held, release = threading.Event(), threading.Event()
+
+    def hold_file_lock():
+        with locks[1]:
+            held.set()
+            release.wait(5)
+
+    holder = threading.Thread(target=hold_file_lock)
+    holder.start()
+    try:
+        assert held.wait(3)
+        refresh(screen, "raced")
+        assert calls == ["latest", "now", "fresh"]
+        assert len(timers) == 1
+        assert not locks[0]._is_owned(), "partial acquisition leaked"
+    finally:
+        release.set()
+        holder.join(3)
+    assert not holder.is_alive()
+    timers.pop()[1]()
+    assert calls == ["latest", "now", "fresh", "raced"]
+
+    acquired_during_render = []
+
+    def try_rebuild():
+        for lock in locks:
+            acquired = lock.acquire(blocking=False)
+            acquired_during_render.append(acquired)
+            if acquired:
+                lock.release()
+
+    @retry_after_config_rebuild
+    def protected_refresh(screen):
+        contender = threading.Thread(target=try_rebuild)
+        contender.start()
+        contender.join(3)
+        assert not contender.is_alive()
+
+    protected_refresh(screen)
+    assert acquired_during_render == [False, False]
+    contender = threading.Thread(target=try_rebuild)
+    contender.start()
+    contender.join(3)
+    assert acquired_during_render == [False, False, True, True]

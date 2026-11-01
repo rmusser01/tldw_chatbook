@@ -1,0 +1,161 @@
+{
+  "events": {
+    "agent_run_created": 1,
+    "agent_run_started": 1,
+    "model_request_started": 10,
+    "context_attached": 1,
+    "context_injected": 1,
+    "model_response_completed": 10,
+    "model": 10,
+    "tool_proposed": 10,
+    "approval_requested": 10,
+    "approval_approved": 10,
+    "tool_execution_started": 10,
+    "tool_call": 10,
+    "tool_succeeded": 10,
+    "tool_result": 10,
+    "error": 1,
+    "model_error": 1,
+    "agent_run_failed": 1
+  },
+  "tool_outcomes": [
+    {
+      "tool": "find_tools",
+      "kind": "tool_proposed",
+      "status": "proposed",
+      "time": "2026-09-28T00:09:21.171839Z"
+    },
+    {
+      "tool": "find_tools",
+      "kind": "tool_succeeded",
+      "status": "success",
+      "time": "2026-09-28T00:09:21.175379Z"
+    },
+    {
+      "tool": "load_tools",
+      "kind": "tool_proposed",
+      "status": "proposed",
+      "time": "2026-09-28T00:09:24.112843Z"
+    },
+    {
+      "tool": "load_tools",
+      "kind": "tool_succeeded",
+      "status": "success",
+      "time": "2026-09-28T00:09:24.119539Z"
+    },
+    {
+      "tool": "search_library_rag",
+      "kind": "tool_proposed",
+      "status": "proposed",
+      "time": "2026-09-28T00:09:26.491477Z"
+    },
+    {
+      "tool": "search_library_rag",
+      "kind": "tool_succeeded",
+      "status": "success",
+      "time": "2026-09-28T00:09:46.672037Z"
+    },
+    {
+      "tool": "find_tools",
+      "kind": "tool_proposed",
+      "status": "proposed",
+      "time": "2026-09-28T00:09:50.394044Z"
+    },
+    {
+      "tool": "find_tools",
+      "kind": "tool_succeeded",
+      "status": "success",
+      "time": "2026-09-28T00:09:50.396477Z"
+    },
+    {
+      "tool": "find_tools",
+      "kind": "tool_proposed",
+      "status": "proposed",
+      "time": "2026-09-28T00:09:51.422941Z"
+    },
+    {
+      "tool": "find_tools",
+      "kind": "tool_succeeded",
+      "status": "success",
+      "time": "2026-09-28T00:09:51.424862Z"
+    },
+    {
+      "tool": "find_tools",
+      "kind": "tool_proposed",
+      "status": "proposed",
+      "time": "2026-09-28T00:09:53.769324Z"
+    },
+    {
+      "tool": "find_tools",
+      "kind": "tool_succeeded",
+      "status": "success",
+      "time": "2026-09-28T00:09:53.783356Z"
+    },
+    {
+      "tool": "load_tools",
+      "kind": "tool_proposed",
+      "status": "proposed",
+      "time": "2026-09-28T00:09:55.510293Z"
+    },
+    {
+      "tool": "load_tools",
+      "kind": "tool_succeeded",
+      "status": "success",
+      "time": "2026-09-28T00:09:55.517155Z"
+    },
+    {
+      "tool": "search_archived_conversations",
+      "kind": "tool_proposed",
+      "status": "proposed",
+      "time": "2026-09-28T00:09:58.899033Z"
+    },
+    {
+      "tool": "search_archived_conversations",
+      "kind": "tool_succeeded",
+      "status": "success",
+      "time": "2026-09-28T00:09:58.932701Z"
+    },
+    {
+      "tool": "search_archived_conversations",
+      "kind": "tool_proposed",
+      "status": "proposed",
+      "time": "2026-09-28T00:10:06.254886Z"
+    },
+    {
+      "tool": "search_archived_conversations",
+      "kind": "tool_succeeded",
+      "status": "success",
+      "time": "2026-09-28T00:10:06.289561Z"
+    },
+    {
+      "tool": "load_tools",
+      "kind": "tool_proposed",
+      "status": "proposed",
+      "time": "2026-09-28T00:10:10.698260Z"
+    },
+    {
+      "tool": "load_tools",
+      "kind": "tool_succeeded",
+      "status": "success",
+      "time": "2026-09-28T00:10:10.708864Z"
+    }
+  ],
+  "runs": [
+    {
+      "id": "ab2dd39c-b7bc-4485-8559-2ca589aa1b93",
+      "status": "stuck",
+      "budget": {
+        "max_steps": 80,
+        "max_wall_seconds": 180.0,
+        "max_subagents": 2,
+        "max_subagent_result_chars": 4000,
+        "max_tool_result_chars": 16000,
+        "max_model_turns": 10,
+        "max_total_tokens": 25000000,
+        "max_tool_call_seconds": 3600.0,
+        "max_model_retries": 0,
+        "budget_warning_fraction": 0.8
+      }
+    }
+  ]
+}

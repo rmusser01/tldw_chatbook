@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
 
 from tldw_chatbook.Agents.library_rag_tool_provider import (
-    LibraryRagToolProvider,
     RAG_TOOL_NAME,
+    LibraryRagToolProvider,
 )
 from tldw_chatbook.Agents.library_tool_provider import LibraryToolProvider
 from tldw_chatbook.Chat.console_agent_bridge import (
@@ -30,6 +31,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleAutoRetrieve,
     ConsoleLibraryPolicySnapshot,
 )
+from tldw_chatbook.Chat.console_runtime import _library_provider_for_app
 from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
     ConsoleTurnExecutionContext,
@@ -37,6 +39,10 @@ from tldw_chatbook.Chat.console_turn_context import (
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from Tests.Chat.test_console_workspace_guidance import _policy_rows, _project_case
 from Tests.private_profile import private_profile_test
+from tldw_chatbook.Library.local_library_tool_service import LocalLibraryToolService
+from tldw_chatbook.Library.local_media_chunk_tool_service import (
+    LocalMediaChunkToolService,
+)
 
 
 class _DirectService:
@@ -102,6 +108,70 @@ def _controller(factory=_factory):
         provider_gateway=SimpleNamespace(),
         library_provider_factory=factory,
     )
+
+
+@pytest.mark.parametrize("backends_present", [False, True])
+def test_shared_direct_factory_uses_real_supported_constructor(backends_present):
+    app = SimpleNamespace(
+        local_library_collections_service=object(),
+        **{
+            name: object() if backends_present else None
+            for name in (
+                "local_media_reading_service",
+                "notes_service",
+                "local_prompt_service",
+                "local_skills_service",
+                "local_chat_conversation_service",
+                "notes_scope_service",
+                "service_policy_enforcer",
+            )
+        },
+    )
+    context = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=True)
+    provider, authority = _controller(
+        partial(_library_provider_for_app, app)
+    )._library_provider_for_context(context)
+
+    assert type(provider) is LibraryToolProvider
+    service = provider._service
+    assert type(service) is LocalLibraryToolService
+    for service_name, app_name in (
+        ("_media", "local_media_reading_service"),
+        ("_notes", "notes_service"),
+        ("_prompts", "local_prompt_service"),
+        ("_skills", "local_skills_service"),
+        ("_conversations", "local_chat_conversation_service"),
+        ("_policy_enforcer", "service_policy_enforcer"),
+    ):
+        assert getattr(service, service_name) is getattr(app, app_name)
+    if backends_present:
+        assert type(service._media_chunk) is LocalMediaChunkToolService
+        assert service._media_chunk._reading is app.local_media_reading_service
+        assert service._media_chunk._policy_enforcer is app.service_policy_enforcer
+    else:
+        assert service._media_chunk is None
+    assert authority.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
+    assert frozenset(entry.name for entry in provider.list_catalog()) == frozenset(
+        LIBRARY_TOOL_DESCRIPTORS
+    )
+
+
+def test_shared_factory_preserves_frozen_rag_branch_and_backend():
+    rag_backend = object()
+    app = SimpleNamespace(
+        library_rag_search_service=rag_backend,
+        local_library_collections_service=object(),
+    )
+    context = _context(ConsoleAssistantLibraryAccess.ALLOWED, direct=False)
+    provider, authority = _controller(
+        partial(_library_provider_for_app, app)
+    )._library_provider_for_context(context)
+
+    assert type(provider) is LibraryRagToolProvider
+    assert provider._rag_service is rag_backend
+    assert authority.assistant_access is ConsoleAssistantLibraryAccess.ALLOWED
+    assert [entry.name for entry in provider.list_catalog()] == [RAG_TOOL_NAME]
+    assert _library_provider_for_app(app) is None
 
 
 @pytest.mark.parametrize(

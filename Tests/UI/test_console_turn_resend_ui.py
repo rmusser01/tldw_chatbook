@@ -877,3 +877,69 @@ async def test_transcript_resend_retains_failed_rows_until_connection_is_ready(r
             next(row for row in _session_rows(console) if row.role is USER).id
             == user.id
         )
+
+
+async def _await_selected_console_readiness(console, pilot):
+    """Await the existing readiness owner under the test's overall timeout."""
+    import inspect
+    from types import MethodType
+
+    bindings = (
+        (ChatScreen, "_sync_console_control_bar"),
+        (ConsoleReadinessConfigProjection, "_refresh"),
+    )
+    originals = tuple(
+        (
+            owner,
+            name,
+            vars(owner)[name],
+            vars(owner)[name].__code__,
+            vars(owner)[name].__globals__,
+            vars(owner)[name].__defaults__,
+        )
+        for owner, name in bindings
+    )
+    control, refresh = originals[0][2], originals[1][2]
+    while True:
+        assert all(
+            vars(owner).get(name) is function
+            and function.__code__ is code
+            and function.__globals__ is namespace
+            and function.__defaults__ is defaults
+            for owner, name, function, code, namespace, defaults in originals
+        ), "Original Console readiness source changed"
+        assert inspect.getattr_static(console, "_sync_console_control_bar") is control
+        projection = getattr(console, "_console_readiness_config_projection", None)
+        if projection is not None:
+            assert type(projection) is ConsoleReadinessConfigProjection
+            assert projection.screen is console
+            assert inspect.getattr_static(projection, "_refresh") is refresh
+            if projection.pending:
+                settled = projection._settled
+                assert type(settled) is asyncio.Event
+                await settled.wait()
+                assert console._console_readiness_config_projection is projection
+                assert projection._settled is settled
+                continue
+        callback = console._sync_console_control_bar
+        assert (
+            type(callback) is MethodType
+            and callback.__self__ is console
+            and callback.__func__ is control
+        )
+        if callback() is True:
+            return
+        # Allow the existing coalesced publication to run; a pending native
+        # read is awaited via its own completion event on the next iteration.
+        await pilot.pause()
+
+
+async def _select_ready_llamacpp_console(console, pilot):
+    """Keep the original DOM-only timeout, then await selected readiness."""
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+    await _select_llamacpp_console(console)
+    await _await_selected_console_readiness(console, pilot)
+
+from tldw_chatbook.UI.Console_Modules.console_spend_projection import ConsoleReadinessConfigProjection
+
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen

@@ -862,6 +862,29 @@ def _runtime_tool_configuration(raw, selection):
     return result
 
 
+def _composition_mcp_capture_current(creator, service):
+    """Qualify the existing stock composition owner without reading tool sources."""
+    from . import console_chat_controller as controller_source
+    from tldw_chatbook.Agents import mcp_tool_provider as provider_source
+    from tldw_chatbook.MCP import console_tool_preparation as preparation_source
+    from tldw_chatbook.MCP.console_snapshot import standard_console_catalog_sources
+
+    checker, code, namespace = controller_source._CONSOLE_TOOL_COMPOSITION_CHECKER
+    return (
+        type(creator) is controller_source.ConsoleChatController
+        and controller_source._stock_console_tool_composition_current is checker
+        and checker.__code__ is code
+        and checker.__globals__ is namespace
+        and namespace is vars(controller_source)
+        and checker(creator)
+        and provider_source._controller_factory_current(
+            controller_source.MCPToolProvider
+        )
+        and provider_source._console_preparation_pipeline_current(preparation_source)
+        and standard_console_catalog_sources(service)
+    )
+
+
 async def capture_console_turn_configuration_owned(
     app,
     store,
@@ -893,6 +916,8 @@ async def capture_console_turn_configuration_owned(
         RecoveryRequired: Readiness or original source identity changed.
         asyncio.CancelledError: Cancellation after issued native work retires.
     """
+    from dataclasses import replace
+
     from tldw_chatbook import config
     from tldw_chatbook.DB.base_db import operation_owned_connection
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -1003,8 +1028,12 @@ async def capture_console_turn_configuration_owned(
         require_current()
         return result
 
+    stock_mcp = refs.mcp is not None and _composition_mcp_capture_current(
+        creator, refs.mcp
+    )
+    composition_mcp = stock_mcp and not session.ephemeral
     maximum = {}
-    if refs.mcp is not None:
+    if refs.mcp is not None and not stock_mcp:
         maximum = await capture_console_definition_maximum(
             refs.mcp,
             CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
@@ -1087,10 +1116,18 @@ async def capture_console_turn_configuration_owned(
                 ),
             )
             current()
+            if composition_mcp:
+                result = replace(
+                    result,
+                    mcp_tool_maximum=None,
+                    mcp_definition_capture="composition",
+                )
             return result
 
     result = await run_native(capture)
     current()
+    if stock_mcp and not _composition_mcp_capture_current(creator, refs.mcp):
+        raise RecoveryRequired("console_snapshot_owner_changed")
     require_current()
     return result
 
@@ -1342,10 +1379,12 @@ async def _controller_capture_turn_configuration_snapshot(
     app = self.app
     app_config = getattr(app, "app_config", None)
     service = getattr(app, "unified_mcp_service", None)
-    if not standard_console_sources(service):
+    stock_mcp = standard_console_sources(service)
+    if not stock_mcp and not standard_screen:
         return synchronous_capture()
     store = self.store
     session = next(item for item in store.sessions() if item.id == session_id)
+    runtime = getattr(self, "_hooks_v2_runtime", None)
     scratch = self._scratch_spaces
     provider_config = self._provider_config
     configuration_identity = config.current_config_identity()
@@ -1380,12 +1419,19 @@ async def _controller_capture_turn_configuration_snapshot(
             and current.__func__ is original.__func__
             and current.__self__ is original.__self__
         )
-    def require_current() -> None:
+    def require_resident_current() -> None:
         current_session = next(
             (item for item in store.sessions() if item.id == session_id), None
         )
         if (
-            self.app is not app
+            self._disposed
+            or self._shutdown_requested.is_set()
+            or getattr(self, "_hooks_v2_runtime", None) is not runtime
+            or (runtime is not None and (runtime._disposed
+                or runtime._chat_controller is not self
+                or runtime._chat_store is not store
+                or session_id in runtime._admission_fenced_sessions))
+            or self.app is not app
             or self.store is not store
             or current_session is not session
             or self._turn_context_provider is not original_provider
@@ -1397,12 +1443,10 @@ async def _controller_capture_turn_configuration_snapshot(
             or config.current_config_identity() != configuration_identity
             or store.session_settings_revision(session_id) != revision
             or store.session_workspace_id(session_id) != workspace_id
-            or self._provider_selection_for_session(session_id) != selection
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
         if standard_screen and (
             screen_owner.app_instance is not app
-            or screen_owner._ensure_console_chat_store() is not store
             or not all(
                 same_callback(getattr(screen_owner, name, None), original)
                 for name, original in zip(
@@ -1420,13 +1464,20 @@ async def _controller_capture_turn_configuration_snapshot(
             )
         ):
             raise RecoveryRequired("console_snapshot_owner_changed")
+    def require_current() -> None:
+        require_resident_current()
+        if (self._provider_selection_for_session(session_id) != selection
+            or (standard_screen and screen_owner._ensure_console_chat_store() is not store)
+            or (stock_mcp and not standard_console_sources(service))):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+
     if standard_screen:
         from .console_configuration_preparation import (
             capture_mounted_configuration_owned,
         )
         captured = await capture_mounted_configuration_owned(
             self, session_id, screen_owner, provider, require_current=require_current
-        )
+        ) if stock_mcp else None
         if captured is not None:
             return captured
     else:
@@ -1440,6 +1491,30 @@ async def _controller_capture_turn_configuration_snapshot(
             return await capture_runtime_configuration_owned(
                 self, session_id, require_current=require_current
             )
+    if standard_screen:
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+        from tldw_chatbook.UI.Console_Modules.turn_admission import (
+            applied, authority_inputs, capture_authority,
+        )
+        from .console_preparation_reads import run_preparation_read
+
+        inputs = authority_inputs(screen_owner, session_id)
+        require_current()
+        authority = await run_preparation_read(
+            lambda: run_finite_local_worker(capture_authority, screen_owner, inputs),
+            creator=self,
+            session_id=session_id,
+            reads=self._preparation_reads,
+            observers=() if runtime is None else (runtime._preparation_reads,),
+            require_current=require_resident_current,
+        )
+        require_current()
+        if authority_inputs(screen_owner, session_id).key != authority.key:
+            raise RecoveryRequired("console_snapshot_owner_changed")
+        with applied(authority):
+            context = synchronous_capture()
+        require_current()
+        return context
     maximum = await capture_console_definition_maximum(
         service, _source_controller.CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS
     )

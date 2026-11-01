@@ -10,6 +10,24 @@ decays into folklore, and folklore gets ignored. If you add one, bring the incid
 
 ---
 
+## A widget `query_one` can find has not necessarily composed its own children
+
+**TASK-36382, 2026-10-23.** `test_unfed_remount_restores_depth_and_running_state`
+waited until `screen.query(SkillEvalPanel)` was truthy, then called
+`set_options([])` on the panel's generator `Select`. Waiting for the `Select`
+itself instead was not enough: under four concurrent loops (load ~50) it still
+raised `NoMatches: 'SelectOverlay' on SetSelect(id='skill-eval-generator')`.
+Textual registers a mounted widget in the DOM first and composes its children
+later, in that widget's own message loop (`MessagePump._pre_process` dispatches
+`Compose`, then `Mount`), so each nesting level has its own window. Waiting for
+`select.is_mounted` (set after its `Mount`, which needs the composed children)
+made 32 of 32 concurrent runs pass. A second error in the same failure,
+`NoMatches '#label'` from `Select._on_mount`, came from app shutdown after the
+test body had raised; it was not a separate product bug.
+
+When a test calls a method that reaches into a widget's children, wait for
+that widget's `is_mounted`, not for a query to find it or its container.
+
 ## Metadata mount echoes can cancel the worker that requested a recompose
 
 **TASK-32755.1, 2026-10-21.** Adding an off-thread transcription readiness
@@ -900,6 +918,25 @@ Re-query after **every** await that could trigger a recompose, and take the refe
 the caller will act on *after* the last one — scrolling counts, because
 `scroll_to_widget` can itself provoke another reconciliation pass.
 
+## A canvas's own fields run ahead of its mounted children -- stamp what a child was composed for ON the child (TASK-34000.40, 2026-10-26)
+
+Escape in the Notes filter used to lose unsubmitted text, because the
+canvas-scoped sync's recompose rebuilt the box from the applied filter. The
+first fix carried a "draft" -- the box's text when it differed from the
+canvas's `filter_value` and from the incoming filter. dev's
+`test_library_shell_filtered_delete_refreshes_list_without_ghost` went red: a
+delete from a filtered list clears the filter in TWO syncs before one
+recompose. `sync_state` stores its fields and only schedules the rebuild, so on
+the second sync `filter_value` was already `""` while the mounted box still
+showed the applied `retro`, and `retro` was "carried" over the clear.
+
+**Rule.** To ask "did the user change this child since it was composed?",
+compare it with a value stamped on the child at compose time
+(`filter_box._library_applied_filter`), not with the container's field: a
+second sync before the first recompose has moved the field on. The same
+reason `LibraryNotesCanvas._apply_post_compose_state` gates on the mounted
+children rather than on `self.mode`.
+
 ## Textual focuses the clicked widget BEFORE the press bubbles — a click-outside dismissal must not restore the popup's opener
 
 **TASK-25709, 2026-08-30.** Wiring click-outside dismissal for the Context rail's
@@ -1786,6 +1823,71 @@ nor doing it *before* the snapshot landed.
   defect for every other branch of the same phase. Prefer a target the phase
   always composes.
 
+## Textual's own focus reset looks exactly like a user focus move (TASK-34000.28 fix rounds 1-2, 2026-10-25)
+
+Enter on the Notes tree's "more" pager loaded the next page and left focus in
+the filter, where the next printable key typed into it. The hand-off that
+should have focused the first added row already existed, and its mounted
+Pilot pins were green.
+
+- **Trace (a `set_focus` wrapper plus an `on_descendant_focus` wrapper that
+  records `focus_intent_generation`).** The loading-state recompose pruned the
+  focused pager. Textual's `Screen._reset_focus` then moved focus to the
+  Library grip. The screen counted that `DescendantFocus` as the user's own
+  move (generation 25 → 26). That vetoed both the canvas's pager retention
+  and the page's hand-off, and the identity restore fell back to the filter.
+- **Why the pins stayed green.** Every widget has its own message pump, so
+  the screen can read a queued `DescendantFocus` while another widget's
+  recompose is still mounting. The existing pins (a folder pager in
+  `LibraryHarness`) won the race: the canvas's `_after_recompose` ran first.
+  The root pager under the production stylesheet, at load ~35, lost it on
+  every run.
+- **Fix (final design).** Do not let Textual reset focus at all. The pager
+  press runs the loading sync, which captures the pager and only schedules
+  the recompose. It then parks focus itself, before the prune, through the
+  public API:
+  - mark the Library grip as `_library_notes_programmatic_focus_target`;
+  - call `screen.set_focus(grip)`;
+  - record the grip as the parked widget.
+
+  The landing is classified programmatic, so no generation bump happens, and
+  Textual's reset finds nothing focused to move. The hand-off holds while
+  focus is still on the pager or exactly on the parked widget, with the
+  generation unchanged.
+- **Two first cuts that failed review.**
+  - **A generation-only ownership check stole a user's move.** The user moved
+    to the filter, and in `LibraryHarness` that move never bumped the
+    generation, so the regression pin caught the hand-off taking focus back
+    (`test_mounted_pager_completion_does_not_steal_moved_focus[success]`).
+    The fix was keying the check on the parked widget.
+  - **Overriding the private `Screen._reset_focus` worked, but was ruled
+    out.** It changed every prune and blur landing screen-wide: Media and
+    Conversations read the same generation. A Textual rename would also have
+    silently dropped the override.
+- **Rule.** Any "has the user moved focus since X?" counter must not count
+  Textual's reset after a removal, which every recompose of the focused
+  control produces and which looks exactly like a click. Prefer parking focus
+  yourself (public `set_focus`, marked programmatic) before the recompose,
+  scoped to the flow that needs it, over reclassifying the framework's reset
+  globally.
+- **Two more incidents (PR #3259 CI fix round 1, 2026-10-26).**
+  - **A generation stamp at Back went stale with no key pressed.** Back's
+    hand-off to the row the note came from waits for the list's source
+    snapshot, and a `/` in that window had focus taken back to the row
+    (`focus_intent_generation` stamped at Back looked like the fix). The
+    editor's prune reset focus to the Library grip, the stamp was stale
+    before any key, and the no-move control went red. The fix withdraws the
+    hand-off from the real-input sites T5-a already uses (`on_key`, mouse,
+    wheel, the priority focus actions, suspend), never from
+    `on_descendant_focus`.
+  - **A restore's own queued event disarmed the arm made right after it.**
+    The Notes filter's Down landing restored focus to the box and then armed
+    the list-entry focus, whose first attempt runs after the next refresh.
+    When the box's queued `DescendantFocus` was handled first, it read as
+    the user leaving the list and disarmed the landing (1 of 10 runs under
+    CPU load; certain once the attempt is held). Landing at once, while the
+    rows are known to be mounted, takes the race away.
+
 ## Keep control choices outside the saved ID domain (TASK-32776, 2026-09-18)
 
 The real Persona service accepts `none` and `auto` as IDs. The workspace Select
@@ -2094,6 +2196,65 @@ switched to. The fix binds the command to its origin in the worker
 that chat no longer shows, and post awaited answers with an explicit
 `session_id`. **Making a call asynchronous changes the contract of everything
 it calls: list each handler's awaits and what it re-reads after them.**
+
+## A `Collapsible` scrolls itself into view on every `collapsed` change -- programmatic ones too
+
+**TASK-34100.6, 2026-10-04.** Arrowing through the first-run Provider list from a
+keyed row (its Authentication section expanded) to a keyless one (collapsed) scrolled
+the step so far that the focused list left the screen (list at y=-11 in a viewport
+starting at y=9). Nothing in the app scrolled: Textual 8's `Collapsible._watch_collapsed`
+ends with `call_after_refresh(self.scroll_visible)`, whoever set `collapsed`. It only
+showed once the list grew taller than 7 rows. Fix without private API: a subclass whose
+`scroll_visible` is held while the step sets `collapsed` and released by a
+`call_after_refresh` queued after the Collapsible's own
+(`first_run_provider_key_entry.AuthCollapsible`). A focus that relied on that scroll then
+needs to wait a refresh too (`call_after_refresh(field.focus)`), so focusing scrolls to
+the field's expanded position. Pinned by
+`test_arrowing_between_keyed_and_local_rows_keeps_the_list_in_view`.
+
+**Correction (review round 1, 2026-10-05): one refresh is not a layout.** Live at
+120x40 a mouse click on OpenAI (a click highlights and picks in one go) focused the key
+field below the fold. Temporary logging showed the after-refresh focus ran while the
+field's `region` was still `Region(0, 0, 0, 0)`: the expanded section had not been laid
+out, and `scroll_to_widget` reads `virtual_region_with_margin` at call time, so the
+focus scroll aimed at nothing (no `scroll_y` change at all). Pilot always laid out
+first, so the pilot test passed on the broken code. The fix focuses with
+`scroll_visible=False` and calls `scroll_visible(animate=False)` only once
+`widget.region` is non-empty, re-queuing `call_after_refresh` until it is
+(`first_run_provider_key_entry._reveal_after_layout`). The test that reproduces it runs
+the pick's first scheduled callback synchronously -- the live frame order --
+(`test_a_clicked_keyed_row_brings_its_key_field_on_screen`, RED at the live region).
+
+## Overriding `watch_<name>` replaces the base class's watcher -- call `super()`
+
+**TASK-34100.6 review round 2, 2026-10-05.** Round 1 added
+`ProviderChoiceList.watch_highlighted` to keep the browsed row inside the step's
+viewport. It never called `super()`. Textual 8 resolves a reactive's watcher with
+`getattr(obj, "watch_highlighted")` (`reactive.py`, `_check_watchers`), so the override
+*replaced* `OptionList.watch_highlighted`, which is the code that calls
+`scroll_to_highlight()` and posts `OptionHighlighted`. Arrowing past the 14-row list
+viewport at 120x40 kept selecting providers while the highlighted row sat below the
+list's own fold (two reviewers, a probe and a live capture: `scroll_y=0`, highlighted
+line 26). No test arrowed past the viewport, and the tests that existed scrolled
+explicitly. A Textual watcher is not a hook that chains: an override that adds
+behaviour must call `super().watch_<name>(...)` first. Pin it with a test that drives
+the base behaviour you kept (here: Down past the viewport, then assert the row's line is
+inside the list's scroll window). Pinned by
+`test_arrowing_past_the_lists_viewport_scrolls_the_list`.
+
+## `text-wrap: wrap` on a RadioButton only moves the cut -- ToggleButton is one row tall
+
+**TASK-34100.6 pass 2, 2026-10-06.** At 80x24 the Provider step's exported-key option
+read 'Use ANTHROPIC_API_KEY from your environment (found; no…', clipping the words the
+AC requires. The obvious fix, `text-wrap: wrap; height: auto` on the button, removed the
+ellipsis and still showed one row ('… (found; not'): Textual 8's
+`ToggleButton.get_content_height` returns 1 whatever the style says, so the wrapped
+second line is laid out into no space. A test that checked only for the missing `…`
+would have passed. The fix is a subclass that measures the wrapped label
+(`Widget.get_content_height`) when the stylesheet wraps it
+(`first_run_provider_key_entry.KeySourceRadioButton`), with a test that reads the
+button's rendered lines for the whole phrase, not just for the absence of an ellipsis
+(`test_the_env_choice_label_is_never_cut_short[80x24]`).
 
 ---
 

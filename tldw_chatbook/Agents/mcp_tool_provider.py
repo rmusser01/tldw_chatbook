@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import contextlib
+import inspect
 import json
 import sys
 import threading
@@ -480,6 +481,7 @@ class MCPToolProvider:
         maximum_tool_ids: frozenset[str] | None = None,
         maximum_definition_hashes: Mapping[str, str] | None = None,
         owned_profile_ids: frozenset[str] = frozenset(),
+        _freeze_definition_maximum_on_compose: bool = False,
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -539,6 +541,32 @@ class MCPToolProvider:
         # gate resolution; None keeps every pre-feature call identical.
         self._persona_policy_provider = persona_policy_provider
         self._runtime_source_provider = runtime_source_provider
+        if not isinstance(_freeze_definition_maximum_on_compose, bool):
+            raise TypeError("MCP composition ceiling flag must be bool")
+        if _freeze_definition_maximum_on_compose and (
+            maximum_tool_ids is not None
+            or maximum_definition_hashes is not None
+            or not _controller_factory_current(type(self))
+        ):
+            raise PermissionError("mcp_catalog_source_changed")
+        self._composition_definition_ceiling = _freeze_definition_maximum_on_compose
+        self._freeze_definition_maximum_on_compose = (
+            _freeze_definition_maximum_on_compose
+        )
+        # Retain the raw ceiling decision: normalization must not qualify
+        # custom or non-frozen inputs for omission of an external dependency.
+        self._maximum_needs_external_catalog = True
+        if type(maximum_tool_ids) is frozenset and _controller_factory_current(
+            type(self)
+        ):
+            from tldw_chatbook.MCP import console_tool_preparation as preparation_source
+
+            if _console_preparation_pipeline_current(preparation_source):
+                self._maximum_needs_external_catalog = (
+                    preparation_source.hub_catalog.maximum_needs_external_catalog(
+                        maximum_tool_ids
+                    )
+                )
         self._maximum_tool_ids = (
             frozenset(str(value) for value in maximum_tool_ids)
             if maximum_tool_ids is not None
@@ -612,6 +640,11 @@ class MCPToolProvider:
         )
 
         service = self._service
+        if self._composition_definition_ceiling and (
+            not standard_console_catalog_sources(service)
+            or not _controller_factory_current(type(self))
+        ):
+            raise PermissionError("mcp_catalog_source_changed")
         if not standard_console_catalog_sources(service):
             await self._compose_catalog(kill_switch_engaged=kill_switch_engaged)
             return
@@ -664,6 +697,8 @@ class MCPToolProvider:
         def require_current():
             if self._service is not service:
                 raise PermissionError("mcp_catalog_owner_changed")
+            if self._composition_definition_ceiling and not _controller_factory_current(type(self)):
+                raise PermissionError("mcp_catalog_source_changed")
             if captured is not None:
                 captured.require_current()
                 if asyncio.get_running_loop() is not self._main_loop:
@@ -680,6 +715,8 @@ class MCPToolProvider:
             engaged = kill_switch_engaged
         require_current()
         if engaged:
+            if self._composition_definition_ceiling:
+                self._install_console_catalog([], {}, require_current)
             self._catalog = []
             self._entry_by_llm_name = {}
             self._not_connected_count = 0
@@ -688,9 +725,14 @@ class MCPToolProvider:
 
         hub_tools: list[HubTool] = []
         servers = []
+        from tldw_chatbook.MCP import console_tool_preparation as preparation_source
+        include_external = not (captured is not None
+            and not self._maximum_needs_external_catalog
+            and _controller_factory_current(type(self))
+            and _console_preparation_pipeline_current(preparation_source))
         records = await (
             captured.catalog_callback() if captured is not None else service.local_external_catalog()
-        )
+        ) if include_external else []
         if captured is None:
             await asyncio.sleep(0)  # the read may have run on the loop (TASK-33620.15.5)
         require_current()
@@ -793,7 +835,13 @@ class MCPToolProvider:
         if preparation.profile_id != self._profile_id():
             raise PermissionError("mcp_catalog_profile_changed")
         if (
-            preparation._builtin_raw_name_exclusions != self._builtin_raw_name_exclusions
+            self._maximum_needs_external_catalog
+            and not preparation._includes_external_catalog
+        ):
+            raise PermissionError("mcp_catalog_maximum_changed")
+        if (
+            preparation._builtin_raw_name_exclusions
+            != self._builtin_raw_name_exclusions
             or preparation._owned_profile_ids != self._owned_profile_ids
         ):
             raise PermissionError("mcp_catalog_consumer_changed")
@@ -811,6 +859,8 @@ class MCPToolProvider:
         with self._decisions_lock:
             self._stamped_decisions.clear()
         if preparation.kill_switch:
+            if self._composition_definition_ceiling:
+                self._install_console_catalog([], {}, require_current)
             self._catalog = []
             self._entry_by_llm_name = {}
             self._not_connected_count = 0
@@ -871,7 +921,23 @@ class MCPToolProvider:
             )
             entry_by_llm_name[llm_name] = (tool, state)
 
+        if self._freeze_definition_maximum_on_compose:
+            from tldw_chatbook.MCP.hub_tool_catalog import (
+                maximum_needs_external_catalog,
+            )
+
+            maximum_hashes = {
+                tool.tool_id: definition_hash(tool.description, tool.input_schema)
+                for tool in eligible
+            }
+            maximum_ids = frozenset(maximum_hashes)
+            needs_external = maximum_needs_external_catalog(maximum_ids)
         require_current()
+        if self._freeze_definition_maximum_on_compose:
+            self._maximum_tool_ids = maximum_ids
+            self._maximum_definition_hashes = maximum_hashes
+            self._maximum_needs_external_catalog = needs_external
+            self._freeze_definition_maximum_on_compose = False
         self._catalog = catalog
         self._entry_by_llm_name = entry_by_llm_name
 
@@ -929,6 +995,9 @@ class MCPToolProvider:
             or when the kill switch was on at that time.
         """
         return list(self._catalog)
+
+    def hook_operation(self, tool_id: str) -> str | None:
+        return "mcp.call" if tool_id in self._entry_by_llm_name else None
 
     def load_schema(self, tool_id: str) -> ToolSchema:
         """Resolve one catalog entry's invocation schema.
@@ -1910,6 +1979,20 @@ class MCPToolProvider:
             # audited with real provenance instead of the pre-Task-4
             # always-empty `argument_names: []`.
             def create_execution():
+                # Legacy adapters remain executable but cannot produce qualified
+                # history until they accept the optional reviewed fingerprint.
+                approval_metadata = {}
+                if decision == "approved":
+                    try:
+                        parameters = inspect.signature(execute).parameters
+                    except (TypeError, ValueError):
+                        parameters = {}
+                    if "approval_definition_hash" in parameters:
+                        from tldw_chatbook.MCP.permission_store import definition_hash
+
+                        approval_metadata["approval_definition_hash"] = definition_hash(
+                            tool.description, tool.input_schema
+                        )
                 return execute(
                     tool.server_key,
                     tool.name,
@@ -1917,6 +2000,7 @@ class MCPToolProvider:
                     initiator="agent",
                     decision=decision,
                     registered_argument_names=schema_argument_names(tool.input_schema),
+                    **approval_metadata,
                 )
 
             async def execute_observed():

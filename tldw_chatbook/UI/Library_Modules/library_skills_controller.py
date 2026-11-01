@@ -1218,7 +1218,7 @@ class LibrarySkillsController:
             self._request_library_skills_browse(refresh_scope)
 
     async def _load_library_skills_trust_posture(
-        self, posture_fn
+        self, posture_fn, *, retry: bool = False
     ) -> LibraryEntryReconcileResult:
         """Await the off-thread ``trust_posture()`` call and apply the result.
 
@@ -1228,6 +1228,7 @@ class LibrarySkillsController:
                 this never re-reads ``local_skill_trust_service`` itself --
                 irrelevant here, but keeps this a pure "run this callable
                 off-thread" step).
+            retry: Refresh the scoped Skills page after a successful explicit retry.
         """
         route_key = self._library_entry_route_key()
         generation = self._library_snapshot_state_generation
@@ -1243,6 +1244,11 @@ class LibrarySkillsController:
             or self._library_skills_view != "list"
         ):
             return LibraryEntryReconcileResult.SUPERSEDED
+        if retry and posture == "ready":
+            # A newer filter/page request may still be loading while Retry waits.
+            self._refresh_library_skills_after_committed_mutation(
+                scope=self._library_skills_browse_controller.scope
+            )
         identity = self._capture_library_entry_focus()
         prior_callback: Callable[[], None] | None = None
         pending = (generation, route_key)
@@ -2075,7 +2081,7 @@ class LibrarySkillsController:
         name = self._selected_skill_name
         is_create = not name
         base_state = self._library_skill_editor_state
-        if base_state is None:
+        if base_state is None or base_state.plugin_owned:
             return
         fields = self._read_library_skill_editor_fields()
         if fields is None:
@@ -2504,6 +2510,11 @@ class LibrarySkillsController:
             self._update_library_skill_status_static("Skill deletion is unavailable.")
             return
         state = self._library_skill_editor_state
+        if state is not None and state.plugin_owned:
+            self._update_library_skill_status_static(
+                "Manage this owned component in Plugins."
+            )
+            return
         version = state.version if state is not None else None
         try:
             result = await self._run_library_service_call(
@@ -3032,6 +3043,9 @@ class LibrarySkillsController:
             self._refresh_local_source_snapshot()
 
     async def _review_library_skill_trust(self) -> None:
+        state = self._library_skill_editor_state
+        if state is not None and state.plugin_owned:
+            return
         if self._library_skills_view != "editor" or not self._selected_skill_name:
             return
         name = self._selected_skill_name
@@ -3049,6 +3063,18 @@ class LibrarySkillsController:
         self._library_skill_active_review = dict(result)
         self._render_library_skill_trust_panel()
 
+    @on(Button.Pressed, "#library-skill-manage-plugin")
+    async def handle_library_skill_manage_plugin(self, event: Button.Pressed) -> None:
+        event.stop()
+        state = self._library_skill_editor_state
+        if state is None or not state.plugin_owned or not state.plugin_installation_id:
+            return
+        from tldw_chatbook.UI.Plugins_Modules.review import open_owned_plugin
+
+        await open_owned_plugin(
+            self.app_instance, state.plugin_installation_id, state.plugin_component_id
+        )
+
     @on(Button.Pressed, "#library-skill-trust-approve")
     def handle_library_skill_trust_approve(self, event: Button.Pressed) -> None:
         """Approve the captured trust review via the passphrase modal.
@@ -3059,6 +3085,9 @@ class LibrarySkillsController:
         """
         event.stop()
         # task-417: any trust action supersedes a lingering "Saved.".
+        state = self._library_skill_editor_state
+        if state is not None and state.plugin_owned:
+            return
         self._update_library_skill_status_static("")
         self.run_worker(
             self._approve_library_skill_trust(),

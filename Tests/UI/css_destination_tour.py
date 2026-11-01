@@ -4,6 +4,7 @@ import asyncio
 
 # These are actual destination bodies, not shared shell navigation/chrome.
 DESTINATION_BODIES = {
+    "plugins": "#plugins-shell",
     "home": "#home-canvas",
     "console": "#console-native-composer",
     "library": "#library-landing-canvas",
@@ -18,6 +19,7 @@ DESTINATION_BODIES = {
     "settings": "#settings-detail-pane",
     "research": "#research-chat-pane",
     "meetings": "#meetings-transcript",
+    "kanban": "#kanban-board-root",
 }
 
 

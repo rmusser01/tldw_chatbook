@@ -623,3 +623,231 @@ async def test_large_valid_schema_retains_full_tools_through_ordinary_fallback(
     assert len(probe.permission_threads) == 3  # current ordinary shared switch
     assert len(probe.read_threads) == 2
     assert all(lease not in storage_admission._live_leases for lease in probe.leases)
+
+@pytest.mark.asyncio
+async def test_builtin_only_controller_ceiling_keeps_policy_without_external_read(
+    snapshot_case,
+):
+    case = snapshot_case
+    _, inventory_calls = _loop_projection(case)
+    context = _configure(
+        _context(case),
+        mcp_tool_maximum=frozenset({"builtin:tldw_chatbook::sample_builtin"}),
+    )
+    probe = _MaximumProbe(case.source, case.permissions)
+    with probe.installed():
+        mcp, builtin_gate, local, review = await _compose(case, context)
+    assert mcp is not None and builtin_gate is not None and local is not None
+    assert callable(review)
+    assert [hub.tool_id for hub, _ in mcp._entry_by_llm_name.values()] == [
+        "builtin:tldw_chatbook::sample_builtin"
+    ]
+    assert len(mcp.list_catalog()) == 1 and mcp.not_connected_count == 0
+    assert (
+        case.app.console_mcp_tool_count,
+        case.app.console_mcp_not_connected_count,
+    ) == (
+        1,
+        0,
+    )
+    assert inventory_calls == [True]
+    assert len(probe.permission_threads) == 1
+    assert all(
+        thread is not threading.current_thread() for thread in probe.permission_threads
+    )
+    assert all(lease not in storage_admission._live_leases for lease in probe.leases)
+    assert not probe.audit_threads
+    assert (
+        not probe.read_threads
+    ), "builtin-only composition read the excluded external catalog"
+
+
+@pytest.mark.asyncio
+async def test_builtin_only_schema_fallback_keeps_external_catalog_unused(
+    snapshot_case,
+):
+    from tldw_chatbook.MCP.client import MAX_SCHEMA_BYTES
+
+    case = snapshot_case
+    schema = {"type": "object", "$comment": "x" * (MAX_SCHEMA_BYTES + 1)}
+    inventory_threads = []
+
+    def manifest():
+        inventory_threads.append(threading.current_thread())
+        return {
+            "tools": [
+                {
+                    "name": "sample_builtin",
+                    "description": "builtin",
+                    "inputSchema": schema,
+                }
+            ]
+        }
+
+    case.local.manifest_provider = manifest
+    context = _configure(
+        _context(case),
+        mcp_tool_maximum=frozenset({"builtin:tldw_chatbook::sample_builtin"}),
+        mcp_definition_maximum={
+            "builtin:tldw_chatbook::sample_builtin": definition_hash("builtin", schema)
+        },
+    )
+    probe = _MaximumProbe(case.source, case.permissions)
+    with probe.installed():
+        mcp, _, local, _ = await _compose(case, context)
+    assert mcp is not None and local is not None
+    assert len(mcp.list_catalog()) == 1
+    assert mcp.load_schema(mcp.list_catalog()[0].id).parameters == schema
+    assert inventory_threads == [threading.current_thread()] * 2
+    assert len(probe.permission_threads) == 4
+    assert not probe.read_threads
+    assert all(lease not in storage_admission._live_leases for lease in probe.leases)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "stock",
+        "unset",
+        "set",
+        "frozen-subclass",
+        "provider-subclass",
+        "catalog-callback",
+    ],
+)
+async def test_ordinary_builtin_ceiling_preserves_custom_routes(
+    snapshot_case, monkeypatch, kind
+):
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+
+    case = snapshot_case
+    _, inventory_calls = _loop_projection(case)
+    maximum = frozenset({"builtin:tldw_chatbook::sample_builtin"})
+    factory = MCPToolProvider
+    catalog_calls = []
+    if kind == "unset":
+        maximum = None
+    elif kind == "set":
+        maximum = set(maximum)
+    elif kind == "frozen-subclass":
+
+        class CustomMaximum(frozenset):
+            pass
+
+        maximum = CustomMaximum(maximum)
+    elif kind == "provider-subclass":
+
+        class CustomProvider(MCPToolProvider):
+            pass
+
+        factory = CustomProvider
+    elif kind == "catalog-callback":
+        original = case.service.local_external_catalog
+
+        async def custom_catalog():
+            catalog_calls.append(True)
+            return await original()
+
+        monkeypatch.setattr(case.service, "local_external_catalog", custom_catalog)
+    provider = factory(
+        service=case.service,
+        main_loop=asyncio.get_running_loop(),
+        maximum_tool_ids=maximum,
+    )
+    probe = _MaximumProbe(case.source, case.permissions)
+    with probe.installed():
+        await provider.compose_catalog()
+    assert [hub.tool_id for hub, _ in provider._entry_by_llm_name.values()] == (
+        ["local:one::first", "builtin:tldw_chatbook::sample_builtin"]
+        if kind == "unset"
+        else []
+        if kind == "catalog-callback"
+        else ["builtin:tldw_chatbook::sample_builtin"]
+    )
+    assert len(probe.read_threads) == (0 if kind == "stock" else 1)
+    assert len(probe.permission_threads) == 2
+    # A custom service keeps the original worker inventory route; this
+    # fixture's loop-only governance declines that optional inventory.
+    assert inventory_calls == ([] if kind == "catalog-callback" else [True])
+    assert catalog_calls == ([True] if kind == "catalog-callback" else [])
+    assert all(lease not in storage_admission._live_leases for lease in probe.leases)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "maximum",
+    [
+        None,
+        frozenset({"local:one::first"}),
+        frozenset({"local:one::first", "builtin:tldw_chatbook::sample_builtin"}),
+    ],
+)
+async def test_builtin_only_preparation_cannot_be_adopted_by_external_consumer(
+    snapshot_case, maximum
+):
+    from tldw_chatbook.Agents import mcp_tool_provider as provider_source
+    from Tests.MCP.test_console_tool_preparation import _prepare
+
+    case = snapshot_case
+    _loop_projection(case)
+    preparation = await _prepare(
+        case, maximum=frozenset({"builtin:tldw_chatbook::sample_builtin"})
+    )
+    assert not preparation._includes_external_catalog
+    composition = provider_source.capture_standard_controller_composition(
+        provider_source.MCPToolProvider, case.service
+    )
+    provider = provider_source.MCPToolProvider(
+        service=case.service,
+        main_loop=asyncio.get_running_loop(),
+        maximum_tool_ids=maximum,
+    )
+    probe = _MaximumProbe(case.source, case.permissions)
+    with probe.installed(), pytest.raises(
+        PermissionError, match="mcp_catalog_maximum_changed"
+    ):
+        provider.adopt_console_preparation(
+            preparation, _controller_composition=composition
+        )
+    assert not provider.list_catalog()
+    assert not probe.permission_threads and not probe.read_threads
+
+
+@pytest.mark.asyncio
+async def test_initial_maximum_stays_fresh_before_builtin_only_composition(
+    snapshot_case,
+):
+    from tldw_chatbook.MCP.console_snapshot import capture_console_definition_maximum
+
+    case = snapshot_case
+    _loop_projection(case)
+    case.permissions.set_tool_state("local:one", "first", "deny")
+    initial = _MaximumProbe(case.source, case.permissions)
+    with initial.installed():
+        maximum = await capture_console_definition_maximum(case.service, frozenset())
+    assert set(maximum) == {"builtin:tldw_chatbook::sample_builtin"}
+    assert len(initial.read_threads) == len(initial.permission_threads) == 1
+    case.permissions.set_tool_state(
+        "local:one", "first", "allow", definition_hash=definition_hash("", None)
+    )
+    context = _configure(
+        _context(case),
+        mcp_tool_maximum=frozenset(maximum),
+        mcp_definition_maximum=maximum,
+    )
+    composition = _MaximumProbe(case.source, case.permissions)
+    with composition.installed():
+        mcp, _, _, _ = await _compose(case, context)
+    assert mcp is not None and len(mcp.list_catalog()) == 1
+    assert not composition.read_threads and len(composition.permission_threads) == 1
+    following = _MaximumProbe(case.source, case.permissions)
+    with following.installed():
+        fresh = await capture_console_definition_maximum(case.service, frozenset())
+    assert set(fresh) == {"local:one::first", "builtin:tldw_chatbook::sample_builtin"}
+    assert len(following.read_threads) == len(following.permission_threads) == 1
+    assert all(
+        lease not in storage_admission._live_leases
+        for probe in (initial, composition, following)
+        for lease in probe.leases
+    )

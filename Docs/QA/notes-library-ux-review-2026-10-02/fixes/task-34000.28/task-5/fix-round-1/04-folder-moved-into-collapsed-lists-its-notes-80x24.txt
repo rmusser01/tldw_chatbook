@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N   Library notes · Folder           N  Select a note to edit it here.
+  a   organization updated. · Next:    o
+  v   Create a note or add from        t
+      files.                           e
+      Notes (122)                      s
+      Filter  Filter notes… (Enter)
+--->    New     Sort: Newest
+        Select
+        Add from files…     Export   <---
+        New folder     Rename
+        Move     Remove
+--->  Folder organization updated.
+      ▸ Agent_Lessons
+      ▸ Journal
+      ▸ Meetings
+      ▸ Projects
+      ▾ Research
+        ▾ Recipes
+  typing in field | esc rail | F1 · F6 · Ctrl+P · Ctrl+Q

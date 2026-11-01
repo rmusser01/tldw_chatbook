@@ -27,6 +27,7 @@ from .executor import (
     ExecutorResident,
     ExecutorResult,
     LocalSourceChangedError,
+    URLIngestSource,
     WorkerPhase,
     validate_local_source_snapshot,
 )
@@ -929,10 +930,17 @@ def _default_parse_job(
         parse_local_file_for_ingest,
     )
 
+    from tldw_chatbook.Utils.egress import UrlProvenance
+
+    parse_options = dict(options)
+    provenance = parse_options.pop("url_provenance", None)
+    if not isinstance(provenance, UrlProvenance):
+        provenance = None
     return parse_local_file_for_ingest(
         file_path,
-        options,
+        parse_options,
         transcription_runner=transcription_runner,
+        url_provenance=provenance,
     )
 
 
@@ -1011,9 +1019,14 @@ def _run_executor_worker(
                         WorkerPhase.TRANSCRIBING,
                     )
                 )
-                if type(request.source) is FileAudioSource:
+                if type(request.source) in (FileAudioSource, URLIngestSource):
+                    source = (
+                        request.source.url
+                        if type(request.source) is URLIngestSource
+                        else request.source.path
+                    )
                     payload = parse_job(
-                        request.source.path,
+                        source,
                         dict(request.options),
                         transcription_runner=resident.provider.runner,
                     )

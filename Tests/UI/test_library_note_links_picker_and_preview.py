@@ -33,6 +33,7 @@ from Tests.UI.library_note_links_support import (
     LISBON,
     TWO,
     _app,
+    _library,
     _info_backlinks,
     _open_note,
     _painted,
@@ -44,7 +45,6 @@ from Tests.UI.library_note_links_support import (
 )
 from Tests.UI.library_quit_guard_support import (
     SIZE,
-    _library,
     _new_blank_note,
     _scaled_autosave,
     _type,
@@ -135,6 +135,12 @@ async def _navigation_keys_leave_the_line_alone(
 async def _blank_note_with_body_focused(screen, pilot) -> TextArea:
     """New ▸ Blank, the title typed, the body clicked (the user's gesture)."""
     await _new_blank_note(screen, pilot)
+    await pilot.click("#library-note-title")
+    await _until(
+        pilot,
+        lambda: screen.focused is screen.query_one("#library-note-title"),
+        "the title to take focus",
+    )
     await _type(pilot, VERIFIER)
     await _until(pilot, lambda: _title_value(screen) == VERIFIER, "the title typed")
     body = screen.query_one("#library-note-body", TextArea)

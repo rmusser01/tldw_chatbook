@@ -212,13 +212,22 @@ def _default_readiness(app_config: Mapping[str, Any], provider: str) -> str | No
         entry_for,
         family_execution_key,
     )
-    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.Chat.provider_readiness import (
+        custom_endpoint_family_readiness,
+        get_provider_readiness,
+    )
 
     entry = entry_for(app_config, provider)
     identity = resolve_console_provider_identity(
         family_execution_key(entry.family) if entry is not None else provider
     )
-    readiness = get_provider_readiness(identity.readiness_key, app_config)
+    # TASK-34100.4 review (F3): the family slot's stranded key is never the
+    # entry's credential; the entry rule below decides.
+    readiness = (
+        custom_endpoint_family_readiness
+        if entry is not None
+        else get_provider_readiness
+    )(identity.readiness_key, app_config)
     if entry is not None and readiness.ready:
         readiness = (
             _custom_endpoint_missing_key_readiness(

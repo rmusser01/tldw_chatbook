@@ -1,0 +1,98 @@
+Timeout (0:01:00)!
+Thread 0x0000a608 (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 355 in wait
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 250 in initializing
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1435 in _acquire_storage
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1389 in acquire_storage
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\local_content_lifetime.py", line 76 in operation
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\local_content_lifetime.py", line 107 in admitted
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\local_content_lifetime.py", line 119 in asynchronous
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Skills_Interop\skills_scope_service.py", line 78 in _maybe_await
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Skills_Interop\skills_scope_service.py", line 170 in _call
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Skills_Interop\skills_scope_service.py", line 188 in get_context
+  File "C:\Python312\Lib\asyncio\events.py", line 88 in _run
+  File "C:\Python312\Lib\asyncio\base_events.py", line 1999 in _run_once
+  File "C:\Python312\Lib\asyncio\base_events.py", line 645 in run_forever
+  File "C:\Python312\Lib\asyncio\windows_events.py", line 322 in run_forever
+  File "C:\Python312\Lib\asyncio\base_events.py", line 678 in run_until_complete
+  File "C:\Python312\Lib\asyncio\runners.py", line 118 in run
+  File "C:\Python312\Lib\asyncio\runners.py", line 195 in run
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\UI\Console_Modules\skill.py", line 346 in <lambda>
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Chat\console_preparation_reads.py", line 202 in invoke
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00006c90 (most recent call first):
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_win_sleep.py", line 100 in wait_inner
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000a788 (most recent call first):
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_win_sleep.py", line 100 in wait_inner
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000919c (most recent call first):
+  File "C:\Python312\Lib\threading.py", line 355 in wait
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 250 in initializing
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1435 in _acquire_storage
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 1389 in acquire_storage
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\storage_admission.py", line 167 in _repository_operation
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Backup_Recovery\participants.py", line 435 in _core_operation
+  File "C:\Python312\Lib\contextlib.py", line 137 in __enter__
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\UI\Console_Modules\character_context.py", line 735 in invoke
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Chat\console_preparation_reads.py", line 202 in invoke
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000a588 (most recent call first):
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_win_sleep.py", line 100 in wait_inner
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00002f24 (most recent call first):
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_win_sleep.py", line 100 in wait_inner
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00009e1c (most recent call first):
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_win_sleep.py", line 100 in wait_inner
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x000072a4 (most recent call first):
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_win_sleep.py", line 100 in wait_inner
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59 in run
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93 in _worker
+  File "C:\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x000096b0 (most recent call first):
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\tldw_chatbook\Utils\windows_files.py", line 0 in _stat_handle
+  File

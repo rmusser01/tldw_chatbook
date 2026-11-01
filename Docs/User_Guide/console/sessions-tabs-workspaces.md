@@ -46,7 +46,7 @@ built-in Default workspace is intentionally absent from the Tree; **Switch**
 is the route to it. **RAG** narrows retrieval to the active workspace's
 items — see [Context & RAG](context-and-rag.md).
 
-**Conversations section** (left rail). A separate **Search conversations**
+**Conversations section** (left rail). A separate **Filter visible titles**
 box with **Clear**, a **New conversation** button, and a flat list containing
 only Default-workspace and unassigned conversations. A conversation assigned
 to a named workspace appears under that workspace in the Tree instead, never
@@ -224,7 +224,7 @@ History remain usable.
 
 | Control | What it does |
 |---|---|
-| "Search conversations" + "Clear" | Filters only Default and unassigned conversations; "Clear" resets it without changing Workspaces search |
+| "Filter visible titles" + "Clear" | Filters only Default and unassigned conversations, by **title**. Case is ignored for plain A–Z letters; for accented letters, type the case the title uses. The match count follows the same title rule; when more titles match than the list has room for, it reads "N matches. Showing K of N". It does not look inside messages: use **Search all chats…** or Ctrl+K for that. The box keeps your text, its case and the cursor while results update, so you can keep typing through a search. "Clear" empties it without changing Workspaces search |
 | "New conversation" | Starts a fresh conversation |
 | Conversation row | Click to open it in the Console |
 | "☆" / "★" | Stars or unstars the conversation; starred rows sort first in this same list |
@@ -437,8 +437,9 @@ conversation.
    match — or,
 2. For a named-workspace conversation, search in **Workspaces**, disclose its
    parent if needed, and select the conversation leaf.
-3. For a Default or unassigned conversation, search in **Conversations** and
-   select its flat row.
+3. For a Default or unassigned conversation, filter **Conversations** by its
+   title and select its flat row. (To find it by something said in it, use
+   **Search all chats…** instead.)
 
 **Star a conversation**
 
@@ -651,3 +652,34 @@ Closing denies pending tool approvals, cancels unanswered questions and declines
 skill, chat-creation and worktree-merge confirmations, cancelling the owning work
 without affecting other tabs. Declining chat creation creates no chat. Declining
 a merge or discard confirmation performs neither action.
+
+## Assistant recovery choices
+
+Ask an Allowed Console assistant to find saved local archives, or use the
+result's **Preview** to inspect the original chat read-only. Chat archival and
+workspace archival are separate states. The app offers these choices:
+
+| Chat | Workspace | Confirmation and effect |
+|---|---|---|
+| Archived | Active or Default | Restore chat. |
+| Archived | Archived | Restore chat only, or restore chat and workspace. Chat-only leaves the workspace archived; Open still requires workspace recovery. |
+| Active | Archived | Restore workspace. Its other active chats become visible; individually archived chats stay archived. |
+| Active | Active or Default | Already available. Open separately; no restoration write is needed. |
+
+Restoration preserves the chat's original identity, messages, branches and
+workspace membership. It leaves the current Chat, workspace and unsent draft
+in place. **Open** is a separate explicit action that rechecks current state
+and resumes the original saved branch; an existing open tab and its draft are
+reused when possible. Restore does not send, activate a workspace, copy history
+or restart an agent.
+
+If another active workspace has reused the archived workspace's name,
+**Restore as** collects a replacement. The final confirmation shows that name;
+changing it requires fresh confirmation. A stale or rehomed result requires
+**Refresh** instead of silently restoring a different target. Partial outcomes
+identify the chat/workspace changes that actually completed and the remaining
+action. There is no automatic rollback of a restored workspace.
+
+See [assistant recovery](agent-runs-and-tools.md#find-and-restore-an-archived-chat-with-the-assistant)
+for expiry and confirmation, [archive search scope and dates](context-and-rag.md#assistant-archive-recovery-and-library-scope),
+and [ADR-166](../../../backlog/decisions/166-agent-assisted-archive-recovery.md).

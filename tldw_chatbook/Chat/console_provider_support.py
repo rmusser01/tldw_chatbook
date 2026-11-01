@@ -79,6 +79,17 @@ class ConsoleProviderCatalogEntry:
     requires_api_key: bool
     uses_direct_llama_path: bool = False
 
+    @property
+    def setup_facts(self):  # -> ProviderSetupFacts (lazy: avoids an import cycle)
+        """What setup needs to know: locality, key URL, base URL, ports (SF5).
+
+        Settings and first-run setup read these from this one shared record
+        (TASK-34100.6); ``Chat/provider_setup_facts.py`` owns the values.
+        """
+        from tldw_chatbook.Chat.provider_setup_facts import provider_setup_facts
+
+        return provider_setup_facts(self.readiness_key)
+
 
 # ADR-066: per-execution-key wire formats for Console thinking controls.
 # Level = reasoning_effort; budget = thinking_budget_tokens.

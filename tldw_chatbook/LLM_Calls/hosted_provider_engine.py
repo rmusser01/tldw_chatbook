@@ -137,7 +137,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     ProviderContinuationCheckpoint,
     dump_provider_continuation_json,
     parse_provider_continuation_json,
-    validate_continuation_restore,
+    validate_continuation_execution_target,
 )
 from tldw_chatbook.Chat.provider_readiness import configured_workspace_base_url
 from tldw_chatbook.Chat.sampling_params import REASONING_EFFORT_VALUES
@@ -1287,7 +1287,7 @@ def _apply_continuations(
     cursor = 0
     for checkpoint in checkpoints:
         try:
-            validate_continuation_restore(
+            validate_continuation_execution_target(
                 checkpoint,
                 ContinuationRestoreTarget(
                     provider=record.key,
@@ -2211,6 +2211,9 @@ def _send_hosted_chat_request(
                 auth_scheme=record.auth_scheme,
                 extra_headers=resolution.extra_headers,
                 display_name=record.display_name,
+                retry_without_stream_options=(
+                    record.tolerant_response_extras or record.stream_usage_optional
+                ),
             ),
             route="chat/completions",
             payload=payload,

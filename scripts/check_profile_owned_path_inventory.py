@@ -827,6 +827,64 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         Disposition.PERSISTED_DEFAULT,
         "shipped config template default for the prompts database",
     ),
+    # ADR-256 portable roots are confined acquired/private-attempt members;
+    # exact contexts and counts retain the same owner-path census enforcement.
+    ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/detached_layout.py",
+        "function:produce_detached_archive",
+        "join:.config/tldw_cli",
+        1,
+        Disposition.RESOLVER_SEED,
+        "fixed config suffix beneath the acquired portable Data root; never an old-location lookup",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/detached_layout.py",
+        "function:produce_detached_archive",
+        "join:.local/share/tldw_cli",
+        2,
+        Disposition.RESOLVER_SEED,
+        "confined acquired default data suffixes used for lexical old-to-staged mapping only",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/detached_layout.py",
+        "function:produce_detached_archive",
+        "literal:~/.local/share/tldw_cli/",
+        1,
+        Disposition.PERSISTED_DEFAULT,
+        "compare legacy shipped database sentinels before mapping the acquired copy; never open the sentinel",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/detached_layout.py",
+        "function:_owner_items",
+        "literal:~/.local/share/tldw_cli/",
+        1,
+        Disposition.PERSISTED_DEFAULT,
+        "recognize absent lazy default stores without substituting an old or host database",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/portable_relocation.py",
+        "function:pending_attempt",
+        "join:.config/tldw_cli",
+        1,
+        Disposition.READ_ONLY_LEGACY_PROBE,
+        "fixed retained-attempt copied control suffix for pathless terminal-evidence validation",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/portable_relocation.py",
+        "function:host_environment",
+        "join:.config/tldw_cli",
+        1,
+        Disposition.RESOLVER_SEED,
+        "fresh private attempt host selector established before importing configuration or owner services",
+    ),
+    ExceptionRule(
+        "tldw_chatbook/Backup_Recovery/portable_relocation.py",
+        "function:acquire_selected_source",
+        "join:.config/tldw_cli",
+        2,
+        Disposition.RESOLVER_SEED,
+        "fixed acquired config and retained bootstrap suffixes; no-follow acquisition never opens the old location",
+    ),
 )
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

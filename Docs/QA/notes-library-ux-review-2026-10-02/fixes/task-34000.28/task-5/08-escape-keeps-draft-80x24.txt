@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────┐  N    N  Select a note to edit it here.
+│ Navigation           │  a    o
+│     Import…          │  v    t
+│ ┌──────────────┐▊▔▎  │       e
+│ │ Search       │▊x▎  │       s
+│ └──────────────┘▊▁▎  │
+│                      │<---
+│ ───────────────────▂ │
+│ Browse          ▾    │     --->
+│    Media (23)        │
+│    Chats (0)         │
+│  ▸ Notes (122)       │<---
+│    Prompts (0)       │
+│    Skills (1)        │
+│    Collections (0)   │
+│    Search / RAG      │
+│  ▾ scroll for        │
+└──────────────────────┘
+  typing in field | esc focus rail | F1 · F6 · Ctrl+P · Ctrl+Q

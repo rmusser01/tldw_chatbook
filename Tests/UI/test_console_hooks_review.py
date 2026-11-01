@@ -1,11 +1,14 @@
 """Native Console hook review routing, draft retention, and literal details."""
 
 import asyncio
+from contextlib import ExitStack
+import os
 
 import pytest
 
 from Tests.Agents.test_hook_permissions import _approve
 from Tests.Agents.test_hook_permissions import hook_file as _hook_file
+from Tests.UI.pump_probe import console_attach_ended
 from Tests.UI.test_console_workbench_contract import (
     ConsoleHarness,
     _configure_native_ready_console,
@@ -84,15 +87,28 @@ async def test_a_warm_console_refresh_shows_an_unsafe_store_directory(hook_file)
         assert console._console_hook_review_snapshot.ready
         approved_tooltip = console.query_one("#console-control-hooks").tooltip
         directory = console._console_hook_review_snapshot.store_path.parent
-        mode = directory.stat().st_mode & 0o777
-        directory.chmod(mode | 0o020)
-        try:
+        with ExitStack() as restore:
+            if os.name == "nt":
+                from Tests.Backup_Recovery.windows_acl_fixture import (
+                    _replace_protected_windows_dacl,
+                    preserve_windows_dacl,
+                )
+                from tldw_chatbook.Utils.windows_files import _native
+
+                restore.enter_context(preserve_windows_dacl(directory))
+                _replace_protected_windows_dacl(
+                    directory,
+                    f"D:P(A;;FA;;;{_native().user_sid})"
+                    "(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;WD)",
+                )
+            else:
+                mode = directory.stat().st_mode & 0o777
+                restore.callback(directory.chmod, mode)
+                directory.chmod(mode | 0o020)
             await console._refresh_console_hooks()
             await pilot.pause()
             refreshed = console._console_hook_review_snapshot
             tooltip = console.query_one("#console-control-hooks").tooltip
-        finally:
-            directory.chmod(mode)
 
     assert not refreshed.ready, "the control bar kept the approved state"
     assert tooltip != approved_tooltip, tooltip
@@ -148,6 +164,9 @@ async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file, v
         await pilot.press("escape")
         assert not await first.wait()
         assert composer.draft_text() == "retained draft" and calls == []
+        # TASK-36389: each dismissal reattaches the Console. A Send started
+        # before that attach ends was refused when the attach ran late.
+        await console_attach_ended(console)
         second = _send_in_worker(console, "retained draft")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
@@ -162,6 +181,7 @@ async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file, v
         await pilot.click("#console-hooks-allow-all")
         assert await second.wait()
         assert calls == ["retained draft"]
+        await console_attach_ended(console)
         third = await console._dispatch_console_draft_send("retained draft")
         assert third and calls == ["retained draft", "retained draft"]
         assert host.screen is console

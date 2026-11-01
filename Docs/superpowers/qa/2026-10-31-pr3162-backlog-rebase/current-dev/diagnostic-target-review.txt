@@ -1,0 +1,19 @@
+tldw_chatbook/Agents/agent_runtime.py: 12 -> 12 diagnostic call(s)
+  moved/re-indented only: 0   removed: 1   added: 1
+
+- REMOVED -- these statements no longer exist:
+  - warning 8be673bf85754add (was line 2601)
+      | logger.opt(exception=True).warning(
+      |     f"review_tool_calls hook raised for batch "
+      |     f"{[c.name for c in review_required_calls]}; treating all "
+      |     f"{len(review_required_calls)} "
+      |     f"calls as proceed"
+      | )
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + warning f715cd98d8a86df0 (now line 2605)
+      | logger.opt(exception=True).warning(
+      |     f"review_tool_calls hook raised for batch "
+      |     f"{[c.name for c in review_required_calls]}; refusing recovery "
+      |     f"calls and preserving legacy review behavior for other tools"
+      | )

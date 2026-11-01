@@ -13,7 +13,7 @@ from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from loguru import logger
 
@@ -31,6 +31,69 @@ class ConsoleScratchSpaceUnavailable(RuntimeError):
     """Raised when a scratch-space capability is stale or no longer safe."""
 
 
+class ConsoleScratchCleanupReceipt:
+    """Consumer-held cleanup observation with one-shot host lifecycle callbacks.
+
+    Failed attempts stay pending. Callbacks run outside manager/receipt locks;
+    the manager retains this receipt only while its generation is pending.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._outcome: str | None = None
+        self._callbacks: list[Callable[[str], None]] = []
+        self._cleanup_callbacks: list[Callable[[], None]] = []
+
+    @property
+    def outcome(self) -> str | None:
+        """Return deleted/already-missing/identity-changed, or None while pending."""
+        with self._lock:
+            return self._outcome
+
+    def add_cleanup_callback(self, callback: Callable[[], None]) -> None:
+        """Register retryable native cleanup, before root removal and without locks.
+
+        A terminal receipt cannot run cleanup retroactively; late registrations
+        are ignored and cannot establish deletion evidence.
+        """
+        with self._lock:
+            if self._outcome is None:
+                self._cleanup_callbacks.append(callback)
+
+    def _prepare_cleanup(self) -> None:
+        with self._lock:
+            callbacks = tuple(self._cleanup_callbacks)
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                logger.warning("Console scratch pre-cleanup observer failed")
+
+    def add_done_callback(self, callback: Callable[[str], None]) -> None:
+        """Register host cleanup bookkeeping, outside any consumer owner lock."""
+        with self._lock:
+            outcome = self._outcome
+            if outcome is None:
+                self._callbacks.append(callback)
+                return
+        self._deliver(callback, outcome)
+
+    @staticmethod
+    def _deliver(callback: Callable[[str], None], outcome: str) -> None:
+        try:
+            callback(outcome)
+        except Exception:
+            logger.warning("Console scratch cleanup observer failed")
+
+    def _finish(self, outcome: str) -> None:
+        with self._lock:
+            self._outcome = outcome
+            self._cleanup_callbacks.clear()
+            callbacks, self._callbacks = self._callbacks, []
+        for callback in callbacks:
+            self._deliver(callback, outcome)
+
+
 @dataclass(slots=True)
 class _ScratchRecord:
     session_id: str
@@ -38,6 +101,9 @@ class _ScratchRecord:
     leases: int = 0
     tombstoned: bool = False
     cleanup_scheduled: bool = False
+    cleanup_receipt: ConsoleScratchCleanupReceipt = field(
+        default_factory=ConsoleScratchCleanupReceipt
+    )
 
 
 class ConsoleScratchSpaceManager:
@@ -149,6 +215,39 @@ class ConsoleScratchSpaceManager:
                     self._schedule_cleanup_locked(record)
                 self._condition.notify_all()
 
+    def observe_cleanup(
+        self, snapshot: ConsoleScratchSnapshot
+    ) -> ConsoleScratchCleanupReceipt:
+        """Observe terminal cleanup for a live generation without retaining history.
+
+        Only ``deleted`` confirms this manager removed the owned directory.
+        Missing/replaced roots revoke authority but do not prove byte deletion.
+        Failed attempts remain pending so a later dispose retry can settle them.
+        """
+        with self.live_guard(snapshot):
+            return self._records[snapshot.token].cleanup_receipt
+
+    @contextmanager
+    def live_guard(self, snapshot: ConsoleScratchSnapshot) -> Iterator[None]:
+        """Serialize a short final publication against generation revocation.
+
+        Hold an ordinary ``lease`` for the full operation; enter this guard only
+        for its final commit. Close cannot tombstone between validation and commit.
+        The body must not wait for another thread or invoke external callbacks.
+        """
+        with self._condition:
+            record = self._matching_record_locked(snapshot)
+            if record is None or record.tombstoned:
+                raise ConsoleScratchSpaceUnavailable(
+                    "Console scratch space is no longer available"
+                )
+            if not self._identity_matches(snapshot):
+                self._tombstone_locked(record)
+                raise ConsoleScratchSpaceUnavailable(
+                    "Console scratch space failed its filesystem identity check"
+                )
+            yield
+
     def is_live(self, snapshot: ConsoleScratchSnapshot) -> bool:
         """Return whether a capability is current and safe to lease.
 
@@ -168,6 +267,16 @@ class ConsoleScratchSpaceManager:
                 return True
             self._tombstone_locked(record)
             return False
+
+    def _published_current(self, snapshot: ConsoleScratchSnapshot | None) -> bool:
+        """Check issued custody without filesystem IO on the effect lane."""
+        if not isinstance(snapshot, ConsoleScratchSnapshot) or not isinstance(
+            snapshot.token, str
+        ):
+            return False
+        with self._condition:
+            record = self._matching_record_locked(snapshot)
+            return not self._disposed and record is not None and not record.tombstoned
 
     def close(self, session_id: str) -> None:
         """Revoke one live session and schedule cleanup after its leases drain.
@@ -289,7 +398,10 @@ class ConsoleScratchSpaceManager:
                     return
                 record = self._cleanup_queue.popleft()
 
+            record.cleanup_receipt._prepare_cleanup()
             cleaned, category = self._cleanup_record(record)
+            if cleaned:
+                record.cleanup_receipt._finish(category)
 
             with self._condition:
                 record.cleanup_scheduled = False

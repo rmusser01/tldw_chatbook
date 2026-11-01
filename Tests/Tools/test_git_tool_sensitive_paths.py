@@ -884,3 +884,31 @@ def test_git_status_and_git_diff_resolve_the_denylist_context_exactly_once(
         f"git_log resolved the sensitive-path context {len(calls)} times "
         "in one call; expected exactly 1"
     )
+
+
+def test_review_tree_and_blob_share_sensitive_exclusions(tmp_path):
+    import subprocess
+
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+    from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
+
+    root = tmp_path / "review-repo"
+    root.mkdir()
+    for args in [
+        ("init", "-q"),
+        ("config", "user.name", "Test"),
+        ("config", "user.email", "test@example.invalid"),
+    ]:
+        subprocess.run(["git", *args], cwd=root, check=True)
+    (root / "safe.py").write_text("safe\n")
+    (root / "secret.txt").write_text("secret\n")
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "source"], cwd=root, check=True)
+    reader = ReviewGitReader(
+        root, sensitive_exclusions=(SensitiveExclusion("subtree", "secret.txt"),)
+    )
+    head = reader.head()
+    assert [entry.path for entry in reader.tree(head)] == ["safe.py"]
+    with pytest.raises(LocalToolError):
+        reader.entry(head, "secret.txt")

@@ -126,7 +126,13 @@ async def _settle(console) -> None:
 
 
 def _replay_pending(console) -> bool:
-    return getattr(console, "_console_control_bar_replay_whole_sync", False)
+    context = getattr(console, "_console_context_read_snapshot", None)
+    config = getattr(console, "_console_readiness_config_projection", None)
+    return (
+        getattr(console, "_console_control_bar_replay_whole_sync", False)
+        or getattr(config, "pending", False)
+        or getattr(context, "pending_key", None) is not None
+    )
 
 
 async def _explicit_sync(console, seen) -> None:
@@ -229,12 +235,24 @@ async def _quiesce(tick, seen, limit: int = 10) -> None:
     refreshes them on a worker and publishes a whole sync with the result,
     which the next tick serves (a sync other than the poll's asked).
     """
+    from tldw_chatbook.UI.Console_Modules import config_sync
+
+    cadence = config_sync._cadence(tick.console)
     for _ in range(limit):
         # A tick refused while a replay is pending would look quiet.
         await until(lambda: not _replay_pending(tick.console), timeout=30)
         before = seen.calls
         await tick()
-        if seen.calls == before and not _replay_pending(tick.console):
+        objects, values = config_sync._projection_inputs(tick.console)
+        if (
+            seen.calls == before
+            and not _replay_pending(tick.console)
+            and cadence.owed
+            and cadence.requested == cadence.served
+            and values == cadence.values
+            and len(objects) == len(cadence.objects)
+            and all(now is then for now, then in zip(objects, cadence.objects))
+        ):
             return
     # Without the cadence (dev) every poll tick enters the projection, so
     # this is where a build with no skipping fails.
@@ -300,6 +318,7 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
     status; ticks in that tail get the backstop too, and the tick on which
     the poll stops itself leaves the controls rendered.
     """
+    from tldw_chatbook import config
     from tldw_chatbook.UI.Console_Modules import config_sync
 
     clock = _install_clock(monkeypatch)
@@ -317,9 +336,9 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
                 # (a) Within a run's second, ticks with no input change skip.
                 for _ in range(5):
                     await tick()
-                assert seen.calls == base, (
-                    f"{seen.calls - base} projections in 5 unchanged ticks"
-                )
+                assert (
+                    seen.calls == base
+                ), f"{seen.calls - base} projections in 5 unchanged ticks"
 
                 # (c) The backstop: once a second during a run, not before.
                 clock.now += 0.6
@@ -354,7 +373,18 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
                     f"{seen.calls - tail} checked config operations in 3 "
                     "unchanged ticks of the run's tail"
                 )
+                source = config.current_config_identity()
+                cadence = config_sync._cadence(console)
+                projected_at = cadence.at
                 await tick.right_after(lambda: setattr(clock, "now", clock.now + 1.0))
+                if seen.calls == tail:
+                    # FULL now prepares before its projection. A real config
+                    # generation change during that native await must refuse
+                    # the captured source, without consuming the backstop.
+                    assert config.current_config_identity() != source
+                    assert console._console_control_bar_replay_whole_sync
+                    assert cadence.at == projected_at
+                    await tick()
                 assert seen.calls == tail + 1, "no backstop in the run's tail"
             finally:
                 del console._console_transcript_poll_needed
@@ -399,9 +429,10 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
                     f"the stop forced {len(forced)} projections; want the one"
                     " that renders what the skipped last tick left"
                 )
-                assert (seen.calls, seen.renders) == (before[0] + 1, before[1] + 1), (
-                    "the stopping poll's last tick left the controls unrendered"
-                )
+                assert (seen.calls, seen.renders) == (
+                    before[0] + 1,
+                    before[1] + 1,
+                ), "the stopping poll's last tick left the controls unrendered"
                 assert not cadence.owed
             finally:
                 monkeypatch.setattr(config_sync, "project_console_tick", project)
@@ -453,9 +484,9 @@ async def test_each_input_change_is_one_projection_on_the_next_poll_tick(monkeyp
                     ),
                 ):
                     count = await projections_on_the_tick_after(change)
-                    assert count == 1, (
-                        f"{count} projections on the tick after {name}; want 1"
-                    )
+                    assert (
+                        count == 1
+                    ), f"{count} projections on the tick after {name}; want 1"
                 assert seen.renders == seen.calls - seen.deferred
             finally:
                 tick.release()
@@ -490,9 +521,10 @@ async def test_a_local_storage_pause_still_defers_the_tick_projection(monkeypatc
             base, rendered, deferred = seen.calls, seen.renders, seen.deferred
             for _ in range(3):
                 await tick()
-            assert (seen.calls, seen.renders) == (base, rendered), (
-                f"{seen.calls - base} projections in 3 unchanged ticks"
-            )
+            assert (seen.calls, seen.renders) == (
+                base,
+                rendered,
+            ), f"{seen.calls - base} projections in 3 unchanged ticks"
             assert not getattr(console, "_console_control_bar_replay_whole_sync", False)
             # The pause half needs the app's own delayed replay to run.
             tick.unhold()

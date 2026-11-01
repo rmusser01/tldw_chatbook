@@ -50,6 +50,11 @@ Adding an OpenAI-compatible hosted provider is a record, a dispatch line and a p
 | `moonshot.py`, `zai.py`, `qwencloud.py` | explicit, then **stored**, then env | `moonshot.py::_resolve_api_key`, `zai.py::_resolve_api_key`, `qwencloud.py::resolve_qwencloud_api_key` |
 | Custom-endpoint registry | env, then stored | `Chat/custom_endpoint_registry.py::resolve_entry_credential` (ADR-146) |
 
+Registry entry credentials end at none when neither source supplies a key. The
+gateway preserves that keyless decision through health checks and chat dispatch;
+a credential from the ordinary family slot never follows the entry's URL. Family
+readiness contributes capabilities, while entry-owned ciphertext still blocks.
+
 ADR-012's 2026-09-19 amendment rules that the stored `api_settings` key outranks the environment variable; the engine currently orders them the other way and the owner decided (2026-10-25) to keep ADR-012 for the hosted engine, so this row is expected to change under TASK-36941.3. Custom endpoints keep ADR-146's order by the owner's 2026-10-26 decision. A user with both set can therefore get a different key per provider family.
 
 ### Implemented providers
@@ -60,7 +65,8 @@ Hosted (bespoke handlers): openai, anthropic, cohere, groq, openrouter, deepseek
 
 - Config overlay: legacy `[openai_api]` + canonical `[api_settings.openai]`, with only `api_key`/`api_base_url` overlaid from canonical; a missing key raises `ChatConfigurationError`.
 - Param resolution: arg > config > default.
-- API selection: reasoning params switch the Responses API (`/responses`, payload key `input`); Responses stream events are translated back into chat-completions SSE.
+- API selection: reasoning params switch the Responses API (`/responses`, payload key `input`). GPT-5.6 with absent/`none` effort uses Chat Completions unless a nonblank summary/verbosity control is present. Exact unprefixed `gpt-6-luna` (case/outer whitespace normalized) also uses Chat Completions for explicit `none` effort and a nonempty list consisting entirely of canonical nested function tools with object parameter schemas; it forwards `reasoning_effort=none`, unchanged tools/choice/history and `max_completion_tokens`. Summary/verbosity presence (including summary `none`) still selects Responses. Empty/no tools, plain/fenced Luna calls, other IDs and absent/non-`none` effort retain their existing routing. This follows the [Luna model contract](https://developers.openai.com/api/docs/models/gpt-6-luna), which restricts Chat function calling to `none`; sampling remains a separate capability fact.
+- OpenAI Responses limitation: its current normalization handles text only. Native function output items/argument events and canonical assistant/tool continuation are not translated end-to-end, and nested Chat function schemas are not converted to flat Responses tools. Provider-wide native-tool advertising does not establish support on those routes. The narrow Luna Chat exception does not implement Responses native tools.
 - Capability gating via `model_capabilities` predicates: reasoning families drop `temperature`/`top_p`; models that require it swap `max_tokens` → `max_completion_tokens`.
 - Prompt caching: `prompt_cache_key` on canonical OpenAI; Anthropic-side `cache_control` with degrade-retry including a 1-hour TTL tier.
 - Streaming: handlers yield provider-shaped SSE `data:` lines; errors mid-stream are yielded as `data: {"error": …}` events; the `[DONE]` sentinel stays out of `finally` so a consumer's `GeneratorExit` (Console Stop) cannot skip cleanup. `stream_options.include_usage` is added with a 400-retry that drops it for providers that reject it.
@@ -84,6 +90,13 @@ Retry layers: transport retries inside handlers (idempotent POST, 429/5xx) → s
 
 `ModelCapabilities` resolves per-model facts from `[model_capabilities]`: direct `models` mappings > per-provider `patterns` regex > models.dev gap-fill (opt-in, network-free) > defaults. Consumers: vision gating for attachments (`Chat/attachment_core`), context-window-based truncation (`Utils/token_counter`), per-provider tools payload builders, and thinking configuration (Anthropic enabled/disabled/adaptive budgets vs effort-style shapes; thinking budgets auto-grow `max_tokens` when needed; per-family predicates for moonshot/zai/deepseek too).
 
+The exact Haiku 5.5 family rejects `temperature`, `top_p`, `top_k` and fixed
+`thinking.budget_tokens`, per its [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide).
+The shared Anthropic predicates omit sampling and reuse the existing adaptive
+thinking/effort mapping; Haiku 4.5 keeps its sampling and fixed-budget behavior.
+This is a documented capability correction, separate from the August 2026 live
+probes for older families.
+
 ## Model catalog auto-refresh (ADR-020)
 
 Providers refreshed: OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter, QwenCloud, ZAI (`AUTO_REFRESH_PROVIDER_LIST_KEYS` — the code is authoritative; QwenCloud postdates the ADR prose).
@@ -98,6 +111,16 @@ Config (`[model_catalog]`): `auto_refresh_enabled` (default true), `refresh_cons
 ## Local backends and managed servers
 
 Local handlers read the immutable `[api_settings]` runtime snapshot. Managed server starts live in `Event_Handlers/LLM_Management_Events/`: per-backend command builders (`--model/-m --host --port` for llamacpp/llamafile), a claim-based lifecycle (`reserve_server_launch`, `run_server_subprocess`, bounded terminate) keyed to app-held `Popen` handles, and the Lab/Models UI for start/stop. Transformers/ONNX participate via local summarization/embedding paths rather than the chat handlers.
+
+The shared local OpenAI-compatible sender fixes SSE decoding to UTF-8 before
+iterating response lines, including when the response omits or misstates its
+charset. Requests otherwise defaults charset-less `text/event-stream` to
+Latin-1 and corrupts literal Unicode before JSON parsing. Console llama.cpp
+requests with native tools use this shared sender; tool-free llama.cpp requests
+use the separate HTTPX gateway path. `Tests/LLM_Calls/test_local_sse_encoding.py`
+exercises real Requests response construction and byte decoding with fragmented
+Unicode, escaped JSON, ASCII, normal exhaustion and consumer Stop. This corrects
+new streamed replies; it does not reconstruct previously corrupted messages.
 
 ### External Strata and PolyStrata servers
 
@@ -147,3 +170,36 @@ The upstream contracts and client-only qualification scope are recorded in
 - [chat-pipeline.md](./chat-pipeline.md), [console.md](./console.md) — the streaming consumers
 - [rag.md](./rag.md) — embeddings share the provider config surface
 - `backlog/decisions/020-automatic-model-catalog-refresh.md` (amends ADR-002)
+
+## Native continuation identity
+
+Provider engines produce canonical execution state; `console_agent_bridge` binds it to the exact raw selected provider before runtime custody. Continuation JSON V3 retains both identities and composes a nullable managed envelope in the existing private message column. The managed MAC covers the raw pin; legacy V1/V2 serialization and V2 signature input are unchanged. Host history/recovery validates execution provider, protocol, model, full normalized base and exact selection. Engine replay validates only canonical execution identity, after the host check. No display-origin inference or registry lookup can recreate missing durable selection authority.
+
+The custom-hosted entry in `Chat_Functions.CUSTOM_PROVIDER_PARAM_MAP` forwards the existing `provider_continuations` argument, so a second native request includes the saved assistant call and completed result. This is the sole additional forwarding key relative to legacy custom endpoint maps. Moonshot, ZAI and the hosted engine retain their existing wire protocols. Private reasoning stays in the continuation/trace sidecar and is not projected into ordinary assistant text by the recovery translator. Session-only destinations remain ephemeral; their full bases are excluded from durable dispatch identity (ADRs 063, 147, 179).
+
+Durable continuation is optional for a send. `resolve_console_destination` pins the continuation tuple (execution provider, protocol, full base) only when the dispatch checkpoint can record it; an unconfigured engine preset pins its record default, the URL the engine itself sends to. A blank, credentialed, query/fragment-bearing or oversized base leaves the tuple empty: the send proceeds and is not resumable. No default setup loses resume this way: only moonshot, zai, deepseek and engine presets produce continuations (legacy `chat_with_<provider>` handlers have none), every one of them that is ready under the shipped config resolves a durable tuple (pinned by `test_shipped_default_continuation_destinations_stay_durable`), the four workspace-URL presets block until a base is configured, and a credentialed or query/fragment base could never hold a continuation even before, because the checkpoint parser rejects it. The one deliberate loss is a tuple too large for the 2,048-byte dispatch checkpoint (each identity may otherwise reach 4 KiB): it stays non-durable for safety. `console_continuation_binding.continuation_can_be_durable` runs the native tool loop with ephemeral continuation durability for temporary sessions, session-only endpoints and dispatches whose checkpoint has no tuple (including pre-upgrade checkpoints, which dispatch recovery accepts on identity alone). A dispatch checkpoint constrains only the assistant message it owns: a regenerate, retry, continue or edit run that starts while another message owns dispatch recovery keeps its durable continuation (bound by its own host target), as on dev.
+
+## Custom hosted streamed usage
+
+`CUSTOM_HOSTED` requests `stream_options.include_usage` on streaming requests
+through the existing preset flag (ADR-179); non-streaming payloads are unchanged.
+The hosted parser still accepts a custom stream that omits usage. Console's
+call-scoped usage tap reads top-level usage first, including its explicit
+null/malformed presence, and otherwise accepts usage from one terminal choice
+without rewriting the event. Automatic work still requires complete nonnegative
+integer usage: missing or malformed counts retain the reservation and pause the
+chain with `usage_unknown` (ADR-134). There is no estimate/refund fallback.
+
+A custom endpoint that rejects the option is not a send failure:
+`hosted_chat.owned_json_post` retries once without `stream_options` when a 400
+(or FastAPI-style 422) body names it, as `chat_with_openai`/`chat_with_huggingface`
+do. The engine enables this only for records whose stream may end without usage
+(`tolerant_response_extras` or `stream_usage_optional`); a strict preset keeps the
+clean 400, because a usage-free retry would bill a whole generation and then fail
+for missing usage. Any other rejection (or a second one) surfaces as the ordinary
+typed provider error, and the degraded stream simply carries no usage (so
+automatic work pauses with `usage_unknown` rather than estimating).
+The local synthetic two-request differential for TASK-35582 established that the
+qualification server omitted usage without the option and supplied complete
+usage with it. This diagnoses the current server behavior; the earlier retained
+HTTP-status-only packets cannot establish their exact raw response fields.

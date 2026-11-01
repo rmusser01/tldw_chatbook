@@ -1152,6 +1152,94 @@ async def test_controller_notice_uses_owning_session_and_drift_cancels_bridge_se
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("drift", ["notice_key", "session_closed"])
+async def test_state_drift_after_preparation_cancels_before_any_prompt(tmp_path, drift):
+    """Dispatch consent is checked against the state captured at preparation."""
+    from dataclasses import replace
+
+    (tmp_path / "AGENTS.md").write_text(SENTINEL)
+    binding = _binding(tmp_path)
+    registry = LocalWorkspaceRegistryService(
+        WorkspaceDB(tmp_path / "workspaces.db", client_id="instruction-drift")
+    )
+    registry.create_workspace(workspace_id="w1", name="Workspace 1")
+    registry.save_runtime_binding(binding)
+    store = persisted_console_store(
+        db_path=tmp_path / "chat.db", workspace_registry=registry
+    )
+    session = store.create_session(workspace_id="w1")
+    notices, decisions = [], []
+
+    class Bridge:
+        def record_run_assistant_message(self, run_id, message_id):
+            pass
+
+        def run_reply(self, **kwargs):
+            candidate = kwargs["startup_instruction_candidate"]
+            if drift == "notice_key":
+                # Another turn's consent landed after this one was prepared.
+                store.set_session_project_instruction_state(
+                    session.id,
+                    replace(
+                        store.sessions()[0].project_instruction_state,
+                        project_instruction_notice_key="consented-elsewhere",
+                    ),
+                )
+            else:
+                store._sessions.pop(session.id)
+            snapshot = InstructionSnapshot(
+                binding_id=candidate.binding_id,
+                binding_root=candidate.binding_root,
+                locator_fingerprint=candidate.locator_fingerprint,
+                dispatch_started_wall_ns=candidate.dispatch_started_wall_ns,
+                startup_source=candidate.source,
+                global_outcomes=candidate.outcomes,
+                primary_delivery=InstructionChainDelivery(
+                    source_digests=(candidate.source.digest,),
+                    outcomes=candidate.outcomes,
+                ),
+                warning_codes=(),
+            )
+            decisions.append(kwargs["confirm_project_instruction_dispatch"](snapshot))
+            return "run-1", RunOutcome(status=RUN_CANCELLED, steps=[], final_text="")
+
+    class Gateway:
+        async def resolve_for_send(self, _selection):
+            return with_destination(
+                ConsoleProviderResolution(
+                    provider="OpenAI",
+                    base_url="https://api.example/v1",
+                    model="test-model",
+                    ready=True,
+                    readiness_key="openai",
+                    execution_key="openai",
+                    max_tokens=128,
+                )
+            )
+
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=Gateway(),
+        provider="openai",
+        model="test-model",
+        agent_bridge=Bridge(),
+        agent_runtime_enabled=True,
+        confirm_project_instruction_dispatch=lambda notice: (
+            notices.append(notice) or "proceed"
+        ),
+    )
+    controller.app = SimpleNamespace(
+        call_from_thread=lambda callback: callback(),
+        workspace_registry_service=registry,
+    )
+
+    await controller.submit_draft("question")
+
+    assert decisions == ["cancel"]
+    assert notices == []
+
+
+@pytest.mark.asyncio
 async def test_folderless_session_skips_optional_project_instructions_and_runs(
     tmp_path,
 ):

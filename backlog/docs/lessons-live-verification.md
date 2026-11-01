@@ -1,5 +1,43 @@
 # Lessons: verifying against the real thing
 
+## A margin on a Console transcript row paints a notch that text checks cannot see (TASK-33621.51, 2026-10-29)
+
+**Incident.** The Library outcome line passed two review rounds: every test read
+the compositor's `strip.text`, and the live `.txt` captures showed the line
+correctly placed under its turn. The third review read the `.ansi` capture and
+the PNG instead. The cell left of each line's text was `ESC[2m ESC[49m`, the
+terminal's default background, which showed as a white block in the PNG. The
+line was inset with `margin-left: 1`. `#console-transcript-surface` layers a
+transparent `#console-transcript-background-effect` under the transcript, and a
+margin cell is not painted by the row, so it shows that layer. Switching the
+inset to padding (same text column) removed the notch.
+
+**What to do.** Inset a Console transcript row with padding, not margin. To test
+paint, read each cell's background from the compositor strip
+(`strip.crop(x, x + 1)`, then `segment.style.bgcolor`; `None` is the terminal
+default), not `strip.text`. Live, read the `.ansi` or look at the `.png`. The
+annotations and citation-chip rows also use a left margin; they were not checked
+here.
+
+## A `.txt` capture shows the composer's history ghost text as if it were typed (TASK-33621.51, 2026-10-29)
+
+**Incident.** On the live re-check of the Library outcome line, the second prompt
+was typed as `Project Zephyr launch codename` and the pane text read
+`Project Zephyr launch codename  and launch lead? One short sentence.` (the caret
+cell was blinked off in that capture). It looked like the previous draft had
+survived the send, so the driver cleared the composer with 80 Backspaces and typed
+again; the next capture read `Project Zephyr launch codename▌ and launch lead? …`. The tail is the
+composer's history suggestion (TASK-1364: a render-only suffix of the most recent
+sent prompt with that prefix, drawn `bright_black` after the caret).
+`capture-pane -p` drops the style, so it reads as typed text. Enter sent only the
+typed part: the transcript showed `Project Zephyr launch codename`.
+
+**What to do.** Before deciding the composer holds the wrong draft, look for the
+caret cell (`▌`; it blinks, so one capture may not show it). Text after the caret,
+when you typed at the end, is ghost text. Confirm it in the `.ansi` capture (a
+bright-black run) or by the message the transcript shows after the send, not by
+the `.txt` row.
+
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 
 **Incident.** The first live capture of the Console header on the branch measured
@@ -14,11 +52,72 @@ are measuring is on top: look at the PNG, or grep the `.txt` for a dialog title.
 Dismiss first-run and catalog dialogs after the app renders, then capture. A uniformly
 low ratio across unrelated widgets points at a backdrop, not at your change.
 
+## Queued geometry callbacks can outlive layout during shutdown (TASK-35582, 2026-10-29)
+
+**Incident.** PR3286 Windows GGUF CI timed out in Console reconciliation. A bounded native trace showed142s closing with136s on the owning thread; the earlier suspicion of timer cancellation starvation did not explain that first boundary. `LifecycleMixin._shutdown` set Textual's exit fence before draining owners. Textual stopped layout timer callbacks, but post-refresh callbacks still ran and retried geometry that could no longer settle. Wrapped/native tests queued work while attached, then held the real owner drain: both entered geometry after exit. Guarding the shared queued consumer with public `is_attached` stopped that execution while existing layout controls passed.
+
+**What to do.** During shutdown, mounted/current widgets are not proof that layout can progress. Check the consumer's live attachment state, including callbacks queued before exit; preserve owner drain ordering. Separate native elapsed/CPU evidence from a portable reproduction of the causal callback boundary.
+
 ## A native terminal launched by automation can inherit TERM=dumb (TASK-37173, 2026-10-28)
 
 **Incident.** The Windows resize investigation initially launched its native Logs probe through an executor exporting `TERM=dumb`. Both output streams were real TTYs and `os.get_terminal_size` reported 120x36, but Rich's dumb-terminal fallback initialized Textual at 80x25. That extra starting gap obscured verification of the actual defect: Textual 8.2.8 omitted `ENABLE_WINDOW_INPUT`, so subsequent Windows resize events were discarded. Removing only the automation's `TERM=dumb` override in the QA launcher produced matching 98x42 initial panes. Resizing the same Terminal window to 135x68 left stock Textual at 98x42 while the fixed driver filled 135x68, confirmed visually by the user and by independent OS/app/layout traces in `qa/windows-terminal-resize-2026-10-28/`.
 
 **What to do.** Record terminal environment, actual output TTY status, OS dimensions, and settled widget regions separately. A native process alone does not establish a faithful terminal environment. Remove an automation-only dumb-terminal override in the probe; do not change application layout to compensate for it. When automation cannot target Terminal windows, user-operated resize gestures plus native traces still test the real driver; Pilot does not.
+
+## Freeze native ancestor permissions during recovery verification (TASK-37269, 2026-10-28)
+
+**Incident.** A combined Windows recovery/portable run passed 325 cases before
+one source-census refusal and 35 subsequent fixture setup errors. Native mode
+inspection found the managed worktree ancestor had changed from safe metadata
+to shared-writable 0766 during root-file edits; the output/test directories
+remained private. The guard correctly refused the newly unsafe ancestor.
+
+**What to do.** Finish filesystem edits before native verification, qualify the
+entire ancestor chain and keep it stable during the run. Restrict only the
+task-owned worktree/test roots when needed. A changed sandbox write grant is a
+real security precondition failure, not grounds to bypass the guard or count an
+interrupted test run as passing.
+
+## A native build-tree launch does not qualify a packaged executable location (TASK-37205, 2026-10-28)
+
+**Incident.** The modified WezTerm GUI passed a real deep-Unicode Data/socket
+probe from its build directory, but the exact extracted bundle fast-failed
+0xC0000409 before Python startup. Identical payloads at short ASCII and Unicode
+executable paths worked; a 168-character ASCII path failed. Removing only the
+pinned optional ConPTY DLL made that same long path work. Omitting its paired
+OpenConsole host also passed, selecting WezTerm's existing system ConPTY fallback.
+Changing Lua renderer, child command or Data root did not resolve the failure.
+Evidence: output/wezterm-build/packaging-crash/ location and ConPTY A/B records.
+
+**What to do.** Exercise the exact shipped launcher and executable location, in
+addition to the data location. Keep native helpers in the A/B matrix. A successful
+build-tree process and byte-identical packaged binaries cannot establish that a
+native helper tolerates the final extraction path.
+
+The subsequent actual relocation GUI held an NVIDIA GLCache file open beneath
+Data/home/AppData/Local, and the conservative source reader refused its read.
+The layout census already excluded that volatile subtree, but acquisition still
+read it. Applying the same exact nested transient roots at acquisition fixed the
+boundary mismatch. New checks prove cache contents are never read/copied while
+ordinary siblings remain visible and a junction at the excluded root refuses.
+
+## A bundled-runtime path probe does not establish portable relocation (TASK-37205, 2026-10-28)
+
+**Incident.** The Windows WezTerm spike loaded its installed wheel, found all 93
+migrations and persisted a real Chatbook note with every default application path
+under its private Data directory. Copying the closed bundle to a path containing
+spaces and Unicode then refused startup with `recovery_scope_uncertain`:
+recovery-bootstrap ancestry deliberately pins absolute paths and native file
+identities. In the live terminal, WezTerm also published its IPC socket under the
+real Windows user's `.local/share/wezterm` despite process-local HOME/USERPROFILE
+overrides; its Rust known-folder API does not follow those environment variables.
+
+**What to do.** Test the installed terminal's actual process environment and pane,
+then reopen real application data after relocation before claiming portability.
+Keep the recovery refusal intact: a launcher must not delete/rewrite identity
+receipts to make a copied profile start. Track application data and terminal
+runtime artifacts separately in evidence, and state both limitations explicitly.
+The spike uses a location marker to explain the refusal before opening moved data.
 
 ## On a loaded host, one blocking read left on the UI loop still costs 100+ ms: move it, do not just count it (TASK-33620.15.1.6, 2026-10-27)
 
@@ -234,12 +333,40 @@ load.
 **Incident.** TASK-33620.15.6's AC #2 asked for about 15 SQLite helper starts or fewer per Console send window, about 2 of them from the Character scope check. On 2026-10-19 the paired live rounds ran at load averages of 50 to 100: windows lasted 7.4 s instead of the 1.6 s the task was filed at, and the branch measured 21.2 starts per window, 5.2 of them Character. The task was written up as not meeting #2 and waiting on an owner decision to restate it. The next day, at load averages of 20 to 36, the same code on a rebased head measured 14.4 and 2.2 per window (dev 16.0 and 3.0), over 2.2 s windows. The Character check runs on a 1 s cadence during a run, so its count grows with the window, while the per-send one-shot starts do not.
 
 **What to do.** When a live criterion counts timer-driven work per window, report the window length and the rate per second next to the count, and take `uptime` with every round. If windows are much longer than the length the criterion was written against, re-measure when the host is quieter before calling the criterion unmet or asking for it to be restated.
+## Private profiles do not isolate a shared source checkout (TASK-35613, 2026-10-19)
+
+**Incident.** While PR #3166's config/CSS follow-up was adding regressions, another
+task rebased the same checkout. HEAD moved to an earlier replayed commit and later
+test/harness files disappeared between reads and edits. Private test-data profiles
+did not protect the source tree. The follow-up moved to a managed worktree at the
+verified head, reconstructed only its own changes, and later rebased onto the
+published result without changing the other checkout's rebase state.
+
+**What to do.** Use an isolated checkout for a long profiling/fix cycle when another
+task may update the branch. Pin original-code controls and record source hashes;
+after a concurrent integration, distinguish earlier A/B measurements from final
+combined-code validation. Never abort someone else's rebase to recover a benchmark.
 
 ## Runtime detachment must not reopen late read admission (TASK-34406.28, 2026-10-18)
 
 **Incident.** The browser Quit repair passed74 targeted checks, but two added controls actually drained and detached the runtime during approved cleanup and then triggered cache/flat refresh. Each made two original queries: `runtime is not None and runtime._disposed` became false after detachment while the screen was still running. The final76-case repair retains that check and also reads the same App's existing permanent shutdown flag; one new strict live Enter/response/Quit validation passes without extra shutdown errors.
 
 **What to do.** Test the owner-removal transition as well as disposal. Keep terminal admission closed with an existing longer-lived fence, while preserving ordinary missing-owner dispatch before shutdown and the issued callback's original source/refusal/physical-retirement checks. Do not silence refusal logs to qualify the packet.
+
+## A truncated diagnostic dump does not identify the crashing routine (TASK-35612, 2026-10-19)
+
+**Incident.** A Windows performance run ended halfway through its first timed
+`faulthandler` dump, while printing a storage worker's frame. The shell wrapper
+discarded the native exit code; six later storage-free timer/synchronous stress
+runs all exited zero. A CPython timer race was plausible, but neither the last
+printed frame nor those successful repeats established the original cause.
+
+**What to do.** Retain partial evidence and exact subprocess exit receipts before
+throwing from a runner. Separate diagnostic machinery from application behavior;
+never bypass storage checks based on the last sampled frame. This probe moved
+periodic dumping to a Python thread while retaining synchronous timeout dumps;
+an indefinite GIL-held hang now needs an external debugger. Record that tradeoff
+and keep unreproduced causes explicitly unresolved.
 
 ## `tmux send-keys M-1` types a character into the composer (TASK-33620.15.2, 2026-10-09)
 
@@ -299,6 +426,18 @@ loop's default executor (`run_worker(thread=True)`, `asyncio.to_thread`);
 only a thread that is not one is skipped. A hang that lasts exactly
 `[general] shutdown_grace_seconds` and ends with status 1 is the watchdog, and
 the pane's last line lists the threads that were still alive.
+
+## `chmod` cannot force a config-save failure; `chflags uchg` can (TASK-34100.4, 2026-10-05)
+
+To live-verify "Exit setup offers *Exit without saving progress* when the save
+fails", the first attempt made the isolated profile's `~/.config/tldw_cli`
+read-only (`chmod 500`). The save still succeeded and setup closed normally: the
+config writer re-secures its application-owned directory to `0700` before
+writing (`secure_private_directory`), undoing the chmod. Setting the macOS
+user-immutable flag on the file itself (`chflags uchg config.toml`) made the
+atomic replace fail for real, the offer appeared, and the file hash was
+unchanged afterwards (`chflags nouchg` to undo). Use a file flag the app does not
+manage, not a mode it repairs -- and only ever in an isolated profile.
 
 ## A tmux key burst loses typed text, and an empty Input shows its placeholder
 
@@ -4533,6 +4672,74 @@ exception at `issue_code` in the real app before you guess. Probes outside the
 app hit different fences. Never print the recorded text raw if credentials
 could be in it.
 
+## The provider recovery guard refuses work on the UI loop that runs fine on a thread
+
+**TASK-34100.6, 2026-10-04.** Console's 'Get started' card had a designed local-server
+offer, and live it never offered anything: with a real llama-server on :9099 the card
+said "no key". Its discovery ran on the UI loop, and `recovery_review.unqualified` (which
+wraps `discover_local_servers`) raised `ProviderReconnectRequired`; the card swallowed it
+at debug level, so the app log at INFO showed nothing. The first-run wizard scanned the
+same profile *off the loop* (`first_run_step_guard.off_loop`) and found the server. The
+cause only surfaced with a temporary warning-level log line in the `except`. In-process
+tests passed both ways (the test profile has no recovery history), so the regression
+test models the measured failure: a stand-in scan that raises on the main thread and
+answers on a worker thread. Run provider-guarded work off the loop
+(`local_server_discovery.discover_local_servers_off_loop`), and when a background call
+"never fires", log the swallowed exception before theorising.
+
+## A live driver that types while Console is ready sends real chat messages
+
+**TASK-34100.6, 2026-10-04.** A scripted run with `OPENAI_API_KEY` exported meant
+Console was ready, and its composer had focus. The script pressed Ctrl+P to open the
+palette, but the composer took it, then typed "setup", "openai", "openrouter", "groq",
+each followed by Enter. Four real chat messages went to OpenAI on the owner's key before
+the run was stopped. Before typing text in a live run, check that the screen you expect
+is on screen (grep the capture for its title, abort if absent). With a ready Console,
+move focus off the composer (Escape, F6) and confirm the palette prompt is visible
+before typing into it.
+
+**Addendum (review round 2, 2026-10-06): a guard only helps if the caller stops on it.**
+A helper script checked that the palette had opened, printed "PALETTE NOT OPEN -
+abort" and exited, but the shell line that called it went on with `;`. The next
+commands clicked, typed a placeholder key string and pressed Ctrl+N. The palette opened
+a moment later, so the typed string landed in its search box (harmless this time,
+`g6-r2env2`). The same session's `wait` helper printed TIMEOUT but exited 0, so an `&&`
+chain carried on after a step that never came. Four captures named "keyboard skip" then
+showed a different flow and had to be deleted and recaptured. Every guard and wait in a
+live driver must exit nonzero on failure, and the caller must chain with `&&` (or `set
+-e`) across every keystroke that follows it. Never type a real key after a step you
+have not seen land.
+
+## An honest-looking "can't be checked" can hide a request that was never sent (TASK-34100.6 review round 1, 2026-10-05)
+
+A reviewer reported Cloudflare Workers AI's key check reading "can't be checked without
+a paid request" and Model saying "Couldn't reach the server (request failed). Check it's
+running". The obvious fix (classify Cloudflare's HTTP 405 as 'listing unavailable') was
+written and unit-tested -- and the live Model step still said "Couldn't reach the
+server". Instrumenting the live app at the discovery boundary showed no request had
+left the process: for all 33 engine-driven presets the wizard staged the resolved chat
+URL as `api_base_url`, and the catalog service's hosted resolver refused it ("must not
+include a terminal /chat/completions endpoint path") as `invalid_provider_settings`. A
+real MiniMax key got the same "can't be checked" line. The verdict copy was plausible
+for every one of them, so nothing looked wrong. When a check's verdict is a negative
+("can't", "unavailable", "couldn't reach"), log the outcome kind at the boundary once
+live (`status`, `error.kind`, `error.category`) before trusting the copy; and verify a
+check reaches the network with a deliberately wrong key against a real API (Together
+now answers 401 -> "rejected this key"). Evidence:
+`.worktrees/setup-wizard-ux-qa/evidence/g6-r1fix/19a`, `20`.
+
+## Reach the wizard with exported keys through Resume, never through a ready Console (TASK-34100.6 pass 2, 2026-10-06)
+
+With any provider key exported, a fresh profile never offers the wizard: it opens a
+ready Console with the composer focused, the state in which a palette script sent four
+real chat messages in pass 1 (see "A live driver that types while Console is ready").
+Pass 2 needed the Provider step with two exported keys at 120x40 and 80x24. What
+worked without touching Console: launch the profile with the keys stripped, go Welcome
+-> Provider, `kill -9` the app, then relaunch the same HOME with the keys exported.
+`setup_recovery_action` returns "prompt", the app lands on Home with "Continue setup?",
+and Enter on Resume opens the wizard at Provider with the exported keys live (evidence
+`setup-wizard-ux-qa/evidence/g6b-env/01`, `g6b-env80/01`). Stop the run (kill the tmux
+server) before Summary finishes setup; that is where a ready Console would appear.
 
 ## A live test that flips a repo-wide switch must restore it in the same command (TASK-34668, 2026-10-10)
 
@@ -4769,3 +4976,249 @@ stale ready response; holding it across Canvas disable reproduced HTTP 500.
 the actual finite capacity and hold in-flight operations across that retirement.
 Free unreachable session/shell/capability state, and revalidate the captured owner
 and runtime after awaits before publishing a replacement resource.
+
+### Mounted review readers exposed an owning-loop authority failure (TASK-35582, 2026-10-26)
+
+The scripted Console continuation tests originally used a non-Textual app stub.
+Replacing it with a mounted report reader exposed two real thread-boundary errors:
+a raw `run_coroutine_threadsafe` handoff lacked Textual's active-app context, and a
+retained project-authority callback always called `App.call_from_thread`, even when
+native wake validation was already on the owning loop. Textual rejected the latter;
+review source validation translated it to `source_authority_unavailable`, so two
+reviewers completed but the authorized next stage never launched. Use the native
+Textual dispatcher from workers and execute the same guard directly on its captured
+owning loop. Four actual default-two-child schedules passed after this correction;
+a separate mounted test observes worker dispatch and owner-thread guard execution,
+and permission revocation still refuses captured reads. A queued callback or model
+report is not proof that a reader was mounted or a continuation admitted.
+
+
+## Inspect both prepared system and message carriers (TASK-35582, 2026-10-27)
+
+The AC24 private trace reported missing child tool schemas in all four cloud sends
+because it searched only `PreparedProviderRequest.messages_payload`. Single-preamble
+serialization stores leading instructions in `system_message`; the gateway sends
+both. A zero-network actual Console-child/provider-wire probe preserved schemas and
+the complete source-list result for OpenAI and DeepSeek. Inspect both prepared
+carriers and label that seam accurately; claim final wire presence only after the
+provider transformation. Model claims and hash/length metadata cannot recover
+historical live body semantics or explain a missing structured submission.
+
+
+## Native protocol checks need the persistent Console boundary (TASK-35582, 2026-10-27)
+
+A real local native request returned HTTP200 but Console rejected the first tool
+handoff: accepted custom-ep selection/disclosure origin differed from canonical
+custom-hosted/full API identity. AgentService/gateway protocol probes had passed
+without the persistent dispatch owner. A real SQLite/controller control reproduced
+the conflict, then two-request/reopened controls exposed dropped private groups,
+a missing production Resume expander and terminal live-status activation. Fake
+resolvers also hid the normal configured endpoint's materialized request URL.
+Keep at least one normal-resolver/controller/admission/store/native HTTP control;
+assert the frozen mapping, committed tool state, exact call/result and final owner.
+Protocol parsing, isolated injected resolutions and no-response probes prove their
+own seams and cannot stand in for that boundary.
+
+
+## Qualification observers must enforce the actual actor contract (TASK-35582, 2026-10-27)
+
+The remaining37 AC24 run completed32physical calls and a sealed Luna review, then
+the QA wrapper stopped the host-admitted V1 continuation beforePOST33. A60-second
+serving-cache expiry intentionally froze the ordinary primary's32000estimated
+fallback, even though its background refresh later knew133120. Input3835 fit;
+production primary admission permits this nonblocking behavior. The observer had
+applied review-bound verifier capacity requirements to every primary request. A
+normal-owner fakeHTTP reproduction proved the distinction, and an offline-only
+correction preserves all child/unknown-actor and overflow refusals. Treat a QA
+exception as QA evidence until its exact production throw site is established;
+verify actor-specific positive and negative observation paths before spending a
+full workflow. Never relabel the estimate verified to get past the observer.
+
+## Diagnose the first trace failure before its later surface symptom (TASK-35582, 2026-10-27)
+
+Native CaptureOn first appeared to fail at a count/span guard afterPOST1. Persisted
+trace inspection showed POST1 itself was already an alignment-mismatch omission.
+A passive verifier observer proved only api_base_url differed: custom-hosted
+dispatch correctly stripped the chat route, while independent reconstruction kept
+the full endpoint. Sharing the established pure adapter projection repaired that
+first failure and made the subsequent live checkpoint/message mixed-delta failure
+visible atPOST3. The legacy-custom parity case had missed the actual custom-hosted
+full endpoint. Inspect earliest available-shadow/header and final-value parity,
+including the real execution key, before changing a later trace planner guard.
+
+
+## Retry error paths need the real native loop after capture changes (TASK-35582, 2026-10-27)
+
+The CaptureOn live-continuation repair passed20native cases and56owner controls,
+but independent review injected503after a completed tool batch and found valid
+unchanged retry custody was rejected. Three transport attempts settle one ERROR
+logical call; the next runtime retry has the same checkpoint rather than a new
+round. A focused actual Console test now verifies six physical attempts, four
+logical outcomes, exact failed/retry request and surface-head equality, one tool
+execution per ID, and later normal advance. A changed result still refuses. Model
+transport retries, runtime retries and new native batches are distinct boundaries;
+prove them with real custody rather than reusing a +1round admission check.
+
+
+## Transcript origin is not the final provider role (TASK-35582, 2026-10-28)
+
+The AC24 accepted verifier wake had a SYSTEM transcript row and a local400-shaped
+error. A standalone mixed-SYSTEM gateway probe rejected the synthetic payload,
+and the first diagnosis incorrectly treated that as the actual wire shape. The
+normal controller deliberately projects automatic notices as trailing USER
+payload while preserving their host origin. A full-handler test instead failed
+at strict continuation ownership: a saved completed checkpoint lacked its native
+assistant/tool replay rows. Inspect the exact normal-controller prepared payload
+and first throw site before changing role/carrier policy. Keep the disproved
+probe as noncausal evidence, and test the completed next-turn history rather than
+only an isolated fresh request.
+
+
+## Console provider_started does not count physical requests (TASK-35582, 2026-10-28)
+
+A bounded exact-BASE cleanup probe completed one fake POST, then accepted a second
+manual turn whose trace reservation refused before HTTP. Both submit receipts
+reported provider_started=true, while the physical counter stayed at one and the
+second durable dispatch remained dispatch_started/paused. That flag records a
+controller lifecycle boundary, not a completed network event. Count qualification
+spend at actual transport admission and keep accepted/pending recovery distinct
+from observed requests and successful shutdown.
+
+
+## HTTP success does not establish automatic-work usage settlement (TASK-35582, 2026-10-28)
+
+The approved fresh40 qualifier completed35 HTTP200 generations, then its accepted
+verifier continuation paused with usage_unknown before Haiku. The new primary's
+token reservation became uncertain before spawn approval was revoked and the run
+cancelled; both pre-shutdown and final rows were already cancelled. Exit0 and a
+null runner stop_reason did not establish success or a runner shutdown race.
+
+Check native accounting and run events before attributing a cancelled continuation
+to teardown. A provider response must also supply usable usage for this automatic
+path. Preserve the fail-closed guard and report the evidence limit: without retained
+raw usage, missing server fields and adapter/parser loss cannot be distinguished.
+Evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/fresh40-after-wake-outcome/.
+
+
+The follow-up differential for this incident made two real requests to the same
+local endpoint: no stream option produced no usage; include_usage=true produced
+complete57/22/79. The existing custom preset now requests usage. A separate native
+regression found that the gateway lost already-supported terminal choice usage;
+both fixes retain strict settlement. One repaired real handler/gateway request
+settled83 tokens and passed the next authority check. Retain both upstream wire
+evidence and downstream ledger evidence: either alone misses part of this failure.
+This synthetic accepted accounting check does not revive the closed review or
+qualify its missing verifier. Evidence: QA/ac24/usage-unknown-repair/ under the
+same multi-model-code-review qualification directory above.
+
+
+## Model-name metadata readiness does not validate generation options (TASK-35582, 2026-10-28)
+
+The fresh42 reviewer/verifier journey reached Haiku5.5 with valid model metadata,
+then its first Messages POST returned400. It carried temperature0.6/top_k50; the
+existing modern-Anthropic capability table omitted the newly released exactfamily.
+The official Haiku5.5 migration guide disallows sampling and fixedthinkingbudget.
+Adding only that family to the existing table passes671 covering tests; a real
+streaming handler request with the same tool schemas then returned200 after
+production omitted sampling. No historicalerrorbody was retained, so the original
+400's exacttext staysunknown. Model-list success and fake-HTTP payload construction
+alone did not catch this gap; check current exact-model request rules as part of
+provider qualification. The compatibility probe cannot complete a closed review.
+Evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/fresh42-after-usage-outcome/.
+
+
+## Submission revisions cannot reconstruct expired review evidence (TASK-35582, 2026-10-28)
+
+The Haiku-fixed fresh43 qualifier reached a real verifier and recorded one accepted
+submit followed by two rejected submits, ending at revision1 with
+submission_conflict. Its final report and expansion reads already refused
+stage_grant_unavailable. Durable steps intentionally omitted arguments/results;
+disclosure feedback retained only hashes. Thus revision1 proved an accepted submit,
+but could not identify its kind, dispositions or evidence. The last presented
+reviewer packets predated V1. All43HTTP200 responses and clean shutdown could not
+prove a complete unified report or recover the exact conflicting payload.
+
+Qualification observers need authorized evidence while its stage is still live,
+including refusal detail and accepted-checkpoint identity. Do not infer decisions
+from counters or bypass an expired stage to reconstruct them. Preserve the existing
+privacy boundary; use admitted report/export paths rather than adding bodies to
+durable runtime metadata. Evidence: Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/fresh43-after-haiku-outcome/.
+## Disposable HOME does not isolate the macOS Keychain
+
+**TASK-33020, archive recovery live qualification, 2026-09-27.** Native
+TldwCli ran with scratch HOME/XDG/config/data paths and real local inference.
+After Quit unmounted the UI, process 27476 still waited; its 23:33:30 UTC sample
+showed a worker in SecItemAdd→AuthorizationCopyRights. The OS authorization
+was not approved. The process exited before the guarded termination action,
+so no signal was sent. Filesystem isolation alone had not excluded an OS
+credential backend.
+
+Final synthetic-profile launches selected the installed no-op backend with
+PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring in that launcher only,
+verified the backend class before importing the app, and exited through native
+Ctrl+Q without leaving the private tmux server. Include the OS credential
+backend in disposable-profile isolation; do not approve an authorization or
+change normal Keychain preferences merely to qualify synthetic data.
+
+## A local-model probe can still download embeddings through a tool
+
+**TASK-33020, archive recovery, 2026-09-27.** A separate native probe intended
+to verify archive recovery with no retrieval index used only local Gemma for
+LLM transport. The model selected the generic search_library_rag tool before
+the dedicated archive search. That call initialized scratch chromadb and
+created downloaded MiniLM cache blobs under the new disposable data root;
+ten recorded LLM HTTP responses were all localhost200, but that narrower
+transport evidence did not exclude asset downloads by other tools.
+
+The probe was stopped through native Quit and excluded from no-index
+qualification. For a no-download/no-index probe, independently constrain
+embedding/index initialization as well as the LLM endpoint and starting data.
+A verbal constraint and an initially empty index do not enforce that boundary.
+
+## Count native tool discovery in a bounded model probe (TASK-33164, 2026-09-28)
+
+A Capture-On archive recovery probe reserved four remaining requests for corrected Direct mode after RAG-only qualified. Repairing the real shared Library constructor restored its full lazy catalog. The model then used two find_tools calls, one load_tools and the archive search, consuming all four requests before its post-tool reply or restore follow-up. Earlier two-request Direct search ran with the failed Library factory and was an invalid budget reference. Keep the hard cap, budget for discovery plus search/restore settlement, and report a capped walkthrough separately from a source failure. All actual requests returned200/DONE; the next request was refused locally, with a separate ERROR trace.
+
+## Match a model-request observer to the actual selected transport (TASK-33164, 2026-10-18)
+
+The fresh archive recovery probe moved from Gemma9099 to the user’s Qwen8010 server. Its copied requests.Session.post observer recorded no model events, yet the native gateway completed two HTTPX llama.cpp calls and showed archive findings. The observer was not a cap for that branch. Two COMPLETE durable call admissions/provider-entry events with no fallback route accounted for those calls; no HTTP-status/SSE-wire evidence was claimed. Before the next send, native Settings reduced the private run to two model turns and native conversation settings disabled streaming/fallback; that send then refused before reservation.
+
+Before bounded inference, verify the selected adapter and cover both generic requests and native HTTPX, including stream fallback and auxiliary calls. Exercise the observer/deny path without inference first, retain an external consumed offset across restarts, and reconcile it against durable call/admission evidence. An empty observation file proves nothing about traffic on an unobserved transport. Evidence: Docs/superpowers/qa/console/2026-10-18-archive-recovery-live.md.
+
+## Structured reasoning is separate from native tool capability (TASK-33164, 2026-10-18)
+
+Qwen8010 parsed reasoning_content and the new version2 trace profile established a live terminal revision/verified_equal. The subsequent natural restore still had no result-reference rider. Production GET-only resolution showed /health200, /props404, no override and native_tools=false; the bridge used fenced text tools while the rider required native function-call support. The earlier real-stack fake structured fixture explicitly supplied native_tools=true, so it qualified that contract rather than this endpoint. Five observed HTTPX200/SSE-DONE calls were real, but the overall follow-up failed and no restore was claimed. Evidence: Docs/superpowers/qa/console/2026-10-18-versioned-profile-live.md.
+
+Check the actual resolved protocol/capability independently of reasoning parsing and model identity. Do not infer native tool support from structured reasoning or force a flag to make qualification pass. Observe optional metadata routes before inference: the first new guard refused GET /props and spent zero model calls; the corrected closed read-only allowance was rechecked offline. Preserve the consumed offset and bound all transport attempts, including a terminal budget-summary request beyond the ordinary model-turn loop.
+
+
+### Fence calls need the runtime dispatch identity (TASK33164,2026-10-18)
+
+After the approved fenced reference handoff reached the current user, an ordinary supported no-ID tool fence still refused Native recovery call identity required: restore dispatch passed raw empty call.call_id while proposal/guard/review/trace already used turn-2-call-0. Reusing that existing app-owned correlation at only the restore callsite preserved the guard and exact keyed confirmation. Inventing a model call_id in the fixture would have hidden the bug. Real localhost8010 Direct/RAG then succeeded with no-ID fences and run-scoped turn-1-call-0, exact workspace confirmation and original-history Open. See2026-10-18-archive-fenced-live QA; native origin and native wire IDs are separate facts.
+## Native terminal portability needs real discovery and path tests (TASK-37205, 2026-10-28)
+
+**Incident.** The bundled Windows WezTerm ignored HOME for its known-folder
+roots. Explicit roots then exposed AF_UNIX's 108-byte address limit, a global
+desktop discovery mapping, and `--always-new-process`/explicit config disabling
+discovery publication. A real GUI plus matching CLI with `--no-auto-start`
+revealed each caller seam. A 158-byte absolute socket path failed while its
+35-byte Data-relative address completed a byte round trip. Host-directory
+snapshots before/during/after and a real pane query established containment.
+
+The native OpenSSL build also failed on a long generated object path. A read-only
+8.3 spelling of the same owned build tree fixed it. A narrower Cargo test feature
+graph rebuilt native dependencies even with `--release`; exact-source helper
+tests plus the full compiled caller graph and real GUI/CLI supplied focused proof.
+Do not infer terminal portability from environment strings or a successful build.
+
+## Recovery validators must retain pure import boundaries (TASK-37205, 2026-10-28)
+
+**Incident.** Detached owner discovery imported normal config and retained a
+startup lease, so same-process publication correctly timed out. An exiting
+validation worker retired that lease without bypassing admission. Actual native
+recovery then exposed `goal_models -> agent_models -> Chat.provider_continuation`
+executing Chat's eager server-service exports and importing config inside the
+recovery fence. Lazy existing Chat exports fixed the pure-model boundary; the
+same staged operation then committed, reopened its real note and retained all
+80 activation requirements. A later move with its old folder absent also passed.
+Never clear leases or ancestry to hide a runtime import crossing recovery.

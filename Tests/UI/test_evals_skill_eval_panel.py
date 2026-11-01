@@ -81,15 +81,38 @@ class _PanelHarness(App):
 
 
 async def _pick_via_overlay(pilot, select_id: str, downs: int) -> None:
-    """Selects an option through the Select's own dropdown, the way a user
-    does: click to expand, arrow to the option, enter to pick. One ``down``
-    is consumed by the NULL padding option Textual prepends when
-    ``allow_blank`` is on, so ``downs=2`` reaches the first real option,
-    ``downs=3`` the second."""
-    await pilot.click(f"#{select_id}")
-    await pilot.pause()
-    await pilot.press(*(["down"] * downs), "enter")
-    await pilot.pause()
+    """Selects an option through the Select's own dropdown, the way a
+    keyboard user does: focus it, open it, arrow to the option, enter to
+    pick. One ``down`` is consumed by the NULL padding option Textual
+    prepends when ``allow_blank`` is on, so ``downs=2`` reaches the first
+    real option, ``downs=3`` the second.
+
+    Each step waits for the state the next one needs (TASK-36382): a
+    coordinate click could land before layout settled and open nothing, and
+    ``focus()`` (the Select's, then the overlay's) lands a turn after the call.
+    """
+    from textual.widgets import Select
+
+    async def wait_for(predicate) -> None:
+        for _ in range(300):
+            if predicate():
+                return
+            await pilot.pause(0.02)
+        raise AssertionError(f"{select_id}: condition never became true")
+
+    select = pilot.app.screen.query_one(f"#{select_id}", Select)
+    overlay = select.query_one("SelectOverlay")
+    select.focus()
+    await wait_for(lambda: select.has_focus)
+    # Space opens both Select and SetSelect (SetSelect's Enter only opens
+    # while unset).
+    await pilot.press("space")
+    await wait_for(lambda: select.expanded and overlay.has_focus)
+    # A keyboard open highlights the first row (the NULL padding) where a
+    # click highlighted nothing; Home makes the start row explicit, so
+    # ``downs`` keeps its documented meaning.
+    await pilot.press("home", *(["down"] * (downs - 1)), "enter")
+    await wait_for(lambda: not select.expanded)
 
 
 def test_estimate_label_matches_depth():

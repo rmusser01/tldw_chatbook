@@ -3129,7 +3129,7 @@ class _LegacyTranscriptionBackend:
                 _handle_progress_callback_error(e)
 
         # Get configuration
-        from ..config import get_cli_setting
+        from ..config import get_cli_setting, without_ciphertext
 
         remote_config = get_cli_setting("transcription.remote_whisper", {})
 
@@ -3142,7 +3142,9 @@ class _LegacyTranscriptionBackend:
             "api_endpoint", "http://localhost:8000/v1/audio/transcriptions"
         )
         api_key_env_var = remote_config.get("api_key_env_var", "REMOTE_WHISPER_API_KEY")
-        api_key = remote_config.get("api_key", "")
+        # TASK-34100.4 AC #10: a key still `enc:` reads as absent, so the env
+        # var below is used and ciphertext is never sent as the bearer.
+        api_key = without_ciphertext(remote_config.get("api_key", ""), "")
 
         # Get API key from environment if specified
         if api_key_env_var and not api_key:

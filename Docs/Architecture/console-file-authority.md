@@ -130,3 +130,33 @@ The fixed narrowing order: config gates → ephemeral restrictions → ADR-069 b
 ## Optional folder keyword indexes
 
 Workspace folder indexing is a separate, explicit binding capability. Its derived cache does not extend Console filesystem authority: each `fs_search_index` call still obeys the requesting run's effective read permission, retained exclusions, exact binding/root identity and live registry state. Candidate locations are ranked only after the exclusion floor, and evidence is reread through the native Capture worker before disclosure. See [project-indexing.md](./project-indexing.md) for management, CAS, admission/retirement, storage bounds and the Console status handoff.
+
+## Captured code-review authority (ADR-281)
+
+The host-only `ReviewGitReader` and its entry records live in
+`Agents/code_review_source.py`; they reuse `Tools/git_tool_impls.py`'s bounded
+byte runner without joining the remote worker closure.
+
+`Agents/code_review_source.py` captures PR/range exact commits, patch bytes with
+matching preimage, or selected working-tree layers and explicit mutable context.
+Children receive opaque refs into that frozen view. Bounded list/literal-search/
+resolve/range reads retain exclusions and current source permission. Committed
+unchanged context can load from the pinned commit; missing mutable context is an
+explicit gap. Provider-validated original paths activate existing nested project
+instructions before evidence delivery; a ref or instruction body grants no access.
+
+`ReviewStore` owns source, originals, raw output, private verification maps and
+checkpoints under the existing Console scratch generation and leases. Limits are
+64 MiB source/check content, 16 MiB reports/metadata, 1 MiB participant output,
+80 MiB total and 2,048 files per review; 160 MiB and four contexts per tab, including
+reservations/staging/copies. Explicit release tombstones access before cleanup;
+failed deletion and native leases retain their charge. Stop/close/source fences
+prevent late publication or automatic replay. Saved conversation references cannot
+restore an expired bundle; explicit Markdown export preserves the requested report.
+
+The stock Raw CLI cannot enforce an aggregate disposable-output quota, so executable
+review checks report unavailable before copying/launching. Source verification
+remains available. A check is evidence only with an actual executed native receipt
+fully delivered to the same live verifier; proposals and unavailable receipts prove
+no execution. Deterministic executable-boundary controls and live limitations are
+separated in the [QA record](../superpowers/qa/2026-10-18-multi-model-code-review/README.md).

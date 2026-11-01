@@ -979,7 +979,7 @@ PROVIDER_PARAM_MAP["polystrata"] = dict(PROVIDER_PARAM_MAP["llama_cpp"])
 
 # Custom-endpoint engine surface (ADR-179 Phase 2 Task 6): the legacy
 # "custom-openai-api" map, copied verbatim so the swapped "custom-hosted"
-# execution key accepts exactly the generic kwargs the legacy handler did
+# execution key accepts the legacy kwargs plus durable continuation groups
 # (set/value parity is pinned by Tests/Chat/test_custom_endpoint_engine_swap.py;
 # the engine closure accepts every mapped provider-side name, including
 # ``user_identifier`` and the gateway's ``api_key_resolved`` decision flag).
@@ -1009,6 +1009,7 @@ CUSTOM_PROVIDER_PARAM_MAP = {
     "top_logprobs": "top_logprobs",
     "reasoning_effort": "reasoning_effort",
     "thinking_budget_tokens": "thinking_budget_tokens",
+    "provider_continuations": "provider_continuations",
 }
 PROVIDER_PARAM_MAP["custom-hosted"] = CUSTOM_PROVIDER_PARAM_MAP
 """

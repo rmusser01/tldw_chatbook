@@ -396,8 +396,12 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
         "server claim resource close failed": ("provider",),
     },
     "tldw_chatbook/config.py": {
-        "Invalid chat display name in [chat_defaults]": (),
         "Refusing to write CLI config": ("type(exc).__name__",),
+    },
+    # Moved verbatim out of config.py's get_chat_defaults_user_display_name
+    # (ab17bcbaea, module size ratchet).
+    "tldw_chatbook/Chat/console_roleplay_identity.py": {
+        "Invalid chat display name in [chat_defaults]": (),
     },
     "tldw_chatbook/Media_Generation/adapter_registry.py": {
         "Failed to initialize {} adapter for '{}' (error_type={})": (
@@ -433,7 +437,9 @@ TASK_15743_FINAL_REBASE_DIAGNOSTICS = {
             ("CONSOLE_RUNTIME_ATTR",),
         ),
     },
-    "tldw_chatbook/Chat/console_agent_bridge.py": {
+    # Moved verbatim out of console_agent_bridge.py (ab17bcbaea, module size
+    # ratchet); the bridge's own logger is passed in as bridge.logger.
+    "tldw_chatbook/Chat/console_streaming_request.py": {
         "usage accounting failed after a successful provider turn": (
             1,
             ("type(exc).__name__",),

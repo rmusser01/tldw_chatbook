@@ -64,6 +64,7 @@ def commit_queued_draft_transaction(
     store: Any,
     sync_command_popup: Callable[[], None],
     notify: Callable[[str], None] | None = None,
+    _captured_inputs: Any = None,
 ) -> None:
     """Clear only the admitted draft while keeping unsent text out of history.
 
@@ -83,6 +84,7 @@ def commit_queued_draft_transaction(
         undo_histories=undo_histories,
         notify=notify or (lambda _text: None),
         verb="queued",
+        captured_inputs=_captured_inputs,
     )
     if visible_session_id == session_id and composer is not None:
         sync_command_popup()
@@ -616,6 +618,14 @@ class ConsolePromptQueueUIController:
             Callable[[str], Awaitable[Callable[[], AbstractContextManager[None]]]]
             | None
         ) = None,
+        capture_configuration_async: Callable[
+            [str, Any], Awaitable["ConsoleTurnConfigurationSnapshot"]
+        ]
+        | None = None,
+        launch_chain_async: Callable[
+            [str, str, "ConsoleDraftStash | None", Any], Awaitable[str]
+        ]
+        | None = None,
     ) -> None:
         """Wire the dispatcher to its owners.
 
@@ -628,6 +638,8 @@ class ConsolePromptQueueUIController:
         self._precapture = precapture
         self._chat_controller_accessor = chat_controller_accessor
         self._capture_configuration = capture_configuration
+        self._capture_configuration_async = capture_configuration_async
+        self._async_capture_sync_source = capture_configuration
         self._ensure_active_session = ensure_active_session
         self._blocked_reason_accessor = blocked_reason_accessor
         self._setup_blocked_reason_accessor = setup_blocked_reason_accessor
@@ -636,6 +648,8 @@ class ConsolePromptQueueUIController:
         self._focus_composer = focus_composer
         self._note_follow_intent = note_follow_intent
         self._launch_chain = launch_chain
+        self._launch_chain_async = launch_chain_async
+        self._async_launch_sync_source = launch_chain
         self._commit_captured_draft = commit_captured_draft
         self._commit_queued_draft = commit_queued_draft
         self._turn_recovery_ids = turn_recovery_ids
@@ -646,9 +660,6 @@ class ConsolePromptQueueUIController:
         self._edit_refusal = edit_refusal
         self._sync_ui = sync_ui
         self._sending_accessor = sending_accessor
-        # Guardian (ADR-204): a getter returning the GuardianChecker, or
-        # None while [guardian] enabled is off -- a None checker is a
-        # zero-cost passthrough (contract 1).
         self._guardian_checker_getter = guardian_checker_getter
         self._append_captured_system_message = append_captured_system_message
 
@@ -954,6 +965,27 @@ class ConsolePromptQueueUIController:
             expected_revision=expected_revision,
         )
 
+    def _capture_user_configuration(self, session_id: str) -> Any:
+        """Issue actor provenance only from user queue/edit event producers."""
+        return self._with_user_origin(
+            session_id, self._capture_configuration(session_id)
+        )
+
+    def _with_user_origin(self, session_id: str, configuration: Any) -> Any:
+        from dataclasses import replace
+
+        controller = self._chat_controller_accessor()
+        runtime = getattr(controller, "_archive_recovery_runtime", None)
+        if runtime is None:
+            owner = getattr(getattr(controller, "app", None), "console_runtime", None)
+            if owner is not None:
+                runtime = owner.ensure_archive_recovery()
+        if runtime is None or configuration is None:
+            return configuration
+        return replace(
+            configuration, recovery_user_origin=runtime.issue_user_proof(session_id)
+        )
+
     def edit_waiting(
         self,
         session_id: str,
@@ -975,7 +1007,7 @@ class ConsolePromptQueueUIController:
             entry_id=entry_id,
             text=text,
             expected_revision=expected_revision,
-            configuration=self._capture_configuration(session_id),
+            configuration=self._capture_user_configuration(session_id),
         )
 
     def move_waiting(
@@ -1111,12 +1143,36 @@ class ConsolePromptQueueUIController:
             detail="Unknown prompt queue recovery action.",
         )
 
+    async def _capture_configuration_for_dispatch(
+        self, session_id: str, expected_controller: Any = None
+    ) -> "ConsoleTurnConfigurationSnapshot":
+        """Prepare production snapshots while preserving injected sync callbacks."""
+        sync_callback = self._capture_configuration
+        if (
+            self._capture_configuration_async is None
+            or sync_callback is not self._async_capture_sync_source
+        ):
+            return self._capture_user_configuration(session_id)
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        controller = expected_controller or self._chat_controller_accessor()
+        callback = self._capture_configuration_async
+        context = await callback(session_id, controller)
+        if (
+            self._chat_controller_accessor() is not controller
+            or self._capture_configuration_async is not callback
+            or self._capture_configuration is not sync_callback
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+        return self._with_user_origin(session_id, context)
+
     async def dispatch(
         self,
         draft: str,
         *,
         session_id: str | None = None,
         stash: "ConsoleDraftStash | None" = None,
+        _captured_inputs: Any = None,
     ) -> ConsolePromptDispatchResult:
         """Send now, queue behind accepted work, or refuse without draft loss.
 
@@ -1129,7 +1185,12 @@ class ConsolePromptQueueUIController:
         the gate, which reads the VISIBLE chat, is read first: in the stretch
         where the hook gate checked that this send's chat is the visible one.
         """
-
+        callbacks = (
+            self._launch_chain_async,
+            self._commit_captured_draft,
+            self._commit_queued_draft,
+        )
+        guardian_redacted = False
         # Guardian pre-send check (ADR-204 contract 4). This hook runs at
         # the very head of dispatch -- BEFORE the blocked-reason refusal
         # gate below, and therefore BEFORE ADR-148 ``UserPromptSubmit``
@@ -1201,6 +1262,7 @@ class ConsolePromptQueueUIController:
                 redacted = guardian_result.get("redacted_draft")
                 if isinstance(redacted, str) and redacted:
                     draft = redacted
+                    guardian_redacted = True
 
         blocked_reason = captured_gate[0] if captured_gate is not None else self._blocked_reason_accessor().strip()
         if blocked_reason:
@@ -1226,6 +1288,10 @@ class ConsolePromptQueueUIController:
         if (
             session_id is not None
             and self._precapture is not None
+            and (
+                self._capture_configuration_async is None
+                or self._capture_configuration is not self._async_capture_sync_source
+            )
             and self._dispatch_builds_turn(session_id)
         ):
             prepared = await self._precapture(session_id)
@@ -1237,6 +1303,63 @@ class ConsolePromptQueueUIController:
         chat_start = getattr(controller, "_chat_start", None)
         if chat_start is not None:
             await chat_start.withdraw_for_manual(session_id)
+
+        def require_pressed_current():
+            if _captured_inputs is None:
+                return
+            from tldw_chatbook.Widgets.Console.console_composer_bar import (
+                ConsoleDraftStash,
+            )
+            from .sent_draft import as_typed
+
+            image_only = stash is None and not draft and not _captured_inputs.draft
+            if not image_only and (
+                type(stash) is not ConsoleDraftStash
+                or (stash.text != draft and not guardian_redacted)
+                or as_typed(stash).text != _captured_inputs.draft
+            ):
+                raise RuntimeError("Pressed Console draft changed.")
+            if (
+                self._chat_controller_accessor() is not controller
+                or any(
+                    original is not current
+                    for original, current in zip(
+                        callbacks,
+                        (
+                            self._launch_chain_async,
+                            self._commit_captured_draft,
+                            self._commit_queued_draft,
+                        ),
+                    )
+                )
+                or not controller.store.session_inputs_are_current(
+                    _captured_inputs, include_draft=False
+                )
+            ):
+                raise RuntimeError("Pressed Console inputs or callbacks changed.")
+
+        def queue_kwargs():
+            if _captured_inputs is None:
+                return {}
+            from tldw_chatbook.Chat.console_chat_controller import (
+                _CONSOLE_RECEIVED_QUEUE_METHOD,
+            )
+            from tldw_chatbook.Chat.console_received_dispatch import (
+                stock_native_methods,
+            )
+
+            function, code = _CONSOLE_RECEIVED_QUEUE_METHOD
+
+            def before_admission():
+                require_pressed_current()
+                if not stock_native_methods(
+                    controller, (("queue_prompt", function, code),)
+                ):
+                    raise RuntimeError("Pressed Console queue source changed.")
+
+            before_admission()
+            return {"_before_admission": before_admission}
+
         snapshot = controller.prompt_queue_registry.snapshot(session_id)
         activity = controller.activity_for(session_id)
 
@@ -1250,20 +1373,58 @@ class ConsolePromptQueueUIController:
             )
 
         if activity.accepted_live_turn or snapshot.total_count > 0:
-            with prepared():
-                configuration = self._capture_configuration(session_id)
-            queued = await controller.queue_prompt(
-                session_id,
-                text=draft,
-                expected_revision=snapshot.revision,
-                configuration=configuration,
-            )
+            try:
+                with prepared():
+                    configuration = await self._capture_configuration_for_dispatch(
+                        session_id, controller
+                    )
+            except (RuntimeError, ValueError) as exc:
+                if self._capture_configuration_async is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
+            try:
+                queued = await controller.queue_prompt(
+                    session_id,
+                    text=draft,
+                    expected_revision=snapshot.revision,
+                    configuration=configuration,
+                    **queue_kwargs(),
+                )
+            except (RuntimeError, ValueError) as exc:
+                if _captured_inputs is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
             if queued.status is QueueMutationStatus.REROUTE_NORMAL_SEND:
                 return await self._stage_normal_chain(
-                    controller, session_id, draft, stash, prepared
+                    controller,
+                    session_id,
+                    draft,
+                    stash,
+                    prepared,
+                    _captured_inputs=_captured_inputs,
+                    _require_pressed_current=require_pressed_current,
+                    _queue_kwargs=queue_kwargs,
+                    _allow_transformed_draft=guardian_redacted,
                 )
             if queued.applied:
-                self._commit_queued_draft(session_id, stash)
+                if _captured_inputs is None:
+                    self._commit_queued_draft(session_id, stash)
+                else:
+                    self._commit_queued_draft(
+                        session_id, stash, _captured_inputs=_captured_inputs
+                    )
                 await self._sync_ui()
                 return ConsolePromptDispatchResult(
                     ConsolePromptDispatchStatus.QUEUED, session_id=session_id
@@ -1279,7 +1440,15 @@ class ConsolePromptQueueUIController:
                 detail=refusal,
             )
         return await self._stage_normal_chain(
-            controller, session_id, draft, stash, prepared
+            controller,
+            session_id,
+            draft,
+            stash,
+            prepared,
+            _captured_inputs=_captured_inputs,
+            _require_pressed_current=require_pressed_current,
+            _queue_kwargs=queue_kwargs,
+            _allow_transformed_draft=guardian_redacted,
         )
 
     async def _append_owned_dispatch_message(self, text: str, session_id: str | None) -> None:
@@ -1308,6 +1477,11 @@ class ConsolePromptQueueUIController:
         draft: str,
         stash: "ConsoleDraftStash | None",
         prepared: Callable[[], AbstractContextManager[None]] = contextlib.nullcontext,
+        *,
+        _captured_inputs=None,
+        _require_pressed_current=None,
+        _queue_kwargs=None,
+        _allow_transformed_draft=False,
     ) -> ConsolePromptDispatchResult:
         # Re-check the controller gate at the exact manual/queue boundary.
         # An accepted-turn race is retried as queue admission once, while a
@@ -1326,16 +1500,46 @@ class ConsolePromptQueueUIController:
             )
         if activity.accepted_live_turn:
             snapshot = controller.prompt_queue_registry.snapshot(session_id)
-            with prepared():
-                configuration = self._capture_configuration(session_id)
-            queued = await controller.queue_prompt(
-                session_id,
-                text=draft,
-                expected_revision=snapshot.revision,
-                configuration=configuration,
-            )
+            try:
+                with prepared():
+                    configuration = await self._capture_configuration_for_dispatch(
+                        session_id, controller
+                    )
+            except (RuntimeError, ValueError) as exc:
+                if self._capture_configuration_async is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
+            try:
+                queued = await controller.queue_prompt(
+                    session_id,
+                    text=draft,
+                    expected_revision=snapshot.revision,
+                    configuration=configuration,
+                    **(_queue_kwargs() if _queue_kwargs is not None else {}),
+                )
+            except (RuntimeError, ValueError) as exc:
+                if _captured_inputs is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
             if queued.applied:
-                self._commit_queued_draft(session_id, stash)
+                if _captured_inputs is None:
+                    self._commit_queued_draft(session_id, stash)
+                else:
+                    self._commit_queued_draft(
+                        session_id, stash, _captured_inputs=_captured_inputs
+                    )
                 await self._sync_ui()
                 return ConsolePromptDispatchResult(
                     ConsolePromptDispatchStatus.QUEUED, session_id=session_id
@@ -1344,17 +1548,37 @@ class ConsolePromptQueueUIController:
                 return self._refuse_queue_mutation(queued, session_id, stash)
         self._note_follow_intent()
         try:
-            with prepared():
-                self._launch_chain(draft, session_id)
+            if (
+                self._launch_chain_async is not None
+                and self._launch_chain is self._async_launch_sync_source
+            ):
+                if _captured_inputs is None:
+                    await self._launch_chain_async(draft, session_id, stash, controller)
+                else:
+                    _require_pressed_current()
+                    await self._launch_chain_async(
+                        draft,
+                        session_id,
+                        stash,
+                        controller,
+                        _captured_inputs=_captured_inputs,
+                        **({"_allow_transformed_draft": True} if _allow_transformed_draft else {}),
+                    )
+            elif _captured_inputs is not None:
+                raise RuntimeError("Pressed Console launch changed.")
+            else:
+                with prepared():
+                    self._launch_chain(draft, session_id)
         except (RuntimeError, ValueError) as exc:
-            detail = str(exc) or "Console runtime refused this turn."
+            detail = _preparation_refusal_detail(exc)
             self._notify(detail, "warning")
             return ConsolePromptDispatchResult(
                 ConsolePromptDispatchStatus.REFUSED,
                 session_id=session_id,
                 detail=detail,
             )
-        self._commit_captured_draft(session_id, stash)
+        if _captured_inputs is None:
+            self._commit_captured_draft(session_id, stash)
         return ConsolePromptDispatchResult(
             ConsolePromptDispatchStatus.SENT, session_id=session_id
         )
@@ -1393,3 +1617,20 @@ __all__ = [
     "commit_queued_draft_transaction",
     "derive_prompt_queue_presentation",
 ]
+
+
+def _preparation_refusal_detail(error: RuntimeError | ValueError) -> str:
+    """Keep the internal preparation reason out of the composer notice."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    if (
+        isinstance(error, RecoveryRequired)
+        and str(error) == "console_snapshot_owner_changed"
+    ):
+        return "Chat or settings changed while preparing Send. Your draft was kept; send again."
+    return str(error) or "Console runtime refused this turn."
+
+
+_CONSOLE_PROMPT_QUEUE_DISPATCH = (
+    ConsolePromptQueueUIController.dispatch, ConsolePromptQueueUIController.dispatch.__code__
+)

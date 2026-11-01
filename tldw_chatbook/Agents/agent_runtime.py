@@ -116,6 +116,7 @@ from .agent_models import (
     RunOutcome,
     RunTerminationReason,
     SpawnAdmissionRefusal,
+    SpawnAdmissionReplay,
     ToolBatchReady,
     ToolCall,
     ToolCallExecuting,
@@ -689,6 +690,16 @@ class LoopDeps:
     on_tool_activity: Callable[[AgentStep], None] | None = None
     list_peer_agents: Callable[[dict], ToolResult] | None = None
     send_to_peer: Callable[[dict], ToolResult] | None = None
+    acknowledge_provider_continuation: (
+        Callable[
+            [ProviderContinuationEvent, ProviderContinuationEvent, str | None], None
+        ]
+        | None
+    ) = None
+    # Appended to preserve existing positional dependency slots. Native dispatch
+    # supplies the restore call identity outside model-controlled arguments.
+    search_archived_conversations: Callable[[dict], ToolResult] | None = None
+    request_conversation_restore: Callable[..., ToolResult] | None = None
 
 
 def _continuation_calls_match(
@@ -1476,7 +1487,10 @@ def run_agent_loop(
         )
         return _outcome(RUN_ERROR)
 
-    def persist_continuation(event: ProviderContinuationEvent) -> bool:
+    def persist_continuation(
+        event: ProviderContinuationEvent, model_result: str | None = None
+    ) -> bool:
+        original = event
         try:
             if isinstance(event, ToolBatchReady):
                 event = replace(
@@ -1489,6 +1503,8 @@ def run_agent_loop(
                     checkpoint=project_continuation_checkpoint(event.checkpoint),
                 )
             deps.persist_provider_continuation(event)
+            if deps.acknowledge_provider_continuation is not None:
+                deps.acknowledge_provider_continuation(original, event, model_result)
         except Exception:
             return False
         return True
@@ -1497,6 +1513,8 @@ def run_agent_loop(
         call: ToolCall,
         target: str,
         result: ContinuationResult | None = None,
+        *,
+        model_result: str | None = None,
     ) -> bool:
         nonlocal continuation_checkpoint
         checkpoint = continuation_checkpoint
@@ -1520,7 +1538,7 @@ def run_agent_loop(
                 target_state=target,  # type: ignore[arg-type]
                 result=result,
             )
-        if not persist_continuation(event):
+        if not persist_continuation(event, model_result):
             return False
         try:
             continuation_checkpoint = transition_provider_call(
@@ -2405,7 +2423,20 @@ def run_agent_loop(
                     except Exception:  # noqa: BLE001 - warning is best effort
                         logger.warning("project_instruction_warning_callback_failed")
             if preparation.status == "retry_with_context":
-                messages.extend(build_project_instruction_deferral_rows(calls))
+                deferrals = build_project_instruction_deferral_rows(calls)
+                # Deferred calls did not execute, but their protocol results must
+                # settle the canonical batch before another response is admitted.
+                if continuation_checkpoint is not None:
+                    for call, row in zip(calls, deferrals):
+                        content = row["content"]
+                        if not transition_call(
+                            call,
+                            "failed",
+                            ContinuationResult(content),
+                            model_result=content,
+                        ):
+                            return continuation_error()
+                messages.extend(deferrals)
                 messages.extend(
                     deepcopy(dict(row)) for row in preparation.ephemeral_rows
                 )
@@ -2573,11 +2604,15 @@ def run_agent_loop(
                 if continuation_checkpoint is None:
                     logger.opt(exception=True).warning(
                         f"review_tool_calls hook raised for batch "
-                        f"{[c.name for c in review_required_calls]}; treating all "
-                        f"{len(review_required_calls)} "
-                        f"calls as proceed"
+                        f"{[c.name for c in review_required_calls]}; refusing recovery "
+                        f"calls and preserving legacy review behavior for other tools"
                     )
-                verdicts = {}
+                verdicts = {
+                    str(call.call_id or call.name): "Recovery tool review failed."
+                    for call in review_required_calls
+                    if call.name
+                    in {"search_archived_conversations", "request_conversation_restore"}
+                }
 
             if not (review_hook_failed and continuation_checkpoint is not None):
                 for call in calls:
@@ -2795,7 +2830,10 @@ def run_agent_loop(
                     total_limit=True,
                 )
                 if not transition_call(
-                    call, "failed", ContinuationResult(continuation_content)
+                    call,
+                    "failed",
+                    ContinuationResult(continuation_content),
+                    model_result=str(content),
                 ):
                     return continuation_error()
                 _emit_record(
@@ -2906,6 +2944,13 @@ def run_agent_loop(
                         dispatch_refused = True
                 if dispatch_refused:
                     result = ToolResult.blocked("hook: final dispatch identity refused")
+                elif config.review_binding is not None and call.name not in {
+                    "code_review_read",
+                    "code_review_submit",
+                    "find_tools",
+                    "load_tools",
+                }:
+                    result = ToolResult(ok=False, error="role_denied", dispatch_state="not_started")
                 elif call.name == SPAWN_TOOL_NAME:
                     if SPAWN_TOOL_NAME not in config.allowed_tools:
                         # Q6: refuse before dispatch — no budget consumption,
@@ -2941,7 +2986,31 @@ def run_agent_loop(
                         # before.
                         override_provider = str(call.args.get("provider") or "").strip()
                         override_model = str(call.args.get("model") or "").strip()
-                        if not task:
+                        scoped = (
+                            "review_id" in call.args or "review_slot_id" in call.args
+                        )
+                        if scoped:
+                            if set(call.args) != {"review_id", "review_slot_id"} or any(
+                                not isinstance(call.args.get(key), str)
+                                or not call.args[key].strip()
+                                for key in ("review_id", "review_slot_id")
+                            ):
+                                result = ToolResult(
+                                    ok=False,
+                                    error="invalid_review_spawn",
+                                    dispatch_state="not_started",
+                                )
+                            else:
+                                result = deps.spawn(
+                                    review_id=call.args["review_id"],
+                                    review_slot_id=call.args["review_slot_id"],
+                                )
+                                if not isinstance(
+                                    result,
+                                    (SpawnAdmissionRefusal, SpawnAdmissionReplay),
+                                ):
+                                    spawned += 1
+                        elif not task:
                             # G4: an empty task is refused with no budget
                             # consumption and no STEP_SPAWN.
                             result = ToolResult(
@@ -3233,6 +3302,20 @@ def run_agent_loop(
                             str(call.args.get("script_path", "")),
                             [str(item) for item in raw_args],
                         )
+                elif (
+                    call.name == "search_archived_conversations"
+                    and deps.search_archived_conversations is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.search_archived_conversations(dict(call.args))
+                elif (
+                    call.name == "request_conversation_restore"
+                    and deps.request_conversation_restore is not None
+                ):
+                    add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
+                    result = deps.request_conversation_restore(
+                        dict(call.args), call_id=current_call_correlation
+                    )
                 elif call.name == FORK_CHAT_TOOL_NAME and deps.fork_chat is not None:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.fork_chat(dict(call.args))
@@ -3292,6 +3375,12 @@ def run_agent_loop(
                     )
                 )
                 content = result.content if result.ok else f"ERROR: {result.error}"
+                if (
+                    call.name in {"code_review_read", "code_review_submit"}
+                    and not result.ok
+                    and result.content
+                ):
+                    content = result.content
 
             if verdict == "proceed" and deps.install_tool_checkpoint is not None:
                 deps.install_tool_checkpoint(call, result)
@@ -3401,6 +3490,7 @@ def run_agent_loop(
                     call,
                     target_state,
                     ContinuationResult(str(continuation_content)),
+                    model_result=str(content),
                 ):
                     return continuation_error()
                 _emit_record(

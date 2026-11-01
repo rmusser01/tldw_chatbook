@@ -35,6 +35,7 @@ tldw_chatbook/UI/MCP_Modules/mcp_inspector.py::_hide_advanced	1
 tldw_chatbook/UI/MCP_Modules/mcp_inspector.py::_mount_test_tool_panel	1
 tldw_chatbook/UI/MCP_Modules/mcp_inspector.py::_reveal_advanced	1
 tldw_chatbook/UI/MCP_Modules/mcp_inspector.py::show_tool	1
+tldw_chatbook/UI/MCP_Modules/mcp_profile_actions.py::_save_local_profile	1	REVIEWED PR3148: exact existing MCP workbench body moved; queried mode shell unchanged; original baseline status retained.
 tldw_chatbook/UI/MCP_Modules/mcp_servers_mode.py::show_detail	3
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_apply_import	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_observe_workspace_root_save	2
@@ -43,7 +44,6 @@ tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_open_audit_tool	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_prepare_tool_test_preview	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_record_mcp_recovery_review	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_run_prepared_tool_test	2
-tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_save_local_profile	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_switch_source	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_sync_audit_mode	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::_sync_children	3
@@ -90,6 +90,8 @@ tldw_chatbook/UI/Screens/personas_screen.py::_select_dictionary	3
 tldw_chatbook/UI/Screens/personas_screen.py::_select_lore_entry	3
 tldw_chatbook/UI/Screens/personas_screen.py::_select_profile	2
 tldw_chatbook/UI/Screens/personas_screen.py::_toggle_dictionary_enabled	2
+tldw_chatbook/UI/Screens/plugins_screen.py::_load	3	REVIEWED PR3148: running/generation fences and shared publication methods cover navigation; real held-child prune success/error regressions; renew if shell/callers change.
+tldw_chatbook/UI/Screens/plugins_screen.py::_perform	3	REVIEWED PR3148: running/generation fences and shared publication methods cover navigation; real held-child prune success/error regressions; renew if shell/callers change.
 tldw_chatbook/UI/Screens/research_workspace_screen.py::_apply_catalog_state	8
 tldw_chatbook/UI/Screens/research_workspace_screen.py::_delete_quick_note	1
 tldw_chatbook/UI/Screens/research_workspace_screen.py::_download_quick_note	3
@@ -117,7 +119,6 @@ tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py::_reconcile_body	2
 tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::open_voice_api_key_settings	1
 tldw_chatbook/UI/Wizards/first_run_appearance_step.py::_on_show_all_cards	1
 tldw_chatbook/UI/Wizards/first_run_appearance_step.py::_on_show_all_themes	1
-tldw_chatbook/UI/Wizards/first_run_protect_step.py::_apply_password_worker	1
 tldw_chatbook/UI/Wizards/first_run_provider_step.py::_discover_selected_provider	1
 tldw_chatbook/UI/Wizards/first_run_provider_step.py::_run_probe	1
 tldw_chatbook/UI/Wizards/first_run_summary_step.py::_render_rows	2
@@ -170,3 +171,12 @@ tldw_chatbook/Widgets/Settings_Widgets/project_index_binding_card.py::run	4	REVI
 tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py::handle_configure_provider_changed	1
 tldw_chatbook/Widgets/audio_troubleshooting_dialog.py::_initialize_audio	1
 tldw_chatbook/Widgets/llamacpp_snapshot_manager.py::_save_preferences	5
+tldw_chatbook/Widgets/plugin_review_modal.py::_button	20	REVIEWED PR3148: serial own-pump handlers/callbacks keep composed shell stable across owner awaits; class-qualified site review covers this aggregate; renew before independent-worker dispatch or subtree replacement.
+tldw_chatbook/Widgets/plugin_review_modal.py::_execute_test	1	REVIEWED PR3148: independent review workers use is_running before retired-shell publication; real held-child prune success/error and queued owner-effect regressions; grouped _load also includes serial StatusModal.
+tldw_chatbook/Widgets/plugin_review_modal.py::_load	9	REVIEWED PR3148: independent review workers use is_running before retired-shell publication; real held-child prune success/error and queued owner-effect regressions; grouped _load also includes serial StatusModal.
+tldw_chatbook/Widgets/plugin_review_modal.py::_load_retained_data	5	REVIEWED PR3148: independent review workers use is_running before retired-shell publication; real held-child prune success/error and queued owner-effect regressions; grouped _load also includes serial StatusModal.
+tldw_chatbook/Widgets/plugin_review_modal.py::_prepare	2	REVIEWED PR3148: serial own-pump handlers/callbacks keep composed shell stable across owner awaits; class-qualified site review covers this aggregate; renew before independent-worker dispatch or subtree replacement.
+tldw_chatbook/Widgets/plugin_review_modal.py::_refresh	4	REVIEWED PR3148: serial own-pump handlers/callbacks keep composed shell stable across owner awaits; class-qualified site review covers this aggregate; renew before independent-worker dispatch or subtree replacement.
+tldw_chatbook/Widgets/plugin_review_modal.py::_save_profile	3	REVIEWED PR3148: independent review workers use is_running before retired-shell publication; real held-child prune success/error and queued owner-effect regressions; grouped _load also includes serial StatusModal.
+tldw_chatbook/Widgets/plugin_review_modal.py::_validate_root_impact	1	REVIEWED PR3148: serial own-pump handlers/callbacks keep composed shell stable across owner awaits; class-qualified site review covers this aggregate; renew before independent-worker dispatch or subtree replacement.
+tldw_chatbook/Widgets/plugin_review_modal.py::_variable_result	5	REVIEWED PR3148: serial own-pump handlers/callbacks keep composed shell stable across owner awaits; class-qualified site review covers this aggregate; renew before independent-worker dispatch or subtree replacement.

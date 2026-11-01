@@ -12,6 +12,7 @@ Qualification keeps native identity and operation verdicts fresh on every call. 
 | CLI + startup unlock | `Backup_Recovery/launcher.py` | `python -m tldw_chatbook.Backup_Recovery` (`inspect / extract / restore / recover / profiles / copies`); `startup_preflight` / `startup_unlock` (master-password prompt, rekey, reset); `minimal_recovery` host |
 | Admission | `Backup_Recovery/storage_admission.py`, `admission.py` | `admit_startup()` (called before runtime imports — the fence), `MaintenanceSession`, capture scopes/leases; nested admission forbidden |
 | Participants | `Backup_Recovery/participants.py` | `run_finite_local_worker`, installed persistence participants, exact-repository-type → owner-id mapping, participant-coverage requirement |
+| Agent worktree directory | `Backup_Recovery/agent_worktree_storage.py` | `prepare_agent_worktrees_base` — ordinary fresh admission for the fixed profile directory while retaining and restoring an enclosing core DB operation |
 | Inventory & groups | `Backup_Recovery/inventory.py`, `data_groups.py` | `discover` (no guessed targets on config failure), the 16 `BACKUP_GROUPS` and owner→group map |
 | Capture & archives | `capture_service.py`, `capture.py`, `archive_writer.py`, `archive_reader.py` | coherent capture, strict-manifest archive publication, bounded inspection (`CompressionReviewRequired`) |
 | Encryption | `crypto.py`, `age_worker.py` | package-owned **age v1**; isolated `python -I` single-scrypt pipe worker; no PATH lookup, no plaintext fallback |
@@ -24,6 +25,16 @@ Qualification keeps native identity and operation verdicts fresh on every call. 
 | Legacy helpers | `Backup_Recovery/settings_backup_helpers.py` | the retired settings-backup UI's surviving contracts (named-DB manifest publication, character-card serialization) kept for tests/TTS-profile backup |
 
 Control root is fixed at `<config dir>/recovery/control` (`service_storage.py`); there is no `[backup]` config section — destinations are chosen per operation.
+
+The fixed agent worktree directory is prepared under its own ordinary native
+storage admission. Its no-argument Backup_Recovery helper retains a counted outer
+AgentRuns operation, suspends only its discovery during that concrete directory
+preparation, then restores and revalidates it. The DB operation never grants
+filesystem authority; new acquisition still refuses on pause, profile selection
+changes or native private-path checks. A refused preparation returns a typed
+worktree storage refusal so the retained parent can terminalize an unstarted run.
+See ADR-126/228's TASK-35582 AC23-B amendment.
+
 
 ## Backup creation (dataflow)
 
@@ -46,6 +57,10 @@ Interrupted operations recover through `recover <operation-id> --finish|--rollba
 ## Startup fence and unlock
 
 `admit_startup()` runs before runtime/config imports (literally the first lines of `app.py` and `Web_Server/serve.py`, and several package `__init__`s — `Web_Server`, `RAG_Search`, `TTS`); enrollment failure is a hard `SystemExit("Recovery required: …")`. When config encryption is enabled with a verifier, `startup_unlock` prompts pre-TUI: a wrong-but-readable password offers rekey; an empty one resets encrypted config values (keys removed; chats/notes untouched). Served children refuse the unlock with a plain-language error rather than hanging. Non-unlock recovery reasons get the minimal recovery host. A recovery restart (app → CLI handoff) checks no running operation and no unsaved editors, quits guarded, and spawns a fresh process into the minimal recovery host.
+
+Same-process initialization followers wait on the existing `_changed` condition (TASK-35595). Initializer retirement/error, acquisition close and local-pause cancellation notify under the same lock. The original acquisition/path/provenance checks run at entry and after waking; native admission still follows before any dependent effect. Removing the 10 ms wake timer avoids repeating native path checks under the shared lock while the leader is unchanged. This does not change native cross-process lock polling, deadlines, source validation or lease retirement.
+
+Creation-intent ancestry validation uses the internal visitor of `native_files.pinned_directory` to inspect every existing parent in a single nofollow traversal (ADR-126, TASK-35595). Each descriptor reaches the visitor only after its original owner/mode check and is borrowed only for that call. Missing descendants do not hide existing ancestor intents; visitor errors and native close errors propagate. No settled verdict or directory handle is cached between acquisitions.
 
 ## Failure behaviors and boundaries
 
@@ -76,3 +91,21 @@ ADR-126 (`126-complete-local-backup-and-recovery.md`, rev 4 with amendments), AD
 - [database-layer.md](./database-layer.md) — the stores being captured
 - [server-sync.md](./server-sync.md) — the separate server-sync account/key recovery
 - [notes-sync.md](./notes-sync.md) — the notes-sync recovery executor
+
+## Archive chronology schema integration (ADR166)
+
+Core recovery retains the frozen predecessor catalogs and appends exact schema85 successors after the preserved schema81/82/83/84 lineages and installed shared Subscriptions layouts. Canvas payload validation remains limited to those exact catalogs. Restricted backup migration admits only the fixed chat84→85 chronology step and its declared column/index/trigger effects. Workspace backup validation retains frozen schema8/9 catalogs and admits the fixed9→10 chronology step before exact successor qualification. The existing schema8 migration refusal remains unchanged. Existing source, quiescence, payload and native-handle guards remain binding.
+
+
+Portable detached relocation (ADR-256) records outer publication intent only after
+`restore_isolated` has durably written `candidate_staged` and retired its source
+lease, before namespace registration or publication. A pre-receipt interruption
+leaves an inert retained attempt; a completed outer marker resumes the existing
+receipt-bound operation. Malformed or ambiguous older pending states still refuse.
+
+The installed `tamagotchi.config` owner includes only the portable copied roaming
+canonical JSON and exact dated backups. Publication retains its existing shared-home
+owner policy inside the private attempt home. After committed profile validation,
+both fresh selection and launch derive portable home/roaming selectors from that
+attempt, ignoring inherited APPDATA. A subsequent move acquires those pet files
+again. Other files under the pet directory remain unsupported durable content.

@@ -82,6 +82,11 @@ The model-catalog refresh worker group is named by `Constants.MODEL_CATALOG_REFR
 
 `recompose=True` is used sparingly and deliberately. The canonical current use is pane-level data reactives (Watchlists panes rebuild just that pane's children). The documented anti-pattern is a screen-level `recompose=True` reactive; Settings removed three such reactives because watchers raised `NoActiveAppError` during early compose. For screen content, `BaseAppScreen.refresh(recompose=True)` releases mouse capture when recomposition is scheduled. Keyboard focus capture and restoration live in `BaseAppScreen.recompose()`, covering both scheduled refreshes and direct awaits; child widgets such as `ConsoleTranscript` own their recomposition separately.
 
+Console dialogs used only by explicit actions can use the existing lazy-export
+facade in `Widgets/Console/__init__.py`. `ConsoleRenameSessionModal` keeps
+its public export and resolves on first access instead of package import.
+The session controller imports it inside its Rename handler (ADR-097).
+
 ## CSS and design tokens
 
 Sources live in `tldw_chatbook/css/{core,layout,components,features,utilities}/*.tcss`; `build_css.py` compiles 64 ordered modules (starting `core/_variables.tcss`, `_reset.tcss`, `_base.tcss`, `_typography.tcss`) into five generated sheets: the app bundle, two consolidated widget-defaults sheets (class-level `BUNDLED_CSS` consolidation dodges Textual's `LRUCache(64)` parse cache — a full destination tour used to hit 94 sources and 125–380 ms cold parses), and two screen-CSS sheets bracketing the bundle. Never edit `tldw_cli_modular.tcss` directly; rebuild with `python tldw_chatbook/css/build_css.py`. `check_bundle_sync.py` plus a build manifest guard the generated files.
@@ -128,6 +133,13 @@ shortcuts stay bound; Theme and Personal Context widgets project their own
 focus/selection-dependent hints. These are the existing ADR-031/033 contracts.
 
 Image/Video Settings completion acknowledges the submitted category draft, retaining later raw values through configuration reload. `UI/Settings_Modules/media_gen_save.py` owns the narrow completion/recomposition helpers; the screen retains staging and checked-write ownership. Current focus/selection and expanded backend sections survive replacement, and a deliberate focus move wins (TASK-36098).
+
+The Settings Internal Prompts count is a display snapshot prepared after the
+first refresh by an exclusive thread worker. Rendering and category filtering
+never read prompt storage. The worker retains the original checked config
+lifetime; config identity, request revision, cancellation and attachment checks
+fence publication. Pending/failed reads display Loading/Unavailable, and prompt
+edits update the existing rows without rebuilding the editor.
 
 ## Splash subsystem
 

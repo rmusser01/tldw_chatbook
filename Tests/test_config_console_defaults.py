@@ -701,3 +701,32 @@ def test_config_template_has_neutral_chat_display_name_default():
     template = tomllib.loads(config_module.CONFIG_TOML_CONTENT)
 
     assert template["chat_defaults"]["user_display_name"] == "User"
+
+
+def test_console_os_notifications_default_off():
+    """TASK-18925 AC#1: OS notifications ship disabled (opt-in), with all
+    three per-type toggles on so enabling the master surfaces every
+    category without further widening."""
+    os_notifications = config_module.DEFAULT_CONFIG_FROM_TOML["console"][
+        "os_notifications"
+    ]
+
+    assert os_notifications == {
+        "enabled": False,
+        "run_finished": True,
+        "run_failed": True,
+        "needs_approval": True,
+    }
+
+
+def test_load_settings_exposes_console_os_notifications_defaults(tmp_path, monkeypatch):
+    select_config_source(monkeypatch, str(tmp_path / "missing-config.toml"), globals())
+
+    settings = config_module.load_settings(force_reload=True)
+
+    assert settings["console"]["os_notifications"] == {
+        "enabled": False,
+        "run_finished": True,
+        "run_failed": True,
+        "needs_approval": True,
+    }

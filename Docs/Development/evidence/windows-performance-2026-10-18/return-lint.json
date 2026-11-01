@@ -1,0 +1,62 @@
+{
+  "Docs/Development/evidence/windows-performance-2026-10-18/probe.py": {
+    "baseline_findings": 0,
+    "current_findings": 0,
+    "added": []
+  },
+  "Tests/Architecture/test_timer_path_static_update_inventory.py": {
+    "baseline_findings": 0,
+    "current_findings": 0,
+    "added": []
+  },
+  "Tests/UI/test_console_attach_completion.py": {
+    "baseline_findings": 0,
+    "current_findings": 0,
+    "added": []
+  },
+  "Tests/UI/test_console_full_config_preparation.py": {
+    "baseline_findings": 0,
+    "current_findings": 0,
+    "added": []
+  },
+  "Tests/UI/test_console_runtime_ownership.py": {
+    "baseline_findings": 0,
+    "current_findings": 0,
+    "added": []
+  },
+  "Tests/UI/test_console_send_disabled_state.py": {
+    "baseline_findings": 0,
+    "current_findings": 0,
+    "added": []
+  },
+  "Tests/UI/test_console_view_worker_groups.py": {
+    "baseline_findings": 0,
+    "current_findings": 0,
+    "added": []
+  },
+  "Tests/UI/test_console_workspace_reconciliation_preparation.py": {
+    "baseline_findings": 0,
+    "current_findings": 0,
+    "added": []
+  },
+  "tldw_chatbook/UI/Console_Modules/view_workers.py": {
+    "baseline_findings": 1,
+    "current_findings": 1,
+    "added": []
+  },
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "baseline_findings": 22,
+    "current_findings": 22,
+    "added": []
+  },
+  "tldw_chatbook/Widgets/Console/console_composer_bar.py": {
+    "baseline_findings": 18,
+    "current_findings": 18,
+    "added": []
+  },
+  "Tests/UI/test_console_hooks_review.py": {
+    "baseline_findings": 0,
+    "current_findings": 0,
+    "added": []
+  }
+}

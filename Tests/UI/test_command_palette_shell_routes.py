@@ -57,8 +57,8 @@ def test_command_palette_has_one_entry_per_shell_destination(request):
 
     # One labeled palette command per destination; nothing else.
     assert command_tab_ids == TabNavigationProvider.navigation_tab_ids()
-    # ADR-240 retired the MCP destination: 13 shell destinations remain.
-    assert len(command_tab_ids) == len(SHELL_DESTINATION_ORDER) == 13
+    # Plugins and Kanban append destinations after ADR-240 retired MCP.
+    assert len(command_tab_ids) == len(SHELL_DESTINATION_ORDER) == 15
 
     # Legacy route ids are aliases, not separate labeled commands.
     legacy_tab_ids = set(ALL_TABS) - set(command_tab_ids)

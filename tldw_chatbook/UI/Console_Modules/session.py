@@ -250,7 +250,6 @@ from ...Widgets.Console.console_composer_bar import ComposerDraftSnapshot
 from ...Widgets.Console import (
     ConsoleComposerUndoHistory,
     ConsoleProjectInstructionStatusRow,
-    ConsoleRenameSessionModal,
     ConsoleForkChatModal,
     ConsoleForkDialogSummary,
     ConsoleForkSubmitResult,
@@ -856,6 +855,24 @@ def request_console_repaint(screen: Any) -> None:
     )
 
 
+class _conversation_activation_window:
+    """Reentrant in-flight marker for a conversation-resume activation.
+
+    TASK-35310: see ``ConsoleSessionController.conversation_activation_window``.
+    """
+
+    def __init__(self, controller: "ConsoleSessionController") -> None:
+        self._controller = controller
+
+    def __enter__(self) -> "_conversation_activation_window":
+        self._controller._conversation_activation_depth += 1
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        depth = self._controller._conversation_activation_depth - 1
+        self._controller._conversation_activation_depth = max(0, depth)
+
+
 class ConsoleSessionController:
     """Owns the Console shell's native session lifecycle: start/activate/
     swap/promote/rename, per-session settings, the Ctrl+K switcher's choice
@@ -1193,6 +1210,12 @@ class ConsoleSessionController:
         self._console_visible_draft_session_id: str | None = None
         self._console_visible_draft_revision: int | None = None
         self._initial_composer_sync_pending = False
+        # TASK-35310: depth of in-flight conversation-resume activations.
+        # While a rail-row resume is hydrating, the active session AND the
+        # composer binding both still name the OLD chat, so the
+        # bound-vs-active comparison in ``refuse_send_from_unbound_composer``
+        # cannot fire; this flag is what lets it refuse during that window.
+        self._conversation_activation_depth: int = 0
         self._visible_agent_handoff_draft: (
             tuple[str, str, int, ComposerDraftSnapshot] | None
         ) = None
@@ -2591,6 +2614,7 @@ class ConsoleSessionController:
                 group="console-sync",
             )
 
+        from tldw_chatbook.Widgets.Console import ConsoleRenameSessionModal
         self.push_screen(
             ConsoleRenameSessionModal(title=session.title),
             callback=_apply_rename,
@@ -3205,6 +3229,10 @@ class ConsoleSessionController:
             visit = await self.begin_manual_read_visit(
                 store.active_session_id, allow_current=True
             )
+            # Ordinary attachment already owns FULL. With no captured reminder,
+            # an acknowledgement-only pass just queues a duplicate behind it.
+            if visit is None or visit.token is None:
+                return
             await self._sync_native_console_chat_ui()
             self.complete_manual_read_visit(visit)
 
@@ -4503,7 +4531,7 @@ class ConsoleSessionController:
             _console_global_user_display_name(app_config),
         )
         session = next(item for item in store.sessions() if item.id == session_id)
-        authority = authority_for(self, authority_inputs(self, session_id))
+        authority = authority_for(self, authority_inputs(self, session_id), mcp_definition_maximum=mcp_definition_maximum)
         if mcp_definition_maximum is None:
             mcp_definition_maximum = authority.mcp_definition_maximum
         held_scope = session.rag_scope_holder.scope
@@ -5722,6 +5750,7 @@ class ConsoleSessionController:
         live_text = composer.draft_text()
         save_text = live_text
         typed_suffix = ""
+        resident_draft_changed = False
         if snapshot is not None and snapshot[0] == visible_session_id:
             snap_text, snap_serial = snapshot[1], snapshot[2]
             if composer.edit_serial != snap_serial and live_text.startswith(snap_text):
@@ -5732,6 +5761,12 @@ class ConsoleSessionController:
                 # save-the-live-text semantics.)
                 save_text = snap_text
                 typed_suffix = live_text[len(snap_text) :]
+            known_revision = self._console_visible_draft_revision
+            if live_text.startswith(snap_text) and known_revision is not None:
+                current = store.session_input_snapshot(visible_session_id)
+                if current.draft_revision != known_revision:
+                    save_text = current.draft
+                    resident_draft_changed = True
         if visible_session_id is not None:
             try:
                 store.set_session_draft(visible_session_id, save_text)
@@ -5741,9 +5776,10 @@ class ConsoleSessionController:
             # session's draft -- bank its undo/redo history under the
             # session it actually belongs to before the swap below discards
             # it, so a later switch back can restore it.
-            self._console_undo_histories[visible_session_id] = (
-                composer.export_undo_history()
-            )
+            if resident_draft_changed:
+                self._console_undo_histories.pop(visible_session_id, None)
+            else:
+                self._console_undo_histories[visible_session_id] = composer.export_undo_history()
         observer = getattr(composer, "_authored_draft_observer", None)
         composer._authored_draft_observer = None
         try:
@@ -5861,6 +5897,20 @@ class ConsoleSessionController:
             composer.edit_serial,
         )
 
+    def conversation_activation_window(self):
+        """Mark a conversation-resume activation as in flight (TASK-35310).
+
+        ``_resume_console_workspace_conversation`` hydrates a saved
+        conversation across multiple awaits during which the active session
+        and the composer binding still name the OLD chat; a Send pressed in
+        that window would be pinned to the OLD chat and die silently. Holding
+        this window makes ``refuse_send_from_unbound_composer`` refuse
+        visibly for its duration. Reentrant: nested activations (a resume
+        re-entering the opener) keep the window open until the outermost one
+        completes.
+        """
+        return _conversation_activation_window(self)
+
     def refuse_send_from_unbound_composer(
         self, *, strict: bool = False, action: str = "sent"
     ) -> bool:
@@ -5875,6 +5925,11 @@ class ConsoleSessionController:
         chat is still on screen (a display rebuild can create a blank active
         session first; TASK-4).
 
+        TASK-35310: a conversation-resume activation is such a switch, but
+        during its hydration window bound == active == OLD, so the
+        bound-vs-active comparison below cannot see it. The explicit
+        activation depth can, and refuses with the same copy.
+
         Args:
             strict: Refuse whenever the composer is not bound to the active
                 chat. Redirect acts on the active chat's run, painted or not.
@@ -5883,6 +5938,26 @@ class ConsoleSessionController:
         Returns:
             True when the action was refused.
         """
+        if self._conversation_activation_depth > 0:
+            monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
+            if monitor is not None:
+                monitor.record_diagnostic(
+                    "console",
+                    "console_send_stage",
+                    phase="ui_submit",
+                    status="not_dispatched",
+                    operation="conversation_resume_activation",
+                )
+            logger.warning(
+                "Console {} refused: conversation resume activation in flight",
+                action,
+            )
+            self.app_instance.notify(
+                f"Still switching chats, so nothing was {action}. Your draft was kept.",
+                severity="warning",
+                markup=False,
+            )
+            return True
         bound = self._console_visible_draft_session_id
         active = self._ensure_console_chat_store().active_session_id
         if strict:

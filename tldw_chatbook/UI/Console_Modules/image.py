@@ -6,7 +6,7 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -17,16 +17,6 @@ from ...Chat.console_chat_fork import (
 )
 from ...Chat.console_chat_store import ConsoleChatSession, ConsoleChatStore
 from ...Chat.console_command_grammar import CommandParse
-from ...Chat.console_generate_image import (
-    GenerationRefusal,
-    LLMContextOptions,
-    PreparedGeneration,
-    clamp_initial_batch,
-    generation_content_marker,
-    parse_generate_image_args,
-    prepare_generation_request,
-    run_generation_batch,
-)
 from ...Chat.console_image_edit_operations import (
     ImageEditCompletion,
     ImageEditFailureNotice,
@@ -39,6 +29,9 @@ from ...Chat.console_image_view import (
     resolve_render_remote_images,
 )
 from ...Widgets.Console.console_generation_card import ConsoleGenerationCardSpec
+
+if TYPE_CHECKING:
+    from ...Chat.console_generate_image import LLMContextOptions, PreparedGeneration
 
 REMOTE_IMAGE_SCAN_WINDOW = 20
 REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
@@ -219,7 +212,9 @@ class ConsoleImageController:
         message = store.append_generation_message(session_id, persist=True, **kwargs)
         app_instance = getattr(self, "app_instance", None)
         runtime = getattr(app_instance, "console_runtime", None)
-        recompute = getattr(runtime, "recompute_console_attention", None)
+        recompute = getattr(runtime, "request_console_attention_refresh", None)
+        if not callable(recompute):
+            recompute = getattr(runtime, "recompute_console_attention", None)
         if callable(recompute):
             try:
                 recompute()
@@ -300,7 +295,11 @@ class ConsoleImageController:
         )
         selection = (root, profile, identities)
         if not self._recovered_image_tasks and not self._recovered_image_paused:
-            task = asyncio.create_task(self._load_recovered_images(selection, cache))
+            worker = self._screen.run_worker(
+                self._load_recovered_images(selection, cache),
+                group="console-recovered-images", exclusive=True, exit_on_error=False,
+            )
+            task = worker._task
             self._recovered_image_tasks.add(task)
             task.add_done_callback(self._recovered_image_tasks.discard)
         # Until this exact source/message selection resolves, suppress transient
@@ -398,6 +397,27 @@ class ConsoleImageController:
 
     def _recovered_images_close_admission(self):
         self._recovered_image_paused = True
+
+    async def _recovered_images_close(self):
+        """Seal this view's image work and join its exact native readers."""
+        self._recovered_images_close_admission()
+        tasks = tuple(self._recovered_image_tasks)
+        for task in tasks:
+            task.cancel()
+        settled = asyncio.gather(*tasks, return_exceptions=True)
+        cancellation = None
+        while not settled.done():
+            try:
+                await asyncio.shield(settled)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+        for result in settled.result():
+            if isinstance(result, BaseException) and not isinstance(
+                result, asyncio.CancelledError
+            ):
+                raise result
+        if cancellation is not None:
+            raise cancellation
 
     async def _recovered_images_drain(self, deadline):
         import time
@@ -583,6 +603,10 @@ class ConsoleImageController:
         self, cfg: Any
     ) -> LLMContextOptions:
         """Resolve the active chat provider for conversation prompt composition."""
+        from ...Chat.console_generate_image import (
+            LLMContextOptions,
+        )
+
         if not cfg.context_llm_enabled:
             return LLMContextOptions(
                 enabled=False,
@@ -617,6 +641,10 @@ class ConsoleImageController:
 
     async def _regenerate_console_generation_variant(self, message_id: str) -> None:
         """Append one random-seed variant to an existing generation message."""
+        from ...Chat.console_generate_image import (
+            run_generation_batch,
+        )
+
         store = self._ensure_console_chat_store()
         try:
             message = store.get_message(message_id)
@@ -1064,6 +1092,10 @@ class ConsoleImageController:
         """Validate, own, persist, and reconcile one ComfyUI H3 edit."""
         from functools import partial
 
+        from ...Chat.console_generate_image import (
+            generation_content_marker,
+            run_generation_batch,
+        )
         from ...Image_Generation import worker as image_worker
         from ...Image_Generation.exceptions import (
             ComfyUIImageEditError,
@@ -1294,6 +1326,15 @@ class ConsoleImageController:
         for most providers; llama.cpp additionally does its own bounded
         ``/health`` reachability probe there, same as a normal send).
         """
+        from ...Chat.console_generate_image import (
+            GenerationRefusal,
+            clamp_initial_batch,
+            generation_content_marker,
+            parse_generate_image_args,
+            prepare_generation_request,
+            run_generation_batch,
+        )
+
         args = parse_generate_image_args(parse.args)
         store = self._ensure_console_chat_store()
         session = store.ensure_session(

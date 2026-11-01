@@ -17,6 +17,16 @@ This document describes the primary destination: the dashboard/triage surface �
 
 Home is a reusable route, and its only dispatch seam is **`on_screen_resume`** — deliberately not `on_mount`, which would double-run the first visit (worker exclusivity cannot undo synchronous provider calls already executing). Each visit fires three exclusive workers: a chatbook-artifact/open-tasks snapshot refresh, a content snapshot build, and an adapter cache warm. Landed workers patch the rail/canvas/header in place — no recompose.
 
+Completion behind another screen records pending presentation instead of rebuilding
+the hidden dashboard (TASK-35612). The next successful cache warm replays it even
+when the snapshot/cache contents are unchanged; failed or cancelled warming leaves
+it pending. The adapter TTL and native checks remain unchanged. Content builds
+stop issuing further queries once the mounted Home is hidden (TASK-38267). A
+read already issued remains awaited through its existing cleanup; a hidden
+partial build never replaces the last complete snapshot. The next visit starts
+the ordinary refresh. This suspension rule does not change the preexisting
+exclusive-worker cancellation behavior on a rapid subsequent resume.
+
 ## Dashboard build (dataflow)
 
 1. Visit → the three workers start.

@@ -172,6 +172,7 @@ MAX_TLDW_MODULES_AT_UI_READY = 1031
 #: The two package prefixes are TASK-21731's; the exact module names are the
 #: trajectory family TASK-22213 took off the Chat leg.
 ABSENT_AT_READY_PREFIXES = (
+    "tldw_chatbook.Chat.archive_recovery",
     # TASK-21239: the Kanban interop trio is a zero-consumer subsystem
     # built lazily on first property access; its import chain (including
     # the 76-model `tldw_api.kanban_schemas`, TASK-21107) must stay off the
@@ -196,6 +197,11 @@ ABSENT_AT_READY_MODULES = (
     # Empty Console has neither persisted markers nor assistant token rates.
     "tldw_chatbook.Chat.console_change_review_read",
     "tldw_chatbook.Chat.console_token_rate",
+    "tldw_chatbook.Agents.archive_recovery_tool_provider",
+    "tldw_chatbook.Chat.conversation_archive_actions",
+    "tldw_chatbook.DB.conversation_archive_queries",
+    "tldw_chatbook.UI.Console_Modules.archive_recovery",
+    "tldw_chatbook.Widgets.Chat_Widgets.archive_recovery_cards",
     # TASK-22504: the 2,260-LOC voice-input module is first-voice-use work;
     # the three Console_Modules seams and the composer's STATE_* constants
     # lazy-load it, and the app's speech-stack diagnostic waits for ready.
@@ -232,6 +238,9 @@ ABSENT_AT_READY_MODULES = (
     # Parsing imported notes and assigning settings controls are first-use work.
     "tldw_chatbook.Notes.note_import_parsers",
     "tldw_chatbook.Widgets.select_values",
+    # Task24/R107: explicit interaction helpers stay behind first use.
+    "tldw_chatbook.Chat.console_generate_image",
+    "tldw_chatbook.Chat.console_side_chat",
     # TASK-32507: run-hook commands and summaries are lifecycle-event work.
     "tldw_chatbook.Agents.run_hooks",
     # Speculative voice resources are first-voice work, never first paint.
@@ -610,3 +619,80 @@ def test_census_script_embeds_the_unit_tested_helper():
         in _CENSUS_SCRIPT
     )
     compile(_CENSUS_SCRIPT, "<census>", "exec")
+
+
+def test_console_interaction_helpers_load_only_on_first_use(tmp_path):
+    """Cold Console import defers helpers; actual handlers keep canonical owners."""
+    script = r"""
+import Tests.conftest  # private profile/null keyring/network guard before product
+import asyncio
+import sys
+from types import SimpleNamespace
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
+names = ("tldw_chatbook.Chat.console_generate_image", "tldw_chatbook.Chat.console_side_chat")
+assert all(name not in sys.modules for name in names), [n for n in names if n in sys.modules]
+
+class Composer:
+    text = "/generate-image a dragon"
+    def draft_text(self): return self.text
+    def clear_draft(self): self.text = ""
+    def insert_text_as_paste(self, value): self.text += value
+composer = Composer()
+assert ChatScreen._insert_console_style_token_into_composer(
+    SimpleNamespace(query_one=lambda *args: composer), "style_anime")
+from tldw_chatbook.Chat import console_generate_image as owner
+assert composer.text == owner.insert_style_token_into_draft("/generate-image a dragon", "style_anime")
+assert names[1] not in sys.modules
+options = asyncio.run(ConsoleImageController._console_generate_image_llm_context_options(
+    SimpleNamespace(), SimpleNamespace(context_llm_enabled=False, context_llm_turns=3, context_llm_timeout_seconds=2)))
+assert type(options) is owner.LLMContextOptions
+assert not options.enabled
+
+from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Widgets.Console.console_selection_menu import ConsoleSideChatRequested
+pushed = []
+gateway = object()
+selection = ConsoleProviderSelection(provider="openai", explicit_model="test")
+screen = SimpleNamespace(app=SimpleNamespace(push_screen=pushed.append),
+    _ensure_console_provider_gateway=lambda: gateway,
+    _build_console_provider_selection=lambda: selection)
+ChatScreen._console_side_chat_requested(screen, ConsoleSideChatRequested(quote="selected text", mode="ask"))
+from tldw_chatbook.Chat.console_side_chat import ConsoleSideChatService
+assert len(pushed) == 1
+assert type(pushed[0]._service) is ConsoleSideChatService
+assert pushed[0]._service.gateway is gateway
+assert pushed[0]._provider_selection is selection
+assert pushed[0]._auto_send_prompt is None
+print("FIRST_USE_IDENTITY_OK")
+"""
+    profile = tmp_path / "first-use-profile"
+    profile.mkdir(mode=0o700)
+    env = {
+        key: os.environ[key]
+        for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
+        if key in os.environ
+    }
+    env.update(
+        {
+            "HOME": str(profile),
+            "XDG_DATA_HOME": str(profile / "data"),
+            "XDG_CONFIG_HOME": str(profile / "config"),
+            "TLDW_CONFIG_PATH": str(profile / "config.toml"),
+            "TLDW_TEST_MODE": "1",
+            "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring",
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "FIRST_USE_IDENTITY_OK" in result.stdout

@@ -95,6 +95,10 @@ $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
 $ds-workflow-navigator-width: 27;
+$ds-workflow-dialog-max-width: 100;
+$ds-setup-voice-wide-share: 21fr;
+$ds-setup-voice-medium-share: 14fr;
+$ds-setup-voice-narrow-share: 11fr;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -115,6 +119,7 @@ $ds-space-inset: $ds-space-1;
 
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
+$ds-control-action-min-width: 6;
 
 $ds-textarea-min-height: 5;
 
@@ -266,6 +271,8 @@ $ds-profile-link-modal-body-share: 82%;
 $ds-widgets-skeleton-title-share: 60%;
 
 $ds-messages-scroll-cap: 50vh;
+
+$ds-note-folder-picker-max-height: 50vh;
 $ds-messages-text-scroll-cap: 40vh;
 
 $ds-console-frame: #6f7782;
@@ -7574,6 +7581,14 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
 }
 
 
+.console-transcript-library-outcome {
+    width: $ds-width-fill;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-2;
+    color: $ds-text-muted;
+}
+
+
 .console-kb-selection-hint {
     dock: bottom;
     width: $ds-width-full;
@@ -8398,6 +8413,62 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 .console-generation-frame { border: round $ds-console-frame !important; }
 
 #console-control-hooks.hooks-attention{color:$ds-status-approval-required;}
+
+
+#console-archive-recovery, #console-archive-recovery-controls {
+    height: $ds-height-auto;
+    width: $ds-width-fill;
+}
+#console-archive-recovery-controls .archive-recovery-card {
+    height: $ds-height-auto;
+    width: $ds-width-fill;
+    background: $ds-surface-panel;
+    border: solid $ds-grid-line;
+    padding: $ds-space-inset;
+    margin-bottom: $ds-space-stack;
+}
+#console-archive-recovery-controls .archive-recovery-copy,
+#console-archive-recovery-controls .archive-recovery-row {
+    height: $ds-height-auto;
+    width: $ds-width-fill;
+}
+#console-archive-recovery-controls .archive-recovery-row {
+    margin-bottom: $ds-space-stack;
+}
+#console-archive-recovery-controls RecoveryActionButton,
+#console-archive-recovery-controls #recovery-scope {
+    width: $ds-width-fill;
+    height: $ds-control-height;
+    margin-top: $ds-space-stack;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+#console-archive-recovery-controls RecoveryActionButton:hover,
+#console-archive-recovery-controls #recovery-scope:hover {
+    background: $ds-hover-bg;
+    color: $ds-hover-fg;
+}
+#console-archive-recovery-controls RecoveryActionButton:focus,
+#console-archive-recovery-controls #recovery-scope:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
+#console-archive-recovery-controls RecoveryActionButton:disabled,
+#console-archive-recovery-controls RecoveryActionButton:disabled:hover {
+    background: $ds-disabled-bg;
+    color: $ds-text-disabled-readable;
+    opacity: 100%;
+}
+#console-archive-recovery-controls #recovery-scope > SelectCurrent {
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+#console-archive-recovery-controls #recovery-scope:focus > SelectCurrent {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}
 
 /* ===== MODULE: features/_console_panels.tcss ===== */
 
@@ -11197,6 +11268,36 @@ RecoveryPassphraseDialog {
     width: $ds-width-full;
     min-width: $ds-size-0;
 }
+
+/* ===== MODULE: features/_plugins.tcss ===== */
+#plugins-shell .section-title { height: $ds-control-height-compact; text-style: $ds-text-strong; color: $ds-text-primary; }
+#plugins-scope { height: auto; color: $ds-authority-workspace; }
+#plugins-search > .input--placeholder { color: $ds-text-primary; }
+#plugins-search { height: $ds-control-height; }
+
+
+#plugins-shell .section-title, #plugins-scope, #plugins-search { margin: $ds-space-0; }
+
+PluginReviewModal, PluginStatusModal, PluginAuthorityResetModal { align: center middle; }
+#plugin-review-shell {
+    width: $ds-percent-90; height: $ds-percent-90; background: $ds-surface-raised;
+    border: solid $ds-grid-line; padding: $ds-space-inset;
+    color: $ds-text-primary;
+}
+#plugin-review-shell .dialog-title, #plugin-review-status, #plugin-review-body { height: auto; color: $ds-text-primary; }
+#plugin-review-selection { height: $ds-textarea-min-height; }
+#plugin-review-shell .dialog-buttons { height: $ds-control-height; }
+#plugin-review-shell Button { width: $ds-width-fill; min-width: $ds-size-0; }
+
+#plugin-review-test-data { height: $ds-textarea-min-height; }
+
+
+PluginAuthorityDialog .dialog-title,
+PluginAuthorityDialog .password-input > .input--placeholder { color: $ds-text-primary; }
+PluginAuthorityDialog .password-dialog-error,
+PluginAuthorityDialog .strength-weak { color: $ds-status-error-readable; }
+
+#plugin-review-shell Input > .input--placeholder { color: $ds-text-primary; }
 
 /* ===== MODULE: features/_home.tcss ===== */
 
@@ -15300,13 +15401,6 @@ SplashScreen.hidden {
     color: $primary;
 }
 
-.current-item {
-    text-align: center;
-    color: $text-muted;
-    margin-bottom: $ds-space-2;
-    text-style: italic;
-}
-
 .progress-stats {
     layout: horizontal;
     align: center middle;
@@ -15410,10 +15504,6 @@ ExportOptionsStep .option-group {
 ExportOptionsStep .option-title {
     text-style: bold;
     margin-bottom: $ds-space-1;
-}
-
-ExportOptionsStep .radio-option {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
 }
 
 ExportOptionsStep .checkbox-option {
@@ -15701,10 +15791,6 @@ ConflictResolutionStep .strategy-title {
     color: $primary;
 }
 
-ConflictResolutionStep .radio-option {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-1;
-}
-
 ConflictResolutionStep .strategy-description {
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-3;
     color: $text-muted;
@@ -15953,9 +16039,10 @@ SmartContentTree Tree > .selected-node {
 .setup-subtitle { color: $text-muted; margin-bottom: $ds-space-1; }
 .setup-provider .setup-title,
 .setup-provider .setup-subtitle { margin-bottom: $ds-space-0; }
+
 .setup-step-error {
-    color: $error;
-    background: $error 15%;
+    color: $text;
+    background: $error 25%;
     text-style: bold;
     margin-top: $ds-space-1;
 
@@ -15965,9 +16052,9 @@ SmartContentTree Tree > .selected-node {
 .setup-step-note { color: $text-muted; margin-top: $ds-space-1; }
 .setup-field-label { margin-top: $ds-space-1; }
 .setup-probe-status { color: $text-muted; margin-top: $ds-space-1; }
-.setup-summary-row { height: $ds-size-1; }
-.setup-summary-ok { color: $success; }
-.setup-summary-missing { color: $error; }
+.setup-probe-status.-ok { color: $text-success; }
+.setup-probe-status.-error { color: $text-error; }
+.setup-probe-status.-warn { color: $text-warning; }
 
 
 .setup-step {
@@ -16045,7 +16132,7 @@ SmartContentTree Tree > .selected-node {
 #setup-voice-preset.-stacked {
     layout: grid;
     grid-size: 3 2;
-    grid-columns: 21fr 14fr 11fr;
+    grid-columns: $ds-setup-voice-wide-share $ds-setup-voice-medium-share $ds-setup-voice-narrow-share;
     grid-rows: $ds-size-1;
     height: $ds-size-4;
     min-height: $ds-size-4;
@@ -16105,6 +16192,11 @@ SmartContentTree Tree > .selected-node {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
 }
+
+#setup-provider-choice { max-height: 40vh; }
+.setup-provider-filter { width: $ds-width-fill; }
+.setup-provider-count { width: auto; margin-left: $ds-space-2; }
+.setup-no-server { height: auto; }
 
 
 .setup-summary-actions {
@@ -16169,11 +16261,6 @@ SmartContentTree Tree > .selected-node {
 }
 
 
-.setup-choice-header {
-    color: $text-muted;
-    text-style: bold;
-    padding: $ds-space-0 $ds-space-1;
-}
 .setup-detected-banner {
     margin-bottom: $ds-space-1;
 }
@@ -16196,8 +16283,7 @@ SmartContentTree Tree > .selected-node {
 }
 
 .setup-provider-connection-actions {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
+    height: auto;
     margin-top: $ds-space-1;
 }
 
@@ -16293,27 +16379,34 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
     text-style: bold;
 }
 
-.setup-progress-item.-upcoming .step-number {
+
+.setup-progress-item.-upcoming .step-number,
+.setup-progress-item.-skipped .step-number {
     background: $panel;
     color: $text-muted;
     border: solid $primary;
 }
 
-.setup-progress-item.-upcoming .step-title {
+.setup-progress-item.-upcoming .step-title,
+.setup-progress-item.-skipped .step-title {
     color: $text-muted;
 }
 
 
 .setup-key-row {
-    height: $ds-size-3;
+    height: auto;
 }
-.setup-key-row Input {
+.setup-key-row #setup-provider-api-key {
     width: $ds-width-fill;
 }
 .setup-key-row Button {
     margin-left: $ds-space-1;
     min-width: $ds-size-8;
 }
+.setup-key-hint, #setup-provider-key-source { height: auto; }
+
+#setup-provider-key-source SetupRadioButton { text-wrap: wrap; }
+.setup-key-hint Static { width: $ds-width-fill; }
 
 
 FirstRunSetupWizard SetupWizardContainer {

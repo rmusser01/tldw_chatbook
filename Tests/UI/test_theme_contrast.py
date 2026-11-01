@@ -1367,3 +1367,56 @@ def test_user_theme_with_auto_on_a_surface_stays_measurable(tmp_path, name, valu
     assert _measurable(theme)
     _assert_boundaries_visible(theme)
     _assert_guard_colours_visible(theme)
+
+
+_WIZARDS_CSS = Path(__file__).resolve().parents[2] / (
+    "tldw_chatbook/css/features/_wizards.tcss"
+)
+
+
+def _wizard_rule(selector: str) -> dict[str, str]:
+    """The declarations of one rule in the wizard stylesheet (comments dropped)."""
+    text = re.sub(r"/\*.*?\*/", "", _WIZARDS_CSS.read_text(encoding="utf-8"), flags=re.S)
+    match = re.search(rf"(?m)^{re.escape(selector)}\s*\{{([^}}]*)\}}", text)
+    assert match, f"{selector} is not styled in {_WIZARDS_CSS.name}"
+    declarations = (part.split(":", 1) for part in match.group(1).split(";") if ":" in part)
+    return {name.strip(): value.strip() for name, value in declarations}
+
+
+@pytest.mark.parametrize("theme", ALL_THEMES, ids=lambda t: t.name)
+def test_first_run_provider_status_styles_clear_aa_on_every_theme(theme: Theme) -> None:
+    """TASK-34100.6 (review provider-16): the Provider step's outcome lines
+    (✓ / ✗ / !), its field error and the pinned refusal strip -- which was
+    $error on $error 15%, 2.74:1 -- each clear AA on the wizard's surfaces.
+    The tokens are read from the real rules, so restyling one re-runs this."""
+    resolved = _resolved_variables(theme)
+    # The lines and the strip paint on the wizard container's $surface
+    # (BaseWizard; measured in a mounted wizard), $panel as the gate above.
+    surfaces = [Color.parse(resolved[k]) for k in ("surface", "panel")]
+    for selector in (
+        # The neutral line too: the key help's expert second line rendered
+        # Rich 'dim' over it, 3.72:1 (review round 1, live F8); it is now
+        # this colour in italics, so this pair is its contrast.
+        ".setup-probe-status",
+        ".setup-probe-status.-ok",
+        ".setup-probe-status.-error",
+        ".setup-probe-status.-warn",  # the key field's error note is one too
+    ):
+        token = _wizard_rule(selector)["color"].lstrip("$")
+        for surface in surfaces:
+            blended = _resolve_color(resolved[token], surface)
+            ratio = _ratio(blended.hex, surface.hex)
+            assert ratio >= AA, (
+                f"{theme.name}: {selector} ({token}) {blended.hex} is {ratio:.2f}:1 "
+                f"on {surface.hex}"
+            )
+    strip = _wizard_rule(".setup-step-error")
+    background_token, percent = strip["background"].lstrip("$").split()
+    for surface in surfaces:
+        background = _resolve_color(f"{resolved[background_token]} {percent}", surface)
+        foreground = _resolve_color(resolved[strip["color"].lstrip("$")], background)
+        ratio = _ratio(foreground.hex, background.hex)
+        assert ratio >= AA, (
+            f"{theme.name}: the pinned strip {foreground.hex} on {background.hex} "
+            f"is {ratio:.2f}:1"
+        )

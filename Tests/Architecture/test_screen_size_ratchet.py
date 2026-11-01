@@ -73,6 +73,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: feature tree measured 17,000/565. PR #2050 removes two remaining
 #: compatibility methods and keeps fork state behind the message controller;
 #: the final merged tree measures 16,966/563.
+# 2026-10-31: user waived size limits for the PR backlog. PR3148 rebase
+# pins changed owners at measured sizes without extra size-only moves.
+# 2026-10-31, PR #3162: the user explicitly waived size limits for this
+# backlog rebase. Affected rows are pinned to exact measured values; see
+# Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
+# 2026-10-31 PR3166: exact final integration measurements under the user
+# backlog size-limit waiver; no spare budget and no behavioral guard changes.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-pinned 2026-09-19 (core-review TASK-32809.1). The ratchet had
     #: gone red on dev -- ~8,400 lines of feature work re-consumed the
@@ -216,7 +223,25 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured 2026-10-29 after rebasing onto dev 3efe8476ce, whose own row
     #: is 24329/737 (dev grew by itself): with this branch, 24331/737, the
     #: exact measurement (same owner rule).
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24331, 737),
+    #: Re-measured 2026-10-30 by TASK-35582 after rebasing onto dev 7536ac3b87,
+    #: whose own row is 24331/737 (TASK-33621.51 used the last headroom): with
+    #: this branch, 24335/737, the exact measurement (same owner rule). The +4
+    #: are the screen-owned half of the Review reports key: the `u` Binding,
+    #: its workbench-shortcut legend entry, the action attribute and the
+    #: `wiring` import that supplies it; the presenter lives in wiring.py.
+    #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
+    #: Retain the notification hooks and bounded shutdown repair in place;
+    #: pin the measured tree exactly, without reflow/extraction to fit.
+    #: 2026-10-31, PR #3225 after #3183: user size-limit waiver; exact measurement.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +11.
+    #: 2026-10-20, TASK-34100.6 review v3r1 (R1-01); re-measured 2026-10-29
+    #: after rebasing onto dev (24329/737): this task adds 11 -- the Get
+    #: started card's 'Look again' action and the local_server_found flag
+    #: behind 'No model connected' (AC#9), and the exported-key provider
+    #: 'Set up provider' opens (AC#11). Methods unchanged. 24340/737, the
+    #: exact measurement, never above it.
+    #: 2026-10-31, PR #3294 on dev21fe53a3: explicit user size waiver; exact24500/741.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24500, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
@@ -1134,7 +1159,73 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 2026-10-24, TASK-34000 P1-B rebased onto dev 96cae7eec0 (owner decision,
     #: expand-the-limits rule): P1-B's .17/.14/.12/.11/.71 screen work on top of
     #: dev's decomposed screen: 37542 -> 37759 lines, 1354 -> 1361 methods (measured).
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37759, 1361),
+    #: 2026-10-25, TASK-34000.28 (polish-1a task 2 + fix rounds 1-2, rebased
+    #: onto dev e554f25812; owner decision 2026-10-04, expand-the-limits rule):
+    #: the Notes tree's Right/Left folder branch and the Sort strip's Left/Right
+    #: branch in ``on_key``, the Sort control's portable focus role, the pager
+    #: press hand-off (``_library_notes_tree_pager_still_focused`` + the no-row
+    #: branch of ``_focus_library_notes_tree_after_page``) and the
+    #: pager press's own ``set_focus`` parking (fix round 2 replaced the
+    #: round-1 private-API override with it): 37759 -> 37862 lines, methods
+    #: unchanged at 1361 (measured; the override was the round-1 +1).
+    #: 2026-10-25, TASK-34000.28 (polish-1a task 3; owner decision 2026-10-04,
+    #: expand-the-limits rule): the folder pickers page every active folder
+    #: (two call sites rewritten, the picker imported where it opens), the
+    #: locator's newly-opened folders ask the shared slice helper for both
+    #: slices, and two delegators in (``_page_library_notes_folder_targets``,
+    #: ``_ensure_library_notes_folder_slices``) for one out
+    #: (``_library_notes_folder_target_options``): 37862 -> 37897 lines,
+    #: 1361 -> 1362 methods (measured).
+    #: 2026-10-26, TASK-34000.28 (polish-1a task 4 and its fix round 1;
+    #: owner decision 2026-10-04, expand-the-limits rule): the Refresh
+    #: delegator (``handle_library_notes_notice_refresh``, the +1 method) and
+    #: its portable focus role, the derived Refresh offer bound to the
+    #: conflict copy plus the whole-notice status line, the conflict branch
+    #: reading ``FOLDER_CONFLICT_COPY`` (the table itself lives in
+    #: ``Notes/note_folder_models.py``), the delete clearing the selection it
+    #: deleted, and the Unfiled reconcile line: 37897 -> 37926 lines,
+    #: 1362 -> 1363 methods (measured with ``_measure``; the first cut's
+    #: 37955 was taken before the copy table moved out).
+    #: 2026-10-26, TASK-34000.28 / TASK-34000.40 (polish-1a task 5; owner
+    #: decision 2026-10-04, expand-the-limits rule): the Notes filter's Down
+    #: branch in ``on_key`` and its four helpers (``_library_notes_filter_down``,
+    #: ``_library_notes_filter_loading``, ``_first_library_notes_note_row``,
+    #: ``_land_library_notes_filter`` -- the ruling T5-a hand-off), Enter on an
+    #: applied filter opening its first result (``_apply_library_notes_filter``
+    #: split out of the Enter handler), the shared typing-field footer
+    #: transform extracted into ``_library_typing_field_footer`` and called by
+    #: the Notes navigator, editor and Info tiers, Clear filter emptying the
+    #: box, and the link-back delegator plus its focus role: 37926 -> 38076
+    #: lines, 1363 -> 1370 methods (measured with ``_measure``).
+    #: 2026-10-26, TASK-34000.28 / TASK-34000.40 (polish-1a task 5 fix round 1;
+    #: same owner decision): ruling T5-b's ``_library_escape_lands_in_text_field``
+    #: (the typing footer withholds "after esc:" keys when Escape lands in
+    #: another text field), the withdrawable ``(filter, live)`` Down hand-off
+    #: and its failure-branch clear (M4), an emptied box's Down landing on
+    #: ``_first_library_notes_tree_row`` through the browse receipt (M5), and
+    #: ``link_origin`` cleared on every plain open (I-1): 38076 -> 38138 lines,
+    #: 1370 -> 1372 methods (measured with ``_measure``).
+    #: 2026-10-26, TASK-34000.28 (polish-1a task 5 fix round 2; same owner
+    #: decision): ``_withdraw_library_notes_filter_row_handoff`` called from
+    #: every input site ``on_key`` never sees (the wheel, the priority Tab
+    #: pair, Shift+F6) and from ``on_screen_suspend`` (R2-2), and Down from an
+    #: empty, unfiltered box landing on the tree's first row (R2-4): 38138 ->
+    #: 38164 lines, 1372 -> 1373 methods (measured with ``_measure``).
+    #: 2026-10-26, TASK-34000.28 (polish-1a final review M-2; same owner
+    #: decision): a class-level ``_library_notes_filter_row_handoff = None``
+    #: default, so a screen built by ``__new__`` reads it on suspend: 38164 ->
+    #: 38166 lines, 1373 methods (measured with ``_measure``).
+    #: 2026-10-26, PR #3259 CI fix round 1 (TASK-34000.28; same owner
+    #: decision): ``_withdraw_library_notes_filter_row_handoff`` renamed
+    #: ``_withdraw_library_notes_pending_focus_handoffs`` and now also
+    #: withdraws Back's pending row hand-off (a ``/`` pressed before the
+    #: list's source snapshot landed had focus taken back to the row), and
+    #: Down's T5-a landing focuses the painted result at once instead of only
+    #: through the list-entry arm's after-refresh attempt: 38166 -> 38195
+    #: lines, 1373 methods (measured with ``_measure``).
+    #: 2026-10-31, PR #3259: user size waiver; New focus role, exact current measurement.
+    #: 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 38242, 1374),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

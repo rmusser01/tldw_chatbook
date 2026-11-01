@@ -49,7 +49,13 @@ NOTE_COUNT = 60
 
 #: Down presses past the end of the first page (20 note rows + the folder
 #: row): the focused row is the deepest one, well below the fold on the base.
+#: Since TASK-34000.28 (N-22) the walk's deepest stop on a paged list is the
+#: "more" pager itself, not the last note row.
 DOWN_PRESSES = 30
+
+#: The note row ``test_thirtieth_focused_row_is_visible`` walks to: on the
+#: SECOND page, so reaching it takes the pager's Enter hand-off.
+THIRTIETH = 30
 
 WIDE_SIZES = [(120, 36), (160, 45)]
 COMPACT_SIZES = [(80, 24), (100, 30)]
@@ -131,6 +137,18 @@ async def test_wide_notes_list_is_a_scroll_owner(size) -> None:
         _assert_never_scrolls_horizontally(size, screen, lst)
 
 
+def _assert_revealed(size, screen, lst, focused) -> None:
+    """The focused row is painted on screen AND inside the list's own pane."""
+    assert screen.region.contains_region(focused.region), (
+        f"{size}: the focused row {focused.id} is off-screen at "
+        f"{focused.region} (screen {screen.region})"
+    )
+    assert lst.region.contains_region(focused.region), (
+        f"{size}: the focused row {focused.id} is outside the list at "
+        f"{focused.region} (list {lst.region}, scroll_y={lst.scroll_y})"
+    )
+
+
 def _assert_never_scrolls_horizontally(size, screen, lst) -> None:
     assert lst.max_scroll_x == 0, (
         f"{size}: horizontal overflow {lst.virtual_size.width} > "
@@ -147,6 +165,13 @@ def _assert_never_scrolls_horizontally(size, screen, lst) -> None:
 @pytest.mark.parametrize("size", WIDE_SIZES, ids=lambda s: f"{s[0]}x{s[1]}")
 async def test_thirtieth_focused_row_is_visible(size) -> None:
     """AC#2: Down past the fold scrolls the focused row in; Enter opens it.
+
+    TASK-34000.28 (N-22) made the tree's "more" pager the last stop of the
+    Up/Down walk, so the deepest row Down reaches on the first page is the
+    pager -- below the fold, and revealed like any row. Enter on it loads
+    the next page and hands focus to the first row that page added; Down
+    then walks on to the 30th note row, which must be revealed too, and
+    Enter opens it.
 
     Also: Tab from the filter, with the list scrolled to its end, lands on
     the first row -- which is then above the fold -- and reveals it.
@@ -165,16 +190,52 @@ async def test_thirtieth_focused_row_is_visible(size) -> None:
         await pilot.pause()
         await pilot.pause()
 
+        pager = screen.focused
+        assert pager is not None and pager.has_class("library-notes-tree-pager"), (
+            f"{size}: Down past the first page should stop on its pager, "
+            f"not {getattr(pager, 'id', None)}"
+        )
+        _assert_revealed(size, screen, lst, pager)
+
+        first_page = {getattr(row, "placement_id", "") for row in _rows(screen)}
+        assert "" not in first_page and len(first_page) == len(_rows(screen)), (
+            "sanity: every first-page row carries its own placement id"
+        )
+        await pilot.press("enter")
+
+        def _handed_to_next_page() -> bool:
+            focused = screen.focused
+            return bool(
+                focused is not None
+                and focused.is_attached
+                and focused.has_class("library-notes-row")
+                and getattr(focused, "placement_id", "") not in first_page
+            )
+
+        await _wait_for_condition(
+            pilot,
+            _handed_to_next_page,
+            message=lambda: (
+                f"{size}: Enter on the pager never handed focus to the next "
+                f"page's first row (focused={getattr(screen.focused, 'id', None)})"
+            ),
+        )
+        assert screen.focused is _rows(screen)[len(first_page)], screen.focused
+        for _ in range(THIRTIETH - len(first_page) - 1):
+            await pilot.press("down")
+        await pilot.pause()
+        await pilot.pause()
+
         focused = screen.focused
-        assert focused is not None and focused.has_class("library-notes-row")
-        assert screen.region.contains_region(focused.region), (
-            f"{size}: the focused row {focused.id} is off-screen at "
-            f"{focused.region} (screen {screen.region})"
+        assert focused is _rows(screen)[THIRTIETH - 1], (
+            f"{size}: Down from the hand-off should reach note row {THIRTIETH}, "
+            f"not {getattr(focused, 'id', None)}"
         )
-        assert lst.region.contains_region(focused.region), (
-            f"{size}: the focused row {focused.id} is outside the list at "
-            f"{focused.region} (list {lst.region}, scroll_y={lst.scroll_y})"
-        )
+        # A page load re-mounts the list (``_load_more_pages`` in the
+        # extended sibling): read the live one.
+        found = screen.query("#library-notes-list")
+        assert found, "the notes list is gone after the page load"
+        _assert_revealed(size, screen, found.first(), focused)
 
         expected_note_id = focused.note_id
         await pilot.press("enter")

@@ -1029,6 +1029,23 @@ class TraceGarbageCollector:
                 request_id, current_epoch, self._mark_count(cursor, request_id)
             )
 
+    @staticmethod
+    @contextmanager
+    def _atomic_sweep(cursor: sqlite3.Cursor) -> Iterator[None]:
+        """Rollback this sweep even when the caller owns the outer transaction."""
+        deferred = cursor.execute("PRAGMA defer_foreign_keys").fetchone()[0]
+        cursor.execute("SAVEPOINT console_trace_gc_sweep")
+        try:
+            yield
+        except BaseException:
+            cursor.execute("ROLLBACK TO console_trace_gc_sweep")
+            raise
+        finally:
+            cursor.execute("RELEASE console_trace_gc_sweep")
+            cursor.execute(
+                "PRAGMA defer_foreign_keys = " + ("ON" if deferred else "OFF")
+            )
+
     def sweep(self, *, request_id: str) -> TraceGCResult:
         """Sweep only the exact durable mark whose global epoch is unchanged.
 
@@ -1044,7 +1061,7 @@ class TraceGarbageCollector:
         """
 
         self._validate_request_id(request_id)
-        with self.db.transaction(immediate=True) as cursor:
+        with self.db.transaction(immediate=True) as cursor, self._atomic_sweep(cursor):
             completed = self._completed_result(cursor, request_id)
             if completed is not None:
                 return completed
@@ -1124,7 +1141,12 @@ class TraceGarbageCollector:
                     """DELETE FROM console_trace_retention_roots
                         WHERE julianday(retain_until) <= julianday('now')"""
                 )
+                # Fork segments and parent events form a cycle. Validate the
+                # whole deletion before restoring the caller's FK mode.
+                cursor.execute("PRAGMA defer_foreign_keys = ON")
                 deleted_rows = self._sweep_unmarked(cursor, request_id)
+                if self._has_swept_dependency(cursor):
+                    raise RuntimeError("trace_gc_foreign_key_dependency")
             pages_after = int(cursor.execute("PRAGMA page_count").fetchone()[0])
             free_after = int(cursor.execute("PRAGMA freelist_count").fetchone()[0])
             logical_live_bytes = int(
@@ -1880,6 +1902,28 @@ class TraceGarbageCollector:
             (str(row[1]),),
         ).fetchall()
         return tuple(str(item[0]) for item in rows)
+
+    @staticmethod
+    def _has_swept_dependency(cursor: sqlite3.Cursor) -> bool:
+        """Check only tables whose foreign keys reference a swept table.
+
+        A whole-database ``PRAGMA foreign_key_check`` would scan every table
+        inside this IMMEDIATE transaction and fail on unrelated orphans.
+        """
+        placeholders = ", ".join("?" for _ in _GC_ENTITY_TABLES)
+        children = cursor.execute(
+            f"""SELECT DISTINCT m.name
+                  FROM sqlite_master AS m, pragma_foreign_key_list(m.name) AS fk
+                 WHERE m.type = 'table' AND fk."table" IN ({placeholders})""",
+            _GC_ENTITY_TABLES,
+        ).fetchall()
+        return any(
+            cursor.execute(
+                "SELECT 1 FROM pragma_foreign_key_check(?) LIMIT 1", (child[0],)
+            ).fetchone()
+            is not None
+            for child in children
+        )
 
     @staticmethod
     def _sweep_unmarked(cursor: sqlite3.Cursor, request_id: str) -> dict[str, int]:

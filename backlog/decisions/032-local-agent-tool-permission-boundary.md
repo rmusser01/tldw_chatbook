@@ -433,3 +433,34 @@ root confinement with hidden components explicitly allowed under it.
 - [Watchlists agent boundary and provenance plan](../../Docs/superpowers/plans/2026-08-27-watchlists-agent-boundary-and-provenance.md)
 - [Console Watchlists commands and operations plan](../../Docs/superpowers/plans/2026-08-27-console-watchlists-commands-and-operations.md)
 - [ADR-030: Direct Local Library Tool Boundary for Console and MCP](030-local-library-agent-tool-boundary.md)
+
+
+## Addendum: approval-history suggestions retain reviewed authority (TASK-18928, 2026-10-31)
+
+Suggestions count explicit `approved` execution decisions only. The first
+`approve_session` decision already records `approved`; `approved-session`
+records reuse of its session grant and is not another human decision.
+
+The existing bounded, metadata-only execution log may retain an optional
+SHA-256 `definition_hash` supplied from the reviewed tool at the explicit
+approval execution boundary. Its sanitizer accepts only canonical digest
+strings only while the server and tool identities survive sanitization unchanged.
+Lossy identities cannot retain a qualification hash, and the reducer excludes
+the `invalid` sentinel even in older rows carrying a hash. A definition hash
+identifies description/schema, not the tool principal; it cannot repair lost
+identity. No descriptions, schemas, arguments, or results are added. Legacy
+rows remain readable but cannot support suggestions without a matching hash.
+This additive metadata field requires no new store or permission schema version.
+
+A suggestion remains proposal-only. Accept retains the displayed definition
+hash and selected permission-profile context, rechecks the current catalog
+and eligibility in that profile, and uses the existing permission-store
+profile digest/revision compare-and-set writer. The rendered context also
+binds the full policy inheritance chain; the same final writer compares its
+digest while holding the existing mutation fence, before changing the selected
+profile. A named-profile acceptance without that captured chain fails closed;
+default-profile legacy callers retain their sufficient selected-profile CAS.
+Unrelated profiles and dismissal bookkeeping are outside the policy chain.
+Definition, selection, or selected/inherited policy drift refuses the stale acceptance. Re-reading a newer definition
+without comparing the reviewed hash is insufficient consent. Settings remains
+the canonical host under ADR-240.

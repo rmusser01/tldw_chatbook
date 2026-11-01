@@ -1,0 +1,73 @@
+{
+  "red-native-clean.log": {
+    "trailing_whitespace_count": 1,
+    "line_numbers": [
+      223
+    ]
+  },
+  "surface-probe.log": {
+    "trailing_whitespace_count": 2,
+    "line_numbers": [
+      326,
+      700
+    ]
+  },
+  "setup-native.log": {
+    "trailing_whitespace_count": 1,
+    "line_numbers": [
+      222
+    ]
+  },
+  "alias-controls.log": {
+    "trailing_whitespace_count": 7,
+    "line_numbers": [
+      7,
+      18,
+      24,
+      30,
+      36,
+      42,
+      48
+    ]
+  },
+  "red-native.log": {
+    "trailing_whitespace_count": 2,
+    "line_numbers": [
+      316,
+      686
+    ]
+  },
+  "classification-red.log": {
+    "trailing_whitespace_count": 1,
+    "line_numbers": [
+      7
+    ]
+  },
+  "green-focused.log": {
+    "trailing_whitespace_count": 6,
+    "line_numbers": [
+      322,
+      793,
+      1165,
+      1527,
+      1889,
+      2254
+    ]
+  },
+  "green-thinking-correction.log": {
+    "trailing_whitespace_count": 4,
+    "line_numbers": [
+      326,
+      798,
+      1171,
+      1537
+    ]
+  },
+  "owner-transition-probe.log": {
+    "trailing_whitespace_count": 2,
+    "line_numbers": [
+      326,
+      700
+    ]
+  }
+}

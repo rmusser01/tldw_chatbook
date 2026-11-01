@@ -1149,3 +1149,75 @@ def test_excluded_notes_device_authority_still_refuses_unsafe_entries(tmp_path, 
     main = next(item for item in adapter.discover(config) if item.path == database)
     assert main.status not in {"included", "intentionally_excluded", "unused"}
     assert outside.read_bytes() == b"keep"
+
+
+def test_genuine_v9_workspace_backup_migrates_archive_chronology(tmp_path, monkeypatch):
+    import sqlite3
+    from threading import Event
+
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    path = tmp_path / "workspaces-v9.sqlite"
+    with monkeypatch.context() as historical:
+        historical.setattr(WorkspaceDB, "_migrate_v9_to_v10", lambda self: None)
+        db = WorkspaceDB(path)
+        try:
+            assert db.get_schema_version() == 9
+            with db.transaction() as connection:
+                assert "archived_at" not in {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(workspace_records)"
+                    )
+                }
+                connection.execute(
+                    "INSERT INTO workspace_records "
+                    "(workspace_id,name,authority,sync_status,archived,created_at,updated_at,assistant_defaults_explicit_none) "
+                    "VALUES ('retained','Retained','local-only','not-configured',1,?,?,1)",
+                    ("2026-09-20T12:00:00+00:00", "2026-09-20T12:00:00+00:00"),
+                )
+        finally:
+            db.close()
+    adapter = operational_adapter("workspaces")
+    assert adapter.validate(path) == ()
+    assert validate_candidate(adapter, path, Event(), migrate=True) == ()
+    with sqlite3.connect(path) as connection:
+        assert connection.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone() == (10,)
+        assert connection.execute(
+            "SELECT archived,archived_at,archive_revision,assistant_defaults_explicit_none "
+            "FROM workspace_records WHERE workspace_id='retained'"
+        ).fetchone() == (1, None, 0, 1)
+    assert adapter.validate(path) == ()
+
+
+def test_frozen_v8_workspace_backup_keeps_existing_recovery_boundary(
+    tmp_path, monkeypatch
+):
+    from threading import Event
+
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+
+    path = tmp_path / "workspaces-v8.sqlite"
+    with monkeypatch.context() as historical:
+        historical.setattr(WorkspaceDB, "_migrate_v8_to_v9", lambda self: None)
+        historical.setattr(WorkspaceDB, "_migrate_v9_to_v10", lambda self: None)
+        db = WorkspaceDB(path)
+        assert db.get_schema_version() == 8
+        db.close()
+    adapter = operational_adapter("workspaces")
+    assert adapter.validate(path) == ()
+    # Binding-authority recovery migration was not declared by ADR-241;
+    # chronology must not grant it implicitly or rewrite this frozen catalog.
+    before = path.read_bytes()
+    assert validate_candidate(adapter, path, Event(), migrate=True) == (
+        "unsupported_schema_migration",
+    )
+    assert path.read_bytes() == before
+    upgraded = WorkspaceDB(path)
+    assert upgraded.get_schema_version() == 10
+    upgraded.close()
+    assert adapter.validate(path) == ()

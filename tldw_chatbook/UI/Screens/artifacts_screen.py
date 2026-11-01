@@ -441,7 +441,7 @@ class ArtifactsScreen(BaseAppScreen):
     def action_open_dreams_story(self) -> None:
         """Open the focused dreams row's story modal (hidden `enter` binding).
 
-        Routes both row families (task-33164): story/synthetic rows and
+        Routes both row families (task-35586): story/synthetic rows and
         Tracked rows, so Enter is never a dead end on a focusable row.
         """
         focused_id = getattr(self.focused, "id", None) or ""
@@ -537,7 +537,7 @@ class ArtifactsScreen(BaseAppScreen):
             )
         )
 
-    # --- Tracked-row interaction (task-33164): open the origin story ---
+    # --- Tracked-row interaction (task-35586): open the origin story ---
 
     def _open_dreams_tracked_row(self, widget_id: str) -> None:
         """Open one Tracked row's origin story, or a summary notice.

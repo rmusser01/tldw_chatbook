@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import image_url_part
+from tldw_chatbook.Chat.console_compaction_hooks import _finish_compaction_hooks
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextCarryForwardMode,
@@ -3067,6 +3068,7 @@ class ConsoleCompactionPreflight:
         read_controller__durable_context_snapshots: Callable[[], Any],
         read_controller__global_context_policy_overrides: Callable[[], Any],
         read_controller__hooks_for_compaction: Callable[[], Any],
+        read_controller__release_compaction_submission: Callable[[], Any],
         read_controller__provider_continuation_history_for_resolution: Callable[
             [], Any
         ],
@@ -3164,6 +3166,9 @@ class ConsoleCompactionPreflight:
         )
         self.read_controller__hooks_for_compaction = (
             read_controller__hooks_for_compaction
+        )
+        self.read_controller__release_compaction_submission = (
+            read_controller__release_compaction_submission
         )
         self.read_controller__provider_continuation_history_for_resolution = (
             read_controller__provider_continuation_history_for_resolution
@@ -3815,45 +3820,40 @@ class ConsoleCompactionPreflight:
                 == admission
             ),
         )
-        transaction = await service.compact(
-            admission=admission,
-            branch_commit=branch_commit,
-            plan=planned.plan,
-            resolution=resolution,
-            prompt=prompt,
-            current_admission=lambda: self.read_controller__compaction_admission()(
-                session_id=session_id,
+        try:
+            transaction = await service.compact(
+                admission=admission,
+                branch_commit=branch_commit,
+                plan=planned.plan,
                 resolution=resolution,
                 prompt=prompt,
-            ),
-            prepare_main=prepare_main,
-            prefix_messages=snapshots[: boundary_index + 1],
-            retry_fence=self.read_global_compaction_retry_fence()(
-                conversation_id,
-                resolution,
-                prompt,
-                resolved,
-                effective,
-                snapshots,
-                active_request=not manual_action,
-            ),
-            honor_failure_latch=micro_compaction or not manual_action,
-            hooks=hooks,
-        )
-        if hooks is not None:
-            try:
-                await hooks.finish()
-                await hooks.lifecycle.wait(hooks.owner)
-            except Exception:  # noqa: BLE001 -- hook boundary
-                return provider_messages, blocked(
-                    "Required compaction hook failed; committed memory is retained."
+                current_admission=lambda: self.read_controller__compaction_admission()(
+                    session_id=session_id,
+                    resolution=resolution,
+                    prompt=prompt,
+                ),
+                prepare_main=prepare_main,
+                prefix_messages=snapshots[: boundary_index + 1],
+                retry_fence=self.read_global_compaction_retry_fence()(
+                    conversation_id,
+                    resolution,
+                    prompt,
+                    resolved,
+                    effective,
+                    snapshots,
+                    active_request=not manual_action,
+                ),
+                honor_failure_latch=micro_compaction or not manual_action,
+                hooks=hooks,
+            )
+            failure = await _finish_compaction_hooks(hooks)
+            if failure is not None:
+                return provider_messages, blocked(failure)
+        finally:
+            if hooks is not None:
+                self.read_controller__release_compaction_submission()(
+                    hooks._controller_submission
                 )
-            finally:
-                if hooks.reason == "manual" and (
-                    hooks.lifecycle._handoff is None
-                    or hooks.lifecycle._handoff[0] != hooks.owner
-                ):
-                    hooks.lifecycle.close_scope(hooks.owner)
         if transaction.terminal is self.read_global_CompactionTerminal().SUCCEEDED:
             memory_rows_after: tuple[
                 self.read_global_Mapping()[str, self.read_global_Any()], ...

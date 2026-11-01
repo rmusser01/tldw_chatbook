@@ -111,37 +111,78 @@ async def _mount_models(
     assert app.CSS_PATH == TldwCli.CSS_PATH
     context = app.run_test(size=size)
     pilot = await context.__aenter__()
-    screen = LLMScreen(app)
-    await app.push_screen(screen)
-    for _ in range(4):
-        await pilot.pause()
-    window = screen.query_one(LLMManagementWindow)
-    await _settle_pilot_until(
-        pilot,
-        lambda: (
-            window.active_view == "llama-cpp"
-            and len(window.query("#llm-view-remote")) == 1
-        ),
-        message="deferred model views did not finish mounting",
-    )
-    # Most of this module compares both GGUF providers. Under the lazy-once
-    # lifecycle, visit llamafile once so those comparison tests retain their
-    # original two-pane fixture while the dedicated deferral tests cover the
-    # true first-arrival shape.
-    if mount_llamafile:
-        window.active_view = "llamafile"
+    try:
+        screen = LLMScreen(app)
+        await app.push_screen(screen)
+        for _ in range(4):
+            await pilot.pause()
+        window = screen.query_one(LLMManagementWindow)
         await _settle_pilot_until(
             pilot,
-            lambda: len(window.query("#llamafile-gguf-source-mode")) == 1,
-            message="llamafile pane did not populate on first selection",
+            lambda: (
+                window.active_view == "llama-cpp"
+                and len(window.query("#llm-view-remote")) == 1
+            ),
+            message="deferred model views did not finish mounting",
         )
-        window.active_view = "llama-cpp"
-        await pilot.pause()
+        # Most of this module compares both GGUF providers. Under the lazy-once
+        # lifecycle, visit llamafile once so those comparison tests retain their
+        # original two-pane fixture while the dedicated deferral tests cover the
+        # true first-arrival shape.
+        if mount_llamafile:
+            window.active_view = "llamafile"
+            await _settle_pilot_until(
+                pilot,
+                lambda: len(window.query("#llamafile-gguf-source-mode")) == 1,
+                message="llamafile pane did not populate on first selection",
+            )
+            window.active_view = "llama-cpp"
+            await pilot.pause()
+    except BaseException:
+        await _close_context(context)
+        raise
     return app, pilot, context, screen, window, inventory_service
 
 
 async def _close_context(context: Any) -> None:
     await context.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("mount setup failed"),
+        asyncio.CancelledError("mount setup cancelled"),
+    ],
+    ids=("error", "cancelled"),
+)
+@private_profile_test
+async def test_mount_setup_exception_closes_its_app(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    failure: BaseException,
+) -> None:
+    app = _build_test_app()
+    context = app.run_test(size=(120, 40))
+    monkeypatch.setattr(app, "run_test", lambda **_kwargs: context)
+    monkeypatch.setattr(f"{__name__}._build_test_app", lambda: app)
+
+    async def fail_after_mount(pilot: Any, predicate: Any, *, message: str) -> None:
+        assert pilot.app is app
+        assert app.screen.query_one(LLMManagementWindow).is_mounted
+        raise failure
+
+    monkeypatch.setattr(f"{__name__}._settle_pilot_until", fail_after_mount)
+    try:
+        with pytest.raises(type(failure)) as raised:
+            await _mount_models(monkeypatch)
+        assert raised.value is failure
+        assert app._task.done()
+        assert not app.is_running
+    finally:
+        # The failing baseline must release its real app before pytest teardown.
+        await _close_context(context)
 
 
 def _select_values(select: Select) -> tuple[object, ...]:

@@ -1,0 +1,10 @@
+#!/bin/zsh
+export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
+export HOME=/private/tmp/archive-budget-live-764p7lar/home
+export XDG_CONFIG_HOME=/private/tmp/archive-budget-live-764p7lar/xdg-config
+export XDG_DATA_HOME=/private/tmp/archive-budget-live-764p7lar/xdg-data
+export XDG_CACHE_HOME=/private/tmp/archive-budget-live-764p7lar/xdg-cache
+export TLDW_CONFIG_PATH=/private/tmp/archive-budget-live-764p7lar/config.toml
+export PYTHONPATH=/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook
+cd /Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook
+exec /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python /private/tmp/archive-budget-live-764p7lar/launch.py

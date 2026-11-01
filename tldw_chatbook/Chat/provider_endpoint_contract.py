@@ -12,6 +12,7 @@ from unicodedata import category
 from urllib.parse import urlsplit, urlunsplit
 
 from ..provider_registry import ALL_RECORDS, ProviderRecord
+from .provider_setup_facts import ROUTE_SUFFIXES
 
 EndpointForm = Literal[
     "origin",
@@ -80,6 +81,26 @@ _ENGINE_PRESETS = {
     for record in ALL_RECORDS
     if record.engine_driven and record.key != "custom-hosted"
 }
+#: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
+#: already carries its API version owns its route suffix, so it resolves like
+#: an engine preset (``<base>/chat/completions``). Z.ai's ``/api/paas/v4``
+#: base previewed and saved ``…/v4/v1/chat/completions`` under the generic rule.
+#: The setup facts' ``ROUTE_SUFFIXES`` is the one owner (review round 1, F11).
+_ROUTE_OWNING_PRESETS = {
+    record.key: record for record in ALL_RECORDS if record.key in ROUTE_SUFFIXES
+}
+#: Cloudflare Workers AI's OpenAI-compatible base is ``…/accounts/<id>/ai/v1``
+#: (record ``CLOUDFLARE``, which carries no suffix). The account URL alone has
+#: no chat route, and Workers AI has no listing to catch it before the first
+#: chat 404s, so a URL that stops at the account gets the route (TASK-34100.6
+#: pre-merge review 2026-10-29).
+_CLOUDFLARE_ACCOUNT_ROUTE = ("ai", "v1")
+#: ``htp:/x`` or ``http:/x``: a scheme-like word and a colon not followed by a
+#: port, typed without "//" (review provider-15).
+_SCHEME_TYPO = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:(?!\d)")
+_SCHEME_HINT = (
+    "Start the address with http:// or https:// (for example http://127.0.0.1:8080)."
+)
 _REMOTE_HTTP_WARNING = "Remote HTTP endpoints are not encrypted."
 _PROVIDER_KEY = re.compile(r"[a-z0-9_]+")
 _UNSAFE_UNICODE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
@@ -207,6 +228,8 @@ def _resolve_provider_endpoint(
         )
 
     has_explicit_scheme = "://" in raw_value
+    if not has_explicit_scheme and _SCHEME_TYPO.match(raw_value):
+        return _invalid_resolution(provider_key, _SCHEME_HINT)
     candidate = raw_value if has_explicit_scheme else f"http://{raw_value}"
     try:
         parsed = urlsplit(candidate)
@@ -217,7 +240,7 @@ def _resolve_provider_endpoint(
 
     scheme = parsed.scheme.lower()
     if scheme not in {"http", "https"}:
-        return _invalid_resolution(provider_key, "Endpoint URL must use HTTP or HTTPS.")
+        return _invalid_resolution(provider_key, _SCHEME_HINT)
     if (
         parsed.username is not None
         or parsed.password is not None
@@ -264,7 +287,9 @@ def _resolve_provider_endpoint(
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
 
     netloc = _normalized_netloc(canonical_host, port)
-    preset = _ENGINE_PRESETS.get(provider_key)
+    preset = _ENGINE_PRESETS.get(provider_key) or _ROUTE_OWNING_PRESETS.get(
+        provider_key
+    )
     if preset is not None:
         return _engine_preset_resolution(
             preset, provider_key, scheme, netloc, canonical_host, segments
@@ -328,7 +353,8 @@ def _engine_preset_resolution(
     The entered path IS the base, minus a pasted ``/chat/completions`` or
     ``/models``; a bare host gets the record's suffix (Azure/Databricks
     ``/openai/v1``), the documented path when it is the preset's own host,
-    or ``/v1``.
+    or ``/v1``; a Cloudflare URL that stops at ``/accounts/<id>`` gets
+    ``/ai/v1``.
 
     Args:
         preset: The provider's registry record.
@@ -346,6 +372,8 @@ def _engine_preset_resolution(
         segments, form = segments[:-2], "chat_url"
     elif segments[-1:] == ("models",):
         segments, form = segments[:-1], "models_url"
+    if provider_key == "cloudflare" and segments[-2:-1] == ("accounts",):
+        segments = (*segments, *_CLOUDFLARE_ACCOUNT_ROUTE)
     if not segments:
         form = "origin"
         default = urlsplit(preset.default_base_url or "")
@@ -379,26 +407,6 @@ def _engine_preset_resolution(
 
 #: ponytail: 256 entries bounds it; the strings are endpoints, short and few.
 _memoized_resolution = lru_cache(maxsize=256)(_resolve_provider_endpoint)
-
-
-def is_native_generate_route(resolution: ProviderEndpointResolution) -> bool:
-    """Return whether an endpoint resolved as koboldcpp's native generate route.
-
-    Its send URL is the route itself and it lists at its root's
-    ``/v1/models`` (TASK-35010). Model discovery asks here, so Settings and
-    Switch model read the route one way (TASK-35832).
-
-    Args:
-        resolution: A result of :func:`resolve_provider_endpoint`.
-
-    Returns:
-        True only for a valid resolution of that route.
-    """
-    path = urlsplit(resolution.normalized_input).path
-    return not resolution.errors and _is_kobold_native_generate(
-        resolution.provider_key,
-        tuple(segment for segment in path.split("/") if segment),
-    )
 
 
 def _is_kobold_native_generate(provider_key: str, segments: tuple[str, ...]) -> bool:

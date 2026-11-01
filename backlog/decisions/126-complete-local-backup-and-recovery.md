@@ -1654,3 +1654,62 @@ That single execution scope still freshly admits every actual source before the
 run body starts; it avoids re-admitting the same profile/config/database sources
 in a nested scope. Qualification never imports or calls an optional source before
 admission. Missing or custom source objects keep the admitted global fallback.
+
+
+## TASK-35582 AC23-B: independently prepare the fixed agent worktree root
+
+The fleet launch keeps its original AgentRuns repository operation live through
+child admission or refused-launch cleanup. That operation owns exactly its DB
+path; it cannot authorize private directory creation under the selected profile.
+A real isolated-child regression exposed `operation_path_outside_scope` when
+`_worktrees_base` called the native private-directory helper inside that DB span.
+
+The Backup_Recovery owner provides one no-argument preparation function for the
+existing `get_user_data_dir() / "agent_worktrees"` directory. It validates and
+retains an enclosing core operation, temporarily suspends its discovery inside
+that owner module, performs ordinary fresh native directory admission, then
+restores and revalidates the original core operation in `finally`. The original
+operation/lease remains counted throughout. Pause gates, current profile/path
+validation, private ownership/mode/symlink checks and `_Operation.check` remain
+unchanged. There is no caller-selected path, callback, source-root override or
+permission grant, and no storage TLS mutation in AgentService/private_paths.
+Git creation and routing keep their existing captured repository authority and
+uncertain-cleanup custody. A refused root preparation becomes a body-free typed
+worktree refusal under the still-live parent DB span, allowing existing durable
+terminalization/refund without claiming that a child launched.
+
+This follows the retained-core/independent-admission boundary already used by raw
+source scopes. Reject widening DB path authority, dropping the parent launch
+operation, caching an unreviewed root, or replacing native private preparation.
+Qualification must cover real root preparation and selected-repository child
+writes, unrelated-path refusal after restoration, native preparation failure,
+pause before filesystem admission and during launch handoff, refused-child
+cleanup/refunds and uncertain retained worktrees. See the AC23 repair follow-up
+in the multi-model review implementation plan and its current QA packet.
+
+Creation translates exactly native `RecoveryRequired` and `PrivatePathError` from
+this fixed-root preparation into the same body-free `storage_unavailable` refusal.
+The latter includes unsafe symlink/ownership/mode posture. Native helper callers
+retain their original exception type; neither private paths nor exception bodies
+are added to logging or public results. Other exception classes are not swallowed.
+
+### TASK-35595 — Check creation intents during one native ancestry walk (2026-10-19)
+
+Same-process initialization waits use the existing owner/pause notifications;
+they do not poll native path checks while the owner is unchanged. Every admission
+still validates its original source, path, provenance and native scope.
+
+The native `pinned_directory` traversal may invoke an internal visitor on each
+directory after its original owner/mode validation, including the anchor and final
+directory. The visitor borrows the descriptor only during that call: it must not
+close, retain or grant authority from it. Nofollow opens, current native metadata
+and cleanup remain the traversal's responsibility; visitor errors propagate.
+Creation-intent verification uses this visitor for the bootstrap root's parent,
+checking the same intent filename at every existing ancestor. Missing descendants
+end the walk only after the existing ancestors have been checked. No filesystem
+decision or descriptor survives the traversal.
+
+This replaces repeated root-to-parent traversals, whose native opens grow
+quadratically with path depth. Reject skipping ancestor intent checks, caching a
+settled verdict, or bypassing admission when a process already owns a live lease:
+surviving creation intent and changed path/security evidence must still refuse.

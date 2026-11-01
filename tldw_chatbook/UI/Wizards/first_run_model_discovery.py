@@ -7,6 +7,7 @@ timeout or outcome for both steps.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
@@ -103,18 +104,144 @@ def _model_discovery_ui_outcome(result: object) -> tuple[list[str], str, str]:
     # (owner ruling 2026-10-02, PR #2958 review; as Test and Settings read it).
     # It keeps "forbidden" for the keyless hint (owner decision 2026-10-17, D2).
     forbidden = result.error is not None and result.error.category == "forbidden"
+    code = answered_http_status(result.error)
     if (
         forbidden
         or result.status == "unsupported"
-        or (result.error is not None and result.error.kind == "unsupported_endpoint")
+        or (
+            result.error is not None
+            # A listing route that isn't there (404, 405) is a listing that
+            # isn't available, never 'couldn't reach the server' (TASK-34100.6
+            # review round 1, live F7). Any other HTTP answer (429, 5xx) is a
+            # failure that names its status (review round 2, R2-02).
+            and (result.error.kind == "unsupported_endpoint" or code in {404, 405})
+        )
     ):
         return [], "listing_unavailable", "forbidden" if forbidden else ""
+    if code is not None:
+        return [], "connection_failed", f"HTTP {code}" if code else "HTTP error"
     error_kind = result.error.kind if result.error is not None else ""
     category = {
         "invalid_response": "invalid response",
         "missing_credentials": "authentication",
     }.get(error_kind, GENERIC_DISCOVERY_FAILURE_CATEGORY)
+    transport = result.error.category if result.error is not None else None
+    category = _TRANSPORT_CATEGORIES.get(str(transport), category)
     return [], "connection_failed", category
+
+
+_HTTP_STATUS = re.compile(r"HTTP (\d{3})")
+
+
+def answered_http_status(error: object) -> int | None:
+    """The HTTP status a discovery error was answered with, or None."""
+    if getattr(error, "category", None) != "http_status":
+        return None
+    match = _HTTP_STATUS.search(str(getattr(error, "message", "") or ""))
+    return int(match.group(1)) if match else 0
+
+
+def http_error_hint(code: int) -> tuple[str, str]:
+    """(what the status means, what to do) for an HTTP error answer.
+
+    llama-server answers 503 on every route while its model loads, a common
+    first-run moment (review round 2, R2-02).
+    """
+    if code == 429:
+        return "too many requests", "wait a moment"
+    if code == 503:
+        return "it may still be loading or busy", "wait"
+    if code >= 500:
+        return "the server hit an error", "check its logs"
+    return "", ""
+
+
+#: TASK-34100.6 (review coverage-19, provider-15): transport causes that
+#: change what the user should do, named in the Model step's copy.
+_TRANSPORT_CATEGORIES = {
+    "tls_untrusted": "untrusted certificate",
+    "tls_plain_http": "plain HTTP",
+}
+
+
+def evidence_failure_category(evidence: object, owner: object = None) -> str:
+    """Model's UI category for an unreachable Test-connection result.
+
+    TASK-34100.6 review round 1 (live F1): the evidence category was shown
+    with its underscores replaced ('tls untrusted'), which never matched the
+    'untrusted certificate' / 'plain HTTP' categories the Model row's copy
+    keys on, so Test connection then Next lost the Settings ▸ Network pointer.
+    Review round 2 (R2-02): an HTTP error answer names its status, read from
+    the Provider step (``owner``) that ran the test. TASK-33008 review: a
+    Test's 401 ("unauthorized") reads as "authentication", the one category
+    ``classify_discovery_failure`` reads as a key problem; it said "not
+    reachable" on every surface after Provider.
+    """
+    category = str(getattr(evidence, "category", "") or "connection_error")
+    if category == "unauthorized":
+        return "authentication"
+    if category == "http_status":
+        code = getattr(owner, "_last_probe_status_code", None)
+        return f"HTTP {code}" if isinstance(code, int) and code else "HTTP error"
+    return _TRANSPORT_CATEGORIES.get(category, category.replace("_", " "))
+
+
+def _origin(endpoint: str) -> str:
+    """'https://127.0.0.1:8443' for an endpoint, or "" when it has none."""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(endpoint)
+    except ValueError:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
+
+
+def connection_failed_text(provider_key: str, category: str, endpoint: str) -> str:
+    """The Model step's failed-discovery row (TASK-21143 UAT M-1/M-4).
+
+    Connection failures name the server the user has to start; a certificate
+    the computer doesn't trust, or https against a plain-HTTP server, says so
+    (TASK-34100.6). A refused or missing key has its own row
+    (``ProbeFailureCopy.model_line``, TASK-33008).
+
+    Args:
+        provider_key: The provider whose models were listed.
+        category: The UI failure category (``_model_discovery_ui_outcome``).
+        endpoint: The address that was asked, or "".
+
+    Returns:
+        The row's text.
+    """
+    at_endpoint = f" at {endpoint}" if endpoint else ""
+    origin = _origin(endpoint) or "The server"  # one line: no chat route
+    if category == "untrusted certificate":
+        return (
+            f"{origin} answered, but its certificate isn't trusted — add your CA "
+            "in Settings ▸ Network."  # Retry is the button below the row
+        )
+    if category == "plain HTTP":
+        return f"{origin} speaks plain HTTP — go Back and use http:// instead of https://."
+    if category.startswith("HTTP "):  # it answered (review round 2, R2-02)
+        code = int(category[5:]) if category[5:].isdigit() else 0
+        what, _todo = http_error_hint(code)
+        meaning = f" — {what}" if what else ""
+        answered = category if code else "with an HTTP error"
+        return f"{origin} answered {answered}{meaning}. Retry, or enter a model ID below."
+    if provider_key in ("ollama", "local_ollama"):
+        return (
+            f"Ollama isn't running{at_endpoint}. Start it (ollama serve), then "
+            "Retry — or enter a model ID below."
+        )
+    if provider_key in ("llama_cpp", "local_llamacpp"):
+        return (
+            f"The llama.cpp server isn't reachable{at_endpoint}. Start it, then "
+            "Retry — or enter a model ID below."
+        )
+    return (
+        f"Couldn't reach the server ({category}). Check it's running, then "
+        "Retry — or enter a model ID below."
+    )
 
 
 def _handed_off_failure_category(owner: object, discovery_key: object) -> str:
@@ -147,19 +274,6 @@ def _handed_off_failure_category(owner: object, discovery_key: object) -> str:
     # Only a failure's category: a 403's "forbidden" names no failure.
     failed = state == "connection_failed"
     return category if failed else GENERIC_DISCOVERY_FAILURE_CATEGORY
-
-
-def tested_failure_category(category: object) -> str:
-    """The Model step's failure category for a failed Test's probe category.
-
-    TASK-33008 review: a Test's 401 ("unauthorized") reached
-    ``classify_discovery_failure``, which reads only "authentication" as a
-    key problem, so every surface after Provider said "not reachable".
-    """
-
-    if category == "unauthorized":
-        return "authentication"
-    return str(category or "connection_error").replace("_", " ")
 
 
 def classify_render(step: Any, state: str, category: str) -> tuple[str, str]:
@@ -343,9 +457,27 @@ def note_probe_failure(owner: Any, failure: str, checked: Any) -> None:
         # ponytail: a check settled before the step's first layout (the app
         # mid-batch) finds no size and does not scroll; checks are network
         # round trips, so retry on the step's Resize only if that is seen.
-        owner.call_after_refresh(
-            lambda: auth.is_attached and auth.scroll_visible(animate=False)
-        )
+        owner.call_after_refresh(_reveal_auth_unless_browsing, owner, auth)
+
+
+def _reveal_auth_unless_browsing(owner: Any, auth: Any) -> None:
+    """Scroll Authentication into view, unless the user is browsing the list.
+
+    Review v3r1, G6-BV3-01: browsing selects, so every browsed keyed row's
+    keyless 401 scrolled the list away from the row being browsed. An
+    explicit pick moves focus to the key, inside this section, so the line
+    still shows when the user acts.
+    """
+    if not auth.is_attached:
+        return
+    keep = getattr(owner, "keep_browsed_row_in_view", None)
+    if callable(keep) and keep():
+        return
+    # Immediate: a clicked check's answer also asks for the status line above
+    # this section (G6-VR2-06). Both deferred scrolls were computed from the
+    # same offset, so the later one put the section back below the fold
+    # (TASK-34100.6 rebase); the line's own scroll now starts from this one.
+    auth.scroll_visible(animate=False, immediate=True)
 
 
 def note_probe_reached(owner: Any, checked: Any, endpoint: str = "reachable") -> None:
@@ -467,6 +599,82 @@ def auth_title(owner: Any, requires_api_key: bool) -> str:
     return "Authentication" if requires_api_key else "Authentication (optional)"
 
 
+def handed_off_probe_failure(model_step: object) -> str:
+    """Provider's settled failure for the staged identity, before Model renders.
+
+    TASK-34100.6 (review provider-03): the tracker showed ✓ on Provider for
+    the whole Model step after a failed check, flipping to '!' only after
+    Model's 'Continue anyway?'. The failure is known as soon as Provider's
+    background check settles, so the tracker reads it from there.
+
+    Args:
+        model_step: The ModelStep asking.
+
+    Returns:
+        A ``PROVIDER_PROBE_*`` classification, or "" while nothing failed.
+    """
+    outcome = _handed_off_outcome(model_step)
+    if outcome is None:
+        return ""
+    return classify_render(model_step, *outcome)[1]  # as Model will (TASK-33008)
+
+
+def _handed_off_outcome(model_step: object) -> tuple[str, str] | None:
+    """(state, category) of Provider's settled check for Model's identity."""
+    owner = getattr(getattr(model_step, "wizard", None), "_first_run_provider_discovery_owner", None)
+    try:
+        discovery_key = model_step._current_discovery_key()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - no identity yet means nothing failed.
+        return None
+    outcomes = getattr(owner, "_selected_provider_outcomes", None)
+    if discovery_key is None or not isinstance(outcomes, Mapping) or discovery_key not in outcomes:
+        return None
+    try:
+        _models, state, category = _model_discovery_ui_outcome(outcomes[discovery_key])
+    except ValueError:
+        return None
+    return state, category
+
+
+def provider_check_forbidden(wizard: Any) -> bool:
+    """Whether Provider's last check for the live identity answered HTTP 403.
+
+    TASK-34100.6 review v3r1, G6-BV3-03 (live: a real Baseten 403). A 403 is
+    explained on Provider ('! … won't list models for this key (HTTP 403)')
+    and never blocks Next (owner ruling 2026-10-02), so it is no
+    ``PROVIDER_PROBE_*`` failure -- and the tracker then showed ✓ on Provider
+    over the step's own '!'. The tracker marks Provider '!' from this, while
+    Model's gate, its Retry and the Summary's actions, which read failures
+    only, are unchanged. It reads the 403 the way
+    ``ModelStep.current_probe_failure`` reads a failure: Model's rendered
+    outcome for the live identity, else Provider's settled check (dropped
+    once Model hides, which is why Model keeps its own record).
+
+    Args:
+        wizard: The setup wizard container whose Model step is asked.
+
+    Returns:
+        True when the live identity's last listing answered 403.
+    """
+    try:
+        step = wizard.steps[wizard._step_index_for_id(wizard_state.STEP_MODEL)]
+        current = step._current_discovery_key()
+    except Exception:  # noqa: BLE001 - no Model step or no identity: no 403.
+        return False
+    if current is not None and current == getattr(step, "_rendered_discovery_key", None):
+        return getattr(step, "_rendered_failure_category", "") == "forbidden"
+    outcome = _handed_off_outcome(step)
+    return outcome is not None and outcome[1] == "forbidden"
+
+
+def _resolves_through_hosted_engine(provider_key: str) -> bool:
+    """Whether catalog discovery resolves ``provider_key`` like a hosted send."""
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    record = RECORDS_BY_KEY.get(provider_key)
+    return bool(record is not None and record.engine_driven)
+
+
 def _first_run_discovery_staged_settings(
     provider_draft: wizard_state.FirstRunProviderDraft,
     discovery_key: wizard_state.FirstRunModelDiscoveryKey,
@@ -480,6 +688,14 @@ def _first_run_discovery_staged_settings(
         or provider_draft.endpoint
         or discovery_key.connection_identity[1]
     )
+    if _resolves_through_hosted_engine(discovery_key.provider_key):
+        # Review round 1 (live F7's real cause): a hosted preset's discovery
+        # resolves its base URL like a send, and refused the chat URL ('must
+        # not include a terminal /chat/completions endpoint path') before any
+        # request. Stage the base Next saves.
+        from tldw_chatbook.Chat.provider_setup_persistence import api_base_from_chat_url
+
+        endpoint = api_base_from_chat_url(endpoint) or endpoint
     settings = {provider_endpoint_key(discovery_key.provider_key): endpoint}
     credential = provider_draft.credential
     credential_value = wizard_state._credential_value_for_boundary(credential)
@@ -497,6 +713,72 @@ def _first_run_discovery_staged_settings(
 
 
 MODEL_DISCOVERY_TIMEOUT_SECONDS = 8.0
+
+
+async def discover_within_timeout(
+    discover_models: Any, provider_key: str, staged_settings: Mapping[str, Any]
+) -> object:
+    """The selected-provider listing under the wizard's wait, never untyped.
+
+    Review round 2 (R2-07): httpx's own ConnectTimeout (10 s) -- where a
+    stalled loopback https handshake is confirmed as plain HTTP -- never
+    fired before the wizard's 8 s wait, so the failure reached the step with
+    no cause. An https loopback listing now gets the wait minus the
+    confirmation's own budget, and every other listing the full wait, as
+    before R2-07 (review v3r1, R1-08); when it runs out, the result is a typed
+    'timeout', or 'tls_plain_http' when one plain GET to the same loopback
+    host:port is answered. The whole call ends inside
+    MODEL_DISCOVERY_TIMEOUT_SECONDS.
+
+    Args:
+        discover_models: The catalog scope service's ``discover_models``.
+        provider_key: The provider listed.
+        staged_settings: The transient settings the listing uses.
+
+    Returns:
+        The listing's ``ModelDiscoveryResult``, or a typed error result.
+    """
+    import asyncio
+
+    from tldw_chatbook.Chat import local_server_discovery as discovery
+    from tldw_chatbook.Chat.provider_setup_persistence import provider_endpoint_key
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+
+    total = MODEL_DISCOVERY_TIMEOUT_SECONDS
+    confirm = discovery.PLAIN_HTTP_CONFIRM_TIMEOUT_SECONDS
+    settings = (staged_settings.get("api_settings") or {}).get(provider_key) or {}
+    endpoint = str(settings.get(provider_endpoint_key(provider_key)) or "")
+    # Review v3r1, R1-08: only an https loopback listing gives up part of the
+    # wait for the plain-HTTP check; a cloud listing keeps the full wait.
+    confirmable = discovery.https_on_loopback(endpoint)
+    try:
+        return await asyncio.wait_for(
+            discover_models(
+                mode="local",
+                provider=provider_key,
+                staged_settings=staged_settings,
+                use_shared_cache=False,
+            ),
+            timeout=max(total - confirm - 0.5, total / 2) if confirmable else total,
+        )
+    except TimeoutError:
+        pass
+    plain = confirmable and await discovery.loopback_answers_plain_http(endpoint)
+    return ModelDiscoveryResult(
+        provider=provider_key,
+        provider_list_key=None,
+        endpoint_fingerprint=None,
+        status="error",
+        error=ModelDiscoveryError(
+            kind="request_failed",
+            message="Model discovery timed out.",
+            recovery_hint="Check the server is running.",
+            category="tls_plain_http" if plain else "timeout",
+        ),
+    )
 
 # TASK-34100.1 review round 3: the one reuse rule for a provider identity's
 # selected discovery. Only a discovery still running, or one whose model list

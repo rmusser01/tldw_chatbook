@@ -145,7 +145,7 @@ def authority_inputs(controller: Any, session_id: str) -> AuthorityInputs:
     )
 
 
-def capture_authority(controller: Any, inputs: AuthorityInputs) -> TurnAuthority:
+def capture_authority(controller: Any, inputs: AuthorityInputs, *, mcp_definition_maximum: Mapping[str, str] | None = None) -> TurnAuthority:
     """Read every service-owned value the turn snapshot freezes.
 
     Touches no store and no widget, so it may run on a worker thread.
@@ -159,7 +159,8 @@ def capture_authority(controller: Any, inputs: AuthorityInputs) -> TurnAuthority
         roots, aliases, skipped = capture_change_review_admission(
             app, inputs.workspace_id
         )
-        mcp_definition_maximum = capture_mcp_definition_maximum(app)
+        if mcp_definition_maximum is None:
+            mcp_definition_maximum = capture_mcp_definition_maximum(app)
         return TurnAuthority(
             key=inputs.key,
             project_authority=capture_project_instruction_authority(
@@ -180,17 +181,19 @@ def capture_authority(controller: Any, inputs: AuthorityInputs) -> TurnAuthority
                 session, inputs.character_repository
             ),
             prompt_transform_inputs=capture_prompt_transform_inputs(app, session),
-            skill_context_maximum=capture_skill_context_maximum(app),
+            skill_context_maximum=capture_skill_context_maximum(
+                app, inputs.workspace_id
+            ),
             rag_top_k=controller._rag_top_k_accessor(),
         )
 
 
-def authority_for(controller: Any, inputs: AuthorityInputs) -> TurnAuthority:
+def authority_for(controller: Any, inputs: AuthorityInputs, *, mcp_definition_maximum: Mapping[str, str] | None = None) -> TurnAuthority:
     """The precaptured authority when its inputs still match, else a fresh read."""
     precaptured = _PRECAPTURED.get()
     if precaptured is not None and precaptured.key == inputs.key:
         return precaptured
-    return capture_authority(controller, inputs)
+    return capture_authority(controller, inputs, mcp_definition_maximum=mcp_definition_maximum)
 
 
 async def precapture(controller: Any, session_id: str) -> TurnAuthority | None:

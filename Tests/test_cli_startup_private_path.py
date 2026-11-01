@@ -56,9 +56,7 @@ def _stub_startup_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
     # TASK-34100.4: cli.py now runs the shared unlock (preflight + admission
     # + password install) through this one function; None admits startup.
     launcher.startup_unlock = lambda: None
-    monkeypatch.setitem(
-        sys.modules, "tldw_chatbook.Backup_Recovery.launcher", launcher
-    )
+    monkeypatch.setitem(sys.modules, "tldw_chatbook.Backup_Recovery.launcher", launcher)
 
     admission = types.ModuleType("tldw_chatbook.Backup_Recovery.storage_admission")
     admission.admit_startup = lambda: None
@@ -104,7 +102,8 @@ def test_tldw_cli_startup_refusal_exits_1_with_diagnostic(
 
     assert exit_info.value.code == 1
     err = capsys.readouterr().err
-    assert "chmod g-w,o-w -- /home/ubuntu/.config" in err
+    assert "Chatbook cannot start" in err
+    assert str(_refusal().result.offender_path) in err
     assert "Traceback" not in err
 
 
@@ -130,7 +129,8 @@ def test_tldw_cli_runtime_refusal_also_exits_cleanly(
 
     assert exit_info.value.code == 1
     err = capsys.readouterr().err
-    assert "chmod g-w,o-w -- /home/ubuntu/.config" in err
+    assert "Chatbook cannot start" in err
+    assert str(_refusal().result.offender_path) in err
     assert "Traceback" not in err
 
 
@@ -141,7 +141,9 @@ def test_tldw_cli_does_not_emit_twice_when_config_already_reported(
 
     startup_errors.emit_private_path_startup_error(_refusal())
     first = capsys.readouterr().err
-    assert "chmod g-w,o-w" in first
+    # TASK-35312: the repair line is platform-branched (chmod on POSIX,
+    # icacls on Windows); either proves the guidance block was emitted.
+    assert "chmod g-w,o-w" in first or "icacls" in first
 
     _stub_startup_preflight(monkeypatch)
     _stub_app_module(monkeypatch, _refusal())

@@ -152,6 +152,10 @@ $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
 $ds-workflow-navigator-width: 27;
+$ds-workflow-dialog-max-width: 100;
+$ds-setup-voice-wide-share: 21fr;
+$ds-setup-voice-medium-share: 14fr;
+$ds-setup-voice-narrow-share: 11fr;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -185,6 +189,7 @@ $ds-space-inset: $ds-space-1;
  * status lines, chip rows) use the compact height. */
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
+$ds-control-action-min-width: 6;
 /* Default/minimum height for multi-line text inputs. */
 $ds-textarea-min-height: 5;
 /* TASK-33004.4 (spec §6): Switch model is 140 columns at 211x44 and
@@ -405,6 +410,8 @@ $ds-widgets-skeleton-title-share: 60%;
 /* task 11 (ADR-161 §3.10): message-body viewport scroll caps
    (components/_messages.tcss, single consumer). */
 $ds-messages-scroll-cap: 50vh;
+/* Folder picker leaves room for its filter, pager and actions. */
+$ds-note-folder-picker-max-height: 50vh;
 $ds-messages-text-scroll-cap: 40vh;
 /* Console's rendered frame color (see Console_Modules.frame.
  * CONSOLE_FRAME_COLOR; themes.py pins the same value). The monolith's

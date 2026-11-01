@@ -11,7 +11,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 from loguru import logger
 
@@ -383,9 +383,17 @@ class ConsoleTurnConfigurationSnapshot:
     #: The workspace's named permission profile this turn resolves tool
     #: gates under; ``"default"`` keeps the single-profile behavior.
     tool_policy_profile_id: str = "default"
+    mcp_definition_capture: Literal["captured", "composition"] = "captured"
+    recovery_user_origin: object | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Detach constructor inputs even when callers bypass ``capture``."""
+        if self.mcp_definition_capture not in ("captured", "composition"):
+            raise ValueError("invalid MCP definition capture mode")
+        if self.mcp_definition_capture == "composition" and (
+            self.mcp_tool_maximum is not None or self.mcp_definition_maximum
+        ):
+            raise ValueError("composition mode requires an unresolved MCP maximum")
         object.__setattr__(self, "session_id", str(self.session_id))
         object.__setattr__(
             self,
@@ -495,6 +503,7 @@ class ConsoleTurnConfigurationSnapshot:
         provider_payload_settings: Mapping[str, Any] | None = None,
         persona_policy_rules: Sequence[Mapping[str, Any]] | None = None,
         tool_policy_profile_id: str = "default",
+        mcp_definition_capture: Literal["captured", "composition"] = "captured",
     ) -> "ConsoleTurnConfigurationSnapshot":
         """Capture detached values from mutable application-owned sources."""
         return cls(
@@ -524,6 +533,7 @@ class ConsoleTurnConfigurationSnapshot:
             provider_payload_settings=provider_payload_settings or {},
             persona_policy_rules=tuple(persona_policy_rules or ()),
             tool_policy_profile_id=tool_policy_profile_id,
+            mcp_definition_capture=mcp_definition_capture,
         )
 
     @property
@@ -552,6 +562,9 @@ class ConsoleTurnCustodyRequest:
     )
     # Optional exact UI capture witness; detached/custom callers retain None.
     draft_revision: int | None = field(default=None, repr=False)
+    _pressed_inputs: Any | None = field(default=None, repr=False)
+    _pressed_stash: Any | None = field(default=None, repr=False)
+    _pressed_attachment_generation: int | None = field(default=None, repr=False)
 
 
 def _detached_configuration(
@@ -560,6 +573,7 @@ def _detached_configuration(
     """Copy an already-frozen configuration at the final-context boundary."""
     return ConsoleTurnConfigurationSnapshot(
         session_id=configuration.session_id,
+        recovery_user_origin=configuration.recovery_user_origin,
         provider_selection=configuration.provider_selection,
         scratch_space=configuration.scratch_space,
         session_settings=configuration.session_settings,
@@ -581,6 +595,7 @@ def _detached_configuration(
         provider_payload_settings=configuration.provider_payload_settings,
         persona_policy_rules=configuration.persona_policy_rules,
         tool_policy_profile_id=configuration.tool_policy_profile_id,
+        mcp_definition_capture=configuration.mcp_definition_capture,
     )
 
 
@@ -632,6 +647,9 @@ def _detached_destination(
         endpoint_identity=str(destination.endpoint_identity),
         egress_class=destination.egress_class,
         endpoint_provenance=destination.endpoint_provenance,
+        continuation_provider=destination.continuation_provider,
+        continuation_protocol=destination.continuation_protocol,
+        continuation_base_url=destination.continuation_base_url,
     )
 
 
@@ -744,13 +762,18 @@ class ConsoleTurnExecutionContext:
 
     @property
     def mcp_tool_maximum(self) -> frozenset[str] | None:
-        """Return exact MCP tool identities eligible at handoff."""
+        """Return captured MCP identities, or None for composition/legacy capture."""
         return self.configuration.mcp_tool_maximum
 
     @property
     def mcp_definition_maximum(self) -> Mapping[str, str]:
         """Exact admitted MCP definition hashes keyed by raw tool ID."""
         return self.configuration.mcp_definition_maximum
+
+    @property
+    def mcp_definition_capture(self) -> Literal["captured", "composition"]:
+        """Return whether this consumer establishes its ceiling at composition."""
+        return self.configuration.mcp_definition_capture
 
     @property
     def capabilities(self) -> Mapping[str, object]:

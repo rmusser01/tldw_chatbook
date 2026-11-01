@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sqlite3
 
 import pytest
 from loguru import logger as loguru_logger
@@ -54,6 +55,8 @@ from tldw_chatbook.Agents.run_log_eviction import (
     coerce_min_recent_rounds,
 )
 from Tests.Agents.test_agent_service import ScriptedChat, native_call
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 # --------------------------------------------------------------------------
@@ -668,7 +671,16 @@ _MIN_RECENT_ROUNDS_ENV_VAR = (
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    database = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    try:
+        yield database
+    finally:
+        connection = getattr(database._thread_local, "conn", None)
+        database.close()
+        if connection is not None:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                connection.execute("SELECT 1")
+        assert not database._maintenance_participant.connections
 
 
 def test_flag_off_sends_full_history_regardless_of_window(db, tmp_path, monkeypatch):

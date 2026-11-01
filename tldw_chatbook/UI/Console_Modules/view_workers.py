@@ -13,6 +13,7 @@ CONSOLE_BROWSER_WORKER_GROUPS = frozenset(
 _GROUPS = frozenset(
     {
         "console-sync",
+        "console-attach-reconciliation",
         "console-context-presentation",
         "console-readiness-config",
         "console-readiness-publication",
@@ -22,6 +23,7 @@ _GROUPS = frozenset(
         "console-subagent-count-publication",
         "console-citation-counts",
         "console-library-activity",
+        "console-library-outcome",
         "console-workspace-display-reads",
         "console-context-publication",
         "console-hook-refresh",
@@ -34,6 +36,7 @@ _GROUPS = frozenset(
         "console-character-context-refresh",
         "console-annotation-previews",
         "console-persisted-browser-cache",
+        "console-recovered-images",
         "console-flat-conversation-search",
     }
 )

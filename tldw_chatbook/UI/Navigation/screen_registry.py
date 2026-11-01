@@ -9,9 +9,15 @@ from loguru import logger
 
 from tldw_chatbook.Constants import (
     TAB_CCP,
+    TAB_EVALS,
+    TAB_KANBAN,
     TAB_LLM,
     TAB_MEETINGS,
+    TAB_PERSONAS,
     TAB_RESEARCH_WORKSPACE,
+    TAB_SCHEDULES,
+    TAB_WATCHLISTS_COLLECTIONS,
+    TAB_WORKFLOWS,
 )
 from .shell_destinations import resolve_shell_route
 
@@ -70,7 +76,23 @@ class ScreenRoute:
             return None
 
 
+_SCREEN_OWNED_ROUTE_CSS: dict[str, tuple[str, ...]] = {
+    "plugins": ("screen_feature_plugins.tcss",),
+    TAB_SCHEDULES: ("screen_feature_scheduling.tcss",),
+    TAB_EVALS: ("screen_feature_evals.tcss",),
+    TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",),
+    TAB_WORKFLOWS: ("screen_feature_workflows.tcss",),
+    TAB_PERSONAS: ("screen_feature_roleplay.tcss",),
+}
+
+
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
+    "plugins": ScreenRoute(
+        "plugins",
+        "plugins",
+        "tldw_chatbook.UI.Screens.plugins_screen",
+        "PluginsScreen",
+    ),
     "chunking_lab": ScreenRoute(
         "chunking_lab",
         "library",
@@ -149,6 +171,12 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         TAB_MEETINGS,
         "tldw_chatbook.UI.Screens.meetings_screen",
         "MeetingsScreen",
+    ),
+    TAB_KANBAN: ScreenRoute(
+        "kanban",
+        TAB_KANBAN,
+        "tldw_chatbook.UI.Kanban.kanban_board_screen",
+        "KanbanBoardScreen",
     ),
     "acp": ScreenRoute(
         "acp", "acp", "tldw_chatbook.UI.Screens.acp_screen", "ACPScreen"

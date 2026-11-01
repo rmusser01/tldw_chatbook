@@ -1,0 +1,12 @@
+{
+  "tldw_chatbook/UI/Console_Modules/session.py": {
+    "baseline_findings": 10,
+    "current_findings": 10,
+    "added": []
+  },
+  "Tests/UI/test_console_manual_unread.py": {
+    "baseline_findings": 5,
+    "current_findings": 5,
+    "added": []
+  }
+}

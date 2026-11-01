@@ -441,6 +441,8 @@ class LibraryNotesState:
     # together (PR #2571 review, finding 6).
     navigation_focus_intent: bool = False
     notice: str = ""
+    # TASK-34000.28 (N-24): the folder-conflict ``notice`` offers Refresh.
+    notice_refresh_offered: bool = False
     tree_expanded_ids: set[str] = field(default_factory=set)
     tree_branches: dict[NotesBranchKey, NotesBranchSliceState] = field(
         default_factory=dict
@@ -543,6 +545,13 @@ class LibraryNotesState:
     #: indistinguishable from a verified zero, and Info claims "no notes
     #: link here yet" before -- or without ever -- checking.
     backlinks_status: Literal["loading", "ready", "failed"] = "loading"
+
+    #: TASK-34000.28 (N-21): ``(note_id, title)`` of the note a backlink or a
+    #: note link was followed FROM, which the editor heading offers as
+    #: ``‹ <title>``. Set by those two opens only; every other open -- the
+    #: control's own included -- clears it in ``_begin_library_note_load``,
+    #: so the way back is one hop by construction.
+    link_origin: tuple[str, str] | None = None
 
     #: TASK-34000.11: the ``[[`` picker's candidate-load generation. Bumped
     #: on every new completion context; a loader that answers for an older

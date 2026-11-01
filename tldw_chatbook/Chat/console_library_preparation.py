@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 
+from tldw_chatbook.Chat.library_preparation import (
+    LibraryPreparationContribution,
+    library_preparation_event_for_outcome,
+)
 from tldw_chatbook.Library.library_rag_service import LibraryRagSearchRequest
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
@@ -14,6 +19,7 @@ from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
 from .console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsolePreparationTransition,
+    ConsoleTurnPreparation,
     ConsoleTurnPreparationState,
 )
 
@@ -21,6 +27,68 @@ if TYPE_CHECKING:
     from .console_chat_controller import (
         ConsoleChatController,
         ConsolePreparationOutcome,
+    )
+
+#: TASK-33621.51: a paused search's error code -> the reason its "Send once
+#: without Library" record keeps (the card already says it; the turn now too).
+_BYPASS_REASONS = MappingProxyType(
+    {
+        "library_retrieval_timeout": "timed_out",
+        "library_retrieval_stopped": "stopped",
+        "library_retrieval_failed": "failed",
+    }
+)
+
+
+def preparation_contribution(
+    controller: ConsoleChatController,
+    outcome: Literal["zero_matches", "bypassed", "evidence_sent"],
+    preparation: ConsoleTurnPreparation,
+    *,
+    result_count: int = 0,
+    bypass_reason: str | None = None,
+) -> LibraryPreparationContribution:
+    """Build the bounded record the send's durable acceptance writes.
+
+    Args:
+        controller: The Console chat controller that prepared the send.
+        outcome: What the Automatic Library search did for this send.
+        preparation: The send's READY preparation.
+        result_count: Evidence references the send carries (evidence only).
+        bypass_reason: Why a bypassed send's search paused, when known.
+
+    Returns:
+        The contribution, owned by the send's USER message.
+    """
+    event = library_preparation_event_for_outcome(
+        outcome,
+        attempt_id=preparation.attempt_id,
+        result_count=result_count,
+        source_types=controller._frozen_rag_source_types(
+            preparation.execution_context
+        ),
+        bypass_reason=bypass_reason,
+    )
+    assert event is not None
+    return LibraryPreparationContribution(event=event)
+
+
+def bypass_contribution(
+    controller: ConsoleChatController, ready: ConsoleTurnPreparation
+) -> LibraryPreparationContribution:
+    """Record a "Send once without Library", keeping why its search paused.
+
+    Args:
+        controller: The Console chat controller holding the paused outcome.
+        ready: The preparation the bypass has just moved to READY.
+
+    Returns:
+        A ``bypassed`` contribution; its reason is None for an unknown code.
+    """
+    paused = controller._preparation_outcomes.get(ready.preparation_id)
+    reason = _BYPASS_REASONS.get(str(getattr(paused, "error_code", None) or ""))
+    return preparation_contribution(
+        controller, "bypassed", ready, bypass_reason=reason
     )
 
 
@@ -129,9 +197,17 @@ async def prepare_library_for_turn(
             error_code=None,
         )
         return outcome
+    # TASK-33621.51: every completed search leaves a record on the turn: how
+    # many evidence references it sent, or that it found none.
+    sent = len(bundle.references) if bundle is not None else 0
     contribution = (
-        controller._preparation_contribution("zero_matches", current)
-        if ready is not None and bundle is None
+        preparation_contribution(
+            controller,
+            "evidence_sent" if sent else "zero_matches",
+            current,
+            result_count=sent,
+        )
+        if ready is not None
         else None
     )
     outcome = ConsolePreparationOutcome(

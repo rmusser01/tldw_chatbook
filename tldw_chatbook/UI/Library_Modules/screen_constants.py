@@ -475,6 +475,16 @@ _LIBRARY_LIST_ROW_CLASSES = (
     # full-width ``library_row_button`` the four above use
     # (``library_conversations_canvas.py``), so Up/Down now walks them too.
     "library-conversation-row",
+    # TASK-34000.28 N-22: the Notes TREE composes its folder rows, note rows
+    # and "more" pagers as siblings under ``#library-notes-list``
+    # (``library_notes_canvas._compose_tree_rows``). Only the note rows were
+    # listed here, so ``g`` landed on a folder row where Down then did
+    # nothing (Textual's Button ignores the key), and the first note was ~17
+    # Tab stops away. Listing the other two kinds makes the tree ONE walk in
+    # visual order; the Right/Left folder rule lives in ``LibraryScreen.
+    # on_key`` beside the Up/Down branch.
+    "library-notes-folder-row",
+    "library-notes-tree-pager",
 )
 
 #: task-32225 (re-review N4): the canvas filters "/" prefers over the rail's

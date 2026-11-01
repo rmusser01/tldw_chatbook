@@ -39,9 +39,9 @@ if TYPE_CHECKING:
         ApprovalDecisions,
         BuiltinToolGate,
         BuiltinToolProvider,
+        ManagedSkillProposalGate,
         MCPPendingCall,
         MCPToolProvider,
-        ManagedSkillProposalGate,
         RawShellToolProvider,
         ToolCall,
         ToolReviewDecision,
@@ -51,6 +51,9 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
+from tldw_chatbook.Agents.approval_provenance import (
+    approval_was_unanswered as approval_was_unanswered,  # noqa: PLC0414 - retained public seam
+)
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 from .console_local_review_hook import (
     build_local_review_hook as build_local_review_hook,
@@ -3448,8 +3451,8 @@ class InterruptRoundHost(InitialHookReviewMixin):
             (deny, cancel, stop, timeout, no wired UI) returns
             ``allow=False``.
         """
-        from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
         from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY
+        from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 
         owning_session_id = (
             session_id
@@ -5327,29 +5330,6 @@ def _stamp_skill_script_round_closed(state: dict[str, Any]) -> None:
         decision["remember"] = False
 
 
-def approval_was_unanswered(
-    row: "MCPPendingCall",
-    decisions: Mapping[str, str],
-    *,
-    read_global_approval_key_unanswered: Callable[[], Any],
-    read_global_selected_approval_key: Callable[[], Any],
-) -> bool:
-    """True when ``row``'s deny came from a Stop/revoke, not from the user.
-
-    Args:
-        row: The pending call whose verdict is being recorded.
-        decisions: The map ``request_mcp_approvals`` returned -- an
-            `ApprovalDecisions` in production, a bare dict in tests and in
-            any other `request_approvals` shape (which then reports
-            "answered", the pre-fix behaviour).
-
-    Returns:
-        Whether the verdict for ``row`` was defaulted by an unresolved round.
-    """
-    key = read_global_selected_approval_key()(
-        decisions, str(getattr(row, "call_id", "") or ""), row.llm_name
-    )
-    return read_global_approval_key_unanswered()(decisions, key)
 
 
 def build_combined_review_hook(
@@ -5641,6 +5621,8 @@ def build_tool_review_hook(
     workspace_id: str | None,
     kill_switch: Callable[[], bool] | None,
     library_provider: Any | None,
+    recovery_provider_reader: Callable[[], Any] | None = None,
+    recovery_persona_rules: tuple[Mapping[str, Any], ...] = (),
     read_global_AGENT_LESSON_APPROVAL_REQUIRED: Callable[[], Any],
     read_global_AGENT_LESSON_DENIED: Callable[[], Any],
     read_global_AGENT_LESSON_FOREGROUND_REQUIRED: Callable[[], Any],
@@ -6012,9 +5994,17 @@ def build_tool_review_hook(
                 )
             )
 
-        all_pending = mcp_pending + builtin_pending + lesson_pending
+        recovery_pending, recovery_refusals = [], {}
+        if recovery_provider_reader is not None and recovery_persona_rules:
+            from .archive_recovery.runtime import pending_recovery_reviews
+
+            recovery_pending, recovery_refusals = pending_recovery_reviews(
+                recovery_provider_reader, recovery_persona_rules, calls, run_id,
+                actor, read_global_MCPPendingCall,
+            )
+        all_pending = mcp_pending + builtin_pending + lesson_pending + recovery_pending
         if not all_pending:
-            return lesson_refusals
+            return {**lesson_refusals, **recovery_refusals}
         try:
             decisions = request_approvals(all_pending)
         except BaseException:
@@ -6180,6 +6170,12 @@ def build_tool_review_hook(
             }
         )
         verdicts.update(lesson_refusals)
+        verdicts.update(recovery_refusals)
+        for row in recovery_pending:
+            verdicts[row.call_id] = (
+                "proceed" if decisions.get(row.call_id) == "approve_once"
+                else "Recovery search was not approved."
+            )
         issue_lesson_approval = getattr(
             library_provider, "issue_agent_lesson_approval", None
         )

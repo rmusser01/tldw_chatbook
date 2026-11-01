@@ -1,0 +1,10 @@
+{
+  "authorized_total": 20,
+  "consumed_before_resume": 15,
+  "remaining": 5,
+  "prior_raw_requests_1_10": "/Users/macbook-dev/.codex/worktrees/agent-archive-recovery/tldw_chatbook/Docs/superpowers/qa/console/2026-09-28-agent-archive-recovery-capture-live",
+  "prior_requests_11_15": "Retained Task3 diagnosis and ledger; temporary raw case expired.",
+  "endpoint": "http://127.0.0.1:8010",
+  "endpoint_authorization": "User corrected port to8010 on2026-10-18.",
+  "no_counter_reset": true
+}

@@ -99,7 +99,9 @@ async def test_learn_repair_reopen_and_exclude_through_console(
         saved = next(s for s in case.chats.sessions() if s.id == case.session_id)
         conversation_id = saved.persisted_conversation_id
         original_persisted_id = original.persisted_message_id
-        case.chats.close_session(case.session_id)
+        # Retire the live composer and runtime through the same close owner as the UI.
+        await case.console._session._close_console_session_tab(case.session_id)
+        assert all(s.id != case.session_id for s in case.chats.sessions())
         assert await case.console._workspace._resume_console_workspace_conversation(
             conversation_id, preserve_persisted_scope=True
         )

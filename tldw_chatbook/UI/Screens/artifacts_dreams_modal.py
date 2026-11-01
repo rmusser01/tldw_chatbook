@@ -10,7 +10,7 @@ service), track this page into the watchlists loop (Phase 2 Task 3, via
 ``Dreams.track_service.track_page`` bound to the app's
 ``LocalWatchlistsService``), untrack it again (Phase 2 Task 6, via
 ``Dreams.track_service.untrack`` -- no tracked wrapper is a gentle
-notice), watch the discovery question itself (task-33164, via
+notice), watch the discovery question itself (task-35586, via
 ``Dreams.track_service.track_question`` -- the story's ``query``
 verbatim, no subscription, offered on every non-synthetic row including
 ``dreams://llm`` ones because a question needs no URL),
@@ -392,7 +392,7 @@ class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
                         yield Button(
                             "Untrack (u)", id="dsm-untrack-button", compact=True
                         )
-                    # Watch question (task-33164): tracks the QUERY, not the
+                    # Watch question (task-35586): tracks the QUERY, not the
                     # page -- a dreams://llm row has no URL but its discovery
                     # query is still a watchable question, so unlike
                     # Ingest/Track this rides NO http(s) gate.
@@ -918,7 +918,7 @@ class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
             self.refresh(recompose=True)
 
     async def action_watch(self) -> None:
-        """Watch the story's discovery question (task-33164, Phase 2 Track).
+        """Watch the story's discovery question (task-35586, Phase 2 Track).
 
         ``track_question`` is the seam: the story's ``query`` -- the search
         that found it -- becomes the watch's template VERBATIM (v1 ruling:

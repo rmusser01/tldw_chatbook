@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -353,6 +354,17 @@ def resolve_first_run_provider_draft(
     )
 
 
+def first_run_endpoint_refusal(provider_key: str, chat_url: str | None) -> str:
+    """Refuse a wizard endpoint incompatible with its native Kobold sender."""
+    if (provider_key == "koboldcpp" and chat_url
+            and not chat_url.endswith("/api/v1/generate")):
+        return (
+            "KoboldCpp needs its native /api/v1/generate address. "
+            "For an OpenAI-compatible server, choose Custom instead."
+        )
+    return ""
+
+
 def _resolve_first_run_provider_endpoints(
     provider: str,
     editable_endpoint: str,
@@ -375,6 +387,8 @@ def _resolve_first_run_provider_endpoints(
         resolution = resolve_provider_endpoint(owner_key, endpoint)
         if resolution.errors or resolution.persisted_endpoint is None:
             raise ValueError("Provider endpoint is invalid.")
+        if refusal := first_run_endpoint_refusal(owner_key, resolution.chat_url):
+            raise ValueError(refusal)
         endpoint = resolution.persisted_endpoint
     if owner_key in _ENDPOINT_REQUIRED_PROVIDER_KEYS:
         if not endpoint:
@@ -480,6 +494,7 @@ def build_first_run_provider_commit(
 
     credential = provider_draft.credential
     credential_value = _credential_value_for_boundary(credential)
+    resolved_env_var = None
 
     def shared_draft(source: str) -> ProviderSetupDraft:
         return ProviderSetupDraft(
@@ -495,19 +510,31 @@ def build_first_run_provider_commit(
                 else None
             ),
             credential_env_var=(
-                credential_value if credential.source == "environment" else None
+                credential_value
+                if credential.source == "environment"
+                else resolved_env_var
             ),
         )
 
     if credential.source == "none":
-        from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+        from tldw_chatbook.Chat.provider_readiness import (
+            get_provider_readiness,
+            resolve_provider_credential,
+        )
 
         readiness = get_provider_readiness(
             effective_draft.provider, config, background_credentials=True
         )
-        if str(readiness.api_key_source or "").startswith("config:"):
+        key_source = readiness.api_key_source
+        if readiness.subscription_status is None:
+            _, key_source, resolved_env_var = resolve_provider_credential(
+                _first_run_provider_owner_key(effective_draft.provider),
+                _first_run_provider_settings(config, effective_draft.provider),
+                environ=os.environ,
+            )
+        if str(key_source or "").startswith("config:"):
             source = "stored"
-        elif str(readiness.api_key_source or "").startswith("env:"):
+        elif str(key_source or "").startswith("env:"):
             source = "environment"
         else:
             source = "none"
@@ -515,12 +542,20 @@ def build_first_run_provider_commit(
             shared_draft(source),
             config,
             preserve_credentials=readiness.subscription_status is not None,
+            record_environment_credentials=True,
         )
-    elif credential.source == "draft" and not credential_value:
-        mutation = build_provider_setup_mutation(shared_draft("none"), config)
     else:
+        # TASK-34100.6 AC#6 (coverage-08): every other exported key is recorded
+        # by its variable's name (api_key_env_var) in the same write -- no
+        # secret and no credential_source (review v3r1, R1-04).
         mutation = build_provider_setup_mutation(
-            shared_draft(credential.source), config
+            shared_draft(
+                "none"
+                if credential.source == "draft" and not credential_value
+                else credential.source
+            ),
+            config,
+            record_environment_credentials=True,
         )
     if type(mutation) is not ProviderSetupMutation:
         raise ValueError("Provider setup mutation is invalid.")
@@ -538,6 +573,19 @@ PROVIDER_PROBE_CONNECTION = "connection"
 #: TASK-33008 (capture 06a): the server refused a check that carried no key.
 #: Nothing was rejected; the server wants a key and none was set.
 PROVIDER_PROBE_KEY_REQUIRED = "key_required"
+#: TASK-34100.6 review round 2 (R2-02): the server answered, with an HTTP
+#: error (429, 5xx, ...) -- a failure, but never 'couldn't be reached'.
+PROVIDER_PROBE_SERVER_ERROR = "server_error"
+#: Review round 2 (found live, g6-r2fix/41): the server answered, but over
+#: the wrong transport -- plain HTTP at an https:// address, or a
+#: certificate that isn't trusted. Failures, never 'couldn't be reached'.
+PROVIDER_PROBE_PLAIN_HTTP = "plain_http"
+PROVIDER_PROBE_CERTIFICATE = "certificate"
+#: Model's transport categories (first_run_model_discovery) -> the above.
+_TRANSPORT_PROBE_FAILURES = {
+    "plain HTTP": PROVIDER_PROBE_PLAIN_HTTP,
+    "untrusted certificate": PROVIDER_PROBE_CERTIFICATE,
+}
 
 
 def classify_discovery_failure(
@@ -556,6 +604,9 @@ def classify_discovery_failure(
     Returns:
         PROVIDER_PROBE_AUTH for a key the server refused,
         PROVIDER_PROBE_KEY_REQUIRED for a refusal when no key was sent,
+        PROVIDER_PROBE_SERVER_ERROR for an HTTP error answer ("HTTP 503"),
+        PROVIDER_PROBE_PLAIN_HTTP / PROVIDER_PROBE_CERTIFICATE for a server
+        that answered over the wrong transport,
         PROVIDER_PROBE_CONNECTION for any other failed probe, and
         PROVIDER_PROBE_NONE when discovery did not fail (including
         "listing_unavailable", which is a provider capability, not an
@@ -565,7 +616,9 @@ def classify_discovery_failure(
         return PROVIDER_PROBE_NONE
     if failure_category == "authentication":
         return PROVIDER_PROBE_AUTH if key_sent else PROVIDER_PROBE_KEY_REQUIRED
-    return PROVIDER_PROBE_CONNECTION
+    if failure_category.startswith("HTTP "):
+        return PROVIDER_PROBE_SERVER_ERROR
+    return _TRANSPORT_PROBE_FAILURES.get(failure_category, PROVIDER_PROBE_CONNECTION)
 
 
 def discovery_sends_a_key(provider_draft: object) -> bool:
@@ -625,6 +678,38 @@ PROBE_FAILURE_COPY: dict[str, ProbeFailureCopy] = {
         "running, or continue anyway.",
         "saved, but the server couldn't be reached when models were checked",
     ),
+    # TASK-34100.6 review round 2 (R2-02, g6-r2fix/41): a server that answered
+    # is never 'couldn't be reached'; Model's line names it
+    # (first_run_model_discovery.connection_failed_text).
+    PROVIDER_PROBE_SERVER_ERROR: ProbeFailureCopy(
+        "",
+        "{display} answered with an error. Check the server, or continue anyway.",
+        "The server answered with an error, so this model setup is unverified. "
+        "Continue anyway?",
+        "The last connection check got an error answer from the server. Check "
+        "the server, or continue anyway.",
+        "saved, but the server answered with an error when models were checked",
+    ),
+    PROVIDER_PROBE_PLAIN_HTTP: ProbeFailureCopy(
+        "",
+        "{display} speaks plain HTTP — use http:// in its address, or continue "
+        "anyway.",
+        "The server speaks plain HTTP at an https:// address, so this model "
+        "setup is unverified. Continue anyway?",
+        "The last connection check found a plain-HTTP server — change the "
+        "address to http://, or continue anyway.",
+        "saved, but the server speaks plain HTTP — its address needs http://",
+    ),
+    PROVIDER_PROBE_CERTIFICATE: ProbeFailureCopy(
+        "",
+        "{display}'s certificate isn't trusted — add your CA in Settings ▸ "
+        "Network, or continue anyway.",
+        "The server's certificate isn't trusted, so this model setup is "
+        "unverified. Continue anyway?",
+        "The last connection check found a server whose certificate isn't "
+        "trusted — add your CA bundle in Settings ▸ Network, or continue anyway.",
+        "saved, but the server's certificate isn't trusted",
+    ),
 }
 
 
@@ -644,6 +729,15 @@ PROVIDER_LISTING_UNAVAILABLE_LINE = (
 #: Model has none, so the key is one step Back).
 PROVIDER_KEYLESS_REFUSAL_HINT = "If this server needs a key, add one under Authentication."
 MODEL_KEYLESS_REFUSAL_HINT = "If this server needs a key, go Back to add one."
+
+
+#: TASK-34100.6 (review provider-03): Back to a keyed provider whose key a
+#: definitive 401 rejected. Next refuses that key there, so the notice never
+#: offers to continue anyway as ``PROVIDER_PROBE_AUTH``'s does.
+PROVIDER_REFUSED_KEY_NOTICE = (
+    "The last connection check failed: this API key was rejected. Update it, "
+    "then continue."
+)
 
 
 def probe_failure_copy(probe_failure: str) -> ProbeFailureCopy:
@@ -666,6 +760,18 @@ def probe_failure_summary_detail(probe_failure: str) -> str:
 
     copy = PROBE_FAILURE_COPY.get(probe_failure)
     return copy.summary_detail if copy else ""
+
+
+def probe_failure_confirm_text(probe_failure: str) -> str:
+    """Model's 'Continue anyway?' question for a known failure, or ""."""
+    copy = PROBE_FAILURE_COPY.get(probe_failure)
+    return copy.confirm if copy else ""
+
+
+def probe_failure_return_notice(probe_failure: str) -> str:
+    """The notice Provider shows on Back after a failed check, or ""."""
+    copy = PROBE_FAILURE_COPY.get(probe_failure)
+    return copy.provider_notice if copy else ""
 
 
 def apply_probe_failure_to_summary_rows(
@@ -1045,7 +1151,36 @@ class SetupProgressItem:
 
     step_id: str
     title: str
-    state: Literal["active", "complete", "upcoming", "attention"]
+    state: Literal["active", "complete", "upcoming", "attention", "not_needed", "skipped"]
+
+
+#: A visited step that had nothing to do (TASK-34100.4: Protect with no key
+#: in config.toml). It renders '–', never the ✓ users read as "done and OK".
+PROGRESS_NOT_NEEDED = "not_needed"
+#: The states of a visited step; their connector draws as travelled.
+VISITED_PROGRESS_STATES = frozenset({"complete", "attention", PROGRESS_NOT_NEEDED, "skipped"})
+PROGRESS_GLYPHS: Mapping[str, str] = {
+    "complete": "✓",
+    "attention": "!",
+    PROGRESS_NOT_NEEDED: "–",
+    "skipped": "–",
+}
+
+
+def progress_glyph(state: str, index: int) -> str:
+    """The tracker's number-box text for one step.
+
+    ✓ for a completed step, ! for one that needs attention (TASK-21143), –
+    for one that had nothing to do (TASK-34100.4), else the 1-based number.
+
+    Args:
+        state: The item's progress state.
+        index: The item's 0-based position on the track.
+
+    Returns:
+        The glyph or step number to render.
+    """
+    return PROGRESS_GLYPHS.get(state, str(index + 1))
 
 
 # TASK-1301: Speech transcription joins the FULL track only, right after RAG
@@ -1375,6 +1510,7 @@ def setup_attention_ids(
     wizard_data: Mapping[str, object] | None,
     *,
     probe_failed: bool = False,
+    provider_warned: bool = False,
 ) -> frozenset[str]:
     """Which visited steps must not wear the completion tick.
 
@@ -1395,6 +1531,10 @@ def setup_attention_ids(
             non-mapping (or missing step) counts as unconfigured.
         probe_failed: Whether the provider probe demonstrably failed, which
             flags both steps regardless of what was configured.
+        provider_warned: Whether Provider's own check ended in a warning
+            that never blocks -- an HTTP 403 to the listing (TASK-34100.6
+            review v3r1, G6-BV3-03). Flags Provider only: Model's model ID
+            is the user's and stays ✓ once set.
 
     Returns:
         frozenset[str]: Step ids that must render the attention marker
@@ -1413,6 +1553,8 @@ def setup_attention_ids(
     flagged: set[str] = set()
     if probe_failed:
         flagged.update({STEP_PROVIDER, STEP_MODEL})
+    if provider_warned:
+        flagged.add(STEP_PROVIDER)
     if not _configured(STEP_PROVIDER, "provider_key"):
         flagged.add(STEP_PROVIDER)
     if not _configured(STEP_MODEL, "model_id"):
@@ -1420,18 +1562,105 @@ def setup_attention_ids(
     return frozenset(flagged)
 
 
+def setup_not_needed_ids(
+    wizard_data: Mapping[str, object] | None,
+) -> frozenset[str]:
+    """Visited steps that left nothing done, so they wear '–' not ✓.
+
+    TASK-34100.4 (protect-summary-06): Protect with no key in config.toml
+    (nothing saved, keys only in environment variables, or a typed key that
+    was never saved) used to tick ✓ as if the keys were protected. Review
+    round 1 (R1-F7): so did keys kept as plain text, and a session resumed
+    past Protect, whose checkpoint keeps only ``encryption_enabled``.
+
+    Args:
+        wizard_data: Collected per-step values, keyed by step id.
+
+    Returns:
+        ``{STEP_PROTECT}`` unless its record says the keys are encrypted,
+        else an empty set.
+    """
+    from tldw_chatbook.UI.Wizards.first_run_protect_state import PROTECT_UNTICKED
+
+    values = wizard_data if isinstance(wizard_data, Mapping) else {}
+    protect = values.get(STEP_PROTECT)
+    if not isinstance(protect, Mapping):
+        return frozenset()
+    kind = protect.get("protect_state")
+    if kind in PROTECT_UNTICKED or (
+        kind is None and protect.get("encryption_enabled") is False
+    ):
+        return frozenset({STEP_PROTECT})
+    return frozenset()
+
+
+def setup_skipped_ids(wizard_data: Mapping[str, object] | None) -> frozenset[str]:
+    """Steps the user deliberately skipped, shown as "–" rather than "!".
+
+    TASK-34100.6 (review new-provider-01): skipping Provider -- Enter in the
+    empty key field, Next with no key, or 'Skip — connect later' -- leaves
+    nothing for Model to save either, so both read as skipped.
+
+    Args:
+        wizard_data: Collected per-step values, keyed by step id.
+
+    Returns:
+        frozenset[str]: Provider and Model when Provider recorded a skip.
+    """
+    values = wizard_data if isinstance(wizard_data, Mapping) else {}
+    provider = values.get(STEP_PROVIDER)
+    if isinstance(provider, Mapping) and provider.get("skipped") is True:
+        return frozenset({STEP_PROVIDER, STEP_MODEL})
+    return frozenset()
+
+
+def setup_progress_items(
+    active_ids: tuple[str, ...],
+    current_index: int,
+    wizard_data: Mapping[str, object] | None,
+    *,
+    probe_failed: bool = False,
+    provider_warned: bool = False,
+) -> tuple[SetupProgressItem, ...]:
+    """The tracker rows the container renders, from what each step recorded.
+
+    Args:
+        active_ids: The resolved active step ids.
+        current_index: The active step's position on that track.
+        wizard_data: Collected per-step values, keyed by step id.
+        probe_failed: Whether the provider probe demonstrably failed.
+        provider_warned: Whether Provider has a nonblocking check warning.
+
+    Returns:
+        The rows, with attention ('!') and nothing-to-do ('–') applied.
+    """
+    return build_setup_progress(
+        active_ids,
+        current_index,
+        attention_ids=setup_attention_ids(
+            wizard_data, probe_failed=probe_failed, provider_warned=provider_warned
+        ),
+        not_needed_ids=setup_not_needed_ids(wizard_data),
+        skipped_ids=setup_skipped_ids(wizard_data),
+    )
+
+
 def build_setup_progress(
     active_ids: tuple[str, ...],
     current_index: int,
     attention_ids: frozenset[str] | set[str] = frozenset(),
+    not_needed_ids: frozenset[str] | set[str] = frozenset(),
+    skipped_ids: frozenset[str] | set[str] = frozenset(),
 ) -> tuple[SetupProgressItem, ...]:
     """Project a resolved setup path into display-ready progress rows.
 
     TASK-21143 (UAT N-7): a visited step whose probe demonstrably failed
     must not wear the ✓ users read as "this part is OK" — ``attention_ids``
     downgrades those completed steps to the "attention" state (rendered as
-    an amber "!"). Only completed steps downgrade: the active step keeps
-    its position marker, upcoming steps have nothing to report on yet.
+    an amber "!"). TASK-34100.4: ``not_needed_ids`` marks completed steps
+    that had nothing to do as "not_needed" (rendered '–'); attention wins.
+    Only completed steps change: the active step keeps its position marker,
+    upcoming steps have nothing to report on yet.
     """
 
     unknown_ids = tuple(step_id for step_id in active_ids if step_id not in STEP_TITLES)
@@ -1443,7 +1672,11 @@ def build_setup_progress(
 
     def state_for(index: int, step_id: str) -> str:
         if index < active_index:
-            return "attention" if step_id in attention_ids else "complete"
+            if step_id in skipped_ids:
+                return "skipped"
+            if step_id in attention_ids:
+                return "attention"
+            return PROGRESS_NOT_NEEDED if step_id in not_needed_ids else "complete"
         return "active" if index == active_index else "upcoming"
 
     return tuple(
@@ -1535,7 +1768,7 @@ def curated_models_for_provider(
         return []
     direct = catalog.get(provider_value)
     if direct:
-        return list(direct)
+        return _real_model_ids(direct)
     from tldw_chatbook.Chat.provider_readiness import provider_config_key
 
     target_key = provider_config_key(provider_value)
@@ -1543,8 +1776,26 @@ def curated_models_for_provider(
         return []
     for name, models in catalog.items():
         if provider_config_key(str(name)) == target_key:
-            return list(models)
+            return _real_model_ids(models)
     return []
+
+
+#: Template placeholders the ``[providers]`` table ships for engines whose
+#: models the user names (``Llama_cpp = ["None"]``); never offered as models.
+_PLACEHOLDER_MODEL_IDS = frozenset({"none", "null"})
+
+
+def _real_model_ids(models: Any) -> list[str]:
+    """Drop blank and placeholder entries from a curated model list.
+
+    TASK-34100.6 folded defect (a): llama.cpp's shipped ``["None"]`` rendered
+    as a pickable 'None (recommended)' model on the Model step.
+    """
+    return [
+        str(model)
+        for model in models
+        if str(model).strip() and str(model).strip().casefold() not in _PLACEHOLDER_MODEL_IDS
+    ]
 
 
 def build_rag_commit(*, default_model_id: str) -> dict[str, dict[str, Any]]:
@@ -1983,11 +2234,39 @@ def build_summary_rows(
         prefill.default_theme and prefill.default_theme != _TEMPLATE_DEFAULT_THEME
     )
 
+    # TASK-34100.4 AC #5: a line about changing this later names the
+    # Settings Encryption card, never a bare category.
+    from tldw_chatbook.UI.Wizards.first_run_protect_state import (
+        encryption_card_path,
+        plaintext_secret_paths,
+        stranded_fix_page,
+        stranded_secret_paths,
+    )
+
+    stranded = () if encryption_on else stranded_secret_paths(app_config)
     if encryption_on:
-        encryption_row = SummaryRow("Key encryption", ROW_CONFIGURED, "")
-    elif stored_plaintext_key_present(app_config):
         encryption_row = SummaryRow(
-            "Key encryption", ROW_ATTENTION, "API keys are stored as plain text"
+            "Key encryption",
+            ROW_CONFIGURED,
+            f"on — change the password or turn it off in {encryption_card_path()}",
+        )
+    elif stranded:
+        # Review v5r1 (R1-4): "off" hid a key stuck under an earlier password;
+        # encrypting is refused until it is re-entered or cleared.
+        encryption_row = SummaryRow(
+            "Key encryption",
+            ROW_ATTENTION,
+            "off — a saved key is still encrypted with an earlier password and "
+            f"can't be read; re-enter or clear it in {stranded_fix_page(stranded)}",
+        )
+    elif plaintext_secret_paths(app_config):
+        # Review round 1 (R1-F1): the same secrets Protect offers to encrypt
+        # (a legacy `[API]` key or a custom endpoint's key included).
+        encryption_row = SummaryRow(
+            "Key encryption",
+            ROW_ATTENTION,
+            "API keys are stored as plain text — encrypt them in "
+            f"{encryption_card_path()}",
         )
     else:
         encryption_row = SummaryRow("Key encryption", ROW_DEFAULT, "off")

@@ -1,4 +1,4 @@
-"""Dreams question-track UI entry + tracked-row interaction (task-33164).
+"""Dreams question-track UI entry + tracked-row interaction (task-35586).
 
 Two surfaces, mirroring the story-modal file's harness split: the ``w``
 (watch question) action is exercised on a bare ``App`` (the modal owns its
@@ -153,7 +153,7 @@ def _button_labels(widget) -> str:
     )
 
 
-# --- Watch question (w): the modal's question-track entry (task-33164 R1) -----
+# --- Watch question (w): the modal's question-track entry (task-35586 R1) -----
 
 
 @pytest.mark.asyncio
@@ -316,7 +316,7 @@ async def test_watch_cap_reached_is_a_notice_and_writes_nothing(
         assert app.screen is modal, "a cap refusal must not dismiss or crash"
 
 
-# --- Tracked-row interaction (task-33164 R2) ----------------------------------
+# --- Tracked-row interaction (task-35586 R2) ----------------------------------
 
 
 def _seed_resolvable_track_db(tmp_path) -> DreamsDB:

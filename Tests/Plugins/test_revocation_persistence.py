@@ -14,6 +14,9 @@ from tldw_chatbook.Plugins.service import PluginService
 
 @pytest.fixture
 async def revocation_case(tmp_path, native_package):
+    from Tests.Plugins.platform_support import require_managed_runtime
+
+    require_managed_runtime()
     service = PluginService(
         tmp_path / "profile",
         workspace_lookup=lambda _: SimpleNamespace(archived=False),
@@ -494,3 +497,29 @@ async def test_uninstall_does_not_follow_replaced_package_parent(
     assert not (
         await case.uninstall(case.installation, "uninstall-replaced-parent")
     ).cleanup_pending
+
+
+def test_distinct_lease_callbacks_in_one_run_are_all_cancelled():
+    from tldw_chatbook.Plugins.revocation import RevocationOperation
+
+    calls = []
+
+    def fail():
+        calls.append("first")
+        raise RuntimeError("controlled")
+
+    records = tuple(
+        SimpleNamespace(
+            run_id="same-run",
+            lease_token=token,
+            completed=threading.Event(),
+            cancel=callback,
+        )
+        for token, callback in (("one", fail), ("two", lambda: calls.append("second")))
+    )
+    operation = RevocationOperation(
+        None, "revoke", "operation", records + records, None
+    )
+    operation.cancel_owned()
+    assert calls == ["first", "second"]
+    assert len(operation.cleanup_errors) == 1

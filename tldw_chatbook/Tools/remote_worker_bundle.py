@@ -1677,7 +1677,7 @@ WORKSPACE_OPERATIONS = frozenset({'fs_list', 'fs_read', 'fs_write', 'fs_edit', '
 WORKSPACE_WRITE_OPERATIONS = frozenset({'fs_write', 'fs_edit', 'fs_patch', 'fs_mkdir'})
 WORKSPACE_INTENTS = frozenset({'read', 'write'})
 WORKSPACE_OUTCOMES = frozenset({'admitted', 'success', 'failure'})
-ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {'fs_list': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_read': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'offset': 'positive_int', 'limit': 'nonnegative_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_write': (frozenset({'path', 'content', 'sensitive_exclusions'}), {'path': 'path', 'content': 'text', 'dry_run': 'bool', 'expected_sha256': 'sha256', 'expected_absent': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_edit': (frozenset({'path', 'old_string', 'new_string', 'sensitive_exclusions'}), {'path': 'path', 'old_string': 'text', 'new_string': 'text', 'replace_all': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_patch': (frozenset({'diff', 'sensitive_exclusions'}), {'diff': 'patch', 'dry_run': 'bool', 'targets': 'patch_targets', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_mkdir': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_glob': (frozenset({'pattern', 'sensitive_exclusions'}), {'pattern': 'glob_pattern', 'max_results': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_grep': (frozenset({'pattern', 'sensitive_exclusions', 'content_exclusions'}), {'pattern': 'text', 'mode': 'grep_mode', 'max_results': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions', 'content_exclusions': 'sensitive_exclusions'}), 'stat_path': (frozenset({'path'}), {'path': 'path'}), 'git_status': (frozenset({'sensitive_exclusions'}), {'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_diff': (frozenset({'sensitive_exclusions'}), {'staged': 'bool', 'commit_range': 'text', 'path': 'path', 'stat': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_log': (frozenset({'sensitive_exclusions'}), {'count': 'positive_int', 'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_blame': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'start_line': 'positive_int', 'end_line': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_branches': (frozenset({'sensitive_exclusions'}), {'sensitive_exclusions': 'sensitive_exclusions'}), 'ping': (frozenset(), {})}
+ARGUMENT_SCHEMAS: dict[str, tuple[frozenset[str], dict[str, str]]] = {'fs_list': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'long_format': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_read': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'offset': 'positive_int', 'limit': 'nonnegative_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_write': (frozenset({'path', 'content', 'sensitive_exclusions'}), {'path': 'path', 'content': 'text', 'dry_run': 'bool', 'expected_sha256': 'sha256', 'expected_absent': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_edit': (frozenset({'path', 'old_string', 'new_string', 'sensitive_exclusions'}), {'path': 'path', 'old_string': 'text', 'new_string': 'text', 'replace_all': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_patch': (frozenset({'diff', 'sensitive_exclusions'}), {'diff': 'patch', 'dry_run': 'bool', 'targets': 'patch_targets', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_mkdir': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_glob': (frozenset({'pattern', 'sensitive_exclusions'}), {'pattern': 'glob_pattern', 'max_results': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'fs_grep': (frozenset({'pattern', 'sensitive_exclusions', 'content_exclusions'}), {'pattern': 'text', 'mode': 'grep_mode', 'max_results': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions', 'content_exclusions': 'sensitive_exclusions'}), 'stat_path': (frozenset({'path'}), {'path': 'path'}), 'git_status': (frozenset({'sensitive_exclusions'}), {'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_diff': (frozenset({'sensitive_exclusions'}), {'staged': 'bool', 'commit_range': 'text', 'path': 'path', 'stat': 'bool', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_log': (frozenset({'sensitive_exclusions'}), {'count': 'positive_int', 'path': 'path', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_blame': (frozenset({'path', 'sensitive_exclusions'}), {'path': 'path', 'start_line': 'positive_int', 'end_line': 'positive_int', 'sensitive_exclusions': 'sensitive_exclusions'}), 'git_branches': (frozenset({'sensitive_exclusions'}), {'sensitive_exclusions': 'sensitive_exclusions'}), 'ping': (frozenset(), {})}
 _REQUEST_KEYS = frozenset(REQUEST_FIELD_NAMES)
 _RESPONSE_KEYS = frozenset(RESPONSE_FIELD_NAMES)
 _IDENTITY_KEYS = frozenset(DIRECTORY_IDENTITY_FIELD_NAMES)
@@ -2155,7 +2155,7 @@ import stat as stat_module
 import threading
 import uuid
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Any, BinaryIO, Literal
 MAX_LIST_ENTRIES = 200
 MAX_SCAN_ENTRIES = 10000
 MAX_READ_CHARS = 32 * 1024
@@ -2293,7 +2293,7 @@ def resolve_workspace_path(path: str, workspace_root: Path, *, intent: PathInten
         raise LocalToolError(f"Refused: creating '{resolved.parent}' would collide with a protected path")
     return resolved
 
-def list_directory(path: str, *, workspace_root: Path, max_entries: int=MAX_LIST_ENTRIES) -> str:
+def list_directory(path: str, *, workspace_root: Path, max_entries: int=MAX_LIST_ENTRIES, long_format: bool=False) -> str:
     """One-level listing of ``path``: ``name/`` for dirs, ``name`` for files.
 
     Directories sort before files, each group case-insensitively by name.
@@ -2316,6 +2316,7 @@ def list_directory(path: str, *, workspace_root: Path, max_entries: int=MAX_LIST
         workspace_root: The confinement root ``path`` must resolve within.
         max_entries: Maximum number of entries included in the output
             before a truncation notice is appended.
+        long_format: Prefix each admitted entry with type/permissions and byte size.
 
     Returns:
         The newline-joined listing, with a truncation and/or scan-cap
@@ -2327,9 +2328,9 @@ def list_directory(path: str, *, workspace_root: Path, max_entries: int=MAX_LIST
     """
     sensitive_ctx = resolve_sensitive_context()
     root = resolve_workspace_path(path, workspace_root, intent='list', context=sensitive_ctx)
-    return _list_relative_directory(root.relative_to(Path(workspace_root).resolve()), workspace=Path(workspace_root).resolve(), max_entries=max_entries, sensitive_exclusions=sensitive_exclusions_under(Path(workspace_root).resolve(), sensitive_ctx), display_path=path)
+    return _list_relative_directory(root.relative_to(Path(workspace_root).resolve()), workspace=Path(workspace_root).resolve(), max_entries=max_entries, sensitive_exclusions=sensitive_exclusions_under(Path(workspace_root).resolve(), sensitive_ctx), display_path=path, long_format=long_format)
 
-def _list_relative_directory(relative: Path, *, workspace: Path, max_entries: int, sensitive_exclusions: tuple[SensitiveExclusion, ...], display_path: str | None=None) -> str:
+def _list_relative_directory(relative: Path, *, workspace: Path, max_entries: int, sensitive_exclusions: tuple[SensitiveExclusion, ...], display_path: str | None=None, long_format: bool=False) -> str:
     """List a pinned-root-relative directory without opening an absolute path."""
     target = workspace / relative
     try:
@@ -2350,7 +2351,13 @@ def _list_relative_directory(relative: Path, *, workspace: Path, max_entries: in
             continue
         scanned.append(entry)
     entries = sorted(scanned, key=lambda p: (p.is_file(), p.name.lower()))
-    lines = [f'{p.name}/' if p.is_dir() else p.name for p in entries[:max_entries]]
+    lines = []
+    for entry in entries[:max_entries]:
+        name = f'{entry.name}/' if entry.is_dir() else entry.name
+        if long_format:
+            metadata = entry.lstat()
+            name = f'{stat_module.filemode(metadata.st_mode)} {metadata.st_size} {name}'
+        lines.append(name)
     remaining = len(entries) - max_entries
     if remaining > 0:
         lines.append(f'… ({remaining} more entries, truncated)')
@@ -2602,36 +2609,40 @@ def _write_lock_for(key: str) -> threading.Lock:
     with _WRITE_LOCKS_GUARD:
         return _WRITE_LOCKS.setdefault(key, threading.Lock())
 
+def _write_file_os():
+    """Select retained-directory operations without importing native code remotely."""
+    if os.name == 'nt':
+        raise ImportError("'tldw_chatbook.Utils.platform_files' (importing os) is not available inside the remote worker bundle")
+        return native_file_os
+    return os
+
+def _read_write_descriptor_bytes(descriptor: int, file_os: Any) -> bytes:
+    return b''.join(iter(lambda: file_os.read(descriptor, 1024 * 1024), b''))
+
 def _read_write_target(target: Path, shown: str) -> bytes | None:
+    file_os = _write_file_os()
     try:
-        before = os.lstat(target)
+        before = file_os.stat(target, follow_symlinks=False)
     except FileNotFoundError:
         return None
     if not stat_module.S_ISREG(before.st_mode) or stat_module.S_ISLNK(before.st_mode):
         raise LocalToolError(f'write target is not a regular file: {shown}')
-    flags = os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0)
-    if hasattr(os, 'O_NOFOLLOW'):
-        flags |= os.O_NOFOLLOW
+    flags = file_os.O_RDONLY | getattr(file_os, 'O_CLOEXEC', 0) | getattr(file_os, 'O_NOFOLLOW', 0)
     try:
-        descriptor = os.open(target, flags)
+        descriptor = file_os.open(target, flags)
         try:
-            opened = os.fstat(descriptor)
-            chunks: list[bytes] = []
-            while True:
-                chunk = os.read(descriptor, 1024 * 1024)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            finished = os.fstat(descriptor)
+            opened = file_os.fstat(descriptor)
+            data = _read_write_descriptor_bytes(descriptor, file_os)
+            finished = file_os.fstat(descriptor)
         finally:
-            os.close(descriptor)
-        after = os.lstat(target)
+            file_os.close(descriptor)
+        after = file_os.stat(target, follow_symlinks=False)
     except OSError:
         raise LocalToolError(f'write target changed while reading: {shown}') from None
     identities = tuple(((value.st_dev, value.st_ino, value.st_mode, value.st_size, value.st_mtime_ns) for value in (before, opened, finished, after)))
     if len(set(identities)) != 1:
         raise LocalToolError(f'write target changed while reading: {shown}')
-    return b''.join(chunks)
+    return data
 
 def _write_preview_json(*, shown: str, current: bytes | None, current_digest: str | None, replacement: bytes) -> str:
     before_text = '' if current is None else current.decode('utf-8', errors='replace')
@@ -2649,56 +2660,54 @@ def _atomic_write_target(target: Path, data: bytes, *, shown: str, expected_sha2
     parent ``dir_fd`` (TOCTOU-safe rename), ``O_NOFOLLOW``, an sha256/absent
     precondition and a target lock, none of which the shared helper offers.
     """
-    directory_flags = os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0)
-    if hasattr(os, 'O_DIRECTORY'):
-        directory_flags |= os.O_DIRECTORY
-    if hasattr(os, 'O_NOFOLLOW'):
-        directory_flags |= os.O_NOFOLLOW
+    file_os = _write_file_os()
+    directory_flags = file_os.O_RDONLY | getattr(file_os, 'O_CLOEXEC', 0) | getattr(file_os, 'O_DIRECTORY', 0) | getattr(file_os, 'O_NOFOLLOW', 0)
     try:
-        parent_fd = os.open(target.parent, directory_flags)
+        parent_fd = file_os.open(target.parent, directory_flags)
     except OSError:
         raise LocalToolError(f'write parent changed: {shown}') from None
     temp_name = f'.chatbook-write-{uuid.uuid4().hex}.tmp'
-    temp_path = os.path.abspath(os.path.join(str(target.parent), temp_name))
+    temp_path = file_os.path.abspath(file_os.path.join(str(target.parent), temp_name))
     temp_created = False
     target_lock = None
     try:
         if expected_sha256 is not None:
             target_lock = _acquire_expected_target_lock(parent_fd, target.name, shown, expected_sha256)
-        live, live_mode = _read_relative_descriptor(parent_fd, target.name, shown)
+        if target_lock is not None and os.name == 'nt':
+            target_lock.seek(0)
+            live, live_mode = (target_lock.read(), None)
+        else:
+            live, live_mode = _read_relative_descriptor(parent_fd, target.name, shown)
         live_digest = None if live is None else hashlib.sha256(live).hexdigest()
         if expected_absent and live is not None:
             raise LocalToolError('write precondition failed: target is present')
         if expected_sha256 is not None and live_digest != expected_sha256:
             raise LocalToolError('write precondition failed: target digest changed')
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_CLOEXEC', 0)
-        if hasattr(os, 'O_NOFOLLOW'):
-            flags |= os.O_NOFOLLOW
-        temp_fd = os.open(temp_name, flags, 438, dir_fd=parent_fd)
+        flags = file_os.O_WRONLY | file_os.O_CREAT | file_os.O_EXCL | getattr(file_os, 'O_CLOEXEC', 0) | getattr(file_os, 'O_NOFOLLOW', 0)
+        temp_fd = file_os.open(temp_name, flags, 438, dir_fd=parent_fd)
         temp_created = True
         register_temp(temp_path)
         try:
-            if live_mode is not None:
-                os.fchmod(temp_fd, live_mode)
+            if live_mode is not None and os.name != 'nt':
+                file_os.fchmod(temp_fd, live_mode)
             view = memoryview(data)
             while view:
-                written = os.write(temp_fd, view)
+                written = file_os.write(temp_fd, view)
                 view = view[written:]
-            os.fsync(temp_fd)
+            file_os.fsync(temp_fd)
         finally:
-            os.close(temp_fd)
+            file_os.close(temp_fd)
         if expected_absent:
-            os.link(temp_name, target.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
-            os.unlink(temp_name, dir_fd=parent_fd)
-            temp_created = False
-            unregister_temp(temp_path)
+            file_os.link(temp_name, target.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd, follow_symlinks=False)
+            file_os.unlink(temp_name, dir_fd=parent_fd)
         else:
             if target_lock is not None:
                 _assert_expected_target_is_current(parent_fd, target.name, shown, expected_sha256, target_lock)
-            os.replace(temp_name, target.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-            temp_created = False
-            unregister_temp(temp_path)
-        os.fsync(parent_fd)
+            replace = file_os.replace_open_target if target_lock is not None and os.name == 'nt' else file_os.replace
+            replace(temp_name, target.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        temp_created = False
+        unregister_temp(temp_path)
+        file_os.fsync(parent_fd)
     except FileExistsError:
         raise LocalToolError('write precondition failed: target is present') from None
     except LocalToolError:
@@ -2708,14 +2717,14 @@ def _atomic_write_target(target: Path, data: bytes, *, shown: str, expected_sha2
     finally:
         if temp_created:
             try:
-                os.unlink(temp_name, dir_fd=parent_fd)
+                file_os.unlink(temp_name, dir_fd=parent_fd)
             except OSError:
                 pass
             unregister_temp(temp_path)
         if target_lock is not None:
             _unlock_target_handle(target_lock)
             target_lock.close()
-        os.close(parent_fd)
+        file_os.close(parent_fd)
 
 def _portalocker_module():
     """Return the ``portalocker`` module, or ``None`` where absent.
@@ -2769,12 +2778,11 @@ def _unlock_target_handle(handle: BinaryIO) -> None:
 
 def _acquire_expected_target_lock(parent_fd: int, filename: str, shown: str, expected_sha256: str) -> BinaryIO:
     """Acquire a non-blocking process lock on the expected target inode."""
-    flags = os.O_RDWR | getattr(os, 'O_CLOEXEC', 0)
-    if hasattr(os, 'O_NOFOLLOW'):
-        flags |= os.O_NOFOLLOW
+    file_os = _write_file_os()
+    flags = file_os.O_RDWR | getattr(file_os, 'O_CLOEXEC', 0) | getattr(file_os, 'O_NOFOLLOW', 0)
     try:
-        descriptor = os.open(filename, flags, dir_fd=parent_fd)
-        handle = os.fdopen(descriptor, 'r+b', buffering=0)
+        descriptor = file_os.open(filename, flags, dir_fd=parent_fd)
+        handle = file_os.fdopen(descriptor, 'r+b', buffering=0)
     except OSError:
         raise LocalToolError('write precondition failed: target digest changed') from None
     _lock_expected_target(handle)
@@ -2788,50 +2796,42 @@ def _acquire_expected_target_lock(parent_fd: int, filename: str, shown: str, exp
 
 def _assert_expected_target_is_current(parent_fd: int, filename: str, shown: str, expected_sha256: str | None, locked_handle: BinaryIO) -> None:
     """Verify the locked inode is still the named path with the expected bytes."""
+    file_os = _write_file_os()
     if expected_sha256 is None:
         raise LocalToolError('write precondition failed: target digest changed')
-    locked_info = os.fstat(locked_handle.fileno())
+    locked_info = file_os.fstat(locked_handle.fileno())
     if not stat_module.S_ISREG(locked_info.st_mode):
         raise LocalToolError(f'write target is not a regular file: {shown}')
     locked_handle.seek(0)
     locked_digest = hashlib.sha256(locked_handle.read()).hexdigest()
-    flags = os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0)
-    if hasattr(os, 'O_NOFOLLOW'):
-        flags |= os.O_NOFOLLOW
+    flags = file_os.O_RDONLY | getattr(file_os, 'O_CLOEXEC', 0) | getattr(file_os, 'O_NOFOLLOW', 0)
     try:
-        current_fd = os.open(filename, flags, dir_fd=parent_fd)
+        current_fd = file_os.open(filename, flags, dir_fd=parent_fd)
     except OSError:
         raise LocalToolError('write precondition failed: target digest changed') from None
     try:
-        current_info = os.fstat(current_fd)
+        current_info = file_os.fstat(current_fd)
     finally:
-        os.close(current_fd)
+        file_os.close(current_fd)
     if (locked_info.st_dev, locked_info.st_ino) != (current_info.st_dev, current_info.st_ino) or locked_digest != expected_sha256:
         raise LocalToolError('write precondition failed: target digest changed')
 
 def _read_relative_descriptor(parent_fd: int, filename: str, shown: str) -> tuple[bytes | None, int | None]:
-    flags = os.O_RDONLY | getattr(os, 'O_CLOEXEC', 0)
-    if hasattr(os, 'O_NOFOLLOW'):
-        flags |= os.O_NOFOLLOW
+    file_os = _write_file_os()
+    flags = file_os.O_RDONLY | getattr(file_os, 'O_CLOEXEC', 0) | getattr(file_os, 'O_NOFOLLOW', 0)
     try:
-        descriptor = os.open(filename, flags, dir_fd=parent_fd)
+        descriptor = file_os.open(filename, flags, dir_fd=parent_fd)
     except FileNotFoundError:
         return (None, None)
     except OSError:
         raise LocalToolError(f'write target changed: {shown}') from None
     try:
-        info = os.fstat(descriptor)
+        info = file_os.fstat(descriptor)
         if not stat_module.S_ISREG(info.st_mode):
             raise LocalToolError(f'write target is not a regular file: {shown}')
-        chunks: list[bytes] = []
-        while True:
-            chunk = os.read(descriptor, 1024 * 1024)
-            if not chunk:
-                break
-            chunks.append(chunk)
-        return (b''.join(chunks), info.st_mode & 4095)
+        return (_read_write_descriptor_bytes(descriptor, file_os), info.st_mode & 4095)
     finally:
-        os.close(descriptor)
+        file_os.close(descriptor)
 
 def edit_file(path: str, old_string: str, new_string: str, *, workspace_root: Path, replace_all: bool=False) -> str:
     """Replace exact ``old_string`` with ``new_string`` in ``path``.
@@ -3649,45 +3649,48 @@ def _read_bounded_stream(stream, max_output_bytes: int) -> tuple[bytes, bool]:
             return (bytes(output[:max_output_bytes]), True)
     return (bytes(output[:max_output_bytes]), True)
 
+@dataclass(frozen=True, slots=True)
+class GitBytesResult:
+    """Internal bounded bytes; a failed stream is never successful empty output."""
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+    truncated: bool = False
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+
 def run_git(argv: list[str], *, cwd: Path | None=None, executable: Path | None=None, own_process_group: bool=True, timeout: float=GIT_TIMEOUT_SECONDS, max_output_bytes: int=GIT_MAX_OUTPUT_BYTES) -> GitCommandResult:
-    """Run an allowlisted git command with bounded output and a timeout.
-
-    Fixed argv only: ``argv[0]`` must be logical ``git``, the only permitted
-    global option is ``--no-pager`` (``--version`` must stand alone), and the
-    subcommand must be in ``_ALLOWED_GIT_SUBCOMMANDS``. The absolute executable
-    replaces logical argv zero only at launch. The environment is sanitized
-    (PATH + git safety vars only) and stdin is
-    DEVNULL. Output per stream is capped at ``max_output_bytes`` — the
-    process is killed when the cap is exceeded (never fully buffered) and a
-    truncation marker is appended. Timeout kills the process and raises.
-
-    NOTE: validation stops at the subcommand. Everything AFTER the
-    subcommand is caller-constructed and NOT validated at this layer — e.g.
-    ``["git", "diff", "--output=/tmp/pwn"]`` passes ``_validate_argv``.
-    Callers (the tool cores below) must therefore build argv only from
-    fixed literals plus values they have validated themselves (see the
-    ``commit_range`` leading-dash/regex checks in :func:`git_diff`) and
-    must never splice raw model-controlled strings into flag positions.
-
-    Raises:
-        LocalToolError: argv validation failure, git unavailable, or timeout.
-    """
+    """Preserve the allowlisted public text API over the bounded byte runner."""
     _validate_argv(argv)
+    result = _run_git_bytes(argv, cwd=cwd, executable=executable, own_process_group=own_process_group, timeout=timeout, max_output_bytes=max_output_bytes)
+    return GitCommandResult(argv=list(argv), returncode=result.returncode, stdout=result.stdout.decode('utf-8', errors='replace') + (GIT_TRUNCATED_MARKER if result.truncated and result.stdout_truncated else ''), stderr=result.stderr.decode('utf-8', errors='replace') + (GIT_TRUNCATED_MARKER if result.truncated and result.stderr_truncated else ''), truncated=result.truncated)
+
+def _run_git_bytes(argv: list[str], *, cwd: Path | None=None, executable: Path | None=None, own_process_group: bool=True, timeout: float=GIT_TIMEOUT_SECONDS, max_output_bytes: int=GIT_MAX_OUTPUT_BYTES, immutable_objects: bool=False) -> GitBytesResult:
+    """Run host-built fixed argv, preserving bytes and bounded failure signals.
+
+    Public callers enter through run_git's allowlist. Internal object readers
+    construct every flag here themselves and validate their OIDs and paths.
+    """
     resolved_executable = executable or (Path(found) if (found := shutil.which('git')) is not None else None)
     if resolved_executable is None:
         raise LocalToolError('git is not available on this system')
     resolved_executable = resolved_executable.resolve()
     if not isinstance(max_output_bytes, int) or isinstance(max_output_bytes, bool) or max_output_bytes <= 0:
         max_output_bytes = GIT_MAX_OUTPUT_BYTES
-    process = subprocess.Popen([str(resolved_executable), *argv[1:]], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=_git_environment(), start_new_session=own_process_group and os.name == 'posix')
+    environment = _git_environment()
+    if immutable_objects:
+        environment.update({'GIT_NO_REPLACE_OBJECTS': '1', 'GIT_NO_LAZY_FETCH': '1', 'GIT_GRAFT_FILE': os.devnull})
+    process = subprocess.Popen([str(resolved_executable), *argv[1:]], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=environment, start_new_session=own_process_group and os.name == 'posix')
     results: dict[str, tuple[bytes, bool]] = {}
+    read_errors: list[Exception] = []
     done: queue.Queue[tuple[str, tuple[bytes, bool]]] = queue.Queue()
 
     def _reader(name: str, stream) -> None:
         try:
             done.put((name, _read_bounded_stream(stream, max_output_bytes)))
-        except Exception:
-            done.put((name, (b'', False)))
+        except Exception as exc:
+            read_errors.append(exc)
+            done.put((name, (b'', True)))
     for name, stream in (('stdout', process.stdout), ('stderr', process.stderr)):
         threading.Thread(target=_reader, args=(name, stream), daemon=True).start()
     deadline = time.monotonic() + float(timeout)
@@ -3709,13 +3712,9 @@ def run_git(argv: list[str], *, cwd: Path | None=None, executable: Path | None=N
         process.wait(timeout=REPOSITORY_DISCOVERY_TIMEOUT_SECONDS)
     stdout_bytes, stdout_truncated = results.get('stdout', (b'', False))
     stderr_bytes, stderr_truncated = results.get('stderr', (b'', False))
-    stdout = stdout_bytes.decode('utf-8', errors='replace')
-    stderr = stderr_bytes.decode('utf-8', errors='replace')
-    if stdout_truncated:
-        stdout += GIT_TRUNCATED_MARKER
-    if stderr_truncated:
-        stderr += GIT_TRUNCATED_MARKER
-    return GitCommandResult(argv=list(argv), returncode=int(process.returncode if process.returncode is not None else -1), stdout=stdout, stderr=stderr, timed_out=False, truncated=stdout_truncated or stderr_truncated)
+    if read_errors:
+        raise LocalToolError('git output read failed') from read_errors[0]
+    return GitBytesResult(returncode=int(process.returncode if process.returncode is not None else -1), stdout=stdout_bytes, stderr=stderr_bytes, truncated=stdout_truncated or stderr_truncated, stdout_truncated=stdout_truncated, stderr_truncated=stderr_truncated)
 
 def _kill_process(process: subprocess.Popen, *, own_process_group: bool=True) -> None:
     """Kill the whole process group on POSIX; fall back to the direct child."""
@@ -4906,7 +4905,7 @@ def execute_pinned_operation(request: _PinnedOperationRequest, root: PinnedWorks
         raise WorkspaceToolDispatchError('unsupported_operation', 'workspace operation is not implemented')
     exclusions = _request_exclusions(request, 'sensitive_exclusions')
     if request.operation == 'fs_list':
-        return _list_relative_directory(_request_relative_path(request, root), workspace=Path('.'), max_entries=MAX_LIST_ENTRIES, sensitive_exclusions=exclusions)
+        return _list_relative_directory(_request_relative_path(request, root), workspace=Path('.'), max_entries=MAX_LIST_ENTRIES, sensitive_exclusions=exclusions, long_format=request.arguments.get('long_format', False))
     if request.operation == 'fs_read':
         return _read_relative_file(_request_relative_path(request, root), workspace=Path('.'), offset=request.arguments.get('offset', 1), limit=request.arguments.get('limit'), sensitive_exclusions=exclusions, content_stamps=True)
     if request.operation == 'fs_glob':
@@ -5703,4 +5702,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("7c8b5f6a35c66d0d810e9eb1e773663e7966cbe78999c12dce41a3850cbae439")
+BUNDLE_SHA256 = _enter_worker_exchange("7954131274050989da442c58af60a3586538d57cf4c574b6590fc0470f4494f9")

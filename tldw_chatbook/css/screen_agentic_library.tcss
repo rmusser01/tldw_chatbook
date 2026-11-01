@@ -78,6 +78,10 @@ $ds-console-composer-height: 1;
 $ds-library-mode-chip-height: 1;
 $ds-library-mode-chip-min-width: 10;
 $ds-workflow-navigator-width: 27;
+$ds-workflow-dialog-max-width: 100;
+$ds-setup-voice-wide-share: 21fr;
+$ds-setup-voice-medium-share: 14fr;
+$ds-setup-voice-narrow-share: 11fr;
 $ds-library-source-action-width: auto;
 $ds-library-source-action-min-width: 0;
 $ds-library-source-action-height: 1;
@@ -94,6 +98,7 @@ $ds-space-inset: $ds-space-1;
 
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
+$ds-control-action-min-width: 6;
 $ds-textarea-min-height: 5;
 $ds-model-switcher-width: 140;
 $ds-chat-settings-width: 176;
@@ -212,6 +217,7 @@ $ds-profile-link-modal-cols: 88;
 $ds-profile-link-modal-body-share: 82%;
 $ds-widgets-skeleton-title-share: 60%;
 $ds-messages-scroll-cap: 50vh;
+$ds-note-folder-picker-max-height: 50vh;
 $ds-messages-text-scroll-cap: 40vh;
 $ds-console-frame: #6f7782;
 $ds-tool-preview-max-height: 3;
@@ -2328,14 +2334,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     text-style: bold;
 }
 
-#library-notes-status {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    color: $ds-text-muted;
-}
-
+#library-notes-status,
 #library-notes-empty {
     width: $ds-width-full;
     height: auto;
@@ -3383,14 +3382,8 @@ with stray left-edge border fragments), and padding 0 1 so the full
    Horizontal clipped Undo to "Und" at the Items pane's real width (live
    2026-09-04) -- the one recovery control was unreadable exactly where it
    renders. Same multi-row grammar as the toolbars (task-30043). */
-#library-media-canvas .library-media-receipt {
-    width: $ds-width-full;
-    height: auto;
-}
-#library-media-canvas .library-media-receipt > .library-media-receipt-copy {
-    width: $ds-width-full;
-    height: auto;
-}
+#library-media-canvas .library-media-receipt,
+#library-media-canvas .library-media-receipt > .library-media-receipt-copy,
 #library-media-canvas .library-media-receipt > .library-media-receipt-actions {
     width: $ds-width-full;
     height: auto;

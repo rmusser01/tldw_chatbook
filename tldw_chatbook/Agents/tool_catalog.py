@@ -95,6 +95,13 @@ if TYPE_CHECKING:
         REPORT_TO_SUPERVISOR_SCHEMA as REPORT_TO_SUPERVISOR_SCHEMA,
     )
     from .run_tool_policy import RunToolPolicy
+    from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
+SEARCH_ARCHIVED_CONVERSATIONS = "search_archived_conversations"
+REQUEST_CONVERSATION_RESTORE = "request_conversation_restore"
+RECOVERY_RESERVED_TOOL_NAMES = frozenset(
+    {SEARCH_ARCHIVED_CONVERSATIONS, REQUEST_CONVERSATION_RESTORE}
+)
 
 LIBRARY_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     (*LIBRARY_TOOL_DESCRIPTORS.keys(), RAG_TOOL_NAME)
@@ -110,6 +117,11 @@ PROFILE_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
 )
 CANVAS_RESERVED_TOOL_NAMES: frozenset[str] = frozenset(
     {"canvas_list", "canvas_read", "canvas_create", "canvas_update", "canvas_guide"}
+)
+
+
+CODE_REVIEW_RESERVED_TOOL_NAMES = frozenset(
+    "code_review_" + name for name in ("guide", "prepare", "read", "submit", "release")
 )
 
 
@@ -150,6 +162,48 @@ SPAWN_TOOL_SCHEMA = ToolSchema(
         "required": ["task"],
     },
 )
+
+
+def review_spawn_schema(schema: ToolSchema) -> ToolSchema:
+    """Add the mutually exclusive host-prepared slot form to ordinary spawn."""
+    parameters = dict(schema.parameters)
+    properties = dict(parameters["properties"])
+    properties.update(
+        review_id={"type": "string", "minLength": 1},
+        review_slot_id={"type": "string", "minLength": 1},
+    )
+    parameters.pop("required", None)
+    parameters.update(
+        properties=properties,
+        oneOf=[
+            {
+                "required": ["task"],
+                "not": {
+                    "anyOf": [
+                        {"required": ["review_id"]},
+                        {"required": ["review_slot_id"]},
+                    ]
+                },
+            },
+            {
+                "required": ["review_id", "review_slot_id"],
+                "not": {
+                    "anyOf": [
+                        {"required": [name]}
+                        for name in properties
+                        if name not in {"review_id", "review_slot_id"}
+                    ]
+                },
+            },
+        ],
+    )
+    return _dataclass_replace(
+        schema,
+        parameters=parameters,
+        description=schema.description
+        + " For an admitted review slot, supply only review_id and review_slot_id; "
+        "do not combine them with task, agent, provider, model or isolation.",
+    )
 
 
 def build_spawn_schema(
@@ -1300,6 +1354,18 @@ class BuiltinToolProvider:
 
     SOURCE = "builtin"
 
+    def hook_operation(self, tool_id: str) -> str | None:
+        name = tool_id.removeprefix("builtin:")
+        if name not in self._tools:
+            return None
+        return {
+            "read_file": "file.read",
+            "write_file": "file.write",
+            "list_directory": "directory.list",
+            "glob_files": "file.search",
+            "grep_files": "file.search",
+        }.get(name)
+
     def __init__(
         self,
         gate: Any | None = None,
@@ -1815,9 +1881,12 @@ class ToolDefinitionSnapshot:
     parameters_json: str
     generation: int
     owner_generation: int
+    operation: str | None = None
 
     @classmethod
-    def from_schema(cls, schema, provider, generation, owner_generation):
+    def from_schema(
+        cls, schema, provider, generation, owner_generation, *, operation=None
+    ):
         return cls(
             schema.id,
             schema.name,
@@ -1830,6 +1899,7 @@ class ToolDefinitionSnapshot:
             ),
             generation,
             owner_generation,
+            operation,
         )
 
 
@@ -1840,6 +1910,8 @@ class ToolCatalogRegistry:
         self._providers: list[ToolProvider] = []
         self._builtin_library_provider: ToolProvider | None = None
         self._builtin_library_authority: BuiltinLibraryAuthority | None = None
+        self._archive_recovery_provider = None
+        self._archive_recovery_authority = None
         self._canvas_provider: ToolProvider | None = None
         self._canvas_authority: object | None = None
         # Whether the Console session owning THIS run is temporary ("not
@@ -1867,6 +1939,17 @@ class ToolCatalogRegistry:
         # registry was composed and its policy armed, and BEFORE dispatch.
         # Clearing there would disarm every run's caps.
         self._run_tool_policy: RunToolPolicy | None = None
+        self._review_service = None
+
+    def for_review_child(self, service) -> ToolCatalogRegistry:
+        """Give one authenticated child a private, closed review catalog."""
+        from .code_review_tool_provider import CodeReviewToolProvider
+
+        registry = ToolCatalogRegistry(ephemeral=self._ephemeral)
+        registry.set_run_tool_policy(self._run_tool_policy)
+        registry.register_provider(CodeReviewToolProvider(service))
+        registry._review_service = service
+        return registry
 
     def set_run_tool_policy(self, policy: RunToolPolicy | None) -> None:
         """Arm (or clear) this registry's per-run persona-policy call caps.
@@ -1938,6 +2021,58 @@ class ToolCatalogRegistry:
             self._catalog_snapshot = None
             self._catalog_generation += 1
         return True
+
+    def register_archive_recovery_provider(
+        self, provider: ArchiveRecoveryToolProvider, authority: object
+    ) -> bool:
+        """Register exact app-issued turn authority; pending cannot execute."""
+        from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
+        if (
+            type(provider) is not ArchiveRecoveryToolProvider
+            or self._ephemeral
+            or not provider.authenticates_authority(authority)
+        ):
+            return False
+        entries = provider.list_catalog()
+        if frozenset(e.name for e in entries) != RECOVERY_RESERVED_TOOL_NAMES or any(
+            e.source != "archive_recovery" for e in entries
+        ):
+            return False
+        with self._catalog_lock:
+            if self._archive_recovery_provider is not None:
+                return False
+            self._archive_recovery_provider = provider
+            self._archive_recovery_authority = authority
+            self._providers.append(provider)
+            self._catalog_snapshot = None
+            self._catalog_generation += 1
+        return True
+
+    def _authenticated_recovery_name(self, provider: object, name: str) -> bool:
+        if (
+            name not in RECOVERY_RESERVED_TOOL_NAMES
+            or provider is None
+            or provider is not self._archive_recovery_provider
+        ):
+            return False
+        from .archive_recovery_tool_provider import ArchiveRecoveryToolProvider
+
+        return bool(
+            type(provider) is ArchiveRecoveryToolProvider
+            and provider.authenticates_authority(self._archive_recovery_authority)
+        )
+
+    def check_archive_recovery_call(self, name: str) -> ToolResult | None:
+        """Apply exact owner and persona caps to native in-loop dispatch."""
+        provider = self._archive_recovery_provider
+        if self._ephemeral or not self._authenticated_recovery_name(provider, name):
+            return ToolResult.blocked("Recovery authority is unavailable.")
+        if self._run_tool_policy is not None:
+            allowed, refusal = self._run_tool_policy.check(current_run_id(), name)
+            if not allowed:
+                return ToolResult.blocked(refusal)
+        return None
 
     def register_canvas_provider(self, provider: object, authority: object) -> bool:
         """Register only an exact live scoped Canvas provider and capability.
@@ -2034,10 +2169,18 @@ class ToolCatalogRegistry:
         return [
             entry
             for entry in entries
-            if entry.name not in CANVAS_RESERVED_TOOL_NAMES
-            or (
-                provider is not None
-                and self._authenticated_canvas_name(provider, entry.name)
+            if (
+                entry.name not in CANVAS_RESERVED_TOOL_NAMES
+                or (
+                    provider is not None
+                    and self._authenticated_canvas_name(provider, entry.name)
+                )
+            )
+            and (
+                entry.name not in RECOVERY_RESERVED_TOOL_NAMES
+                or self._authenticated_recovery_name(
+                    self._archive_recovery_provider, entry.name
+                )
             )
         ]
 
@@ -2093,6 +2236,24 @@ class ToolCatalogRegistry:
         ranked.sort(key=lambda item: item[:4])
         return [item[4] for item in ranked[: max(int(limit), 0)]]
 
+    def _authenticated_review_provider(self, provider) -> bool:
+        from .code_review_service import CodeReviewService, ReviewStageIssuer
+        from .code_review_tool_provider import CodeReviewToolProvider
+
+        if self._ephemeral or type(provider) is not CodeReviewToolProvider:
+            return False
+        service = provider.service
+        if (
+            type(service) is not CodeReviewService
+            or type(service.issuer) is not ReviewStageIssuer
+        ):
+            return False
+        try:
+            service.validate_authority()
+            return service.enabled
+        except ValueError:
+            return False
+
     def _build_owner_cache(
         self,
     ) -> _CatalogSnapshot:
@@ -2101,6 +2262,16 @@ class ToolCatalogRegistry:
         accepted_entries: list[ToolCatalogEntry] = []
         for provider in self._providers:
             for entry in provider.list_catalog():
+                if (
+                    (
+                    entry.name in CODE_REVIEW_RESERVED_TOOL_NAMES
+                    and not self._authenticated_review_provider(provider)
+                    ) or (
+                    entry.name in RECOVERY_RESERVED_TOOL_NAMES
+                    and not self._authenticated_recovery_name(provider, entry.name)
+                    )
+                ):
+                    continue
                 if (
                     entry.name in CANVAS_RESERVED_TOOL_NAMES
                     and not self._authenticated_canvas_name(provider, entry.name)
@@ -2184,8 +2355,24 @@ class ToolCatalogRegistry:
             schema = record.provider.load_schema(record.tool_id)
             if schema.id != record.tool_id or schema.name != name:
                 raise ValueError("tool schema identity changed")
+            classify = getattr(record.provider, "hook_operation", None)
+            operation = classify(record.tool_id) if callable(classify) else None
+            if operation not in {
+                None,
+                "file.read",
+                "file.write",
+                "file.edit",
+                "directory.list",
+                "file.search",
+                "mcp.call",
+            }:
+                raise ValueError("tool operation unavailable")
             return ToolDefinitionSnapshot.from_schema(
-                schema, record.source, self._catalog_generation, id(record.provider)
+                schema,
+                record.source,
+                self._catalog_generation,
+                id(record.provider),
+                operation=operation,
             )
 
     def load_schema(self, tool_id: str) -> ToolSchema:
@@ -2306,6 +2493,26 @@ class ToolCatalogRegistry:
             )
         return repaired
 
+    def authorize_review_source(
+        self, name, args, *, allowed_names, expected_binding_id
+    ):
+        """Use the composed local owner and the same per-run policy counters."""
+        from .local_tool_provider import LocalToolProvider
+
+        if name not in allowed_names:
+            return "source_permission_denied"
+        with self._catalog_lock:
+            record = self._owner_record_for_name(name)
+        if record is None or not isinstance(record.provider, LocalToolProvider):
+            return "source_permission_unavailable"
+        if self._run_tool_policy is not None:
+            allowed, _ = self._run_tool_policy.check(current_run_id(), name)
+            if not allowed:
+                return "source_policy_call_cap_reached"
+        return record.provider.authorize_review_source(
+            name, args, expected_binding_id=expected_binding_id
+        )
+
     def invoke_by_name(
         self,
         name: str,
@@ -2313,6 +2520,11 @@ class ToolCatalogRegistry:
         *,
         expected_definition: ToolDefinitionSnapshot | None = None,
     ) -> ToolResult:
+        if self._review_service is not None and name not in {
+            "code_review_read",
+            "code_review_submit",
+        }:
+            return ToolResult(ok=False, error="role_denied", dispatch_state="not_started")
         with self._catalog_lock:
             if expected_definition is not None:
                 try:
@@ -2326,6 +2538,11 @@ class ToolCatalogRegistry:
                 ok=False, error=f"Unknown tool: {name}", dispatch_state="not_started"
             )
         tool_id, provider = record.tool_id, record.provider
+        if (
+            name in CODE_REVIEW_RESERVED_TOOL_NAMES
+            and not self._authenticated_review_provider(provider)
+        ):
+            return ToolResult.blocked("Review authority is unavailable.")
         if name in CANVAS_RESERVED_TOOL_NAMES:
             if not self._authenticated_canvas_name(provider, name):
                 from .canvas_tool_provider import CanvasToolProvider

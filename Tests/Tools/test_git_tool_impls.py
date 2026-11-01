@@ -279,12 +279,12 @@ def test_git_status_description_matches_the_scoping_implementation() -> None:
     """
     import ast
 
+    from Tests.Agents.test_local_tool_provider import InProcessWorkspaceExecutor
     from tldw_chatbook.Agents.local_tool_provider import (
         LocalToolExposure,
         LocalToolProvider,
     )
     from tldw_chatbook.Tools import git_tool_impls
-    from Tests.Agents.test_local_tool_provider import InProcessWorkspaceExecutor
 
     provider = LocalToolProvider(
         workspace_root=Path.cwd(),
@@ -596,3 +596,110 @@ def test_run_git_kills_process_group(
 def test_run_git_bare_argv_requires_subcommand() -> None:
     with pytest.raises(LocalToolError, match="requires a subcommand"):
         run_git(["git"])
+
+
+def test_internal_review_reader_preserves_bytes_and_refuses_options(tmp_git_repo):
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+
+    path = tmp_git_repo / "raw.bin"
+    path.write_bytes(b"\xff\x00\r\n")
+    subprocess.run(["git", "add", "raw.bin"], cwd=tmp_git_repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "binary"], cwd=tmp_git_repo, check=True)
+    reader = ReviewGitReader(tmp_git_repo)
+    head = reader.head()
+    entry = reader.entry(head, "raw.bin")
+    assert reader.blob(entry) == b"\xff\x00\r\n"
+    with pytest.raises(LocalToolError):
+        reader.commit("--help")
+    with pytest.raises(LocalToolError):
+        reader.entry(head, "../escape")
+
+
+def test_internal_review_reader_propagates_pipe_failure(tmp_git_repo, monkeypatch):
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+    from tldw_chatbook.Tools import git_tool_impls as module
+
+    def fail(*args):
+        raise OSError("injected read failure")
+
+    monkeypatch.setattr(module, "_read_bounded_stream", fail)
+    with pytest.raises(LocalToolError, match="read failed"):
+        ReviewGitReader(tmp_git_repo)
+
+
+def test_review_reader_ignores_replace_and_rejects_promisor(tmp_git_repo):
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+
+    reader = ReviewGitReader(tmp_git_repo)
+    old = reader.head()
+    (tmp_git_repo / "replacement.txt").write_text("replacement\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_git_repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-qm", "replacement"], cwd=tmp_git_repo, check=True
+    )
+    new = reader.head()
+    subprocess.run(["git", "replace", old, new], cwd=tmp_git_repo, check=True)
+    assert reader.entry(old, "replacement.txt") is None
+    subprocess.run(
+        ["git", "config", "remote.origin.promisor", "true"],
+        cwd=tmp_git_repo,
+        check=True,
+    )
+    with pytest.raises(LocalToolError, match="history_unavailable"):
+        ReviewGitReader(tmp_git_repo)
+
+
+def test_review_reader_validates_repository_object_format(tmp_path):
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+
+    root = tmp_path / "sha256"
+    root.mkdir()
+    result = subprocess.run(
+        ["git", "init", "--object-format=sha256", "-q"], cwd=root, capture_output=True
+    )
+    if result.returncode:
+        pytest.skip("installed Git has no SHA256 repository support")
+    for args in [
+        ("config", "user.name", "Test"),
+        ("config", "core.autocrlf", "false"),
+        ("config", "user.email", "test@example.invalid"),
+    ]:
+        subprocess.run(["git", *args], cwd=root, check=True)
+    (root / "safe.py").write_bytes("utf8 café\r\n".encode("utf-8"))
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-qm", "source"], cwd=root, check=True)
+    reader = ReviewGitReader(root)
+    assert len(reader.head()) == 64
+    assert (
+        reader.blob(reader.entry(reader.head(), "safe.py")) == "utf8 café\r\n".encode()
+    )
+    with pytest.raises(LocalToolError, match="invalid_object_id"):
+        reader.commit("0" * 40)
+
+
+@pytest.mark.parametrize("ignorecase", ["true", "false"])
+def test_review_index_case_variant_matches_a_single_literal_lookup(
+    tmp_git_repo, ignorecase
+):
+    """Batched index reads agree with the old per-path literal lookup.
+
+    A literal pathspec is case-sensitive even with core.ignorecase, so git
+    returns no record for a case variant of a tracked file: the old single-
+    path read and the batch both answer None (no new acceptance).
+    """
+    from tldw_chatbook.Agents.code_review_source import ReviewGitReader
+
+    _git(tmp_git_repo, "config", "core.ignorecase", ignorecase)
+    raw = subprocess.run(
+        ["git", "ls-files", "--stage", "-z", "--", ":(literal)FILE.TXT"],
+        cwd=tmp_git_repo,
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert raw == b""
+    reader = ReviewGitReader(tmp_git_repo)
+    entries = reader.index_entries(("FILE.TXT", "file.txt"))
+    assert entries["FILE.TXT"] is None
+    assert entries["file.txt"] is not None
+    assert entries["file.txt"].path == "file.txt"
+    assert reader.index("FILE.TXT") is None

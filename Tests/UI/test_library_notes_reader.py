@@ -302,7 +302,7 @@ async def test_database_notes_capability_inventory_and_modes(
                 push_screen=lambda modal, callback: pushed.append((modal, callback))
             ),
             _selected_library_notes_tree_row=lambda: folder,
-            _library_notes_folder_target_options=lambda **kwargs: (),
+            _page_library_notes_folder_targets=lambda query, offset, **kwargs: None,
             _schedule_library_notes_tree_mutation=lambda action, **kwargs: (
                 mutations.append((action, kwargs))
             ),

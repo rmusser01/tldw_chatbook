@@ -25,7 +25,10 @@ from uuid import uuid4
 import pytest
 
 from Tests.Chat.test_console_first_send_atomicity import _controller as _base_controller
-from Tests.Chat.test_console_provider_continuation import _active_checkpoint
+from Tests.Chat.test_console_provider_continuation import (
+    _MOONSHOT_RUN_TARGET,
+    _active_checkpoint,
+)
 from tldw_chatbook.Agents.agent_models import ContinuationEventContext, ToolBatchReady
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
@@ -562,7 +565,8 @@ async def test_continuation_owner_saved_by_its_first_tool_batch_mirrors_its_pare
                 ContinuationEventContext(owner.id, "run", "primary", "persistent"),
                 _active_checkpoint(),
                 None,
-            )
+            ),
+            continuation_target=_MOONSHOT_RUN_TARGET,
         )
 
         live = store.get_message(owner.id)

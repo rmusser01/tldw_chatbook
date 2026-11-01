@@ -119,13 +119,14 @@ async def test_master_shell_navigation_order_and_labels():
         ("nav-watchlists_collections", "\u23035 Watchlists"),
         ("nav-schedules", "\u23037 Schedules"),
         ("nav-workflows", "\u23038 Workflows"),
-        ("nav-mcp", "\u23039 MCP"),
         ("nav-acp", "\u23030 ACP"),
         ("nav-lab", "F2 Lab"),
         ("nav-logs", "F3 Logs"),
         ("nav-settings", "F4 Settings"),
         ("nav-research", "F5 Research"),
         ("nav-meetings", "F7 Meetings"),
+        ("nav-plugins", "F8 Plugins"),
+        ("nav-kanban", "F9 Kanban"),
     ]
 
 
@@ -139,6 +140,8 @@ def test_nav_button_label_numbering_scheme():
     assert nav_button_label("settings", "Settings") == "F4 Settings"
     assert nav_button_label("research", "Research") == "F5 Research"
     assert nav_button_label("meetings", "Meetings") == "F7 Meetings"
+    assert nav_button_label("plugins", "Plugins") == "F8 Plugins"
+    assert nav_button_label("kanban", "Kanban") == "F9 Kanban"
 
 
 @pytest.mark.asyncio
@@ -172,7 +175,10 @@ async def test_console_attention_glyph_is_accessible_and_geometry_stable(size):
 
 
 @pytest.mark.asyncio
-async def test_fresh_navigation_mount_recomputes_durable_console_attention():
+@pytest.mark.parametrize(
+    "refresh_api", ["recompute_console_attention", "request_console_attention_refresh"]
+)
+async def test_fresh_navigation_mount_recomputes_durable_console_attention(refresh_api):
     calls: list[dict[str, bool]] = []
 
     class TestApp(ConsolidatedCSSApp):
@@ -183,7 +189,7 @@ async def test_fresh_navigation_mount_recomputes_durable_console_attention():
 
     app = TestApp()
     app.console_runtime = SimpleNamespace(
-        recompute_console_attention=lambda **kwargs: calls.append(kwargs)
+        **{refresh_api: lambda **kwargs: calls.append(kwargs)}
     )
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -540,6 +546,8 @@ def test_shell_destination_hotkeys_keep_existing_destination_owners():
         "settings": "f4",
         "research": "f5",
         "meetings": "f7",
+        "plugins": "f8",
+        "kanban": "f9",
     }
     assert len(hotkey_bindings) == len(SHELL_DESTINATION_ORDER)
     from Tests.UI.css_destination_tour import DESTINATION_BODIES

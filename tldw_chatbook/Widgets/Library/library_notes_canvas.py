@@ -964,6 +964,15 @@ class NoteEditorTextArea(DetachSafeTextArea):
     #: to a box laid out for a terminal that no longer exists.
     link_picker_terminal: tuple[int, int] | None = None
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # TASK-34000.28 (N-32, fix round 1): F6 leaves the body for the next
+        # pane instead of selecting the line (Textual's own TextArea f6).
+        # Imported here, not at module level (ADR-097 boot budget).
+        from tldw_chatbook.Widgets.text_area_pane_key import release_pane_key
+
+        release_pane_key(self)
+
     class LinkPickerKey(Message):
         """One of ``LINK_PICKER_KEYS`` pressed while the picker is open."""
 
@@ -1221,6 +1230,9 @@ class LibraryNotePresentationState:
     #: Whether the backlink query has answered yet -- see
     #: ``library_note_backlink_header``.
     backlinks_status: str = "loading"
+    #: TASK-34000.28 (N-21): ``(note_id, title)`` a followed link came from;
+    #: the heading offers ``‹ <title>`` back to it while set.
+    link_origin: tuple[str, str] | None = None
     #: TASK-34000.11: ``(label, note_id)`` for each stored note link the body
     #: carries, computed only while Preview is shown (the same gate the
     #: preview source uses). The Preview's Enter follows the one link or
@@ -1359,6 +1371,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.list_state = list_state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
+        #: TASK-34000.40 (N-31): unsubmitted filter text carried across a
+        #: recompose (see ``sync_state``); ``None`` shows the applied filter.
+        self._filter_draft: str | None = None
         self.mode = mode
         self.presentation_state = presentation_state
         self.import_snapshot = import_snapshot
@@ -2072,6 +2087,22 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         else:
             self._tree_pager_focus_id = None
             self._tree_pager_focus_guard = None
+        # TASK-34000.40 (N-31) AC#2: the recompose below rebuilds the filter
+        # box, so text the user typed and did not submit (Escape in the box
+        # ends in this sync) went with the old widget. A box that differs
+        # from the filter IT was composed for (declared on the widget: a
+        # second sync before the first recompose has moved ``filter_value``
+        # on) AND from the incoming one is a draft and is carried; the
+        # APPLIED filter is never touched here. Clear filter empties the box
+        # before it syncs, so it never returns.
+        boxes = self.query("#library-notes-filter")
+        box = boxes.first(Input) if boxes else None
+        typed = box.value if box is not None else None
+        applied = getattr(box, "_library_applied_filter", None)
+        composed_for = typed if applied is None else applied
+        self._filter_draft = (
+            typed if typed not in (None, composed_for, filter_value) else None
+        )
         self.list_state = list_state
         self.sort_mode = sort_mode
         self.filter_value = filter_value
@@ -2251,12 +2282,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # this box has focus "/" must be a plain typeable character,
             # not an accelerator that swallows it. The screen-level "/"
             # handler already only fires while this box is NOT focused.
-            yield LibraryRailSearchInput(
+            filter_box = LibraryRailSearchInput(
                 placeholder="Filter notes… (Enter)",
                 id="library-notes-filter",
-                value=self.filter_value,
+                value=(
+                    self.filter_value
+                    if self._filter_draft is None
+                    else self._filter_draft  # TASK-34000.40 N-31 AC#2
+                ),
                 swallow_slash_on_focus=False,
             )
+            filter_box._library_applied_filter = self.filter_value
+            yield filter_box
         select_mode = list_state.select_mode
         # Gate/label off the RENDERED rows, not any total-count field -- only
         # rendered rows are selectable, matching the media/conversations
@@ -2595,6 +2632,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     id="library-notes-filter-clear",
                     classes="library-canvas-action",
                     compact=True,
+                )
+            if list_state.notice_refresh_offered:
+                # TASK-34000.28 (N-24): a folder conflict's next step.
+                yield Button(
+                    "Refresh",
+                    id="library-notes-notice-refresh",
+                    classes="library-canvas-action",
+                    compact=True,
+                    disabled=list_state.operation_running,
                 )
         receipt = list_state.delete_receipt
         if receipt is not None:
@@ -3200,6 +3246,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
     def _set_tree_row_metadata(button: Button, row: LibraryNotesTreeRow) -> None:
         """Attach stable domain identities without encoding them in DOM ids."""
         button.tree_kind = row.kind
+        # TASK-34000.28 N-22: Left on a collapsed folder row climbs to its
+        # parent -- the nearest earlier folder row with a SMALLER depth
+        # (``canvas_sync._previous_folder_row_above``); an integer here lets
+        # that walk compare depths, not indent spaces in a label.
+        button.tree_depth = row.depth
         button.placement_id = row.placement_id
         button.note_id = row.note_id or ""
         button.folder_id = row.folder_id or ""
@@ -3274,6 +3325,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 classes="library-canvas-action",
                 compact=True,
             )
+            if presentation_state.link_origin is not None:
+                # TASK-34000.28 (N-21): one hop back to the note a followed
+                # backlink or note link came from.
+                yield Button(
+                    self._link_back_label(),
+                    id="library-note-link-back",
+                    classes="library-canvas-action",
+                    compact=True,
+                    tooltip=escape_markup(
+                        f"Back to {presentation_state.link_origin[1]}"
+                    ),
+                )
             yield Static(
                 heading_title,
                 id="library-note-editor-title",
@@ -3748,7 +3811,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._children_ready = True
         self._apply_post_compose_state()
         if self.mode == "lasting_add":
-            self.call_after_refresh(self._focus_initial_lasting_sync_control)
+            # Children are mounted; establish the action before the first frame
+            # instead of leaving Textual's default focus on the scroll body.
+            self._focus_initial_lasting_sync_control()
 
     def _focus_initial_lasting_sync_control(self) -> None:
         """Focus the safe first control once, after the wrapper initially mounts."""
@@ -4057,6 +4122,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # admission -- displacing the prompt instead of leaving Info in
         # place like every other Danger/Reuse & Export action.
         context_back_button.disabled = confirming_delete
+        if state.link_origin is not None:
+            try:
+                # The same rule as Back: no open behind the delete prompt.
+                node("#library-note-link-back").disabled = confirming_delete
+            except NoMatches:
+                pass  # composed by a sync whose state had no origin yet
         node("#library-note-editor-title").display = show_editor
         node("#library-note-preview-title").display = show_preview
         node("#library-note-context-title").display = show_context
@@ -4557,6 +4628,27 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """
         self.update_note_chrome_facts()
         self._restate_note_location()
+        label = self._link_back_label()
+        links_back = self.query("#library-note-link-back")
+        if label and links_back:
+            links_back.first(Button).label = label
+
+    def _link_back_label(self) -> str:
+        """``‹ <origin title>``, held to a third (compact: a quarter) of the width.
+
+        TASK-34000.28 (N-21): the heading row also carries the open note's
+        own title -- the one thing identifying it -- so the way back yields
+        width first (measured: a 32-cell origin left that title three letters
+        at 120x36, and none at all at 80x24 beside the compact authority).
+        """
+        state = self.presentation_state
+        origin = state.link_origin if state is not None else None
+        if origin is None:
+            return ""
+        width = self._effective_work_width()
+        share = 4 if self.compact else 3
+        budget = 32 if width <= 0 else max(8, min(32, width // share))
+        return "‹ " + escape_markup(ellipsize_note_title_cells(origin[1], budget))
 
     def _compose_create(self) -> ComposeResult:
         """Render the notes canvas in create mode: Blank note + template rows.

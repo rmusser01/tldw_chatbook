@@ -1,0 +1,1302 @@
+{
+  "task": "TASK-37267",
+  "base": "8fbc9d2e1d91c31654742736f652d173b07b3ea9",
+  "head": "41e530c9f6a8936f85f5c09107907e22d27cd55d",
+  "archive": "task2-local-receipts.tar.gz",
+  "archive_sha256": "87259d2a93c0d1c141395009160523afad6295fc54765caa7a3a41387feea60c",
+  "members": {
+    "review/review-8fbc9d2e1d..41e530c9f6.diff": {
+      "bytes": 25917,
+      "sha256": "2bcebc48294bc5d592467bf4d9c9f364c3521ad3b1d06cfd8561f4ffe86b6311"
+    },
+    "review/task-2-report.md": {
+      "bytes": 22696,
+      "sha256": "5d2d8d06bf70d7cb4c20cc7e0e07a65fcc9b70ff122c78bee5321e924a989095"
+    },
+    "review/task-2-review.md": {
+      "bytes": 12504,
+      "sha256": "ead7cf2ea5a207296de47cb63d9e44d65e7ff98403b22f0df78da4a968b48977"
+    },
+    "runtime/run-targeted.py": {
+      "bytes": 2165,
+      "sha256": "fed322c340015529db927e4639e57437144e5b722368659309cb2808c05c8773"
+    },
+    "task2-green01-sources/Research_Window.py": {
+      "bytes": 44620,
+      "sha256": "4f6187501ca52af4aed63360cfa0ef711a31c29d79e89ba0ccbfc95c24c9e3dc"
+    },
+    "task2-green01-sources/ruff.json": {
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "task2-green01-sources/test_research_run_refresh_publication.py": {
+      "bytes": 15627,
+      "sha256": "a5d9fad60f787de2de67a8a12a514faba38e89713fa4b341c76f723f48f19cef"
+    },
+    "task2-red-sources/Research_Window.py": {
+      "bytes": 44052,
+      "sha256": "026a6af5fa30f11e659cacec8d8cca95a6ee5720e2d76ef0281d0074fe75c359"
+    },
+    "task2-red-sources/test_research_run_refresh_publication.py": {
+      "bytes": 12056,
+      "sha256": "cc6deed00d5e8f5d846f006b5a0715a58c3497abe4fa729cbd782597a6dc4bb0"
+    },
+    "task2-red02-sources/Research_Window.py": {
+      "bytes": 44052,
+      "sha256": "026a6af5fa30f11e659cacec8d8cca95a6ee5720e2d76ef0281d0074fe75c359"
+    },
+    "task2-red02-sources/test_research_run_refresh_publication.py": {
+      "bytes": 12408,
+      "sha256": "7f97bd65b403167e1df849cb57dc9e49242dcf6faa3d5d9d04481675c9ad9d27"
+    },
+    "task2-red03-sources/Research_Window.py": {
+      "bytes": 44052,
+      "sha256": "026a6af5fa30f11e659cacec8d8cca95a6ee5720e2d76ef0281d0074fe75c359"
+    },
+    "task2-red03-sources/ruff-baseline.json": {
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "task2-red03-sources/test_research_run_refresh_publication.py": {
+      "bytes": 13037,
+      "sha256": "7d2f91ebb7350568002153b3aa35d72459d95c701927b22f74afd293786171e1"
+    },
+    "task2/commit.json": {
+      "bytes": 282,
+      "sha256": "1f66a4ddced89280264e6d6de4f87985b71a0412bad70a96f972c03ffe1d6c49"
+    },
+    "task2/compare-timer-inputs.py": {
+      "bytes": 2764,
+      "sha256": "c830e1d8c3f14c57f5f20753aebc4a79e835e8941b021b48861e6a79dd8963e5"
+    },
+    "task2/compare-worker-inputs.py": {
+      "bytes": 3597,
+      "sha256": "c9304a700453762a73a2a25f19e18634bb6298862aa7663d4824c7f8dff7927e"
+    },
+    "task2/control-selectors.json": {
+      "bytes": 1795,
+      "sha256": "32dfe9134298dfed25eba92502ff1bb285399a114a0ab451c262d80f866a29ae"
+    },
+    "task2/final-summary.json": {
+      "bytes": 109568,
+      "sha256": "5680a87dcf4bc21172f19547cef9eb91cec06db66243650a55bbc7220396393d"
+    },
+    "task2/inspect-runs.py": {
+      "bytes": 3765,
+      "sha256": "4e90df5087f2f566e444c3f57d6dee21208522bbb37445250dfbf95b7675702a"
+    },
+    "task2/legacy-selectors.json": {
+      "bytes": 1286,
+      "sha256": "c1adade4dca479a9d3c287542dc18528a851c49ef07b0e8f1a939bdbdb214ce2"
+    },
+    "task2/new-case-timings.json": {
+      "bytes": 10330,
+      "sha256": "02ee2b90015f2ed786590a2e831a83b91261db886e3208c4cc93f1ae6b16f211"
+    },
+    "task2/root-static-proof.json": {
+      "bytes": 1700,
+      "sha256": "d1fccf44bb51a9a95a3d3aa23613b9043c45526e23ec206e1760ca1a42861e6e"
+    },
+    "task2/source-hashes.json": {
+      "bytes": 2462,
+      "sha256": "74599378e12c1a63b650d1668d67188f53b4849392354f7fccbdd6cd86ca1c96"
+    },
+    "task2/static-inputs/baseline__Tests__Architecture__test_timer_path_static_update_inventory.py": {
+      "bytes": 114947,
+      "sha256": "396882445eb5585ea47094c60a7f8388da30313d7b3a4e175e288f02f412f3ab"
+    },
+    "task2/static-inputs/baseline__Tests__Architecture__test_worker_exclusive_group_inventory.py": {
+      "bytes": 34956,
+      "sha256": "f7f235ba0039693c8a2a50d84d3895d0d4a1956632cf9e81c1343266eaef3690"
+    },
+    "task2/static-inputs/baseline__tldw_chatbook__Third_Party__textual_fspicker__parts__directory_navigation.py": {
+      "bytes": 21668,
+      "sha256": "ee53c8cce7825b1e2719c2c414970d78fe7d09e7e0ddf579f93075168888fdf4"
+    },
+    "task2/static-inputs/baseline__tldw_chatbook__UI__Research_Window.py": {
+      "bytes": 43020,
+      "sha256": "7ace314a589149a6681d0a2e6e5f2beed53ff39a3d660c7dd07a23d978b57d75"
+    },
+    "task2/static-inputs/baseline__tldw_chatbook__UI__Screens__chat_screen.py": {
+      "bytes": 1125467,
+      "sha256": "c6e7db947abbf8f7c3b57b39d547c83ce9f41897a746b0d60ef536b29594c48c"
+    },
+    "task2/static-inputs/baseline__tldw_chatbook__UI__Screens__scheduling__schedules_workbench.py": {
+      "bytes": 259895,
+      "sha256": "c3faa5d75ab878e2dc59f4069adb36cbb417893fc0b428354e4043feb3762c1f"
+    },
+    "task2/static-inputs/baseline__tldw_chatbook__UI__Screens__watchlists_collections_screen.py": {
+      "bytes": 676483,
+      "sha256": "eca2416b37afe082c2f2eae3d00a6b4db5e7b91f6d8052f43345089fb555d2c4"
+    },
+    "task2/static-inputs/baseline__tldw_chatbook__UI__Widgets__SmartContentTree.py": {
+      "bytes": 18083,
+      "sha256": "be54fad42df86a4d3d9243a476cb2fbc3a0690027f56e48c5ae5cf636c859c48"
+    },
+    "task2/static-inputs/baseline__tldw_chatbook__UI__Wizards__ChatbookImportWizard.py": {
+      "bytes": 69769,
+      "sha256": "4a39350446052c3273cc723c0b08427ea20ecf61172fb6a8ba12561ae1a28852"
+    },
+    "task2/static-inputs/baseline__tldw_chatbook__Widgets__Console__console_goal_setup_modal.py": {
+      "bytes": 17783,
+      "sha256": "82f83b50b11cb74371504705c5c8d749af5261891f9f99c0b61f0da30ce83746"
+    },
+    "task2/static-inputs/baseline__tldw_chatbook__Widgets__Settings_Widgets__workspace_change_review.py": {
+      "bytes": 11049,
+      "sha256": "e816e34ea2ec54256c101abe385ea94700db9169c0d89ae52648e2dda1f3aaa4"
+    },
+    "task2/static-inputs/baseline__tldw_chatbook__Widgets__workspace_create_modal.py": {
+      "bytes": 28900,
+      "sha256": "7fa22847ff83ec163a1f47e8c58421c9c10fc3ac9a9907139925ed06dc6865d8"
+    },
+    "task2/static-inputs/current__Tests__Architecture__test_timer_path_static_update_inventory.py": {
+      "bytes": 117747,
+      "sha256": "c26600c07b20b6e65fa50d29ab01cd16412ddc194f45a2637e68773db50089a6"
+    },
+    "task2/static-inputs/current__Tests__Architecture__test_worker_exclusive_group_inventory.py": {
+      "bytes": 35787,
+      "sha256": "478376e2107fa3e12016640841ca25442311f81506537e90138f7a2bcd4a2216"
+    },
+    "task2/static-inputs/current__tldw_chatbook__Third_Party__textual_fspicker__parts__directory_navigation.py": {
+      "bytes": 22269,
+      "sha256": "c93ca51c7958e6d131616ecdf6084b415a2a413ac3415dee282586d0f4eee154"
+    },
+    "task2/static-inputs/current__tldw_chatbook__UI__Research_Window.py": {
+      "bytes": 44620,
+      "sha256": "4f6187501ca52af4aed63360cfa0ef711a31c29d79e89ba0ccbfc95c24c9e3dc"
+    },
+    "task2/static-inputs/current__tldw_chatbook__UI__Screens__chat_screen.py": {
+      "bytes": 1149796,
+      "sha256": "df17d4df73537c9c2555dc494405d5f838b9330209b1c9229b4f9559c406c58d"
+    },
+    "task2/static-inputs/current__tldw_chatbook__UI__Screens__scheduling__schedules_workbench.py": {
+      "bytes": 265425,
+      "sha256": "3fde4e3c8b6e6c3ecf04604f039ee41e60955d1cee691cab736aa54c10877caa"
+    },
+    "task2/static-inputs/current__tldw_chatbook__UI__Screens__watchlists_collections_screen.py": {
+      "bytes": 690753,
+      "sha256": "a923f40c448758e980e83daef416b31ae6a49943a5f6f8f1b8426ae879e0196b"
+    },
+    "task2/static-inputs/current__tldw_chatbook__UI__Widgets__SmartContentTree.py": {
+      "bytes": 18570,
+      "sha256": "8b3dae979305d0e82dfc1cb7c860245a27c736b8eee1c4dd568b109eba3109f7"
+    },
+    "task2/static-inputs/current__tldw_chatbook__UI__Wizards__ChatbookImportWizard.py": {
+      "bytes": 71421,
+      "sha256": "a9c5c27223b18135fcdd23826ada99d821eb2fb116b4616616913733ba6d4a6d"
+    },
+    "task2/static-inputs/current__tldw_chatbook__Widgets__Console__console_goal_setup_modal.py": {
+      "bytes": 18185,
+      "sha256": "19b8782368ae9dad2aa95b91bce9cc56c0c19fc6bbfd25ad66b2aab7bee862be"
+    },
+    "task2/static-inputs/current__tldw_chatbook__Widgets__Settings_Widgets__workspace_change_review.py": {
+      "bytes": 11334,
+      "sha256": "2e46893023ccd2c7450d7acedaf82ae0e846d0c14cc98597867c88b386c9bb9e"
+    },
+    "task2/static-inputs/current__tldw_chatbook__Widgets__workspace_create_modal.py": {
+      "bytes": 29577,
+      "sha256": "acf72a563aa26d17f5adb7c205b1aba156adc2bc8244e6c8bbad0c572cb316b7"
+    },
+    "task2/task2-controls01/child-01.xml": {
+      "bytes": 355,
+      "sha256": "0851efa5658833977a47a7a9b51e03af45a389d191dfe644b8cb68b71950fc3e"
+    },
+    "task2/task2-controls01/child-02.xml": {
+      "bytes": 372,
+      "sha256": "401e3069dcd00fc5b6e429a81010e801b752d44848823fb4195603f72de5ca0d"
+    },
+    "task2/task2-controls01/child-03.xml": {
+      "bytes": 347,
+      "sha256": "3d9d50900ab3f6a5ea473263e74f58e695fd03cb1b71b56d5424489e07242d99"
+    },
+    "task2/task2-controls01/command.json": {
+      "bytes": 2866,
+      "sha256": "5c0103ede8ce41ac38449a2831a9af6e4f0a3d9d4505cf78fd3376f672fa23e3"
+    },
+    "task2/task2-controls01/inspection.json": {
+      "bytes": 159867,
+      "sha256": "644da03eb47465078b9a2d94365dc86ffeddbcc3446fb088b3f9f831538676f9"
+    },
+    "task2/task2-controls01/parent.xml": {
+      "bytes": 114437,
+      "sha256": "540ae19ca28b66f8b351161f29a5e8d26d7daff2c8f2fb4418a5531a44324ee9"
+    },
+    "task2/task2-controls01/verification.json": {
+      "bytes": 1595,
+      "sha256": "14695d5d137c3c8586d675451ab80340134b4f92a502bcedf57a53778545ece5"
+    },
+    "task2/task2-green01/child-01.xml": {
+      "bytes": 2153,
+      "sha256": "ef535b83b3772c414b1a506c7108c50ae3b6096c23771e7cc595dd0857886329"
+    },
+    "task2/task2-green01/child-02.xml": {
+      "bytes": 2389,
+      "sha256": "9278076b1db0a5307264869c2bf17d8a5ba992518362348715947b3c91ad0bb8"
+    },
+    "task2/task2-green01/child-03.xml": {
+      "bytes": 1377,
+      "sha256": "b90cb3ac0355e9316aa075ae6fdd76fc3eebe8996b91f6caecc64ec4520ac476"
+    },
+    "task2/task2-green01/child-04.xml": {
+      "bytes": 1175,
+      "sha256": "d243039fea8c9bab47cb49bea82838a7db7f72fe9ff94626997a972fa12224fa"
+    },
+    "task2/task2-green01/child-05.xml": {
+      "bytes": 2028,
+      "sha256": "d8abe7209526d540a5b0cfdbd9624244f8bb05db8def3f95a2349cd44b45d36c"
+    },
+    "task2/task2-green01/child-06.xml": {
+      "bytes": 771,
+      "sha256": "b951887c29c0e7a4544fe7bb52543af3a09a33ef5ad3cc9cdf70b23cc756b72c"
+    },
+    "task2/task2-green01/child-07.xml": {
+      "bytes": 765,
+      "sha256": "b3bdf32739c448df8c5d05300a38f461812af613eed5c1662ddf888125146300"
+    },
+    "task2/task2-green01/command.json": {
+      "bytes": 1044,
+      "sha256": "cc442a29561f2e486b47211553f0a717804cd5114d08a713e758d94699889b65"
+    },
+    "task2/task2-green01/inspection.json": {
+      "bytes": 24506,
+      "sha256": "2c8193e5aa3e91c31d59a0decf1fed38eb977cbcbabece27c3b0ebe3e4310074"
+    },
+    "task2/task2-green01/parent.xml": {
+      "bytes": 1270,
+      "sha256": "7ca5cf595b488518d82da7f0aa1b60c77deecbe48674da3bb779d3b0d75cadd2"
+    },
+    "task2/task2-green01/verification.json": {
+      "bytes": 3060,
+      "sha256": "92e9c31377a0bb6904ce879fcc27dededf4f384c669094d818108815f883e327"
+    },
+    "task2/task2-red01/command.json": {
+      "bytes": 1273,
+      "sha256": "c21f4a8e7c17b39b21cfb4a56f4bfc559d159076156fb6710405d5de656a27c4"
+    },
+    "task2/task2-red01/inspection.json": {
+      "bytes": 3892,
+      "sha256": "ceee5f0938c3e11ced008776798b8ea3a2bb58aff40b23ea4a9830de84baf7bc"
+    },
+    "task2/task2-red01/parent.xml": {
+      "bytes": 2206,
+      "sha256": "efedea15f63fe454a64cb8974fa093ed71d102d3e87675b9d18031de4c3524f8"
+    },
+    "task2/task2-red01/verification.json": {
+      "bytes": 496,
+      "sha256": "30e00bfaa36419d17bedf4363620c2fc93a38ab5f854ab36997b27d9f83401a9"
+    },
+    "task2/task2-red02/child-01.xml": {
+      "bytes": 4020,
+      "sha256": "54876cf02bce3ed1c6fe07944e039617e185666298af07f8aaa9e73883448534"
+    },
+    "task2/task2-red02/child-02.xml": {
+      "bytes": 2962,
+      "sha256": "810edebb7ad6860838530deb30d65dca24295fa82acdca061c3aaeafeb0d814c"
+    },
+    "task2/task2-red02/child-03.xml": {
+      "bytes": 2864,
+      "sha256": "e4f8b0fcf13bd9da74739bf295828ffb06f80be07a95957331d535152e769337"
+    },
+    "task2/task2-red02/command.json": {
+      "bytes": 1273,
+      "sha256": "9a4cfe35d405e531f58028a7702eb68ae3210a3f32803a3f58bed0e6b3ffbfce"
+    },
+    "task2/task2-red02/inspection.json": {
+      "bytes": 77395,
+      "sha256": "233377db4db6ea46d7bf7662438d7f2dc1ff15a0089fe07d98b173926d068600"
+    },
+    "task2/task2-red02/parent.xml": {
+      "bytes": 62654,
+      "sha256": "21d8be1012f8c47eb764325b036cae21e078bd9b5ccd8b3f1d901f5aa0911f8d"
+    },
+    "task2/task2-red02/verification.json": {
+      "bytes": 1594,
+      "sha256": "be358ae65f75e8db9f62d810c73faefc4db3b8c230e9959a56d51f957bfe4821"
+    },
+    "task2/task2-red03/child-01.xml": {
+      "bytes": 5320,
+      "sha256": "ecf7e3c0cdde0a6a903f26f042baf4e5523778aaac57e371486358f928f53940"
+    },
+    "task2/task2-red03/child-02.xml": {
+      "bytes": 3826,
+      "sha256": "d1081ff01c3dc31f2516bbdece002c412a8b5012ae850853c26b33b1331cfca5"
+    },
+    "task2/task2-red03/child-03.xml": {
+      "bytes": 2762,
+      "sha256": "e80b5c17b5a155e73d620675dce890f78879015b14711d559f835b7d83b31cb0"
+    },
+    "task2/task2-red03/command.json": {
+      "bytes": 1273,
+      "sha256": "a61f192f2688443c9a6b6961604bb6723a0f3250252b96a4c02c3a77c7334bd8"
+    },
+    "task2/task2-red03/inspection.json": {
+      "bytes": 69473,
+      "sha256": "c4f773d7e4bc9eb66449a4c6c25c47dd51265bb70ac34f1049b778e2432c8e93"
+    },
+    "task2/task2-red03/parent.xml": {
+      "bytes": 53859,
+      "sha256": "8f94d81a204dd1bf66393f8c0b3ff84ce74288b823dfeafcdd28145cd74e644a"
+    },
+    "task2/task2-red03/verification.json": {
+      "bytes": 1594,
+      "sha256": "a448214e278e0ab8df45522978e4d1744f9ee09108dc9b6d4e8abe6707b96f00"
+    },
+    "task2/task2_bootstrap_controls.py": {
+      "bytes": 418,
+      "sha256": "84b3da5c41d000bf4133d245ca0e001c0ee57520aefd188302664c7b34a06c07"
+    },
+    "task2/timer-input-comparison.json": {
+      "bytes": 165745,
+      "sha256": "c896f4f7f394eed3dd1fe51b93e2e17e71ad6f300c9e5baa8cd04a22096fd4c8"
+    },
+    "task2/worker-input-comparison.json": {
+      "bytes": 9514,
+      "sha256": "919ad8405e63aed6aa38c491d828c27be104d42e5284cdc2edf42ee1cbe7bcaa"
+    }
+  },
+  "runs": [
+    {
+      "run": "task2-controls01",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "task2/task2-controls01/parent.xml",
+          "sha256": "540ae19ca28b66f8b351161f29a5e8d26d7daff2c8f2fb4418a5531a44324ee9",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_runs_screen_composes_shared_research_mode_strip_before_window",
+              "seconds": 5.583,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_research_controller_routes_runs_by_source",
+              "seconds": 0.129,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_research_controller_routes_bundle_artifact_and_checkpoint_actions",
+              "seconds": 0.112,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_research_window_loads_and_selects_runs_without_mixed_sources",
+              "seconds": 0.29,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_research_window_watches_selected_server_run_events",
+              "seconds": 0.276,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_research_window_reports_local_live_events_unavailable",
+              "seconds": 0.283,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_research_window_loads_bundle_and_artifact_for_selected_run",
+              "seconds": 0.314,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_research_window_approves_selected_server_checkpoint",
+              "seconds": 0.294,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_research_window_reports_no_pending_local_checkpoint",
+              "seconds": 0.283,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_window_approves_latest_local_checkpoint_and_restarts_engine",
+              "seconds": 0.289,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_load_bundle_auto_loads_the_report",
+              "seconds": 0.295,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_auto_refresh_updates_non_terminal_local_run_preserving_payload",
+              "seconds": 0.29,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_screen",
+              "name": "test_auto_refresh_skips_terminal_and_non_local",
+              "seconds": 0.292,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_census_actually_finds_the_known_clock_roots",
+              "seconds": 101.919,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_no_timer_path_update_defaults_to_layout_true",
+              "seconds": 0.816,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: These `.update(` calls are reachable from a repeating clock and do not pass `layout=`. Static.update defaults to layout=True, so each of these arms a whole screen reflow per tick.\n  \n  Fix by either passing `layout=False` (only where the rendered size genuinely cannot change -- prove it with a geometry-equivalence A/B, see Tests/UI/test_timer_path_layout_cost.py), or by adding an entry to CLASSIFIED_SITES saying why it does not need to.\n  \n    tldw_chatbook\\Chat\\console_interrupt_rounds.py:[818] in InterruptRoundHost.refresh_decision_clocks recv='clock'\n        via ['[set_interval] buddy_conversation_modal:BuddyConversationModal._on_poll_tick']\n    tldw_chatbook\\Chat\\console_runtime.py:[4902] in ConsoleRuntime.ensure_chat_controller recv='kwargs'\n        via ['[rearming-set_timer] chat_screen:ChatScreen._reconcile_console_after_attach']\n    tldw_chatbook\\Metrics\\metrics_logger.py:[174] in MetricsLogger._get_labels recv='final_labels'\n        via ['[set_interval] charact",
+                  "full_message_sha256": "3e9df4a96c8e7ee860e1a7c3ed39f6827082edc28cde8fe0c5a17083c6752687"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_classified_sites_are_not_stale",
+              "seconds": 22.179,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_every_classification_states_a_kind",
+              "seconds": 0.005,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_clock_roots_all_resolve_loudly",
+              "seconds": 0.007,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_clock_root_set_is_pinned",
+              "seconds": 0.179,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: NEW repeating-clock roots. Before adding each to EXPECTED_CLOCK_ROOTS, check what its callback repaints: every `.update(` it reaches must pass layout= or carry a CLASSIFIED_SITES row.\n    + ('_create_interval', 'tldw_chatbook\\\\UI\\\\Console_Modules\\\\fleet.py', 'ConsoleFleetLifecycleController', '_console_fleet_survivor_tick')\n    + ('_set_interval', 'tldw_chatbook\\\\UI\\\\Console_Modules\\\\realtime.py', 'ConsoleRealtimeController', '_tick_console_realtime')\n    + ('rearming-set_timer', 'tldw_chatbook\\\\UI\\\\Console_Modules\\\\dictation.py', 'ConsoleDictationController', '_sync_console_dictation_availability')\n    + ('rearming-set_timer', 'tldw_chatbook\\\\UI\\\\Console_Modules\\\\left_rail.py', 'ConsoleLeftRail', '_recover_pending_focus')\n    + ('rearming-set_timer', 'tldw_chatbook\\\\UI\\\\Screens\\\\chat_screen.py', 'ChatScreen', '_reconcile_console_after_attach')\n    + ('rearming-set_timer', 'tldw_chatbook\\\\UI\\\\Screens\\\\model_installed_view.py', 'InstalledView', '_focus_import_after_recom",
+                  "full_message_sha256": "e12718b277341a807d759bbf3c7eb246614be6172cb6d2785c24dd767541c33f"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_wrapper_spelled_interval_is_censused",
+              "seconds": 0.009,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: the wrapper-spelled clock's repaint did not reach the census\nassert (('tldw_chatbook/timer_census_fixture.py', 'InjectedClockWidget._tick', 'self.status') in {('tldw_chatbook\\\\timer_census_fixture.py', 'InjectedClockWidget._tick', 'self.status'): {'explicit': False, 'lines': {10}, 'roots': {'[_set_interval] timer_census_fixture:InjectedClockWidget._tick'}}})",
+                  "full_message_sha256": "e3b636a8f0143b2473de1c255847c21b9b8c75eeb783b8b60c6bd8a6936a9c88"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_deferral_shim_callback_resolves_through",
+              "seconds": 0.01,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: assert ('tldw_chatbook/timer_census_fixture.py', 'ShimClockManager.reconcile', 'self.status') in {('tldw_chatbook\\\\timer_census_fixture.py', 'ShimClockManager.reconcile', 'self.status'): {'explicit': False, 'lines': {7}, 'roots': {'[set_interval] timer_census_fixture:ShimClockManager.reconcile'}}}\n +  where {('tldw_chatbook\\\\timer_census_fixture.py', 'ShimClockManager.reconcile', 'self.status'): {'explicit': False, 'lines': {7}, 'roots': {'[set_interval] timer_census_fixture:ShimClockManager.reconcile'}}} = census({'tldw_chatbook.timer_census_fixture': <Tests.Architecture.test_timer_path_static_update_inventory._Module object at 0x000002C3F70861A0>})",
+                  "full_message_sha256": "e16cbe0363d6ab34995741207cb6c7185871902833f3dc06afef90110f038c78"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_unresolvable_root_fails_loudly",
+              "seconds": 0.006,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_unregistered_passthrough_wrapper_fails_loudly",
+              "seconds": 0.006,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_clock_family_passthrough_wrappers_are_excused",
+              "seconds": 0.011,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_provable_dict_receiver_is_auto_classified",
+              "seconds": 13.275,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_self_attr_set_receiver_is_auto_classified",
+              "seconds": 0.009,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_query_one_receiver_is_never_auto_classified",
+              "seconds": 0.007,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: a query_one receiver was auto-classified -- the inference is guessing toward silence\nassert (('tldw_chatbook/timer_census_fixture.py', 'StaticTickWidget._tick', 'label') in {('tldw_chatbook\\\\timer_census_fixture.py', 'StaticTickWidget._tick', 'label'): {'explicit': False, 'lines': {8}, 'roots': {'[set_interval] timer_census_fixture:StaticTickWidget._tick'}}})",
+                  "full_message_sha256": "e067a00b94486ad3e54d890887114e3734ec43539b07ecf9797121699fbc0a21"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_mixed_binding_receiver_is_never_auto_classified",
+              "seconds": 0.007,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_timer_path_static_update_inventory",
+              "name": "test_rebound_self_attr_is_never_auto_classified",
+              "seconds": 0.008,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_no_ungrouped_exclusive_workers",
+              "seconds": 21.542,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: exclusive=True scheduled without an explicit group= lands in the shared \"default\" group, where it cancels every other ungrouped exclusive worker on the same node (cancel_group filters on (node, group) and never on name=). Name the group after the WORK being done, or -- if default-group mutual exclusion really is what the site wants -- add it to DEFAULT_GROUP_ALLOWLIST with the reason:\n  tldw_chatbook\\Third_Party\\textual_fspicker\\parts\\directory_navigation.py:503 (DirectoryNavigation._load): work(exclusive=True) with no group=\n  tldw_chatbook\\UI\\Screens\\chat_screen.py:7695 (ChatScreen._console_environment): run_worker(exclusive=**kwargs) with no group=\n  tldw_chatbook\\UI\\Screens\\watchlists_collections_screen.py:1647 (WatchlistsCollectionsScreen._resolve_daily_report_banner): work(exclusive=True) with no group=\n  tldw_chatbook\\UI\\Widgets\\SmartContentTree.py:192 (SmartContentTree.on_mount): run_worker(exclusive=True) with no group=\n  tldw_chatbook\\UI\\Wizards\\ChatbookImport",
+                  "full_message_sha256": "5234c64773e61c02a13c16f9cee2ae9cd041b8b620d13f09bfe521e12f224199"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_mutation_refreshes_dispatch_through_loader_group",
+              "seconds": 0.499,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: mutation-triggered refreshes must not await raw loaders outside their exclusive loader group. Replace each raw await with exactly one call to the inventoried dispatch helper:\n  tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py::SchedulesWorkbench._request_tasks_refresh._load: await self.load_tasks(...) is forbidden; dispatch through the loader-group refresh helper\n  tldw_chatbook/UI/Screens/watchlists_collections_screen.py::WatchlistsCollectionsScreen._follow_coordinated_briefing: await self._load_briefings(...) is forbidden; dispatch through the loader-group refresh helper\n  tldw_chatbook/UI/Screens/watchlists_collections_screen.py::WatchlistsCollectionsScreen._request_briefings_refresh.refresh: await self._load_briefings(...) is forbidden; dispatch through the loader-group refresh helper\nassert not ['tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py::SchedulesWorkbench._request_tasks_refresh._load: await s...fings_refresh.refresh: await self._load_br",
+                  "full_message_sha256": "ad4b5e232b9f156b30b9965b5b0fd3f720d4c16b1ffafbd4d1eac689a350db39"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_ungrouped_exclusive_decorator_is_flagged",
+              "seconds": 0.015,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_multiline_ungrouped_exclusive_is_flagged",
+              "seconds": 0.013,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_positional_group_is_not_a_violation",
+              "seconds": 0.012,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_name_keyword_does_not_satisfy_the_guard",
+              "seconds": 0.005,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_group_default_does_not_satisfy_the_guard",
+              "seconds": 0.007,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_falsy_group_does_not_satisfy_the_guard",
+              "seconds": 0.006,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_non_literal_group_is_accepted",
+              "seconds": 0.005,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_non_exclusive_worker_needs_no_group",
+              "seconds": 0.006,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_allowlisted_site_is_not_flagged",
+              "seconds": 0.005,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_allowlist_has_no_stale_entries",
+              "seconds": 0.01,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: DEFAULT_GROUP_ALLOWLIST entries that no longer match an ungrouped exclusive worker -- delete them:\n  tldw_chatbook/Third_Party/textual_fspicker/parts/directory_navigation.py::DirectoryNavigation._load\nassert not ['tldw_chatbook/Third_Party/textual_fspicker/parts/directory_navigation.py::DirectoryNavigation._load']",
+                  "full_message_sha256": "1796a31dc4dd83e386fd43beb2517c8d570cd9bef2ffbdf573f1507f5f59255b"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_allowlist_entries_state_a_reason",
+              "seconds": 0.016,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_prefilter_admits_every_flagged_form",
+              "seconds": 0.016,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_prefilter_only_skips_files_with_no_scheduler_token",
+              "seconds": 11.631,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_scan_is_a_single_cached_pass",
+              "seconds": 0.006,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_awaited_mutation_loader_is_flagged",
+              "seconds": 0.005,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_wrapped_awaited_mutation_loaders_are_flagged_once_each",
+              "seconds": 0.004,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_helper_dispatch_and_unrelated_loader_are_clean",
+              "seconds": 0.007,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_missing_or_wrong_refresh_helper_is_flagged",
+              "seconds": 0.005,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_worker_exclusive_group_inventory",
+              "name": "test_duplicate_refresh_helper_is_flagged",
+              "seconds": 3.941,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.Architecture.test_module_size_ratchet",
+              "name": "test_every_module_of_the_guard_size_has_a_row",
+              "seconds": 0.866,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_design_token_governance",
+              "name": "test_all_referenced_ds_tokens_are_defined",
+              "seconds": 21.139,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_design_token_governance",
+              "name": "test_hex_literals_are_ratcheted_outside_token_definitions",
+              "seconds": 29.844,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_component_pattern_governance",
+              "name": "test_python_style_ratchet",
+              "seconds": 116.115,
+              "properties": {},
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-controls01/child-01.xml",
+          "sha256": "0851efa5658833977a47a7a9b51e03af45a389d191dfe644b8cb68b71950fc3e",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_design_token_governance",
+              "name": "test_all_referenced_ds_tokens_are_defined",
+              "seconds": 5.706,
+              "properties": {},
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-controls01/child-02.xml",
+          "sha256": "401e3069dcd00fc5b6e429a81010e801b752d44848823fb4195603f72de5ca0d",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_design_token_governance",
+              "name": "test_hex_literals_are_ratcheted_outside_token_definitions",
+              "seconds": 9.823,
+              "properties": {},
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-controls01/child-03.xml",
+          "sha256": "3d9d50900ab3f6a5ea473263e74f58e695fd03cb1b71b56d5424489e07242d99",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_component_pattern_governance",
+              "name": "test_python_style_ratchet",
+              "seconds": 99.426,
+              "properties": {},
+              "outcomes": []
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 3
+    },
+    {
+      "run": "task2-green01",
+      "exit_code": 0,
+      "reports": [
+        {
+          "entry": "task2/task2-green01/parent.xml",
+          "sha256": "7ca5cf595b488518d82da7f0aa1b60c77deecbe48674da3bb779d3b0d75cadd2",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_refresh_preserves_newer_run_selection",
+              "seconds": 28.499,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_local_refresh_cannot_restore_a_departed_source[server]",
+              "seconds": 26.176,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_local_refresh_cannot_restore_a_departed_source[source-aba]",
+              "seconds": 24.911,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_source_switch_clears_previous_detail[unavailable]",
+              "seconds": 22.687,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_source_switch_clears_previous_detail[empty]",
+              "seconds": 22.499,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_native_refresh_updates_progress_and_retains_current_payload",
+              "seconds": 28.29,
+              "properties": {},
+              "outcomes": []
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_native_refresh_skips_terminal_and_server_selections",
+              "seconds": 29.247,
+              "properties": {},
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-green01/child-01.xml",
+          "sha256": "ef535b83b3772c414b1a506c7108c50ae3b6096c23771e7cc595dd0857886329",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_local_refresh_cannot_restore_a_departed_source[server]",
+              "seconds": 15.414,
+              "properties": {
+                "publication": "{\"before\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: running\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": 2, \"list_owner\": 2574376395232, \"detail_owner\": 2574376397056}, \"departed\": {\"source\": \"server\", \"select\": \"server\", \"selected\": null, \"highlighted\": null, \"detail\": \"No research run selected.\", \"selection_revision\": 3, \"list_owner\": 2574376395232, \"detail_owner\": 2574376397056}, \"current\": {\"source\": \"server\", \"select\": \"server\", \"selected\": null, \"highlighted\": null, \"detail\": \"No research run selected.\", \"selection_revision\": 3, \"list_owner\": 2574376395232, \"detail_owner\": 2574376397056}, \"final\": {\"source\": \"server\", \"select\": \"server\", \"selected\": null, \"highlighted\": null, \"detail\": \"No research run selected.\", \"selection_revision\": 3, \"list_owner\": 2574376395232, \"detail_owner\": 2574376397056}, \"reads\": [{\"id\": \"run-a\", \"mode\": \"local\", \"result_id\": \"run-a\", \"task\": \"set_interval#1\", \"coroutine\": \"Timer._run_timer\"}]}"
+              },
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-green01/child-02.xml",
+          "sha256": "9278076b1db0a5307264869c2bf17d8a5ba992518362348715947b3c91ad0bb8",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_local_refresh_cannot_restore_a_departed_source[source-aba]",
+              "seconds": 13.03,
+              "properties": {
+                "publication": "{\"before\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: running\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": 2, \"list_owner\": 3005509755696, \"detail_owner\": 3005509757520}, \"departed\": {\"source\": \"server\", \"select\": \"server\", \"selected\": null, \"highlighted\": null, \"detail\": \"No research run selected.\", \"selection_revision\": 3, \"list_owner\": 3005509755696, \"detail_owner\": 3005509757520}, \"current\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: paused\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": 6, \"list_owner\": 3005509755696, \"detail_owner\": 3005509757520}, \"final\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: paused\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": 6, \"list_owner\": 3005509755696, \"detail_owner\": 3005509757520}, \"reads\": [{\"id\": \"run-a\", \"mode\": \"local\", \"result_id\": \"run-a\", \"task\": \"set_interval#1\", \"coroutine\": \"Timer._run_timer\"}]}"
+              },
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-green01/child-03.xml",
+          "sha256": "b90cb3ac0355e9316aa075ae6fdd76fc3eebe8996b91f6caecc64ec4520ac476",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_native_refresh_skips_terminal_and_server_selections",
+              "seconds": 12.687,
+              "properties": {
+                "skipped_ticks": "{\"ticks\": [{\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: completed\\nPhase: planning\\nControl: running\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": 2, \"list_owner\": 2166109561456, \"detail_owner\": 2166109563232}, {\"source\": \"server\", \"select\": \"server\", \"selected\": \"server-run\", \"highlighted\": \"research-run-server-run\", \"detail\": \"SERVER DELTA\\nStatus: running\\nPhase: unknown\\nControl: unknown\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": 4, \"list_owner\": 2166109561456, \"detail_owner\": 2166109563232}], \"reads\": []}"
+              },
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-green01/child-04.xml",
+          "sha256": "d243039fea8c9bab47cb49bea82838a7db7f72fe9ff94626997a972fa12224fa",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_native_refresh_updates_progress_and_retains_current_payload",
+              "seconds": 16.069,
+              "properties": {
+                "ordinary_refresh": "{\"state\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: collecting\\nControl: running\\nLatest checkpoint: none\\nProgress: A new SQLite progress\", \"selection_revision\": 2, \"list_owner\": 3083850244912, \"detail_owner\": 3083850246736}, \"reads\": [{\"id\": \"run-a\", \"mode\": \"local\", \"result_id\": \"run-a\", \"task\": \"set_interval#1\", \"coroutine\": \"Timer._run_timer\"}]}"
+              },
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-green01/child-05.xml",
+          "sha256": "d8abe7209526d540a5b0cfdbd9624244f8bb05db8def3f95a2349cd44b45d36c",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_refresh_preserves_newer_run_selection",
+              "seconds": 10.676,
+              "properties": {
+                "publication": "{\"before\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: running\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": 2, \"list_owner\": 1749427922000, \"detail_owner\": 1749427923824}, \"selected\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-b\", \"highlighted\": \"research-run-run-b\", \"detail\": \"LOCAL B BRAVO\\nStatus: draft\\nPhase: planning\\nControl: paused\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": 3, \"list_owner\": 1749427922000, \"detail_owner\": 1749427923824}, \"final\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-b\", \"highlighted\": \"research-run-run-b\", \"detail\": \"LOCAL B BRAVO\\nStatus: draft\\nPhase: planning\\nControl: paused\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": 3, \"list_owner\": 1749427922000, \"detail_owner\": 1749427923824}, \"reads\": [{\"id\": \"run-a\", \"mode\": \"local\", \"result_id\": \"run-a\", \"task\": \"set_interval#1\", \"coroutine\": \"Timer._run_timer\"}]}"
+              },
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-green01/child-06.xml",
+          "sha256": "b951887c29c0e7a4544fe7bb52543af3a09a33ef5ad3cc9cdf70b23cc756b72c",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_source_switch_clears_previous_detail[unavailable]",
+              "seconds": 10.637,
+              "properties": {
+                "empty_projection": "{\"source\": \"server\", \"select\": \"server\", \"selected\": null, \"highlighted\": null, \"detail\": \"No research run selected.\", \"selection_revision\": 3, \"list_owner\": 2947545097152, \"detail_owner\": 2947545098832}"
+              },
+              "outcomes": []
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-green01/child-07.xml",
+          "sha256": "b3bdf32739c448df8c5d05300a38f461812af613eed5c1662ddf888125146300",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_source_switch_clears_previous_detail[empty]",
+              "seconds": 10.949,
+              "properties": {
+                "empty_projection": "{\"source\": \"server\", \"select\": \"server\", \"selected\": null, \"highlighted\": null, \"detail\": \"No research run selected.\", \"selection_revision\": 3, \"list_owner\": 2435785663184, \"detail_owner\": 2435785665008}"
+              },
+              "outcomes": []
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 7
+    },
+    {
+      "run": "task2-red01",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "task2/task2-red01/parent.xml",
+          "sha256": "efedea15f63fe454a64cb8974fa093ed71d102d3e87675b9d18031de4c3524f8",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_refresh_preserves_newer_run_selection",
+              "seconds": 4.696,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "KeyError: 'request'",
+                  "full_message_sha256": "2056d23dc6494f7c313765e2bc366a0de0963211e9fdb446f2a174ab573ddde8"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_local_refresh_cannot_restore_a_departed_source[source-aba]",
+              "seconds": 0.321,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "KeyError: 'request'",
+                  "full_message_sha256": "2056d23dc6494f7c313765e2bc366a0de0963211e9fdb446f2a174ab573ddde8"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_source_switch_clears_previous_detail[unavailable]",
+              "seconds": 0.273,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "KeyError: 'request'",
+                  "full_message_sha256": "2056d23dc6494f7c313765e2bc366a0de0963211e9fdb446f2a174ab573ddde8"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 0
+    },
+    {
+      "run": "task2-red02",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "task2/task2-red02/parent.xml",
+          "sha256": "21d8be1012f8c47eb764325b036cae21e078bd9b5ccd8b3f1d901f5aa0911f8d",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_refresh_preserves_newer_run_selection",
+              "seconds": 59.586,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-e83e599e2dd648d6bbb8a70b3e111952\\pytest\\test_refresh_preserves_newer_r0\\private-profile-process\\pytest.log\n--- child failure: TypeError: ResearchScopeService.get_artifact() takes 1 positional argument but 3 positional arguments (and 1 keyword-only argument) were given\nrequest = <FixtureRequest for <Coroutine test_refresh_preserves_newer_run_selection>>\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-e83e599e2dd648d6bbb8a70b3e111952/pytest/test_refresh_preserves_newer_r0/private-profile-process/pytest/test_refresh_preserves_newer_r0')\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001BD81C05E20>\n\n    @pytest.mark.asyncio\n    @private_profile_test\n    async def test_refresh_preserves_newer_run_selection(request, tmp_path, monkeypatch):\n        \"\"\"An older A tick cannot retarget selected B or attach B payload to A.\"\"\"\n        async with _mounted(tmp_path) as (pilot, window, scope, _loc",
+                  "full_message_sha256": "5b640026b566384061d5cfbf2cb8faa93327e706f8799f9ed0eadb7c80e91306"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_local_refresh_cannot_restore_a_departed_source[source-aba]",
+              "seconds": 59.208,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-e83e599e2dd648d6bbb8a70b3e111952\\pytest\\test_local_refresh_cannot_rest0\\private-profile-process\\pytest.log\n--- child failure: TypeError: ResearchScopeService.get_artifact() takes 1 positional argument but 3 positional arguments (and 1 keyword-only argument) were given\nrequest = <FixtureRequest for <Coroutine test_local_refresh_cannot_restore_a_departed_source[source-aba]>>\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-e83e599e2dd648d6bbb8a70b3e111952/pytest/test_local_refresh_cannot_rest0/private-profile-process/pytest/test_local_refresh_cannot_rest0')\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000024AC05019A0>\nreturn_local = True\n\n    @pytest.mark.asyncio\n    @private_profile_test\n    @pytest.mark.parametrize(\"return_local\", [False, True], ids=[\"server\", \"source-aba\"])\n    async def test_local_refresh_cannot_restore_a_departed_source(\n        request, tmp_path, monkeypatch, ret",
+                  "full_message_sha256": "5c6fb201e001faf659c52a86519d21f05debc987df3c1dd8e8cac78163402f2c"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_source_switch_clears_previous_detail[unavailable]",
+              "seconds": 30.216,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-e83e599e2dd648d6bbb8a70b3e111952\\pytest\\test_source_switch_clears_prev0\\private-profile-process\\pytest.log\n--- child failure: TypeError: ResearchScopeService.get_artifact() takes 1 positional argument but 3 positional arguments (and 1 keyword-only argument) were given\nrequest = <FixtureRequest for <Coroutine test_source_switch_clears_previous_detail[unavailable]>>\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-e83e599e2dd648d6bbb8a70b3e111952/pytest/test_source_switch_clears_prev0/private-profile-process/pytest/test_source_switch_clears_prev0')\navailable = False\n\n    @pytest.mark.asyncio\n    @private_profile_test\n    @pytest.mark.parametrize(\"available\", [False, True], ids=[\"unavailable\", \"empty\"])\n    async def test_source_switch_clears_previous_detail(request, tmp_path, available):\n        \"\"\"Both catalog outcomes paint empty detail, then later valid selection works.\"\"\"\n        async with _moun",
+                  "full_message_sha256": "80b800ea0476f956929303243fe17c41df7800a358034327ae4424f7f70c426f"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-red02/child-01.xml",
+          "sha256": "54876cf02bce3ed1c6fe07944e039617e185666298af07f8aaa9e73883448534",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_local_refresh_cannot_restore_a_departed_source[source-aba]",
+              "seconds": 28.666,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "TypeError: ResearchScopeService.get_artifact() takes 1 positional argument but 3 positional arguments (and 1 keyword-only argument) were given",
+                  "full_message_sha256": "947b8a21d36ace41af2d7fa21e5d1c710302025971cd57583c29d7934c4260b1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-red02/child-02.xml",
+          "sha256": "810edebb7ad6860838530deb30d65dca24295fa82acdca061c3aaeafeb0d814c",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_refresh_preserves_newer_run_selection",
+              "seconds": 24.551,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "TypeError: ResearchScopeService.get_artifact() takes 1 positional argument but 3 positional arguments (and 1 keyword-only argument) were given",
+                  "full_message_sha256": "947b8a21d36ace41af2d7fa21e5d1c710302025971cd57583c29d7934c4260b1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-red02/child-03.xml",
+          "sha256": "e4f8b0fcf13bd9da74739bf295828ffb06f80be07a95957331d535152e769337",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_source_switch_clears_previous_detail[unavailable]",
+              "seconds": 11.661,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "TypeError: ResearchScopeService.get_artifact() takes 1 positional argument but 3 positional arguments (and 1 keyword-only argument) were given",
+                  "full_message_sha256": "947b8a21d36ace41af2d7fa21e5d1c710302025971cd57583c29d7934c4260b1"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 3
+    },
+    {
+      "run": "task2-red03",
+      "exit_code": 1,
+      "reports": [
+        {
+          "entry": "task2/task2-red03/parent.xml",
+          "sha256": "8f94d81a204dd1bf66393f8c0b3ff84ce74288b823dfeafcdd28145cd74e644a",
+          "parent_wrapper": true,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_refresh_preserves_newer_run_selection",
+              "seconds": 35.423,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-9b3788be2510479cb1598b78b19ec194\\pytest\\test_refresh_preserves_newer_r0\\private-profile-process\\pytest.log\n--- child failure: AssertionError: assert 'run-a' == 'run-b'\n  \n  - run-b\n  ?     ^\n  + run-a\n  ?     ^\nrequest = <FixtureRequest for <Coroutine test_refresh_preserves_newer_run_selection>>\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-9b3788be2510479cb1598b78b19ec194/pytest/test_refresh_preserves_newer_r0/private-profile-process/pytest/test_refresh_preserves_newer_r0')\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000025360151DC0>\n\n    @pytest.mark.asyncio\n    @private_profile_test\n    async def test_refresh_preserves_newer_run_selection(request, tmp_path, monkeypatch):\n        \"\"\"An older A tick cannot retarget selected B or attach B payload to A.\"\"\"\n        async with _mounted(tmp_path) as (pilot, window, scope, _local):\n            held = _HeldRead(scope, monkeypatch)\n    ",
+                  "full_message_sha256": "497f07ad1fa08a1e3ab700f8dc85ba78c863c84aa9067ee6c6cfb642bb4b3ef2"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_local_refresh_cannot_restore_a_departed_source[source-aba]",
+              "seconds": 34.762,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-9b3788be2510479cb1598b78b19ec194\\pytest\\test_local_refresh_cannot_rest0\\private-profile-process\\pytest.log\n--- child failure: AssertionError: assert 'running' == 'paused'\n  \n  - paused\n  + running\nrequest = <FixtureRequest for <Coroutine test_local_refresh_cannot_restore_a_departed_source[source-aba]>>\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-9b3788be2510479cb1598b78b19ec194/pytest/test_local_refresh_cannot_rest0/private-profile-process/pytest/test_local_refresh_cannot_rest0')\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000019BEE256540>\nreturn_local = True\n\n    @pytest.mark.asyncio\n    @private_profile_test\n    @pytest.mark.parametrize(\"return_local\", [False, True], ids=[\"server\", \"source-aba\"])\n    async def test_local_refresh_cannot_restore_a_departed_source(\n        request, tmp_path, monkeypatch, return_local\n    ):\n        \"\"\"A Local tick loses authority on departure, i",
+                  "full_message_sha256": "bee4dc608638c7bef406f3232bc5e020900c0969d83b583717c4852631796df9"
+                }
+              ]
+            },
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_source_switch_clears_previous_detail[unavailable]",
+              "seconds": 18.684,
+              "properties": {},
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "Failed: C:\\Users\\GDesktop-1\\AppData\\Local\\codex-textual-test-9b3788be2510479cb1598b78b19ec194\\pytest\\test_source_switch_clears_prev0\\private-profile-process\\pytest.log\n--- child failure: AssertionError: assert 'LOCAL B BRAV...Progress: n/a' == 'No research run selected.'\n  \n  - No research run selected.\n  + LOCAL B BRAVO\n  + Status: draft\n  + Phase: planning\n  + Control: paused\n  + Latest checkpoint: none\n  + Progress: n/a\nrequest = <FixtureRequest for <Coroutine test_source_switch_clears_previous_detail[unavailable]>>\ntmp_path = WindowsPath('C:/Users/GDesktop-1/AppData/Local/codex-textual-test-9b3788be2510479cb1598b78b19ec194/pytest/test_source_switch_clears_prev0/private-profile-process/pytest/test_source_switch_clears_prev0')\navailable = False\n\n    @pytest.mark.asyncio\n    @private_profile_test\n    @pytest.mark.parametrize(\"available\", [False, True], ids=[\"unavailable\", \"empty\"])\n    async def test_source_switch_clears_previous_detail(request, tmp_path, available):\n        \"\"\"Both c",
+                  "full_message_sha256": "f0faef205d33d6c0d579f06d5a3cdab880b57b9b20d4c98df18fbae6501bd6b7"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-red03/child-01.xml",
+          "sha256": "ecf7e3c0cdde0a6a903f26f042baf4e5523778aaac57e371486358f928f53940",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_local_refresh_cannot_restore_a_departed_source[source-aba]",
+              "seconds": 14.592,
+              "properties": {
+                "publication": "{\"before\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: running\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": null, \"list_owner\": 1769320424960, \"detail_owner\": 1769320426784}, \"departed\": {\"source\": \"server\", \"select\": \"server\", \"selected\": null, \"highlighted\": null, \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: running\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": null, \"list_owner\": 1769320424960, \"detail_owner\": 1769320426784}, \"current\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: paused\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": null, \"list_owner\": 1769320424960, \"detail_owner\": 1769320426784}, \"final\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: running\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": null, \"list_owner\": 1769320424960, \"detail_owner\": 1769320426784}, \"reads\": [{\"id\": \"run-a\", \"mode\": \"local\", \"result_id\": \"run-a\", \"task\": \"set_interval#1\", \"coroutine\": \"Timer._run_timer\"}]}"
+              },
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: assert 'running' == 'paused'\n  \n  - paused\n  + running",
+                  "full_message_sha256": "c6952b32165487d7ae9e081baa36f2f71b0a98e9b7f1313ba7b60f89cd84cb75"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-red03/child-02.xml",
+          "sha256": "d1081ff01c3dc31f2516bbdece002c412a8b5012ae850853c26b33b1331cfca5",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_refresh_preserves_newer_run_selection",
+              "seconds": 14.527,
+              "properties": {
+                "publication": "{\"before\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-a\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: running\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": null, \"list_owner\": 2557210960448, \"detail_owner\": 2557210962272}, \"selected\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-b\", \"highlighted\": \"research-run-run-b\", \"detail\": \"LOCAL B BRAVO\\nStatus: draft\\nPhase: planning\\nControl: paused\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": null, \"list_owner\": 2557210960448, \"detail_owner\": 2557210962272}, \"final\": {\"source\": \"local\", \"select\": \"local\", \"selected\": \"run-a\", \"highlighted\": \"research-run-run-b\", \"detail\": \"LOCAL A ALPHA\\nStatus: running\\nPhase: planning\\nControl: running\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": null, \"list_owner\": 2557210960448, \"detail_owner\": 2557210962272}, \"reads\": [{\"id\": \"run-a\", \"mode\": \"local\", \"result_id\": \"run-a\", \"task\": \"set_interval#1\", \"coroutine\": \"Timer._run_timer\"}]}"
+              },
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: assert 'run-a' == 'run-b'\n  \n  - run-b\n  ?     ^\n  + run-a\n  ?     ^",
+                  "full_message_sha256": "437c2ae0af80b3c33a3e107a35fbbbe00bc63ca282cfbefb3948195447b6f56d"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "entry": "task2/task2-red03/child-03.xml",
+          "sha256": "e80b5c17b5a155e73d620675dce890f78879015b14711d559f835b7d83b31cb0",
+          "parent_wrapper": false,
+          "cases": [
+            {
+              "classname": "Tests.UI.test_research_run_refresh_publication",
+              "name": "test_source_switch_clears_previous_detail[unavailable]",
+              "seconds": 8.028,
+              "properties": {
+                "empty_projection": "{\"source\": \"server\", \"select\": \"server\", \"selected\": null, \"highlighted\": null, \"detail\": \"LOCAL B BRAVO\\nStatus: draft\\nPhase: planning\\nControl: paused\\nLatest checkpoint: none\\nProgress: n/a\", \"selection_revision\": null, \"list_owner\": 2370300568128, \"detail_owner\": 2370300569952}"
+              },
+              "outcomes": [
+                {
+                  "kind": "failure",
+                  "message_excerpt": "AssertionError: assert 'LOCAL B BRAV...Progress: n/a' == 'No research run selected.'\n  \n  - No research run selected.\n  + LOCAL B BRAVO\n  + Status: draft\n  + Phase: planning\n  + Control: paused\n  + Latest checkpoint: none\n  + Progress: n/a",
+                  "full_message_sha256": "f1526325d971d1a2ae1afaf45b55276ce8ba5b2fbb25ddff0b8d1e90102d7c42"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "actual_child_cases": 3
+    }
+  ],
+  "qualification": "Actual children are separate from parent wrappers. RED01/02 are invalid timer evidence; RED03 is intended. GREEN has seven actual child passes. Controls remain46pass/8fail; baseline comparison proves no new Research obligation, not a green static suite. Message excerpts are limited to1000characters; raw XML is complete in archive. Payload fixture is real scope data, not successful artifact-action proof (TASK-37330). Raw .log files remain private."
+}

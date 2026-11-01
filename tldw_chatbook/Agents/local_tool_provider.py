@@ -522,6 +522,7 @@ class LocalToolSpec:
     #: question is two interruptions for one. Anything that touches data,
     #: disk, or network must leave this False.
     gate_exempt: bool = False
+    operation: str | None = None
 
     def __post_init__(self) -> None:
         """Fail closed when descriptor policy is missing or not code-owned."""
@@ -1382,15 +1383,9 @@ class LocalToolProvider:
         *,
         write: bool,
     ) -> bool:
-        """Fail closed while revalidating legacy or run-admitted authority."""
-        if authority is None:
-            return self._root_is_valid()
-        if write and not authority.allow_write:
-            return False
-        try:
-            return bool(authority.guard(write))
-        except Exception:  # noqa: BLE001 - invocation must fail closed
-            return False
+        from tldw_chatbook.Agents.local_tool_authority import authority_is_valid
+
+        return authority_is_valid(self, authority, write=write)
 
     # -- catalog ------------------------------------------------------
 
@@ -1442,6 +1437,10 @@ class LocalToolProvider:
             )
             for s in self._specs.values()
         ]
+
+    def hook_operation(self, tool_id: str) -> str | None:
+        spec = self._specs.get(tool_id.removeprefix("local:"))
+        return spec.operation if spec is not None else None
 
     def load_schema(self, tool_id: str) -> ToolSchema:
         """Load one tool's full schema by catalog id or bare name.
@@ -2341,6 +2340,15 @@ class LocalToolProvider:
         return gate, False
 
     # -- invocation -----------------------------------------------------
+
+    def authorize_review_source(
+        self, name: str, args: dict, *, expected_binding_id: str
+    ) -> str | None:
+        from tldw_chatbook.Agents.local_tool_authority import authorize_review_source
+
+        return authorize_review_source(
+            self, name, args, expected_binding_id=expected_binding_id
+        )
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         """Execute one tool call through the compatible result-only seam."""
@@ -3598,23 +3606,9 @@ class LocalToolProvider:
             return False
 
     def _kill_switch_engaged(self) -> bool:
-        """Never-raise kill-switch read.
+        from tldw_chatbook.Agents.local_tool_authority import kill_switch_engaged
 
-        The fail-open/fail-closed POLICY for store read errors lives in the
-        injected callable, not here: the controller's composition closure
-        swallows `get_kill_switch` errors and returns False (fail open --
-        deliberate MCPToolProvider._kill_switch_engaged parity), so in
-        production this guard never sees a raise. What remains here is
-        only the protocol boundary: if the injected callable ITSELF
-        propagates (a test double, or a future composition without its own
-        guard), invoke() still cannot raise, and that case fails closed
-        (treated as engaged).
-        """
-        try:
-            return bool(self._kill_switch())
-        except Exception as exc:  # noqa: BLE001 — invoke() must never raise
-            logger.warning(f"LocalToolProvider: kill_switch read failed: {exc}")
-            return True
+        return kill_switch_engaged(self)
 
     def _verdict_for(self, name: str, args: dict, run_id: str) -> _LocalGateDecision:
         """Resolve this call's gate decision: only "allow" executes.
@@ -4290,6 +4284,7 @@ def _default_specs(
     specs = [
         LocalToolSpec(
             name="fs_list",
+            operation="directory.list",
             description="List a directory's entries (dirs first, then files), relative to the workspace root.",
             parameters={
                 "type": "object",
@@ -4310,6 +4305,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_read",
+            operation="file.read",
             description="Read a text file with 1-based line numbers; pages via offset/limit. Refuses binary files.",
             parameters={
                 "type": "object",
@@ -4339,6 +4335,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_write",
+            operation="file.write",
             description=(
                 "Create or overwrite a file with full content, relative to the "
                 "workspace root. dry_run previews exact state and a bounded diff. "
@@ -4460,6 +4457,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_edit",
+            operation="file.edit",
             description="Replace an exact string in a file. Fails unless the match is unique, unless replace_all is true.",
             parameters={
                 "type": "object",
@@ -4493,6 +4491,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_patch",
+            operation="file.edit",
             description=(
                 "Apply a unified diff to one or more workspace files. The diff "
                 "argument must be standard unified-diff text (---/+++ headers, "
@@ -4529,6 +4528,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_glob",
+            operation="file.search",
             description="Match files under the workspace with a glob pattern, newest-mtime first, workspace-relative paths.",
             parameters={
                 "type": "object",
@@ -4554,6 +4554,7 @@ def _default_specs(
         ),
         LocalToolSpec(
             name="fs_grep",
+            operation="file.search",
             description="Regex search under the workspace: matching lines (default), file names, or per-file match counts.",
             parameters={
                 "type": "object",

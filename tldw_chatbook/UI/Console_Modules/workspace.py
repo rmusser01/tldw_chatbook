@@ -22,8 +22,8 @@ import inspect
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from contextlib import contextmanager, nullcontext
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import partial
@@ -106,6 +106,7 @@ from ...Workspaces import (
 )
 from ...Workspaces.conversation_browser_state import (
     console_conversation_status_detail,
+    console_conversation_title_matches_query,
     format_console_relative_age,
 )
 from ...Workspaces.display_state import (
@@ -933,6 +934,8 @@ class ConsoleWorkspaceController:
         self._console_appearance_map_cached_at: float = 0.0
         #: TASK-33620.15.4: (map, ids an off-loop re-read of it found absent).
         self._console_appearance_map_absent: tuple[dict, frozenset[str]] | None = None
+        self._console_appearance_map_service: Any = None
+        self._console_appearance_map_queried_ids: set[str] = set()
         self._character_conversation_activation_coordinator = None
 
     @property
@@ -2628,7 +2631,7 @@ class ConsoleWorkspaceController:
             self._console_conversation_browser_search_timer.stop()
             self._console_conversation_browser_search_timer = None
         self._console_conversation_browser_rows = (
-            self._filter_console_browser_rows_for_query(
+            self._filter_flat_browser_rows_by_title(
                 self._console_conversation_browser_rows,
                 query,
             )
@@ -2731,7 +2734,7 @@ class ConsoleWorkspaceController:
             self.call_after_refresh(self._focus_console_workspace_conversation_search)
             return
         self._console_conversation_browser_rows = (
-            self._filter_console_browser_rows_for_query(
+            self._filter_flat_browser_rows_by_title(
                 self._merge_console_browser_rows(
                     self._native_console_browser_rows(),
                     *self._workspace_membership_rows.values(),
@@ -2792,6 +2795,15 @@ class ConsoleWorkspaceController:
             row
             for row in row_tuple
             if self._console_browser_row_matches_query(row, normalized_query)
+        )
+
+    @staticmethod
+    def _filter_flat_browser_rows_by_title(
+        rows: Iterable[ConsoleConversationBrowserInputRow], query: str
+    ) -> tuple[ConsoleConversationBrowserInputRow, ...]:
+        """TASK-33622.6: the Conversations filter keeps title matches only."""
+        return tuple(
+            row for row in rows if console_conversation_title_matches_query(row.title, query)
         )
 
     def _find_console_browser_row(
@@ -3181,13 +3193,16 @@ class ConsoleWorkspaceController:
         cache_at = getattr(self, "_console_appearance_map_cached_at", 0.0)
         cached_map = getattr(self, "_console_appearance_map_cache", None)
         now = time.monotonic()
-        if (
-            cached_map is not None
+        same_service = getattr(self, "_console_appearance_map_service", None) is service
+        current = (
+            same_service
+            and cached_map is not None
             and now - cache_at < CONSOLE_APPEARANCE_MAP_CACHE_TTL_SECONDS
-            and wanted <= set(cached_map)
-        ):
+        )
+        queried_ids = getattr(self, "_console_appearance_map_queried_ids", set())
+        if current and wanted <= queried_ids:
             return cached_map
-        if cached_map is not None and self._stale_display_reads_on:
+        if same_service and cached_map is not None and self._stale_display_reads_on:
             # An id the last re-read found absent (unknown or soft-deleted)
             # is not re-requested while the map is fresh, or every tick's
             # build would start another read (TASK-33620.15.4 review).
@@ -3207,8 +3222,10 @@ class ConsoleWorkspaceController:
             logger.opt(exception=True).debug(
                 "Unable to read Console conversation appearances"
             )
-            return cached_map if cached_map is not None else {}
-        merged_map = dict(cached_map or {})
+            return cached_map if same_service and cached_map is not None else {}
+        merged_map = dict(cached_map or {}) if same_service else {}
+        for conversation_id in wanted:
+            merged_map.pop(conversation_id, None)
         merged_map.update(
             {
                 str(conversation_id): (
@@ -3220,6 +3237,10 @@ class ConsoleWorkspaceController:
         )
         self._console_appearance_map_cache = merged_map
         self._console_appearance_map_cached_at = now
+        self._console_appearance_map_service = service
+        # Unknown/deleted conversations are omitted by the service. Remember
+        # their display read too, without inventing an appearance for the row.
+        self._console_appearance_map_queried_ids = wanted
         return merged_map
 
     @staticmethod
@@ -3904,6 +3925,10 @@ class ConsoleWorkspaceController:
             ("global", None),
             ("workspace", DEFAULT_WORKSPACE_ID),
         )
+        # TASK-33622.6: the flat lane's filter counts and pages titles only.
+        title_only_kwargs = (
+            {"title_only": True} if scopes is None and str(query or "").strip() else {}
+        )
         last_error = ""
         for service, include_mode in services:
             stock_read = None
@@ -3937,6 +3962,7 @@ class ConsoleWorkspaceController:
                         "workspace_id": workspace_id,
                         "limit": CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
                         "offset": max(0, int(offset)), "character_scope": "generic",
+                        **title_only_kwargs,
                     }
                     for scope_type, workspace_id in query_scopes
                 )
@@ -3955,6 +3981,7 @@ class ConsoleWorkspaceController:
                     # TASK-32309 (review finding 1): flat-lane ownership is a
                     # query filter, not a post-fetch removal.
                     "character_scope": "generic",
+                    **title_only_kwargs,
                 }
                 if include_mode:
                     list_kwargs["mode"] = "local"
@@ -4410,7 +4437,7 @@ class ConsoleWorkspaceController:
 
         local_rows = tuple(
             row
-            for row in self._filter_console_browser_rows_for_query(
+            for row in self._filter_flat_browser_rows_by_title(
                 self._merge_console_browser_rows(
                     self._native_console_browser_rows(),
                     *self._workspace_membership_rows.values(),
@@ -4997,6 +5024,7 @@ class ConsoleWorkspaceController:
         registry = getattr(self.app_instance, "workspace_registry_service", None)
         if registry is None:
             return
+        selected_record: WorkspaceRecord | None = None
         request = object()
         self._console_workspace_restore_request = request
 
@@ -5018,13 +5046,18 @@ class ConsoleWorkspaceController:
             self._open_console_workspace_switcher(show_archived=True)
 
         async def _restore(name: str | None = None) -> None:
-            if not _current():
+            if not _current() or selected_record is None:
                 return
 
             async def _complete_restore() -> None:
                 try:
                     restored = await storage_call(
-                        registry, "unarchive_workspace", workspace_id, name=name
+                        registry,
+                        "unarchive_workspace",
+                        workspace_id,
+                        name=name,
+                        expected_archive_revision=selected_record.archive_revision,
+                        expected_name=selected_record.name,
                     )
                 except WorkspaceRegistryServiceError as exc:
                     _failed(exc)
@@ -5065,6 +5098,7 @@ class ConsoleWorkspaceController:
                 )
 
         async def _prepare() -> None:
+            nonlocal selected_record
             try:
                 record = await storage_call(registry, "get_workspace", workspace_id)
             except WorkspaceRegistryServiceError as exc:
@@ -5084,6 +5118,7 @@ class ConsoleWorkspaceController:
                     "Workspace is no longer archived.", severity="warning"
                 )
                 return
+            selected_record = record
             if rename:
                 self.push_screen(
                     ConsoleWorkspaceRenameModal(
@@ -5218,7 +5253,10 @@ class ConsoleWorkspaceController:
                 nonlocal archived_record
                 try:
                     archived_record = await storage_call(
-                        registry_service, "archive_workspace", workspace_id
+                        registry_service,
+                        "archive_workspace",
+                        workspace_id,
+                        expected_archive_revision=record.archive_revision,
                     )
                 except WorkspaceRegistryServiceError as exc:
                     _failed(str(exc))
@@ -5805,6 +5843,123 @@ class ConsoleWorkspaceController:
         # previous session was temporary.
         self._sync_console_temporary_chip()
 
+    @asynccontextmanager
+    async def prepare_console_workspace_reconciliation(self) -> AsyncIterator[None]:
+        """Prepare one original registry read for the immediately resumed stack.
+
+        This is neither display evidence nor a reusable workspace cache. The
+        original reader retains live storage admission and its finite native
+        scope; reconciliation and all subsequent resume effects stay on-loop.
+        Custom and in-memory readers retain their original synchronous route.
+        """
+        from ...Backup_Recovery.participants import _core_operation
+        from ...Chat.console_preparation_reads import run_preparation_read
+
+        app = self.app_instance
+        registry = getattr(app, "workspace_registry_service", None)
+        database = getattr(registry, "db", None)
+        if not (
+            type(registry) is LocalWorkspaceRegistryService
+            and type(database) is WorkspaceDB
+            and not database.is_memory_db
+            and _availability_methods_current(self, _WORKSPACE_RECONCILIATION_METHODS)
+            and _availability_methods_current(
+                registry, _WORKSPACE_RECONCILIATION_REGISTRY_METHODS
+            )
+            and _availability_methods_current(
+                database, _WORKSPACE_RECONCILIATION_DATABASE_METHODS
+            )
+        ):
+            yield
+            return
+
+        reader = registry.get_active_workspace
+        database_path = database.db_path
+        generation = registry.mutation_generation
+        runtime = self._workspace_availability_runtime()
+        lifecycle = self._screen_lifecycle_token()
+        store = self._console_chat_store
+        session_id = None if store is None else store.active_session_id
+        session = None
+        if session_id is not None:
+            try:
+                session = store.ensure_session()
+            except KeyError:
+                pass  # The original reconciler repairs stale active identities.
+        workspace_id = None if session is None else session.workspace_id
+
+        def source_current():
+            # Worker checks inspect captured sources only, never UI callbacks.
+            if (
+                registry.db is not database
+                or database.db_path != database_path
+                or registry.mutation_generation != generation
+                or not _availability_methods_current(
+                    registry, _WORKSPACE_RECONCILIATION_REGISTRY_METHODS
+                )
+                or not _availability_methods_current(
+                    database, _WORKSPACE_RECONCILIATION_DATABASE_METHODS
+                )
+                or (runtime is not None and runtime._disposed)
+            ):
+                raise _WorkspaceAvailabilityObsolete(
+                    "workspace_reconciliation_source_changed"
+                )
+
+        def view_current():
+            source_current()
+            if (
+                self.app_instance is not app
+                or getattr(app, "workspace_registry_service", None) is not registry
+                or self._workspace_availability_runtime() is not runtime
+                or self._screen_lifecycle_token() != lifecycle
+                or not self._screen_running_accessor()
+                or self._console_chat_store is not store
+                or (store is not None and store.active_session_id != session_id)
+                or (
+                    session is not None
+                    and (
+                        store.ensure_session() is not session
+                        or session.workspace_id != workspace_id
+                    )
+                )
+                or not _availability_methods_current(
+                    self, _WORKSPACE_RECONCILIATION_METHODS
+                )
+            ):
+                raise _WorkspaceAvailabilityObsolete(
+                    "workspace_reconciliation_view_changed"
+                )
+
+        def read():
+            with operation_owned_connection(database), _core_operation(database):
+                source_current()
+                return reader()
+
+        view_current()
+        try:
+            active = await run_preparation_read(
+                read,
+                creator=self,
+                session_id=session_id,
+                reads=self._preparation_reads,
+                observers=() if runtime is None else (runtime._preparation_reads,),
+                require_current=source_current,
+            )
+        except _WorkspaceAvailabilityObsolete:
+            raise  # Existing attach reconciliation owns the bounded retry.
+        except Exception:
+            logger.debug(
+                "Unable to read active workspace during Console resume reconcile"
+            )
+            active = None  # Preserve the original optional-read failure policy.
+        view_current()
+        self._prepared_workspace_reconciliation = (view_current, active)
+        try:
+            yield
+        finally:
+            self.__dict__.pop("_prepared_workspace_reconciliation", None)
+
     def _reconcile_console_session_with_registry(self) -> None:
         """Align the Console session with the registry's active workspace.
 
@@ -5861,10 +6016,17 @@ class ConsoleWorkspaceController:
         )
         if registry_service is None:
             return
+        prepared = self.__dict__.pop("_prepared_workspace_reconciliation", None)
         try:
-            active = registry_service.get_active_workspace()
+            if prepared is None:
+                active = registry_service.get_active_workspace()
+            else:
+                current, active = prepared
+                current()
+        except _WorkspaceAvailabilityObsolete:
+            raise
         except Exception:
-            logger.opt(exception=True).debug(
+            logger.debug(
                 "Unable to read active workspace during Console resume reconcile"
             )
             return
@@ -6594,201 +6756,204 @@ class ConsoleWorkspaceController:
         target = str(conversation_id or "").strip()
         if not target:
             return None
-        store = self._ensure_console_chat_store()
-        prior_active_session_id = store.active_session_id
-        visit = (
-            await self._begin_manual_read_visit("", target)
-            if self._begin_manual_read_visit
-            else None
-        )
-        # TASK-339: keystrokes typed while the conversation tree loads
-        # belong to the resumed session — snapshot the composer now.
-        self._capture_console_draft_switch_snapshot()
-        # task-15860 Task 6: the tree load and the session build moved to
-        # `Chat/console_conversation_hydration.py` -- the launch wake has to
-        # hydrate a conversation with no screen in existence, and one policy
-        # beats two. Everything BELOW the hydration call is this screen's own
-        # work (marker overlay, scope warm, repaint, focus) and stays here;
-        # so do both failure toasts, because the UX
-        # for each failure is a view concern.
-        try:
-            tree = await load_console_conversation_tree(self.app_instance, target)
-        except ConversationServiceUnavailable:
-            await self._restore_console_session_after_failed_open(
-                store, prior_active_session_id
+        # Every resume caller (rail, Library and switcher) shares this window,
+        # including awaits before the conversation tree itself is loaded.
+        with self._screen._session.conversation_activation_window():
+            store = self._ensure_console_chat_store()
+            prior_active_session_id = store.active_session_id
+            visit = (
+                await self._begin_manual_read_visit("", target)
+                if self._begin_manual_read_visit
+                else None
             )
-            self.app_instance.notify(
-                "Saved conversation resume is unavailable in this build.",
-                severity="warning",
-            )
-            return None
-        except ConversationLoadFailed:
-            logger.exception(
-                f"Unable to resume Console saved conversation: conversation_id={target}"
-            )
-            await self._restore_console_session_after_failed_open(
-                store, prior_active_session_id
-            )
-            self.app_instance.notify(
-                CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
-                severity="error",
-                timeout=15,
-            )
-            return None
-
-        if resume_if is not None and not resume_if():
-            return None
-
-        if tree is None:
-            # TASK-717: missing record - the caller owns this failure's UX
-            # (honest toast + marking the row visibly broken), so do not
-            # stack a second notification here.
-            await self._restore_console_session_after_failed_open(
-                store, prior_active_session_id
-            )
-            return False
-
-        if reuse_existing or preserve_persisted_scope:
-            matches = [
-                session
-                for session in store.sessions()
-                if str(session.persisted_conversation_id or "") == target
-            ]
-            if matches:
-                session = next(
-                    (item for item in matches if item.id == store.active_session_id),
-                    matches[0],
+            # TASK-339: keystrokes typed while the conversation tree loads
+            # belong to the resumed session — snapshot the composer now.
+            self._capture_console_draft_switch_snapshot()
+            # task-15860 Task 6: the tree load and the session build moved to
+            # `Chat/console_conversation_hydration.py` -- the launch wake has to
+            # hydrate a conversation with no screen in existence, and one policy
+            # beats two. Everything BELOW the hydration call is this screen's own
+            # work (marker overlay, scope warm, repaint, focus) and stays here;
+            # so do both failure toasts, because the UX
+            # for each failure is a view concern.
+            try:
+                tree = await load_console_conversation_tree(self.app_instance, target)
+            except ConversationServiceUnavailable:
+                await self._restore_console_session_after_failed_open(
+                    store, prior_active_session_id
                 )
-                return await self.open_console_workspace_conversation(
-                    f"native:{session.id}", resume_if=resume_if
-                )
-
-        conversation = tree.get("conversation")
-        if not isinstance(conversation, dict):
-            conversation = {}
-        if preserve_persisted_scope:
-            target_workspace_id = conversation.get("workspace_id") or None
-            target_scope_type = "workspace" if target_workspace_id else "global"
-        session = None
-        hydration = self._console_session_settings_for_resume(conversation)
-        if not isinstance(hydration, ConsoleGenerationSettingsHydration):
-            raise TypeError(
-                "Console resume settings must be ConsoleGenerationSettingsHydration"
-            )
-        try:
-            session = await hydrate_console_session(
-                app=self.app_instance,
-                store=store,
-                conversation_id=target,
-                tree=tree,
-                settings=hydration.settings,
-                generation_durable_snapshot=hydration.durable_snapshot,
-                generation_metadata_status=hydration.metadata_status,
-                target_scope_type=target_scope_type,
-                target_workspace_id=target_workspace_id,
-                activate=False,
-            )
-            # Re-derive display-only agent TOOL markers from AgentRunsDB and
-            # overlay them onto the restored active-path view.
-            store.apply_resume_marker_overlay(
-                session.id,
-                self._inject_resume_agent_markers(
-                    store.messages_for_session(session.id), target
-                ),
-            )
-            # Live identity re-resolution on resume (task-32481, ADR-149):
-            # refresh the display name from the live card/profile. Dev's
-            # hydration already set the label from the persisted snapshot,
-            # which stays as the fallback when live resolution fails.
-            if (
-                session.runtime_backend == "local"
-                and session.assistant_kind == "character"
-                and session.character_id is not None
-            ):
-                resolved_character_name = await self._resolve_resumed_character_name(
-                    session.character_id
-                )
-                if resolved_character_name:
-                    session.character_name = resolved_character_name
-                    if session.settings is not None:
-                        session.settings = replace(
-                            session.settings,
-                            character_label=resolved_character_name,
-                        )
-            elif session.assistant_kind == "persona" and session.assistant_id:
-                # Persona sessions carry no local projection; the display name
-                # is re-resolved from the live profile on every resume
-                # (ADR-149), for local and server backends alike.
-                persona_name = await self._resolve_resumed_persona_name(
-                    session.assistant_id, session.runtime_backend
-                )
-                session.assistant_name = persona_name or None
-                if persona_name:
-                    # One-name invariant: a persona session never shows a
-                    # stale character label.
-                    session.character_name = None
-                if session.settings is not None:
-                    session.settings = replace(session.settings, character_label="")
-            elif session.settings is not None:
-                session.settings = replace(session.settings, character_label="")
-            # Warm the effective conversation/workspace scope before the final
-            # activation commit so any failure leaves the prior session active.
-            await self._resolve_console_effective_scope_state(session)
-            from .conversation_token_preparation import prepare_conversation_tokens
-
-            await prepare_conversation_tokens(self._screen, store, session.id)
-            if resume_if is not None and not resume_if():
-                store.rollback_restored_session(
-                    session.id,
-                    expected_session=session,
-                    prior_active_session_id=prior_active_session_id,
+                self.app_instance.notify(
+                    "Saved conversation resume is unavailable in this build.",
+                    severity="warning",
                 )
                 return None
-            store.switch_session(session.id)
-            self._bind_composer_after_switch()
-            self._set_active_workspace_for_console_session(session.id)
-            self._sync_console_retrieval_scope_row()
-            self._console_agent_drilldown_run_id = None
-            self._note_console_follow_intent()
-            self._sync_console_chat_core_state()
-            await self._sync_native_console_chat_ui()
-            await self._refresh_console_conversation_browser_after_selection()
-            self._focus_console_composer_if_needed(force=True)
-            if callable(self._wake_retry_poke_fn):
-                self._wake_retry_poke_fn()
-        except asyncio.CancelledError:
-            if session is not None:
-                store.rollback_restored_session(
-                    session.id,
-                    expected_session=session,
-                    prior_active_session_id=prior_active_session_id,
+            except ConversationLoadFailed:
+                logger.exception(
+                    f"Unable to resume Console saved conversation: conversation_id={target}"
                 )
-            await self._restore_console_session_after_failed_open(
-                store, prior_active_session_id
-            )
-            raise
-        except Exception:
-            logger.opt(exception=True).warning(
-                "Unable to present Console saved conversation"
-            )
-            if session is not None:
-                store.rollback_restored_session(
-                    session.id,
-                    expected_session=session,
-                    prior_active_session_id=prior_active_session_id,
+                await self._restore_console_session_after_failed_open(
+                    store, prior_active_session_id
                 )
-            await self._restore_console_session_after_failed_open(
-                store, prior_active_session_id
-            )
-            self.app_instance.notify(
-                CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
-                severity="error",
-                timeout=15,
-            )
-            return None
-        if self._complete_manual_read_visit:
-            self._complete_manual_read_visit(visit, session.id)
-        return True
+                self.app_instance.notify(
+                    CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
+                    severity="error",
+                    timeout=15,
+                )
+                return None
+
+            if resume_if is not None and not resume_if():
+                return None
+
+            if tree is None:
+                # TASK-717: missing record - the caller owns this failure's UX
+                # (honest toast + marking the row visibly broken), so do not
+                # stack a second notification here.
+                await self._restore_console_session_after_failed_open(
+                    store, prior_active_session_id
+                )
+                return False
+
+            if reuse_existing or preserve_persisted_scope:
+                matches = [
+                    session
+                    for session in store.sessions()
+                    if str(session.persisted_conversation_id or "") == target
+                ]
+                if matches:
+                    session = next(
+                        (item for item in matches if item.id == store.active_session_id),
+                        matches[0],
+                    )
+                    return await self.open_console_workspace_conversation(
+                        f"native:{session.id}", resume_if=resume_if
+                    )
+
+            conversation = tree.get("conversation")
+            if not isinstance(conversation, dict):
+                conversation = {}
+            if preserve_persisted_scope:
+                target_workspace_id = conversation.get("workspace_id") or None
+                target_scope_type = "workspace" if target_workspace_id else "global"
+            session = None
+            hydration = self._console_session_settings_for_resume(conversation)
+            if not isinstance(hydration, ConsoleGenerationSettingsHydration):
+                raise TypeError(
+                    "Console resume settings must be ConsoleGenerationSettingsHydration"
+                )
+            try:
+                session = await hydrate_console_session(
+                    app=self.app_instance,
+                    store=store,
+                    conversation_id=target,
+                    tree=tree,
+                    settings=hydration.settings,
+                    generation_durable_snapshot=hydration.durable_snapshot,
+                    generation_metadata_status=hydration.metadata_status,
+                    target_scope_type=target_scope_type,
+                    target_workspace_id=target_workspace_id,
+                    activate=False,
+                )
+                # Re-derive display-only agent TOOL markers from AgentRunsDB and
+                # overlay them onto the restored active-path view.
+                store.apply_resume_marker_overlay(
+                    session.id,
+                    self._inject_resume_agent_markers(
+                        store.messages_for_session(session.id), target
+                    ),
+                )
+                # Live identity re-resolution on resume (task-32481, ADR-149):
+                # refresh the display name from the live card/profile. Dev's
+                # hydration already set the label from the persisted snapshot,
+                # which stays as the fallback when live resolution fails.
+                if (
+                    session.runtime_backend == "local"
+                    and session.assistant_kind == "character"
+                    and session.character_id is not None
+                ):
+                    resolved_character_name = await self._resolve_resumed_character_name(
+                        session.character_id
+                    )
+                    if resolved_character_name:
+                        session.character_name = resolved_character_name
+                        if session.settings is not None:
+                            session.settings = replace(
+                                session.settings,
+                                character_label=resolved_character_name,
+                            )
+                elif session.assistant_kind == "persona" and session.assistant_id:
+                    # Persona sessions carry no local projection; the display name
+                    # is re-resolved from the live profile on every resume
+                    # (ADR-149), for local and server backends alike.
+                    persona_name = await self._resolve_resumed_persona_name(
+                        session.assistant_id, session.runtime_backend
+                    )
+                    session.assistant_name = persona_name or None
+                    if persona_name:
+                        # One-name invariant: a persona session never shows a
+                        # stale character label.
+                        session.character_name = None
+                    if session.settings is not None:
+                        session.settings = replace(session.settings, character_label="")
+                elif session.settings is not None:
+                    session.settings = replace(session.settings, character_label="")
+                # Warm the effective conversation/workspace scope before the final
+                # activation commit so any failure leaves the prior session active.
+                await self._resolve_console_effective_scope_state(session)
+                from .conversation_token_preparation import prepare_conversation_tokens
+
+                await prepare_conversation_tokens(self._screen, store, session.id)
+                if resume_if is not None and not resume_if():
+                    store.rollback_restored_session(
+                        session.id,
+                        expected_session=session,
+                        prior_active_session_id=prior_active_session_id,
+                    )
+                    return None
+                store.switch_session(session.id)
+                self._bind_composer_after_switch()
+                self._set_active_workspace_for_console_session(session.id)
+                self._sync_console_retrieval_scope_row()
+                self._console_agent_drilldown_run_id = None
+                self._note_console_follow_intent()
+                self._sync_console_chat_core_state()
+                await self._sync_native_console_chat_ui()
+                await self._refresh_console_conversation_browser_after_selection()
+                self._focus_console_composer_if_needed(force=True)
+                if callable(self._wake_retry_poke_fn):
+                    self._wake_retry_poke_fn()
+            except asyncio.CancelledError:
+                if session is not None:
+                    store.rollback_restored_session(
+                        session.id,
+                        expected_session=session,
+                        prior_active_session_id=prior_active_session_id,
+                    )
+                await self._restore_console_session_after_failed_open(
+                    store, prior_active_session_id
+                )
+                raise
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Unable to present Console saved conversation"
+                )
+                if session is not None:
+                    store.rollback_restored_session(
+                        session.id,
+                        expected_session=session,
+                        prior_active_session_id=prior_active_session_id,
+                    )
+                await self._restore_console_session_after_failed_open(
+                    store, prior_active_session_id
+                )
+                self.app_instance.notify(
+                    CONSOLE_SAVED_CONVERSATION_RESUME_FAILURE_COPY,
+                    severity="error",
+                    timeout=15,
+                )
+                return None
+            if self._complete_manual_read_visit:
+                self._complete_manual_read_visit(visit, session.id)
+            return True
 
     # -- Workspace context state / grouped conversation rows -----------------
 
@@ -8105,6 +8270,8 @@ class ConsoleWorkspaceController:
         # appearance for up to the TTL window.
         self._console_appearance_map_cache = None
         self._console_appearance_map_cached_at = 0.0
+        self._console_appearance_map_queried_ids = set()
+        self._console_appearance_map_service = None
         self._sync_console_workspace_context()
 
     def _toggle_console_conversation_star(
@@ -8673,6 +8840,30 @@ class ConsoleWorkspaceController:
                     "Unable to resolve Console workspace name for approval toast"
                 )
         return str(workspace_id)
+
+
+_WORKSPACE_RECONCILIATION_METHODS = tuple(
+    (name, function, function.__code__, function.__defaults__, function.__kwdefaults__)
+    for name in ("_reconcile_console_session_with_registry",)
+    for function in (getattr(ConsoleWorkspaceController, name),)
+)
+_WORKSPACE_RECONCILIATION_REGISTRY_METHODS = tuple(
+    (name, function, function.__code__, function.__defaults__, function.__kwdefaults__)
+    for name in ("get_active_workspace",)
+    for function in (getattr(LocalWorkspaceRegistryService, name),)
+)
+_WORKSPACE_RECONCILIATION_DATABASE_METHODS = tuple(
+    (name, function, function.__code__, function.__defaults__, function.__kwdefaults__)
+    for name in (
+        "connection",
+        "_get_connection",
+        "_held_connection",
+        "_open_connection",
+        "_configure_connection",
+        "close",
+    )
+    for function in (getattr(WorkspaceDB, name),)
+)
 
 
 _WORKSPACE_AVAILABILITY_METHODS = tuple(

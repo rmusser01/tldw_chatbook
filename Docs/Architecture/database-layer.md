@@ -10,7 +10,7 @@ This document describes the SQLite layer: the `BaseDB` infrastructure (private c
 | `DB/ChaChaNotes_DB.py` | `CharactersRAGDB` — conversations, messages, characters, notes, keywords, world books, learning tables, console policy columns. Schema version is defined by `_CURRENT_SCHEMA_VERSION` |
 | `DB/Client_Media_DB_v2.py` | `MediaDatabase` — media items, chunks, transcripts, document versions, chunking templates. Schema v9 |
 | `DB/migrations/chachanotes_vN_to_vN+1_*.sql` | File-backed ChaChaNotes migration steps (v16→v67+ present) |
-| `DB/store_kernel.py` | `SQLiteStoreKernel` mixin — the one held-connection/transaction implementation (ADR-228): autocommit held thread-local connections, 30s liveness probe, BEGIN IMMEDIATE `transaction()` with BaseException rollback, participants wiring. `RAG_Indexing_DB` and `Workspace_DB` consume it; remaining stores migrate one per PR |
+| `DB/store_kernel.py` | `SQLiteStoreKernel` mixin — the one held-connection/transaction implementation (ADR-228): autocommit held thread-local connections, 30s liveness probe, BEGIN IMMEDIATE `transaction()` with BaseException rollback, participants wiring. `RAG_Indexing_DB`, `Workspace_DB`, and `Guardian_DB` consume it; Guardian preserves admission rechecks around native connection setup; remaining stores migrate one per PR |
 | `DB/sql_validation.py` | Identifier validation (`escape_identifier`, `validate_table_name`, `validate_column_name`) |
 | `DB/Prompts_DB.py`, `Evals_DB.py`, `Subscriptions_DB.py`, `AgentRuns_DB.py`, `Library_*_DB.py`, `RAG_Indexing_DB.py`, `Workspace_DB.py`, `VisualIdentity_DB.py`, `Chunking_Lab_DB.py` | Satellite databases |
 
@@ -19,6 +19,7 @@ Note: the "schema v37" figure that circulates in older docs is stale — read `_
 ## BaseDB infrastructure
 
 - **Private connections** (`connect_private_sqlite`) harden the SQLite build for user-data files.
+- **Finite Workspace reads**: registry `get_workspace`, `list_workspaces` and `get_runtime_binding` use `operation_owned_connection` to retire newly acquired exact file-backed handles on their producer thread. The binding read includes Default-binding repair; borrowed handles/transactions and custom/in-memory owners keep their lifetimes. Awaiter cancellation does not retire a running callback (ADR-228).
 - **Quiescence registry**: an exclusive maintenance barrier per canonical file identity. Cursors hold use reservations until result exhaustion; `quiesce_connections()` drains and closes same-file handles so maintenance (vacuum, migration) can run without "database is locked" races.
 - **Semantic-mutation guards**: `register_semantic_mutation_guard` registers SQLite functions plus a trace callback and an authorizer that **denies COMMIT/ROLLBACK escape mid-scope** — fail-closed guards consumed by DB triggers protecting console trace/semantic state.
 
@@ -41,6 +42,8 @@ v81 lineages and their exact v82 successors, including installed shared-file
 Subscriptions catalogs; only those exact catalogs can enable the pure Canvas
 payload CHECK during bounded validation. Restricted connections relinquish that
 temporary authority before returning.
+
+Schema85 appends local conversation `archived_at` chronology and its archive lookup index after the existing schema83 portrait and schema84 region migrations. Existing immutable Canvas and semantic columns remain unchanged; real archive/restore transitions advance local conversation versions while archive-only writes emit no sync event or payload field. Workspace schema10 follows the schema9 binding-authority migration and adds local `archived_at` and `archive_revision`, preserving unknown historical dates and compare-and-swap restoration. Archive search uses finite operation deadlines through existing BaseDB/SQLiteStoreKernel connection custody, including borrowed transactions.
 
 ### Patterns (the load-bearing conventions)
 
@@ -91,3 +94,14 @@ Database helpers in `config.py` resolve explicit path overrides first, then prof
 - [chat-pipeline.md](./chat-pipeline.md) — the messages/conversations consumers
 - [notes-sync.md](./notes-sync.md) — the notes tables' sync authority
 - [media-ingestion.md](./media-ingestion.md) — the Media DB write seam
+
+
+### Review-boundary wake linkage (ADR281)
+
+AgentRuns schema25 extends existing `automatic_wake_attempts` with a nullable opaque
+`review_boundary_id` and `automatic_review_boundary_claims`. `AutomaticWorkLedger`
+validates an in-process host receipt at claim and acceptance; persisted identities
+cannot restore that authority. Prepared abort removes its exact active link and
+reservation, while accepted/completed/uncertain attempts retain links and charges.
+The existing restart audit requires review and cannot recover ephemeral bundles.
+Source, report and grant bodies are never stored in this link.

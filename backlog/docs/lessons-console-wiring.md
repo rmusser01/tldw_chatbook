@@ -52,6 +52,36 @@ painted and that the loop made no database read.
 
 ---
 
+## A switch-progress guard comparing binding to active state cannot fire mid-resume (TASK-35310, 2026-10-18)
+
+**Incident.** Console UAT 2026-10-17 round 11 (`qa/console-uat-2026-10-17/`,
+dev `6c0bde2437`): clicking a workspace-rail conversation row and pressing
+Send ~2 s later was **silently dropped** — no provider POST, no persisted
+turn, no notice; a 1.5 s settle made it work. The shipped TASK-33622.7 guard
+(`refuse_send_from_unbound_composer`) never fired, and the reason is
+structural, not timing: `open_console_workspace_conversation`'s slow path
+hydrates across many awaits during which `active_session_id` AND the composer
+binding still name the OLD chat, so the guard's bound-vs-active comparison
+sees a consistent OLD state and waves the send through, pinned to OLD; the
+decoupled send task then dies in `return False` branches that notify nobody.
+A second face of the same window: a seeded conversation resumed with the
+sandbox's default `chat_defaults` (openai, no key) left Send disabled, so
+Enter hit the Enter-guard's silent release.
+
+**What to do.** A guard that detects switches by comparing two pointers can
+only see a switch once one pointer has moved. For a multi-await activation
+you need an explicit in-flight flag set for the whole window
+(`conversation_activation_window` on the session controller) that the guard
+reads INDEPENDENTLY of the pointer comparison — and every `return False` on
+a send path needs a notice, because each silent branch is where a raced
+press goes to die. When reproducing: seeded conversations need a file-backed
+DB at the sandbox path plus `app._wire_chat_conversation_services()` after
+attach (the conversation browser wires from `app.chachanotes_db` during
+`__init__`), and a resumed session's base settings come from
+`chat_defaults`, not from the seeding session.
+
+---
+
 ## A warning-free batch can still retain worker-owned database files
 
 **TASK-31245 / TASK-33620.9, 2026-10-04.** After explicit Console fixture
@@ -704,3 +734,39 @@ claim from several live runs, not one. After the first run, the guide said
 "text typed between the two clicks can land in either"; the third run put a
 key typed after the second click into the first tab, and the sentence had
 to widen.
+
+
+## A completed reply can still lack citation settlement after recovery (PR3173, 2026-10-31)
+
+Rebasing the DONE-result shutdown fix onto dev57e330e735 left the recovered reply
+complete, and its original status/content test passed. Asserting the retained
+citation session's selection_committed field exposed the missing outcome: a new
+finalizer task failed the active-stream task identity check. Finalizing on the
+original task and using its existing citation cancellation path retained the answer,
+committed selection, and made no extra provider request. Check the secondary
+owner's actual settlement as well as the visible message status when moving a
+terminal path across tasks. The focused regression failed before this repair.
+
+
+## A queued breadcrumb can still fail its metadata sink (PR3173, 2026-10-31)
+
+The resume refusal spy observed console_send_stage and passed, but the real
+UIResponsivenessMonitor drain rejected its reason field. The same original PR had
+used that unsupported field for both pending-send refusals. Real monitor plus
+persistent-sink regressions were RED until the calls used the already-admitted
+operation field. Exercise the actual sink once; observing a producer call alone
+cannot prove that its schema-approved event survives admission.
+
+### PR3173 review: guard the shared hydration operation and retain every wrapper
+
+On 2026-10-31, the initial resume regression covered the workspace rail, whose caller
+held the activation window. Library's handoff and Ctrl+K called the shared resume
+method directly and still dispatched Enter against the old chat during hydration.
+Holding the tree load through both actual callers reproduced the missing refusal;
+the window belongs in the shared operation, before its first await.
+
+The same review found that observing a retained inner native task does not observe
+an outer coroutine task that propagates its exception. A real held provider failed
+after submit cancellation and produced `Task exception was never retrieved` even
+though the maintenance owner had consumed the inner error. Retaining the wrapper
+through that same owner preserves prompt Stop and observes its eventual outcome.

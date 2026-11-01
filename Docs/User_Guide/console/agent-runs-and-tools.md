@@ -1763,6 +1763,12 @@ string, parse pipes or redirection, expand environment variables, or invoke a
 host shell. Its fixed read-only commands are `ls`, `cat`, `grep`, `find`,
 `stat`, `git_status`, `git_diff`, `git_log`, `git_blame`, and `git_branches`.
 
+The model receives the supported argument forms with the tool schema. Virtual
+`ls` accepts `-a`, `-A`, `--all`, `--almost-all`, `-l`, and combinations such as
+`-la`. Listings already include hidden entries; `-l` adds type/permissions and
+byte size. Unsupported arguments return the selected command's usage. These
+are fixed virtual commands, so other host-command flags are not implied.
+
 The tool is discoverable only when local tools are enabled and the run admitted
 at least one valid Workspace folder, but discoverability is not authorization.
 Before each invocation, Chatbook resolves the selected command under the
@@ -1873,6 +1879,16 @@ altered, and unrecognized failures return exactly as before. Model
 bounded agent tool history and local run logs; they do not create a
 `local_command` record. Generic diagnostics retain content-free execution
 metadata rather than command or output bodies.
+
+Shell results retain the executor's stdout and stderr without an additional
+4,000-character cut. Existing stream, storage and agent-context budgets still
+apply. A simple `grep`, `rg`, or `findstr` command that exits 1 without stderr is
+reported as a successful empty search, retaining its actual exit code. It does
+not consume the three-failure limit. Other command errors and compound shell
+expressions retain the existing failure handling.
+
+On Windows, `cmd` receives the command text without argument-list re-escaping,
+so quoted arguments retain their intended spaces and characters.
 
 ### Persistent Terminal: user-only interactive PTY
 
@@ -3148,3 +3164,125 @@ refusal, and the `[tools] character_tools_enabled` gate; confirmed by the
 mounted run `Tests/UI/test_console_character_tools_mounted_uat.py`, which
 drives search → save → approve through the real Console and checks the saved
 card, its avatar, and the Personas refresh message.)*
+
+
+## Multi-model code review
+
+In **Settings → Agents**, create provider/model presets, then save an ordered
+reviewer team with optional additional focuses and a verifier preset. The default
+team is empty. Names can change without breaking saved preset IDs. Missing or
+disabled presets need attention; duplicate destinations are shown explicitly.
+Per-run provider/model choices use existing routing permission and consent and do
+not change the saved team. `[tools] code_review_enabled` controls the feature
+(on by default); its switch is **Multi-model code review** under
+Settings ▸ Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates. With it off, no
+review tools are offered and review wording is ordinary chat; a review already in
+progress keeps its accepted automatic continuations.
+
+Ask “Review my changes with my default team”, identifying the selected workspace
+folder and scope. You can also supply exact commit-range/PR base and head commits
+with direct or merge-base comparison, or a patch with matching preimage. Include
+untracked files and mutable caller/test context explicitly. A PR URL alone cannot
+grant integration or repository access. Normal file permissions, exclusions,
+project instructions and destination consent still apply. No installed skill is
+required; the optional [inline skill example](../../Examples/skills/multi-model-review/SKILL.md)
+uses the same primary recipe. Without exactly one selected local workspace folder,
+only a request that names code review (code, multi-model, reviewer, PR, pull
+request, diff, commit, patch or changes) reports that a folder is needed; other
+“review …” wording, such as “Review my resume”, stays an ordinary chat.
+
+Each reviewer gets the same captured source and general brief, plus its optional
+focus. A changed binary, symlink, submodule, non-UTF-8 or over-size file is listed by path as
+a coverage gap, and changed files hidden by exclusions or sensitive-path rules are
+counted without names; neither blocks the rest of the review. The assistant states
+these gaps (up to eight, plus a count of the rest) before launching reviewers, and
+each reviewer's first listing of the review scope shows them. Originals open in **Review reports**
+before verification; press **u** in the
+owning Console chat to reopen them. A review that finished while you were away from
+Console opens when you return to Console, and one that finished while you were in another chat
+opens when you switch back to its chat. Read originals, raw output, target identity,
+requested/actual provider-model routes, fallback changes and coverage separately.
+A failed or incomplete report is not an empty successful review. Later edits to
+your files do not change captured evidence.
+
+Ask for verification initially (“Review my changes and verify every finding”), or
+accept the later offer; the first “yes” or “no” answers it, and a later “yes” is
+ordinary chat. A fresh verifier assesses blinded claims and a separate
+unified report maps every original to confirmed, refuted or unresolved evidence.
+Exact repeated claims share an assessment; different triggers remain separate.
+Refutations need specific counter-evidence, and unresolved claims state the next
+check. Model agreement alone is not proof. Stock executable checks currently report
+unavailable because the process owner lacks aggregate disposable-output limits;
+source-based verification can still complete, while execution-dependent claims
+remain unresolved.
+
+The default limit is two total children per primary turn. Two reviewers followed
+by pre-authorized verification need a later automatic turn on the same finite
+budget. Disabled automatic wake, exhaustion or uncertain acceptance preserves
+progress and shows the blocker. An explicit “Resume review” can request remaining
+reviewers; “Retry reviewer R1” requests a new attempt for that slot. Neither silently
+replays an accepted attempt or replenishes the old automatic chain. **Stop** and
+closing the chat fence pending work; cancellation does not prove a process or
+cleanup has finished.
+
+Reports and captured source are temporary session data. Use **Export** to save a
+Markdown report before closing the chat; saved transcript references cannot restore
+an expired bundle. **Discard** requires explicit confirmation and may show cleanup
+pending. Four retained contexts or the tab's 160 MiB reserved/retained allowance
+require an explicit export/release or narrower scope; no report is silently evicted.
+Individual review/source/output caps and context capacity can yield honest partials.
+The [qualification record](../../superpowers/qa/2026-10-18-multi-model-code-review/README.md)
+distinguishes tested deterministic behavior from unverified live-provider quality.
+## Find and restore an archived chat with the assistant
+
+With **Assistant Library access: Allowed**, an interactive main-agent run in an
+ordinary local Console Chat can search saved archives and request restoration.
+The dedicated recovery tools work in **Direct** and **RAG-only** mode, even
+without an embedding index. With access **Blocked**, use the existing manual
+[Library recovery route](sessions-tabs-workspaces.md#archive-find-review-and-resume-a-saved-chat).
+Temporary chats, subagents, unattended runs and remote-only conversations are
+outside this recovery feature.
+
+```text
+You: Find conversations I archived today. I don't remember the workspace.
+Assistant: Here are the matching local chats, with their workspaces and archive dates.
+You: Restore the second one.
+App: Confirm the named chat and the exact chat/workspace restoration scope.
+```
+
+The app renders numbered results with **Preview** and the applicable recovery
+action. Choose a result's button or ask the assistant to restore it; both lead
+to the same confirmation. If several result cards make “the second one”
+ambiguous, identify the card first. Agent-written text and imported transcripts
+cannot create recovery buttons or authorize a restore.
+
+While the original results remain live, follow-ups carry their selection references,
+row numbers, titles, workspace labels and available recovery scopes to the same
+model destination that performed the search. This retained selection context
+contains no excerpts or message history. A changed destination needs a fresh
+search. **Next Send** does not display or estimate this metadata; the actual
+request budget includes it.
+
+Review the exact title, workspace, scope and any replacement name before
+**Confirm**. Every operation needs fresh confirmation; remembered Allow does
+not approve recovery. Cancel or an unanswered confirmation makes no new write.
+Confirmation expires after five minutes, including while its source Chat is
+in the background. See the [recovery choices](sessions-tabs-workspaces.md#assistant-recovery-choices)
+for workspace effects and separate **Open**.
+
+Results expire after thirty minutes; at most ten pages are retained per source
+Chat. Closing that Chat or restarting also expires its references. Use
+**Refresh** for expired or stale results. A manual refresh stays in the local
+UI; a conversational follow-up needs a fresh assistant search before the agent
+can select a result it has not seen. **More** continues the current search,
+which may observe changed local state rather than a frozen inventory.
+
+A partial receipt identifies which change completed. A workspace may already
+be restored while the selected chat remains archived. Refresh and confirm only
+the remaining work; recovery does not undo the completed workspace change or
+move the chat. Restoring or opening manually does not send a prompt. If an
+agent is waiting for your confirmation, its ordinary continuation can consume
+the operation's outcome.
+
+The permission and ownership boundaries are defined in
+[ADR-166](../../../backlog/decisions/166-agent-assisted-archive-recovery.md).

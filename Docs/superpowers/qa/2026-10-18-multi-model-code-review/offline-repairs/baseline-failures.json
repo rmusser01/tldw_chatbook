@@ -1,0 +1,35 @@
+{
+  "baseline_commits": [
+    "d561a27298565216d494002fb7c42b25c503ba2e",
+    "3e5054c5ad2ac0d2299299ba2e129f13e8be631e"
+  ],
+  "extraction_commit": "32f40af781",
+  "identical_outcomes": true,
+  "nodes": {
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_preserves_selected_displayable_thinking[False-replay_harness0]": "ERROR",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_preserves_selected_displayable_thinking[False-replay_harness1]": "ERROR",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_preserves_selected_displayable_thinking[True-replay_harness0]": "ERROR",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_preserves_selected_displayable_thinking[True-replay_harness1]": "ERROR",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_transformed_send_replays_new_assistant_thinking_on_cold_successor[replay_harness0]": "ERROR",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_transformed_send_replays_new_assistant_thinking_on_cold_successor[replay_harness1]": "ERROR",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_rejects_unsaved_thinking_under_saved_owner[False-replay_harness0]": "ERROR",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_rejects_unsaved_thinking_under_saved_owner[True-replay_harness0]": "ERROR",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_keeps_excluded_thinking_out_of_request[replay_harness0]": "ERROR",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_keeps_excluded_thinking_out_of_request[replay_harness1]": "ERROR",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_preserves_selected_continuation_and_successor[False-False]": "FAILED",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_preserves_selected_continuation_and_successor[False-True]": "FAILED",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_preserves_selected_continuation_and_successor[True-False]": "FAILED",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_preserves_selected_continuation_and_successor[True-True]": "FAILED",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_keeps_incompatible_continuation_out_of_request[model-False]": "FAILED",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_keeps_incompatible_continuation_out_of_request[model-True]": "FAILED",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_keeps_incompatible_continuation_out_of_request[endpoint-False]": "FAILED",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_keeps_incompatible_continuation_out_of_request[endpoint-True]": "FAILED",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_does_not_attach_continuation_for_missing_owner[False]": "FAILED",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_does_not_attach_continuation_for_missing_owner[True]": "FAILED",
+    "Tests/Chat/test_console_trace_sidecar_replay.py::test_capture_rejects_private_sidecar_value_that_disagrees_with_saved_source[True]": "FAILED",
+    "Tests/Chat/test_console_continuation_review_fixes.py::test_manual_reasoning_only_final_event_is_not_terminalized_twice": "FAILED",
+    "Tests/Chat/test_console_continuation_review_fixes.py::test_queued_reasoning_only_final_event_settles_once": "FAILED",
+    "Tests/Agents/test_code_review_context.py::test_gateway_admission_counts_private_continuation_and_effective_fallback": "FAILED",
+    "Tests/Agents/test_code_review_context.py::test_final_prepared_owner_positive_remainder_does_not_consume_claim": "FAILED"
+  }
+}

@@ -7,7 +7,7 @@ import sys
 from contextlib import nullcontext
 from pathlib import Path
 from threading import Event
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -47,7 +47,12 @@ def verified_data_identity() -> tuple[str, str]:
 
 
 def restore_isolated(
-    archive: SealedArchive, plan: RestorePlan, control_root: Path, cancel: Event
+    archive: SealedArchive,
+    plan: RestorePlan,
+    control_root: Path,
+    cancel: Event,
+    *,
+    on_staged: Callable[[], None] | None = None,
 ) -> str:
     """Publish explicit new roots; retain fences through catalog durability.
 
@@ -157,6 +162,10 @@ def restore_isolated(
                 raise ValueError("isolated_stage_selection_changed")
     # Retire the selected source lease before publication can drain that scope.
     reader._check(cancel)
+    # The receipt is durable and the source lease retired. No publication or
+    # namespace registration may precede the caller's outer transaction record.
+    if on_staged is not None:
+        on_staged()
     names = ("isolated." + operation_id,)
     authority.register(names[0], tuple(ancestors))
     selectors = tuple(Path(row["config"]) for row in profiles)
@@ -368,6 +377,9 @@ def _launch_environment() -> dict[str, str]:
         "TEMP",
         "TMP",
         "TMPDIR",
+        "CHATBOOK_WEZTERM_HOME",
+        "CHATBOOK_WEZTERM_DATA_DIR",
+        "CHATBOOK_WEZTERM_RUNTIME_DIR",
     )
     env = {name: os.environ[name] for name in allowed if name in os.environ}
     env.update(
@@ -383,6 +395,14 @@ def _launch_environment() -> dict[str, str]:
     return env
 
 
+def _profile_launch_environment(entry, control_root: Path) -> dict[str, str]:
+    from .portable_relocation import _selected_environment
+
+    env = _launch_environment()
+    env.update(_selected_environment(entry, control_root))
+    return env
+
+
 def select_profile(
     profile_id: str, control_root: Path, *, launch_attempt: str | None = None
 ) -> None:
@@ -395,7 +415,7 @@ def select_profile(
         from .profile_open import _select
 
         _select(profile_id, control_root, launch_attempt)
-    env = _launch_environment()
+    env = _profile_launch_environment(entry, control_root)
     env["TLDW_CONFIG_PATH"] = entry.config
     os.environ.clear()
     os.environ.update(env)
@@ -434,5 +454,5 @@ def launch_profile(
             *extra,
         ],
         cwd=Path(entry.config).parent,
-        env=_launch_environment(),
+        env=_profile_launch_environment(entry, control_root),
     )

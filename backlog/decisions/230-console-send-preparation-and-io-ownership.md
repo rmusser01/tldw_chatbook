@@ -197,3 +197,69 @@ Overlap is counted under the existing finite-read bookkeeping lock. The first ph
 TASK-34406.16 may omit the preliminary Character display change-detection read only when the previous immutable scope fingerprint exists, its open-conversation identity already differs from the current identity, and the existing stock finite-refresh selector qualifies the original display closure, controller, file-backed database, source methods and owners. This observation proves that a refresh is needed; it grants no freshness, row or execution authority. Call the original refresh immediately, retaining its original pair/groups/pair operation, source and ambient checks, final fingerprint comparison, retries, cancellation and physical native retirement before publication.
 
 Unchanged conversations, missing/invalidated fingerprints, explicit forced or direct actions, custom/memory/changed sources and unqualified closures retain their preceding preliminary scope route. The original one-second active recheck, two-second idle display memo and all native deadlines remain. No general polling narrowing, deferral of checks, new cache, transaction, lifecycle owner or authority policy. Causal controls must prove the remaining original native reads and refusal boundaries, exact native retirement, and a fresh retry after actual metadata change. Release still requires consistent unprofiled actual Enter-to-HTTP improvement and current-base CI/review.
+
+
+## Accepted review-boundary metadata exception (TASK-35582, 2026-10-27)
+
+Adopt the [ADR281 focused amendment](281-primary-agent-multi-model-code-review.md)
+for a host-accepted exact review-boundary wake only. Immediately after existing
+automatic acceptance and before capacity preparation, await the existing bounded
+context-window operation with the actual pinned ConsoleProviderResolution. Reuse
+current TTL/singleflight/egress/size limits and an outer deadline bounded by normal
+provider validation and original automatic-chain time. No new global wait flag,
+settings re-resolution, expired capacity or changed destination is authorized.
+
+Accepted authority/source/grant/session/Stop/priority fences are checked around
+await with no lock/native lease held across I/O. Plan the normal tools afterward;
+a missing reachable next-stage catalog is a visible pre-dispatch blocker. A failed
+accepted preparation keeps its consumed finite charge and reports; no automatic
+replay/refund. Ordinary manual/progress/Goal/queued preparation remains nonblocking
+and retains existing4096unknown bootstrap. Current shared probe cancellation/close
+ownership remains; metadata is not a physical generation attempt. No schema change.
+
+
+### Source correction to accepted-wake carrier diagnosis (Ruling63)
+
+Exact BASE7952422 controller source deliberately projects automatic SYSTEM
+transcript notices as payload-only trailing USER while preserving AGENT_WAKE
+authority and order. The prior reconstructed SYSTEM-carrier diagnosis was not
+the actual wire path. Its carrier conversion/Safe-capture clauses are superseded;
+ordinary serialization and the strict engine stay unchanged. Accepted-review-only
+pinned capacity/revalidation and normal schema reachability requirements remain.
+The full handler-backed fixture instead exposes completed checkpoint forwarding
+without native replay rows. A focused replay contract is pending before source
+changes at that extra boundary. Original diagnostic evidence is retained with
+QA/ac24/review-wake-repair-design/diagnosis-controller-correction.md. No authority,
+schema or additional live allowance follows from this correction.
+
+
+### PR3050 current-owner reconciliation — 2026-10-31
+
+The remaining Send work is rebased onto current dev owners. A pressed resident
+snapshot survives the acknowledgement paint and later draft edits; only that
+snapshot can retire its original draft after durable acceptance. Guardian may
+transform the submitted body while the original snapshot remains the cleanup
+witness. View publication retains the pressing view's attachment generation.
+Custom mounted capture uses the existing finite preparation-read owner until the
+physical callback retires, including repeated cancellation. Existing admission,
+Stop, source, Goal, response-rule, transferred-draft and citation fences remain.
+
+Stock MCP execution consumers freeze their own fresh definition ceiling during
+composition. A deferred capture refuses changed factories/catalog sources before
+reading them; invocation permission is still read fresh. Builtin-only captured
+maxima avoid external catalog work. Hook observations are reused only within the
+same exact attempt and owner, with fresh final admission and dispatch checks.
+
+Recovered-image tasks belong to the existing view-worker group. Unmount releases
+runtime and settings ownership before image admission is sealed, completes view
+cleanup, and joins actual reader retirement in finally. App shutdown also joins
+already detached workers. Reader failure or caller cancellation cannot skip the
+terminal/speech cleanup by preceding it.
+
+Current dev's native descriptor/admission generations, operation-owned DB scopes,
+character refresh and one-second configuration projection remain authoritative.
+The earlier Windows watcher and broad polling optimization are historical
+qualification material, not selected replacement implementations. No new cache,
+storage policy, authority, or ADR identity is introduced. The original under-100ms
+input and under-one-second overhead claims and complete platform/Close
+qualification remain unproven; TASK34601 and TASK34601.1 stay In Progress.

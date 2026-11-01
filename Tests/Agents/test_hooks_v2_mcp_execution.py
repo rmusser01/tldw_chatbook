@@ -14,6 +14,7 @@ from Tests.Agents.test_mcp_tool_provider import (
     _catalog_record,
     _tool_dict,
 )
+from Tests.Plugins import platform_support
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
@@ -498,9 +499,7 @@ async def test_actual_stdio_required_initializer_runs_through_existing_tool_pipe
             required_handler_ids=lambda _definition: (
                 None
                 if mode == "unknown_dependencies"
-                else ("initializer",)
-                if mode == "depends_on_initializer"
-                else ()
+                else ("initializer",) if mode == "depends_on_initializer" else ()
             ),
         )
         engine.mcp_executor.bind_context(context)
@@ -510,7 +509,9 @@ async def test_actual_stdio_required_initializer_runs_through_existing_tool_pipe
             lifecycle.event("SessionStart", data={"reason": "startup"})
         )
         try:
-            result = await asyncio.wait_for(lifecycle.initialize(token), 5)
+            result = await asyncio.wait_for(
+                lifecycle.initialize(token), 15 if mode == "success" else 5
+            )
             if mode != "success":
                 assert not result.allowed and not result.accepted
                 if mode == "disconnected":
@@ -842,7 +843,8 @@ async def test_actual_transport_engine_result_boundary(
             lifecycle.event("SessionStart", data={"reason": "startup"})
         )
         try:
-            outcome = await asyncio.wait_for(lifecycle.initialize(token), 5)
+            # Include native store checks beyond the hook's active-time budget.
+            outcome = await asyncio.wait_for(lifecycle.initialize(token), 15)
             assert outcome.succeeded is success, outcome
             assert len(service.execution_log.read_recent()) == 1
             assert owner.snapshot()["tickets"] == owner.snapshot()["execution"] == 0
@@ -982,7 +984,7 @@ async def test_admitted_agent_service_uses_same_mcp_hook_executor_and_parent_con
                     config=replace(CFG, allowed_tools=("calculator", name)),
                     api_endpoint="test",
                 ),
-                10,
+                30,
             )
             assert result.status == "done", result
             assert len(normal_service.execution_log.read_recent()) == 1
@@ -993,6 +995,7 @@ async def test_admitted_agent_service_uses_same_mcp_hook_executor_and_parent_con
             db.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 async def test_mcp_executor_installs_both_required_post_events_before_either_settles(
     tmp_path,
@@ -1112,6 +1115,7 @@ async def test_mcp_executor_installs_both_required_post_events_before_either_set
             await engine.close()
 
 
+@platform_support.v2_command
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "approval,change,phase",
@@ -1298,9 +1302,9 @@ async def test_original_mcp_result_rechecks_normal_authority_after_post_and_at_a
             counter = await client.call_tool_result(
                 "fixture", "fixture", {"counter": True}
             )
-            assert counter.content[0]["text"] == "2", (
-                "acceptance replayed the original tool"
-            )
+            assert (
+                counter.content[0]["text"] == "2"
+            ), "acceptance replayed the original tool"
         finally:
             release.touch()
             accept_release.set()

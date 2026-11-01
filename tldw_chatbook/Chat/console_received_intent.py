@@ -51,6 +51,9 @@ class ConsoleReceivedTurnIntent:
     staged_evidence_revision: int
     view_attachment_generation: int
     queue_revision: int | None = None
+    _pressed_inputs: ConsoleSessionInputSnapshot | None = field(default=None, repr=False)
+    _pressed_stash: Any | None = field(default=None, repr=False)
+    recovery_user_origin: object | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         from .console_configuration_preparation import ConsoleTurnCaptureSelection
@@ -60,6 +63,8 @@ class ConsoleReceivedTurnIntent:
         _validate_identifier(self.session_id, "received session ID")
         if type(self.inputs) is not ConsoleSessionInputSnapshot:
             raise TypeError("inputs must be ConsoleSessionInputSnapshot")
+        if self._pressed_inputs is not None and self._pressed_inputs is not self.inputs:
+            raise ValueError("Pressed inputs must be the original received snapshot.")
         if self.inputs.session_id != self.session_id:
             raise ValueError("Received inputs belong to another session.")
         if not isinstance(self.selection, ConsoleTurnCaptureSelection):
@@ -239,9 +244,10 @@ class ConsoleReceivedIntentInputMixin:
             )
 
     def session_inputs_are_current(
-        self: ConsoleChatStore, snapshot: ConsoleSessionInputSnapshot
+        self: ConsoleChatStore, snapshot: ConsoleSessionInputSnapshot,
+        *, include_draft: bool = True,
     ) -> bool:
-        """Check all receipt-time inputs before complete request promotion.
+        """Check receipt-time source inputs before complete request promotion.
 
         Args:
             snapshot: The original received input snapshot.
@@ -262,8 +268,11 @@ class ConsoleReceivedIntentInputMixin:
                 == snapshot.generation_settings_revision
                 and session.context_policy_revision == snapshot.context_policy_revision
                 and session.identity_revision == snapshot.identity_revision
-                and session.draft_revision == snapshot.draft_revision
-                and session.draft == snapshot.draft
+                and (
+                    not include_draft
+                    or (session.draft_revision == snapshot.draft_revision
+                        and session.draft == snapshot.draft)
+                )
                 and session.attachment_revision == snapshot.attachment_revision
                 and len(pending) == len(snapshot.attachments)
                 and all(

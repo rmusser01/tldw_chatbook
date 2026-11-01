@@ -20,6 +20,7 @@ import pytest
 from PIL import Image as PILImage
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.console_controller_stubs import stub_image_controller
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -30,6 +31,7 @@ from Tests.UI.test_console_native_chat_flow import (
     _message_row_plain_text,
     _select_llamacpp_console,
 )
+from tldw_chatbook.Chat import console_generate_image as generation_owner
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_models import (
@@ -437,8 +439,10 @@ async def test_h3_completion_for_session_a_never_clears_identical_visible_draft_
         db.close_connection()
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
+    request,
     monkeypatch,
 ):
     _patch_h3_enabled(monkeypatch)
@@ -485,7 +489,9 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
         batch_calls += 1
         raise AssertionError("cancelled canonical decode reached dispatch")
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _canonical_then_dispatch)
+    monkeypatch.setattr(
+        generation_owner, "run_generation_batch", _canonical_then_dispatch
+    )
     async with host.run_test(size=(160, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
@@ -531,8 +537,10 @@ async def test_h3_start_immediately_paints_enabled_stop_on_live_screen(
         assert batch_calls == 0
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
+    request,
     monkeypatch,
 ):
     _patch_h3_enabled(monkeypatch)
@@ -550,7 +558,7 @@ async def test_actual_unmount_is_nonblocking_and_fresh_screen_shows_stopping(
         assert kwargs["cancel_event"].is_set()
         raise ImageGenerationCancelled()
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _blocked_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _blocked_batch)
     async with host.run_test(size=(160, 48)) as pilot:
         old = host.screen_stack[-1]
         await _wait_for_selector(old, pilot, "#console-native-composer")
@@ -649,9 +657,11 @@ async def test_real_app_shutdown_cancels_and_drains_owned_h3_operation():
             await operation.task
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_kind", ("success", "failure", "cancel"))
 async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
+    request,
     monkeypatch,
     tmp_path,
     terminal_kind,
@@ -694,7 +704,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
                 errors=[],
             )
 
-        monkeypatch.setattr(image_module, "run_generation_batch", _terminal_batch)
+        monkeypatch.setattr(generation_owner, "run_generation_batch", _terminal_batch)
         async with host.run_test(size=(160, 48)) as pilot:
             old = host.screen_stack[-1]
             await _wait_for_selector(old, pilot, "#console-native-composer")
@@ -879,6 +889,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
         db.close_connection()
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("failure_kind", "expected_copy"),
@@ -898,6 +909,7 @@ async def test_fresh_mounted_screen_settles_late_h3_outcome_in_dom_and_controls(
     ),
 )
 async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
+    request,
     monkeypatch,
     failure_kind,
     expected_copy,
@@ -934,7 +946,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
             )
         raise RuntimeError("sentinel response body and private descriptor")
 
-    monkeypatch.setattr(image_module, "run_generation_batch", _failed_batch)
+    monkeypatch.setattr(generation_owner, "run_generation_batch", _failed_batch)
     async with host.run_test(size=(160, 48)) as pilot:
         old = host.screen_stack[-1]
         await _wait_for_selector(old, pilot, "#console-native-composer")
@@ -984,6 +996,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
         assert "sentinel" not in repr(system_copy)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("failure_kind", "expected_copy"),
@@ -999,6 +1012,7 @@ async def test_batch_failure_after_actual_unmount_never_syncs_stale_screen(
     ),
 )
 async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore(
+    request,
     monkeypatch,
     tmp_path,
     failure_kind,
@@ -1020,7 +1034,7 @@ async def test_late_first_persisted_h3_failure_reconciles_through_normal_restore
                 raise ComfyUIImageEditError("source_upload")
             raise RuntimeError("sentinel response body /private/source.png")
 
-        monkeypatch.setattr(image_module, "run_generation_batch", _failed_batch)
+        monkeypatch.setattr(generation_owner, "run_generation_batch", _failed_batch)
         async with host.run_test(size=(160, 48)) as pilot:
             old = host.screen_stack[-1]
             await _wait_for_selector(old, pilot, "#console-native-composer")

@@ -1,0 +1,829 @@
+[32m2026-10-31 12:48:20.683[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m150[0m - [34m[1mCRITICAL DEBUG: config.py module is being imported/executed NOW.[0m
+[32m2026-10-31 12:48:21.143[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m7088[0m - [1mAttempting to load CLI config from: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\config\config\config.toml[0m
+[32m2026-10-31 12:48:21.150[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m7117[0m - [1mCLI Config file not found at C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\config\config\config.toml. Creating with default values from CONFIG_TOML_CONTENT.[0m
+[32m2026-10-31 12:48:21.166[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m7126[0m - [1mCreated default CLI config file at C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\config\config\config.toml[0m
+[32m2026-10-31 12:48:21.166[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m7193[0m - [34m[1mload_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'session_summary', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'sync', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run'][0m
+[32m2026-10-31 12:48:21.167[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_cli_config_bootstrap_unlocked[0m:[36m7197[0m - [34m[1m  'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'strata', 'polystrata', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm'][0m
+[32m2026-10-31 12:48:21.409[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2321[0m - [1mDetermined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook[0m
+[32m2026-10-31 12:48:21.409[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2324[0m - [1mDetermined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook[0m
+[32m2026-10-31 12:48:21.415[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2347[0m - [34m[1mload_settings: Configuration loaded from disk (cache miss or forced reload)[0m
+[32m2026-10-31 12:48:22.044[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3912[0m - [34m[1mEnsured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\config\home\.local\share\tldw_cli\default_user\chat_dicts[0m
+[32m2026-10-31 12:48:22.045[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3943[0m - [34m[1mload_settings: Configuration cached for future use[0m
+[32m2026-10-31 12:48:22.045[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m11993[0m - [1mDefault API Endpoint (from config.py global scope): openai[0m
+[32m2026-10-31 12:48:22.045[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m<module>[0m:[36m12016[0m - [34m[1mCRITICAL DEBUG: Database initialization is now lazy - will initialize on first access[0m
+[32m2026-10-31 12:48:22.046[0m | [1mINFO    [0m | [36mtldw_chatbook.Utils.optional_deps[0m:[36m<module>[0m:[36m1554[0m - [1mLazy dependency checking enabled (default). Dependencies will be checked on first use.[0m
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+============================= test session starts =============================
+platform win32 -- Python 3.12.10, pytest-8.3.5, pluggy-1.6.0 -- C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Scripts\python.exe
+hypothesis profile 'tldw' -> deadline=None, max_examples=25, stateful_step_count=20, suppress_health_check=(HealthCheck.too_slow,)
+rootdir: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui
+configfile: pyproject.toml
+plugins: anyio-4.9.0, hypothesis-6.131.27, asyncio-1.0.0, cov-7.1.0, mock-3.15.1, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 300.0s
+timeout method: thread
+timeout func_only: False
+collecting ... [32m2026-10-31 12:48:32.134[0m | [1mINFO    [0m | [36mtldw_chatbook.Evals.task_loader[0m:[36m<module>[0m:[36m36[0m - [1mHuggingFace evaluation datasets are unavailable. Install with: pip install datasets[0m
+[32m2026-10-31 12:48:38.402[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Utils.optional_deps[0m:[36mcheck_dependency[0m:[36m642[0m - [34m[1m✅ pydub dependency found. Feature 'pydub' is enabled.[0m
+collected 1 item
+
+Tests/UI/test_console_config_sync_cadence.py::test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run [32m2026-10-31 12:48:46.150[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Utils.optional_deps[0m:[36mcheck_dependency[0m:[36m642[0m - [34m[1m✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.[0m
+[32m2026-10-31 12:48:46.362[0m | [1mINFO    [0m | [36mtldw_chatbook.Audio.recording_service[0m:[36m<module>[0m:[36m49[0m - [1mPyAudio backend available[0m
+[32m2026-10-31 12:48:46.364[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Audio.recording_service[0m:[36m<module>[0m:[36m65[0m - [33m[1mSounddevice not available. Install with: pip install sounddevice[0m
+[32m2026-10-31 12:48:46.365[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Audio.recording_service[0m:[36m<module>[0m:[36m76[0m - [33m[1mWebRTC VAD not available. Install with: pip install webrtcvad[0m
+[32m2026-10-31 12:48:47.635[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1289[0m - [1mLoaded app_config - strip_thinking_tags: True[0m
+[32m2026-10-31 12:48:51.995[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1397[0m - [1mParallel init task 'prompts_service' completed in 0.000s[0m
+[32m2026-10-31 12:48:51.995[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1397[0m - [1mParallel init task 'providers_models' completed in 0.000s[0m
+[32m2026-10-31 12:48:51.995[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1397[0m - [1mParallel init task 'notes_service' completed in 0.000s[0m
+[32m2026-10-31 12:48:51.995[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1397[0m - [1mParallel init task 'media_db' completed in 0.000s[0m
+[32m2026-10-31 12:48:52.982[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1047[0m - [1mLibraryCollectionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\temp\tldw-chatbook-test-q2mec4sq\library_collections.sqlite [Client: tldw_cli_local_instance_v1][0m
+[32m2026-10-31 12:48:57.958[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1047[0m - [1mWorkspaceDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\temp\tldw-chatbook-test-q2mec4sq\workspaces.sqlite [Client: tldw_cli_local_instance_v1][0m
+[32m2026-10-31 12:49:05.329[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1047[0m - [1mSubscriptionsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\temp\tldw-chatbook-test-q2mec4sq\subscriptions.sqlite [Client: tldw_cli_local_instance_v1][0m
+[32m2026-10-31 12:49:08.200[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1047[0m - [1mClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1][0m
+[32m2026-10-31 12:49:08.205[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1047[0m - [1mEventStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\temp\tldw-chatbook-test-q2mec4sq\tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1][0m
+[32m2026-10-31 12:49:08.205[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1047[0m - [1mSyncStateRepository initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\temp\tldw-chatbook-test-q2mec4sq\tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1][0m
+[32m2026-10-31 12:49:08.773[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v1_to_v2[0m:[36mmigrate[0m:[36m73[0m - [34m[1mScheduling schema migrated to version 2 (missed_count column)[0m
+[32m2026-10-31 12:49:08.887[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v2_to_v3[0m:[36mmigrate[0m:[36m58[0m - [34m[1mScheduling schema migrated to version 3 (timeout_seconds column)[0m
+[32m2026-10-31 12:49:09.101[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v3_to_v4[0m:[36mmigrate[0m:[36m137[0m - [34m[1mScheduling schema migrated to version 4 (automation runs/results)[0m
+[32m2026-10-31 12:49:09.207[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v4_to_v5[0m:[36mmigrate[0m:[36m63[0m - [34m[1mScheduling schema migrated to version 5 (scheduled_task_runs)[0m
+[32m2026-10-31 12:49:09.314[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v5_to_v6[0m:[36mmigrate[0m:[36m68[0m - [34m[1mScheduling schema migrated to version 6 (task_incidents)[0m
+[32m2026-10-31 12:49:09.434[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Scheduling.db.migrations.v6_to_v7[0m:[36mmigrate[0m:[36m107[0m - [34m[1mScheduling schema migrated to version 7 (automation_results server_id unique index)[0m
+[32m2026-10-31 12:49:09.435[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.base_db[0m:[36m__init__[0m:[36m1047[0m - [1mScheduledTasksDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\temp\tldw-chatbook-test-q2mec4sq\scheduled_tasks.sqlite [Client: default][0m
+[32m2026-10-31 12:49:11.767[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1468[0m - [34m[1mULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media'][0m
+[32m2026-10-31 12:49:11.768[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1471[0m - [34m[1mULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>[0m
+[32m2026-10-31 12:49:13.082[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Evals.config_loader[0m:[36m_load_config[0m:[36m115[0m - [34m[1mLoaded evaluation configuration from C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\config\config\eval_overrides.yaml[0m
+[32m2026-10-31 12:49:14.050[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Evals_DB[0m:[36m_create_schema[0m:[36m614[0m - [1mCreated EvalsDB schema version 7[0m
+[32m2026-10-31 12:49:14.050[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.Evals_DB[0m:[36m__init__[0m:[36m242[0m - [1mEvalsDB initialized with path: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\config\home\.local\share\tldw_cli\default_user\evals.db[0m
+[32m2026-10-31 12:49:14.050[0m | [1mINFO    [0m | [36mtldw_chatbook.Evals.task_loader[0m:[36m__init__[0m:[36m98[0m - [1mTaskLoader initialized[0m
+[32m2026-10-31 12:49:15.176[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Event_Handlers.worker_handlers.base_handler[0m:[36mregister[0m:[36m155[0m - [34m[1mRegistered worker handler: MiscWorkerHandler[0m
+[32m2026-10-31 12:49:15.176[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m_init_worker_handlers[0m:[36m2220[0m - [1mWorker handler registry initialized with all handlers[0m
+[32m2026-10-31 12:49:15.177[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1662[0m - [1m=== STARTUP TIMING SUMMARY ===[0m
+[32m2026-10-31 12:49:15.177[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1663[0m - [1mTotal initialization time: 28.357 seconds[0m
+[32m2026-10-31 12:49:15.177[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1669[0m - [1m  basic_init: 4.318s (15.2%)[0m
+[32m2026-10-31 12:49:15.177[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1669[0m - [1m  attribute_init: 0.000s (0.0%)[0m
+[32m2026-10-31 12:49:15.177[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1669[0m - [1m  parallel_init: 0.837s (3.0%)[0m
+[32m2026-10-31 12:49:15.177[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1682[0m - [1m    - notes_service: 0.000s (0.0% of parallel_init)[0m
+[32m2026-10-31 12:49:15.177[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1682[0m - [1m    - providers_models: 0.000s (0.0% of parallel_init)[0m
+[32m2026-10-31 12:49:15.177[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1682[0m - [1m    - prompts_service: 0.000s (0.0% of parallel_init)[0m
+[32m2026-10-31 12:49:15.177[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1682[0m - [1m    - media_db: 0.000s (0.0% of parallel_init)[0m
+[32m2026-10-31 12:49:15.177[0m | [1mINFO    [0m | [36mtldw_chatbook.app[0m:[36m__init__[0m:[36m1686[0m - [1m==============================[0m
+[32m2026-10-31 12:49:15.178[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m__init__[0m:[36m2958[0m - [1mInitializing CharactersRAGDB db_sha256=memory [Client ID: test-client][0m
+[32m2026-10-31 12:49:15.179[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=235380[0m
+[32m2026-10-31 12:49:15.180[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:15.180[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_initialize_schema[0m:[36m8480[0m - [1mChecking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 84[0m
+[32m2026-10-31 12:49:15.180[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_apply_schema_v4[0m:[36m4064[0m - [1mApplying schema Version 4 for 'rag_char_chat_schema' to DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.180[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.196[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_apply_schema_v4[0m:[36m4105[0m - [34m[1m[rag_char_chat_schema V4] Full schema script executed.[0m
+[32m2026-10-31 12:49:15.196[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_apply_schema_v4[0m:[36m4112[0m - [1m[rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.198[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enrich_default_assistant_card_if_bare[0m:[36m4376[0m - [34m[1m[task-2451] Default Assistant enrichment UPDATE affected 1 row(s) in DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.198[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v4_to_v5[0m:[36m4397[0m - [1mMigrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.198[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.228[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v4_to_v5[0m:[36m4407[0m - [34m[1m[rag_char_chat_schema V4→V5] Migration script executed.[0m
+[32m2026-10-31 12:49:15.228[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v4_to_v5[0m:[36m4416[0m - [1m[rag_char_chat_schema V4→V5] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.228[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v5_to_v6[0m:[36m4450[0m - [1mMigrating schema from V5 to V6 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.229[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.233[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v5_to_v6[0m:[36m4458[0m - [34m[1m[rag_char_chat_schema V5→V6] Migration script executed.[0m
+[32m2026-10-31 12:49:15.233[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v5_to_v6[0m:[36m4467[0m - [1m[rag_char_chat_schema V5→V6] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.234[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v6_to_v7[0m:[36m4501[0m - [1mMigrating schema from V6 to V7 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.234[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.238[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v6_to_v7[0m:[36m4509[0m - [34m[1m[rag_char_chat_schema V6→V7] Migration script executed.[0m
+[32m2026-10-31 12:49:15.238[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v6_to_v7[0m:[36m4518[0m - [1m[rag_char_chat_schema V6→V7] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.238[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v7_to_v8[0m:[36m8394[0m - [1mMigrating schema from V7 to V8 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.239[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.244[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v7_to_v8[0m:[36m8402[0m - [34m[1m[rag_char_chat_schema V7→V8] Migration script executed.[0m
+[32m2026-10-31 12:49:15.245[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v7_to_v8[0m:[36m8411[0m - [1m[rag_char_chat_schema V7→V8] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.245[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v8_to_v9[0m:[36m4552[0m - [1mMigrating schema from V8 to V9 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.245[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.252[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v8_to_v9[0m:[36m4560[0m - [34m[1m[rag_char_chat_schema V8→V9] Migration script executed.[0m
+[32m2026-10-31 12:49:15.252[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v8_to_v9[0m:[36m4569[0m - [1m[rag_char_chat_schema V8→V9] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.253[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v9_to_v10[0m:[36m4603[0m - [1mMigrating schema from V9 to V10 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.253[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.254[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v9_to_v10[0m:[36m4611[0m - [34m[1m[rag_char_chat_schema V9→V10] Migration script executed.[0m
+[32m2026-10-31 12:49:15.254[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v9_to_v10[0m:[36m4620[0m - [1m[rag_char_chat_schema V9→V10] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.254[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v10_to_v11[0m:[36m4654[0m - [1mMigrating schema from V10 to V11 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.254[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.260[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v10_to_v11[0m:[36m4662[0m - [34m[1m[rag_char_chat_schema V10→V11] Migration script executed.[0m
+[32m2026-10-31 12:49:15.261[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v10_to_v11[0m:[36m4671[0m - [1m[rag_char_chat_schema V10→V11] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.261[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v11_to_v12[0m:[36m4705[0m - [1mMigrating schema from V11 to V12 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.262[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.282[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v11_to_v12[0m:[36m4713[0m - [34m[1m[rag_char_chat_schema V11→V12] Migration script executed.[0m
+[32m2026-10-31 12:49:15.283[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v11_to_v12[0m:[36m4722[0m - [1m[rag_char_chat_schema V11→V12] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.283[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v12_to_v13[0m:[36m4748[0m - [1mMigrating schema from V12 to V13 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.283[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.376[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v12_to_v13[0m:[36m4756[0m - [34m[1m[rag_char_chat_schema V12→V13] Migration script executed.[0m
+[32m2026-10-31 12:49:15.376[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v12_to_v13[0m:[36m4764[0m - [1m[rag_char_chat_schema V12→V13] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.383[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v13_to_v14[0m:[36m4789[0m - [1mMigrating schema from V13 to V14 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.384[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.401[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v13_to_v14[0m:[36m4797[0m - [34m[1m[rag_char_chat_schema V13→V14] Migration script executed.[0m
+[32m2026-10-31 12:49:15.402[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v13_to_v14[0m:[36m4805[0m - [1m[rag_char_chat_schema V13→V14] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.402[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v14_to_v15[0m:[36m4830[0m - [1mMigrating schema from V14 to V15 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.403[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.407[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v14_to_v15[0m:[36m4838[0m - [34m[1m[rag_char_chat_schema V14→V15] Migration script executed.[0m
+[32m2026-10-31 12:49:15.408[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v14_to_v15[0m:[36m4846[0m - [1m[rag_char_chat_schema V14→V15] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.408[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v15_to_v16[0m:[36m4872[0m - [1mMigrating schema from V15 to V16 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.408[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.410[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v15_to_v16[0m:[36m4915[0m - [34m[1m[rag_char_chat_schema V15→V16] Migration script executed.[0m
+[32m2026-10-31 12:49:15.410[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v15_to_v16[0m:[36m4925[0m - [1m[rag_char_chat_schema V15→V16] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.410[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v16_to_v17[0m:[36m4951[0m - [1mMigrating schema from V16 to V17 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.411[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.412[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v16_to_v17[0m:[36m4966[0m - [34m[1m[rag_char_chat_schema V16→V17] Migration script executed.[0m
+[32m2026-10-31 12:49:15.412[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v16_to_v17[0m:[36m4974[0m - [1m[rag_char_chat_schema V16→V17] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.412[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v17_to_v18[0m:[36m5002[0m - [1mMigrating schema from V17 to V18 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.412[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.420[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v17_to_v18[0m:[36m5017[0m - [34m[1m[rag_char_chat_schema V17→V18] Migration script executed.[0m
+[32m2026-10-31 12:49:15.421[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v17_to_v18[0m:[36m5025[0m - [1m[rag_char_chat_schema V17→V18] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.421[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v18_to_v19[0m:[36m8337[0m - [1mMigrating schema from V18 to V19 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.421[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.423[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v18_to_v19[0m:[36m8352[0m - [34m[1m[rag_char_chat_schema V18→V19] Migration script executed.[0m
+[32m2026-10-31 12:49:15.423[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v18_to_v19[0m:[36m8360[0m - [1m[rag_char_chat_schema V18→V19] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.424[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v19_to_v20[0m:[36m5053[0m - [1mMigrating schema from V19 to V20 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.424[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.432[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v19_to_v20[0m:[36m5073[0m - [34m[1m[rag_char_chat_schema V19→V20] Migration script executed.[0m
+[32m2026-10-31 12:49:15.432[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v19_to_v20[0m:[36m5081[0m - [1m[rag_char_chat_schema V19→V20] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.433[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v20_to_v21[0m:[36m5109[0m - [1mMigrating schema from V20 to V21 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.433[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.434[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_skip_already_applied_add_column[0m:[36m3939[0m - [1m[rag_char_chat_schema V20→V21] world_book_entries.priority already present; skipping the ADD COLUMN (idempotent replay).[0m
+[32m2026-10-31 12:49:15.436[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v20_to_v21[0m:[36m5129[0m - [34m[1m[rag_char_chat_schema V20→V21] Migration script executed.[0m
+[32m2026-10-31 12:49:15.436[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v20_to_v21[0m:[36m5137[0m - [1m[rag_char_chat_schema V20→V21] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.436[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v21_to_v22[0m:[36m5159[0m - [1mMigrating schema from V21 to V22 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.437[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.438[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_skip_already_applied_add_column[0m:[36m3939[0m - [1m[rag_char_chat_schema V21→V22] world_book_entries.regex already present; skipping the ADD COLUMN (idempotent replay).[0m
+[32m2026-10-31 12:49:15.439[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v21_to_v22[0m:[36m5174[0m - [34m[1m[rag_char_chat_schema V21→V22] Migration script executed.[0m
+[32m2026-10-31 12:49:15.442[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v21_to_v22[0m:[36m5180[0m - [1m[rag_char_chat_schema V21→V22] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.442[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v22_to_v23[0m:[36m5202[0m - [1mMigrating schema from V22 to V23 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.443[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.446[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v22_to_v23[0m:[36m5217[0m - [34m[1m[rag_char_chat_schema V22→V23] Migration script executed.[0m
+[32m2026-10-31 12:49:15.447[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v22_to_v23[0m:[36m5223[0m - [1m[rag_char_chat_schema V22→V23] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.447[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v23_to_v24[0m:[36m5246[0m - [1mMigrating schema from V23 to V24 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.447[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.455[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v23_to_v24[0m:[36m5261[0m - [34m[1m[rag_char_chat_schema V23→V24] Migration script executed.[0m
+[32m2026-10-31 12:49:15.455[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v23_to_v24[0m:[36m5267[0m - [1m[rag_char_chat_schema V23→V24] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.456[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v24_to_v25[0m:[36m5290[0m - [1mMigrating schema from V24 to V25 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.456[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.458[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v24_to_v25[0m:[36m5305[0m - [34m[1m[rag_char_chat_schema V24→V25] Migration script executed.[0m
+[32m2026-10-31 12:49:15.458[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v24_to_v25[0m:[36m5311[0m - [1m[rag_char_chat_schema V24→V25] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.459[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v25_to_v26[0m:[36m5335[0m - [1mMigrating schema from V25 to V26 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.459[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.478[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v25_to_v26[0m:[36m5350[0m - [34m[1m[rag_char_chat_schema V25→V26] Migration script executed.[0m
+[32m2026-10-31 12:49:15.479[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v25_to_v26[0m:[36m5356[0m - [1m[rag_char_chat_schema V25→V26] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.480[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.489[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.490[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 3 on thread 235380.[0m
+[32m2026-10-31 12:49:15.498[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v28_to_v29[0m:[36m5543[0m - [1mMigrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.499[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.501[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v28_to_v29[0m:[36m5558[0m - [34m[1m[rag_char_chat_schema V28→V29] Migration script executed.[0m
+[32m2026-10-31 12:49:15.502[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v28_to_v29[0m:[36m5566[0m - [1m[rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.502[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v29_to_v30[0m:[36m5593[0m - [1mMigrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.502[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.511[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v29_to_v30[0m:[36m5613[0m - [34m[1m[rag_char_chat_schema V29→V30] Migration script executed.[0m
+[32m2026-10-31 12:49:15.512[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v29_to_v30[0m:[36m5637[0m - [1m[rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.512[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v30_to_v31[0m:[36m5664[0m - [1mMigrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.513[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.522[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v30_to_v31[0m:[36m5684[0m - [34m[1m[rag_char_chat_schema V30→V31] Migration script executed.[0m
+[32m2026-10-31 12:49:15.523[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v30_to_v31[0m:[36m5708[0m - [1m[rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.524[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v31_to_v32[0m:[36m5741[0m - [1mMigrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.525[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enrich_default_assistant_card_if_bare[0m:[36m4376[0m - [34m[1m[task-2451] Default Assistant enrichment UPDATE affected 0 row(s) in DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.526[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v31_to_v32[0m:[36m5767[0m - [1m[rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.526[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.531[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.542[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.548[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.551[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.564[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.566[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.569[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.571[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.575[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v41_to_v42[0m:[36m6087[0m - [1mMigrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.578[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v41_to_v42[0m:[36m6151[0m - [1m[rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.[0m
+[32m2026-10-31 12:49:15.579[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v42_to_v43[0m:[36m6201[0m - [1mMigrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.580[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.584[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v42_to_v43[0m:[36m6340[0m - [1m[rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.584[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v43_to_v44[0m:[36m6370[0m - [1mMigrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.584[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.611[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v43_to_v44[0m:[36m6410[0m - [1m[rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.611[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v44_to_v45[0m:[36m6479[0m - [1mActor Pack schema migration started: chachanotes_v44_to_v45[0m
+[32m2026-10-31 12:49:15.612[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.614[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v44_to_v45[0m:[36m6512[0m - [1mActor Pack schema migration completed: chachanotes_v44_to_v45[0m
+[32m2026-10-31 12:49:15.615[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v45_to_v46[0m:[36m6556[0m - [1mMigrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.615[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.626[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v45_to_v46[0m:[36m6602[0m - [1m[rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=memory. Purged 0 unreachable sync_log row(s) of 1.[0m
+[32m2026-10-31 12:49:15.626[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v46_to_v47[0m:[36m6644[0m - [1mMigrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.628[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.630[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v46_to_v47[0m:[36m6679[0m - [1m[rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.630[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.642[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v48_to_v49[0m:[36m6835[0m - [1mMigrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.642[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.644[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v48_to_v49[0m:[36m6870[0m - [1m[rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.645[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v49_to_v50[0m:[36m6918[0m - [1mMigrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.645[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.646[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v49_to_v50[0m:[36m6952[0m - [1m[rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=memory.[0m
+[32m2026-10-31 12:49:15.646[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.655[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.684[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v52_to_v53[0m:[36m7077[0m - [1mMigrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=memory...[0m
+[32m2026-10-31 12:49:15.685[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.685[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_migrate_from_v52_to_v53[0m:[36m7142[0m - [1m[rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=memory (examined 0, compacted 0, skipped 0 unreadable).[0m
+[32m2026-10-31 12:49:15.686[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.695[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.699[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.728[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.735[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.817[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.826[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.830[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.835[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.884[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.897[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.942[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.950[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.965[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 3 on thread 235380.[0m
+[32m2026-10-31 12:49:15.966[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 3 on thread 235380.[0m
+[32m2026-10-31 12:49:15.970[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:15.978[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.057[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.063[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.066[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.086[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.122[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.124[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.146[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.149[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.151[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.211[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.214[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.222[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.225[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.231[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.235[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.238[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:16.256[0m | [1mINFO    [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_initialize_schema[0m:[36m8621[0m - [1mDatabase schema 'rag_char_chat_schema' successfully initialized/migrated to version 84.[0m
+[32m2026-10-31 12:49:16.258[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:16.258[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m__init__[0m:[36m2981[0m - [34m[1mCharactersRAGDB initialization completed successfully db_sha256=memory[0m
+[32m2026-10-31 12:49:18.270[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.UI.Navigation.base_app_screen[0m:[36m__init__[0m:[36m122[0m - [34m[1mInitializing ChatScreen screen: chat[0m
+[32m2026-10-31 12:49:19.327[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:19.327[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:19.666[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Chat.chat_persistence_service[0m:[36m__init__[0m:[36m325[0m - [34m[1mRecovered-media message source is unavailable.[0m
+[32m2026-10-31 12:49:20.515[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mensure_chat_controller[0m:[36m5017[0m - [34m[1mensure_chat_controller: ignoring runtime-owned kwargs supplied by caller: ['default_session_settings', 'global_user_display_name', 'library_provider_factory', 'provider_config', 'rag_capture_provider', 'turn_context_provider'][0m
+[32m2026-10-31 12:49:20.896[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.UI.Console_Modules.workspace[0m:[36m_persisted_console_browser_rows[0m:[36m4037[0m - [34m[1mLocal persisted conversation service is unavailable[0m
+[32m2026-10-31 12:49:20.897[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.UI.Screens.chat_screen[0m:[36m_sync_console_workspace_context[0m:[36m12860[0m - [34m[1mNo Console workspace context tray available for sync[0m
+[32m2026-10-31 12:49:20.898[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.UI.Screens.chat_screen[0m:[36m_sync_console_workspace_context[0m:[36m12860[0m - [34m[1mNo Console workspace context tray available for sync[0m
+[32m2026-10-31 12:49:20.899[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_fleet_wake[0m:[36mrecover[0m:[36m1478[0m - [33m[1mwake recovery failed (exception_type=AttributeError)[0m
+[32m2026-10-31 12:49:20.899[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36msave_setting_to_cli_config[0m:[36m9795[0m - [1mAttempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}[0m
+[32m2026-10-31 12:49:24.138[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=233268[0m
+[32m2026-10-31 12:49:24.170[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 233268.[0m
+[32m2026-10-31 12:49:24.233[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 233268.[0m
+[32m2026-10-31 12:49:24.254[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Widgets.compact_model_bar[0m:[36mhandle_compact_temp_change[0m:[36m910[0m - [34m[1mSidebar temperature input not found for sync[0m
+[32m2026-10-31 12:49:24.268[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 233268.[0m
+[32m2026-10-31 12:49:24.309[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 233268.[0m
+[32m2026-10-31 12:49:24.316[0m | [1mINFO    [0m | [36mtldw_chatbook.UI.Navigation.base_app_screen[0m:[36mon_mount[0m:[36m720[0m - [1mScreen chat mounted[0m
+[32m2026-10-31 12:49:24.320[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:24.321[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:24.322[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.UI.Screens.chat_screen[0m:[36mon_screen_resume[0m:[36m22830[0m - [34m[1mChat screen resuming[0m
+[32m2026-10-31 12:49:26.307[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=236760[0m
+[32m2026-10-31 12:49:26.307[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 236760.[0m
+[32m2026-10-31 12:49:26.308[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 236760.[0m
+[32m2026-10-31 12:49:26.373[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:26.760[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=205924[0m
+[32m2026-10-31 12:49:26.771[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 205924.[0m
+[32m2026-10-31 12:49:26.802[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 205924.[0m
+[32m2026-10-31 12:49:26.818[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=165248[0m
+[32m2026-10-31 12:49:26.825[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 165248.[0m
+[32m2026-10-31 12:49:26.849[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 165248.[0m
+[32m2026-10-31 12:49:27.360[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 233268.[0m
+[32m2026-10-31 12:49:27.360[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 233268.[0m
+[32m2026-10-31 12:49:27.361[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:27.566[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_apply_literal_settings_transaction_locked[0m:[36m9100[0m - [1mAttempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}[0m
+[32m2026-10-31 12:49:27.679[0m | [32m[1mSUCCESS [0m | [36mtldw_chatbook.config[0m:[36m_apply_literal_settings_transaction_locked[0m:[36m9155[0m - [32m[1mSuccessfully replaced settings file at C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\config\config\config.toml[0m
+[32m2026-10-31 12:49:27.694[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2321[0m - [1mDetermined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook[0m
+[32m2026-10-31 12:49:27.694[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2324[0m - [1mDetermined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook[0m
+[32m2026-10-31 12:49:27.701[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2347[0m - [34m[1mload_settings: Configuration loaded from disk (cache miss or forced reload)[0m
+[32m2026-10-31 12:49:28.143[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3912[0m - [34m[1mEnsured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\config\home\.local\share\tldw_cli\default_user\chat_dicts[0m
+[32m2026-10-31 12:49:28.143[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3943[0m - [34m[1mload_settings: Configuration cached for future use[0m
+[32m2026-10-31 12:49:28.148[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_apply_literal_settings_transaction_locked[0m:[36m9185[0m - [1mGlobal configuration caches invalidated and reloaded.[0m
+[32m2026-10-31 12:49:28.422[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=214456[0m
+[32m2026-10-31 12:49:28.423[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 214456.[0m
+[32m2026-10-31 12:49:28.424[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 214456.[0m
+[32m2026-10-31 12:49:28.424[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:28.592[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.LLM_Calls.pricing_catalog[0m:[36m_compile_patterns[0m:[36m716[0m - [34m[1mCompiled 10 pricing patterns for provider anthropic[0m
+[32m2026-10-31 12:49:28.593[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.LLM_Calls.pricing_catalog[0m:[36m_compile_patterns[0m:[36m716[0m - [34m[1mCompiled 18 pricing patterns for provider openai[0m
+[32m2026-10-31 12:49:28.594[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.LLM_Calls.pricing_catalog[0m:[36m_compile_patterns[0m:[36m716[0m - [34m[1mCompiled 5 pricing patterns for provider cohere[0m
+[32m2026-10-31 12:49:28.594[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.LLM_Calls.pricing_catalog[0m:[36m_compile_patterns[0m:[36m716[0m - [34m[1mCompiled 5 pricing patterns for provider google[0m
+[32m2026-10-31 12:49:28.595[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.LLM_Calls.pricing_catalog[0m:[36m_compile_patterns[0m:[36m716[0m - [34m[1mCompiled 4 pricing patterns for provider mistral[0m
+[32m2026-10-31 12:49:28.595[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.LLM_Calls.pricing_catalog[0m:[36m_compile_patterns[0m:[36m716[0m - [34m[1mCompiled 4 pricing patterns for provider mistralai[0m
+[32m2026-10-31 12:49:28.595[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.LLM_Calls.pricing_catalog[0m:[36m_compile_patterns[0m:[36m716[0m - [34m[1mCompiled 2 pricing patterns for provider deepseek[0m
+[32m2026-10-31 12:49:28.595[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.LLM_Calls.pricing_catalog[0m:[36m__init__[0m:[36m689[0m - [34m[1mPricingCatalog initialized with 62 direct mappings and patterns for 7 providers[0m
+[32m2026-10-31 12:49:28.813[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 233268.[0m
+[32m2026-10-31 12:49:28.814[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 233268.[0m
+[32m2026-10-31 12:49:28.820[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 236760.[0m
+[32m2026-10-31 12:49:28.820[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 236760.[0m
+[32m2026-10-31 12:49:30.104[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mlist_all_active_conversations[0m:[36m11390[0m - [34m[1mListing all active conversations: limit=1000, offset=0[0m
+[32m2026-10-31 12:49:30.105[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3654[0m - [34m[1mExecuting SQL (script=False): 
+                SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)[0m
+[32m2026-10-31 12:49:30.113[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 205924.[0m
+[32m2026-10-31 12:49:30.114[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=235388[0m
+[32m2026-10-31 12:49:30.114[0m | [31m[1mERROR   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3749[0m - [31m[1mQuery execution failed: 
+                SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError[0m
+[32m2026-10-31 12:49:30.130[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 205924.[0m
+[32m2026-10-31 12:49:30.134[0m | [31m[1mERROR   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mlist_all_active_conversations[0m:[36m11448[0m - [31m[1mDatabase error listing all active conversations: exception_type=CharactersRAGDBError[0m
+[32m2026-10-31 12:49:30.140[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235388.[0m
+[32m2026-10-31 12:49:30.196[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.UI.Screens.chat_screen[0m:[36m_prune_console_rail_preferences[0m:[36m11910[0m - [33m[1mConsole rail preference prune skipped: Query execution failed: no such table: conversations[0m
+[32m2026-10-31 12:49:30.216[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:30.216[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 235388.[0m
+[32m2026-10-31 12:49:30.230[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 214456.[0m
+[32m2026-10-31 12:49:30.264[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 214456.[0m
+[32m2026-10-31 12:49:30.324[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235388.[0m
+[32m2026-10-31 12:49:30.358[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 235388.[0m
+[32m2026-10-31 12:49:30.369[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235388.[0m
+[32m2026-10-31 12:49:30.370[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 235388.[0m
+[32m2026-10-31 12:49:31.774[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:31.774[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:31.775[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.UI.Screens.chat_screen[0m:[36mon_screen_resume[0m:[36m22830[0m - [34m[1mChat screen resuming[0m
+[32m2026-10-31 12:49:31.784[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235388.[0m
+[32m2026-10-31 12:49:31.795[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 235388.[0m
+[32m2026-10-31 12:49:31.862[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.UI.Console_Modules.workspace[0m:[36m_persisted_console_browser_rows[0m:[36m4037[0m - [34m[1mLocal persisted conversation service is unavailable[0m
+[32m2026-10-31 12:49:31.871[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.UI.Screens.chat_screen[0m:[36m_restore_collapsible_states[0m:[36m24291[0m - [34m[1mNo collapsible states to restore[0m
+[32m2026-10-31 12:49:31.940[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235388.[0m
+[32m2026-10-31 12:49:31.941[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:31.945[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 235388.[0m
+[32m2026-10-31 12:49:31.955[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 214456.[0m
+[32m2026-10-31 12:49:31.955[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 214456.[0m
+[32m2026-10-31 12:49:32.940[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 165248.[0m
+[32m2026-10-31 12:49:32.940[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 165248.[0m
+[32m2026-10-31 12:49:32.942[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:33.939[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 165248.[0m
+[32m2026-10-31 12:49:33.939[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 165248.[0m
+[32m2026-10-31 12:49:33.940[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:34.971[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=227608[0m
+[32m2026-10-31 12:49:34.972[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 227608.[0m
+[32m2026-10-31 12:49:34.972[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 227608.[0m
+[32m2026-10-31 12:49:34.973[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:35.963[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=238120[0m
+[32m2026-10-31 12:49:35.964[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 238120.[0m
+[32m2026-10-31 12:49:35.964[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 238120.[0m
+[32m2026-10-31 12:49:35.964[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:36.073[0m | [1mINFO    [0m | [36mtldw_chatbook.RAG_Search.config_profiles[0m:[36m_load_builtin_profiles[0m:[36m609[0m - [1mLoaded 12 built-in profiles[0m
+[32m2026-10-31 12:49:36.858[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=220464[0m
+[32m2026-10-31 12:49:36.858[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 220464.[0m
+[32m2026-10-31 12:49:36.858[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 220464.[0m
+[32m2026-10-31 12:49:36.890[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 238120.[0m
+[32m2026-10-31 12:49:36.900[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 238120.[0m
+[32m2026-10-31 12:49:36.966[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 233268.[0m
+[32m2026-10-31 12:49:36.966[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 233268.[0m
+[32m2026-10-31 12:49:36.967[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:37.871[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 236760.[0m
+[32m2026-10-31 12:49:37.873[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 236760.[0m
+[32m2026-10-31 12:49:37.901[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 205924.[0m
+[32m2026-10-31 12:49:37.916[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 205924.[0m
+[32m2026-10-31 12:49:38.056[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=232428[0m
+[32m2026-10-31 12:49:38.069[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 232428.[0m
+[32m2026-10-31 12:49:38.070[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 232428.[0m
+[32m2026-10-31 12:49:38.102[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:39.040[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=176156[0m
+[32m2026-10-31 12:49:39.040[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 176156.[0m
+[32m2026-10-31 12:49:39.040[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 176156.[0m
+[32m2026-10-31 12:49:39.054[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 238120.[0m
+[32m2026-10-31 12:49:39.054[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 238120.[0m
+[32m2026-10-31 12:49:39.108[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 220464.[0m
+[32m2026-10-31 12:49:39.170[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 220464.[0m
+[32m2026-10-31 12:49:39.176[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:40.064[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 227608.[0m
+[32m2026-10-31 12:49:40.064[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 227608.[0m
+[32m2026-10-31 12:49:40.079[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 220464.[0m
+[32m2026-10-31 12:49:40.079[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 220464.[0m
+[32m2026-10-31 12:49:40.158[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 227608.[0m
+[32m2026-10-31 12:49:40.159[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 227608.[0m
+[32m2026-10-31 12:49:40.159[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:40.647[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:40.708[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:40.709[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36madd_conversation[0m:[36m11189[0m - [34m[1mAdded conversation ID: 4ff00361-ec29-41cb-873b-e796fb817a5f.[0m
+[32m2026-10-31 12:49:40.710[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:40.710[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:40.719[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:40.721[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:40.721[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:40.722[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3654[0m - [34m[1mExecuting SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (4ff00361-ec29-41cb-873b-e796fb817a5f)[0m
+[32m2026-10-31 12:49:41.332[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 232428.[0m
+[32m2026-10-31 12:49:41.332[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 232428.[0m
+[32m2026-10-31 12:49:41.568[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:41.997[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:41.998[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:42.469[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.UI.Console_Modules.workspace[0m:[36m_persisted_console_browser_rows[0m:[36m4037[0m - [34m[1mLocal persisted conversation service is unavailable[0m
+[32m2026-10-31 12:49:42.472[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.UI.Console_Modules.workspace[0m:[36m_refresh_console_persisted_rows_cache[0m:[36m4263[0m - [34m[1mArchive state refresh unavailable[0m
+[32m2026-10-31 12:49:43.244[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 176156.[0m
+[32m2026-10-31 12:49:43.245[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 176156.[0m
+[32m2026-10-31 12:49:43.256[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:43.738[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.UI.Console_Modules.retrieval[0m:[36mrefresh_active_dictionaries_summary[0m:[36m499[0m - [33m[1mCould not summarize active chat dictionaries for the Console inspector.[0m
+[33m[1mTraceback (most recent call last):[0m
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\Tests\[0m[32m[1mwindows_private_fixture_runner.py[0m", line [33m64[0m, in [35m<module>[0m
+    [35m[1mraise[0m [1mSystemExit[0m[1m([0m[1mmain[0m[1m([0m[1m)[0m[1m)[0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\Tests\[0m[32m[1mwindows_private_fixture_runner.py[0m", line [33m60[0m, in [35mmain[0m
+    [35m[1mreturn[0m [1mint[0m[1m([0m[1mpytest[0m[35m[1m.[0m[1mmain[0m[1m([0m[1msys[0m[35m[1m.[0m[1margv[0m[1m[[0m[34m[1m1[0m[1m:[0m[1m][0m[1m)[0m[1m)[0m
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\config\__init__.py", line 175, in main
+    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 330, in pytest_cmdline_main
+    return wrap_session(config, _main)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 283, in wrap_session
+    session.exitstatus = doit(config, session) or 0
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 337, in _main
+    config.hook.pytest_runtestloop(session=session)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\main.py", line 362, in pytest_runtestloop
+    item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 113, in pytest_runtest_protocol
+    runtestprotocol(item, nextitem=nextitem)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 132, in runtestprotocol
+    reports.append(call_and_report(item, "call", log))
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 241, in call_and_report
+    call = CallInfo.from_call(
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 341, in from_call
+    result: TResult | None = func()
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 242, in <lambda>
+    lambda: runtest_hook(item=item, **kwds), when=when, reraise=reraise
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\runner.py", line 174, in pytest_runtest_call
+    item.runtest()
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 508, in runtest
+    super().runtest()
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\python.py", line 1627, in runtest
+    self.ihook.pytest_pyfunc_call(pyfuncitem=self)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pluggy\_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\_pytest\python.py", line 159, in pytest_pyfunc_call
+    result = testfunction(**testargs)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py", line 773, in inner
+    _loop.run_until_complete(task)
+  File "C:\Python312\Lib\asyncio\base_events.py", line 678, in run_until_complete
+    self.run_forever()
+  File "C:\Python312\Lib\asyncio\windows_events.py", line 322, in run_forever
+    super().run_forever()
+  File "C:\Python312\Lib\asyncio\base_events.py", line 645, in run_forever
+    self._run_once()
+  File "C:\Python312\Lib\asyncio\base_events.py", line 1999, in _run_once
+    handle._run()
+  File "C:\Python312\Lib\asyncio\events.py", line 88, in _run
+    self._context.run(self._callback, *self._args)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\timer.py", line 146, in _run_timer
+    await self._run()
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\timer.py", line 176, in _run
+    await self._tick(next_timer=next_timer, count=count)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\timer.py", line 189, in _tick
+    await invoke(self._callback)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py", line 96, in invoke
+    return await _invoke(callback, *params)
+  File "C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\textual\_callback.py", line 58, in _invoke
+    result = await result
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\UI\Screens\[0m[32m[1mchat_screen.py[0m", line [33m17985[0m, in [35m_poll_transcript[0m
+    [35m[1mif[0m [35m[1mawait[0m [1mconfig_sync[0m[35m[1m.[0m[1mrun_periodic_console_sync[0m[1m([0m[1mdisplay[0m[1m,[0m [1mself[0m[1m)[0m [35m[1mis[0m [36m[1mFalse[0m[1m:[0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\UI\Console_Modules\[0m[32m[1mconfig_sync.py[0m", line [33m267[0m, in [35mrun_periodic_console_sync[0m
+    [35m[1mreturn[0m [35m[1mawait[0m [1msync[0m[1m([0m[35m[1m*[0m[1margs[0m[1m)[0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\UI\Console_Modules\[0m[32m[1mcomposer_run_controls.py[0m", line [33m1044[0m, in [35msync_poll_display_ui[0m
+    [35m[1mreturn[0m [35m[1mawait[0m [1mself[0m[35m[1m.[0m[1m_sync_native_console_chat_ui[0m[1m([0m[1m_preparing_poll[0m[35m[1m=[0m[36m[1mTrue[0m[1m)[0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\UI\Screens\[0m[32m[1mchat_screen.py[0m", line [33m17684[0m, in [35m_sync_native_console_chat_ui[0m
+    [35m[1mawait[0m [1m([0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\UI\Console_Modules\[0m[32m[1mretrieval.py[0m", line [33m515[0m, in [35m_refresh_active_dictionaries_summary_if_scope_changed[0m
+    [35m[1mawait[0m [1mself[0m[35m[1m.[0m[1mrefresh_active_dictionaries_summary[0m[1m([0m[1m)[0m
+> File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\UI\Console_Modules\[0m[32m[1mretrieval.py[0m", line [33m496[0m, in [35mrefresh_active_dictionaries_summary[0m
+    [35m[1mawait[0m [1m_await_finite_display[0m[1m([0m[1moperation[0m[1m)[0m [35m[1mif[0m [1mstock[0m [35m[1melse[0m [35m[1mawait[0m [1moperation[0m
+  File "C:\Python312\Lib\asyncio\threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\UI\Console_Modules\[0m[32m[1mretrieval.py[0m", line [33m91[0m, in [35m_run_dictionary_summary_off_thread[0m
+    [35m[1mreturn[0m [1masyncio[0m[35m[1m.[0m[1mrun[0m[1m([0m
+  File "C:\Python312\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+  File "C:\Python312\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+  File "C:\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+    return future.result()
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Character_Chat\[0m[32m[1mchat_dictionary_scope_service.py[0m", line [33m497[0m, in [35msummarize_active_dictionaries[0m
+    [35m[1mreturn[0m [35m[1mawait[0m [1mself[0m[35m[1m.[0m[1m_invoke[0m[1m([0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Character_Chat\[0m[32m[1mchat_dictionary_scope_service.py[0m", line [33m192[0m, in [35m_invoke[0m
+    [35m[1mreturn[0m [35m[1mawait[0m [1mself[0m[35m[1m.[0m[1m_call_backend[0m[1m([0m[1mbackend[0m[1m,[0m [1mmethod[0m[1m,[0m [35m[1m*[0m[1margs[0m[1m,[0m [35m[1m**[0m[1mkwargs[0m[1m)[0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Character_Chat\[0m[32m[1mchat_dictionary_scope_service.py[0m", line [33m115[0m, in [35m_call_backend[0m
+    [35m[1mreturn[0m [35m[1mawait[0m [1mself[0m[35m[1m.[0m[1m_maybe_await[0m[1m([0m[1mmethod[0m[1m([0m[35m[1m*[0m[1margs[0m[1m,[0m [35m[1m**[0m[1mkwargs[0m[1m)[0m[1m)[0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Backup_Recovery\[0m[32m[1mchat_source_participants.py[0m", line [33m423[0m, in [35mwrapped[0m
+    [35m[1mreturn[0m [1mfunction[0m[1m([0m[1msource[0m[1m,[0m [35m[1m*[0m[1margs[0m[1m,[0m [35m[1m**[0m[1mkwargs[0m[1m)[0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Character_Chat\[0m[32m[1mlocal_chat_dictionary_service.py[0m", line [33m1269[0m, in [35msummarize_active_dictionaries[0m
+    [35m[1mreturn[0m [1mcdl[0m[35m[1m.[0m[1msummarize_active_dictionaries[0m[1m([0m[1mself[0m[35m[1m.[0m[1m_require_db[0m[1m([0m[1m)[0m[1m,[0m [1mconv_id[0m[1m,[0m [1mchar_data[0m[1m)[0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Backup_Recovery\[0m[32m[1mchat_source_participants.py[0m", line [33m423[0m, in [35mwrapped[0m
+    [35m[1mreturn[0m [1mfunction[0m[1m([0m[1msource[0m[1m,[0m [35m[1m*[0m[1margs[0m[1m,[0m [35m[1m**[0m[1mkwargs[0m[1m)[0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Character_Chat\[0m[32m[1mlocal_chat_dictionary_service.py[0m", line [33m201[0m, in [35m_require_db[0m
+    [35m[1mraise[0m [1mValueError[0m[1m([0m[36m"Local chat dictionary backend is unavailable."[0m[1m)[0m
+[31m[1mValueError[0m:[1m Local chat dictionary backend is unavailable.[0m
+[32m2026-10-31 12:49:43.781[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=141672[0m
+[32m2026-10-31 12:49:43.782[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 141672.[0m
+[32m2026-10-31 12:49:43.782[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 141672.[0m
+[32m2026-10-31 12:49:43.782[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.Character_Chat.world_info_resolver[0m:[36msummarize_active_world_books[0m:[36m336[0m - [34m[1mworld-info: could not summarize conversation world books[0m
+[33m[1mTraceback (most recent call last):[0m
+  File "C:\Python312\Lib\threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Python312\Lib\threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "C:\Python312\Lib\threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 93, in _worker
+    work_item.run()
+  File "C:\Python312\Lib\concurrent\futures\thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\DB\[0m[32m[1mbase_db.py[0m", line [33m148[0m, in [35minvoke[0m
+    [35m[1mreturn[0m [1moperation[0m[1m([0m[35m[1m*[0m[1margs[0m[1m,[0m [35m[1m**[0m[1mkwargs[0m[1m)[0m
+> File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Character_Chat\[0m[32m[1mworld_info_resolver.py[0m", line [33m332[0m, in [35msummarize_active_world_books[0m
+    [1mbooks[0m [35m[1m=[0m [1mWorldBookManager[0m[1m([0m[1mdb[0m[1m)[0m[35m[1m.[0m[1mget_world_books_for_conversation[0m[1m([0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\Character_Chat\[0m[32m[1mworld_book_manager.py[0m", line [33m908[0m, in [35mget_world_books_for_conversation[0m
+    [1mcursor[0m[35m[1m.[0m[1mexecute[0m[1m([0m[1mquery[0m[1m,[0m [1m([0m[1mconversation_id[0m[1m,[0m[1m)[0m[1m)[0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\DB\[0m[32m[1mbase_db.py[0m", line [33m653[0m, in [35mexecute[0m
+    [35m[1mreturn[0m [1mself[0m[35m[1m.[0m[1m_tracked[0m[1m([0m
+  File "[32mC:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook\DB\[0m[32m[1mbase_db.py[0m", line [33m634[0m, in [35m_tracked[0m
+    [1mresult[0m [35m[1m=[0m [1mrun[0m[1m([0m[35m[1m*[0m[1margs[0m[1m)[0m
+[31m[1msqlite3.OperationalError[0m:[1m no such table: world_books[0m
+[32m2026-10-31 12:49:43.804[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 214456.[0m
+[32m2026-10-31 12:49:43.804[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 214456.[0m
+[32m2026-10-31 12:49:43.816[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=236972[0m
+[32m2026-10-31 12:49:43.817[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 236972.[0m
+[32m2026-10-31 12:49:43.817[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 236972.[0m
+[32m2026-10-31 12:49:43.827[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:43.828[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:43.847[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:43.847[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:43.853[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 236760.[0m
+[32m2026-10-31 12:49:43.853[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 236760.[0m
+[32m2026-10-31 12:49:43.929[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.UI.Console_Modules.review_selection[0m:[36m_load_console_annotation_previews[0m:[36m596[0m - [33m[1mConsole annotations: load failed for '4ff00361-ec29-41cb-873b-e796fb817a5f'[0m
+[32m2026-10-31 12:49:44.177[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:44.178[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:44.178[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:44.178[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:44.178[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:44.178[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:44.184[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:44.185[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:44.190[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:44.191[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:44.192[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:44.192[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36mexecute_query[0m:[36m3654[0m - [34m[1mExecuting SQL (script=False): SELECT id, conversation_id, parent_message_id, sender, role, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json, provider_continuation_json, thinking_blocks_json, assistant_generation_state FROM messages WHERE id ... Params: (3923ced3-bbce-4d6b-a8ff-c2116f6ad3a1)[0m
+[32m2026-10-31 12:49:44.197[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:44.198[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25226[0m - [34m[1mEntered nested transaction level 2 on thread 235380.[0m
+[32m2026-10-31 12:49:44.201[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:44.204[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36msave_setting_to_cli_config[0m:[36m9795[0m - [1mAttempting to save setting: [console.onboarding].first_send_completed = True[0m
+[32m2026-10-31 12:49:44.243[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 227608.[0m
+[32m2026-10-31 12:49:44.247[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=228992[0m
+[32m2026-10-31 12:49:44.247[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 228992.[0m
+[32m2026-10-31 12:49:44.247[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 227608.[0m
+[32m2026-10-31 12:49:44.248[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 228992.[0m
+[32m2026-10-31 12:49:44.248[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:44.288[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 165248.[0m
+[32m2026-10-31 12:49:44.290[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 165248.[0m
+[32m2026-10-31 12:49:44.327[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:44.328[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:44.450[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:44.452[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:44.453[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:44.453[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:44.503[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 228992.[0m
+[32m2026-10-31 12:49:44.504[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 228992.[0m
+[32m2026-10-31 12:49:44.515[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 176156.[0m
+[32m2026-10-31 12:49:44.556[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 176156.[0m
+[32m2026-10-31 12:49:44.663[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 205924.[0m
+[32m2026-10-31 12:49:44.664[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 205924.[0m
+[32m2026-10-31 12:49:44.679[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 236972.[0m
+[32m2026-10-31 12:49:44.681[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 236972.[0m
+[32m2026-10-31 12:49:44.711[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 238120.[0m
+[32m2026-10-31 12:49:44.712[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 238120.[0m
+[32m2026-10-31 12:49:44.722[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 214456.[0m
+[32m2026-10-31 12:49:44.722[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 214456.[0m
+[32m2026-10-31 12:49:44.747[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 141672.[0m
+[32m2026-10-31 12:49:44.747[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 141672.[0m
+[32m2026-10-31 12:49:44.756[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 236760.[0m
+[32m2026-10-31 12:49:44.757[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 236760.[0m
+[32m2026-10-31 12:49:44.781[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 236972.[0m
+[32m2026-10-31 12:49:44.782[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 236972.[0m
+[32m2026-10-31 12:49:44.789[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_get_thread_connection[0m:[36m3136[0m - [34m[1mOpened/Reopened SQLite connection db_sha256=memory thread=204836[0m
+[32m2026-10-31 12:49:44.793[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 204836.[0m
+[32m2026-10-31 12:49:44.794[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 204836.[0m
+[32m2026-10-31 12:49:45.058[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_apply_literal_settings_transaction_locked[0m:[36m9100[0m - [1mAttempting to apply literal settings mutation: sets={"('console', 'onboarding')": ['first_send_completed']}, deletes={}[0m
+[32m2026-10-31 12:49:45.162[0m | [32m[1mSUCCESS [0m | [36mtldw_chatbook.config[0m:[36m_apply_literal_settings_transaction_locked[0m:[36m9155[0m - [32m[1mSuccessfully replaced settings file at C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\config\config\config.toml[0m
+[32m2026-10-31 12:49:45.177[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2321[0m - [1mDetermined ACTUAL_PROJECT_ROOT for general paths: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook[0m
+[32m2026-10-31 12:49:45.178[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2324[0m - [1mDetermined APP_COMPONENT_ROOT for config files: C:\Users\GDesktop-1\.codex\worktrees\pr3166-resync\tldw_tui\tldw_chatbook[0m
+[32m2026-10-31 12:49:45.184[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m2347[0m - [34m[1mload_settings: Configuration loaded from disk (cache miss or forced reload)[0m
+[32m2026-10-31 12:49:45.269[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 165248.[0m
+[32m2026-10-31 12:49:45.269[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 165248.[0m
+[32m2026-10-31 12:49:45.270[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:45.865[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3912[0m - [34m[1mEnsured chat dictionaries folder exists: C:\Users\GDesktop-1\.tmp-pr3166-integration-89617c8abf21\config\home\.local\share\tldw_cli\default_user\chat_dicts[0m
+[32m2026-10-31 12:49:45.866[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.config[0m:[36m_load_settings_uncached[0m:[36m3943[0m - [34m[1mload_settings: Configuration cached for future use[0m
+[32m2026-10-31 12:49:45.871[0m | [1mINFO    [0m | [36mtldw_chatbook.config[0m:[36m_apply_literal_settings_transaction_locked[0m:[36m9185[0m - [1mGlobal configuration caches invalidated and reloaded.[0m
+[32m2026-10-31 12:49:45.878[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:45.878[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:46.287[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235388.[0m
+[32m2026-10-31 12:49:46.325[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25359[0m - [34m[1mTransaction (outermost) rolled back due to exception (OperationalError) on thread 235388.[0m
+[32m2026-10-31 12:49:46.326[0m | [33m[1mWARNING [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36mrun[0m:[36m4541[0m - [33m[1mlegacy trace maintenance paused after OperationalError[0m
+[32m2026-10-31 12:49:46.334[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_enter_transaction[0m:[36m25257[0m - [34m[1mStarted outermost transaction on thread 235380.[0m
+[32m2026-10-31 12:49:46.334[0m | [34m[1mDEBUG   [0m | [36mtldw_chatbook.DB.ChaChaNotes_DB[0m:[36m_exit_transaction[0m:[36m25322[0m - [34m[1mTransaction (outermost) committed successfully on thread 235380.[0m
+[32m2026-10-31 12:49:46.337[0m | [1mINFO    [0m | [36mtldw_chatbook.UI.Navigation.base_app_screen[0m:[36mon_unmount[0m:[36m751[0m - [1mScreen chat unmounted[0m
+WARM_REFUSAL changed_indices [0, 7] age 1000.0 value False pending False closed False captured_current False stored_current False
+RETURN warm 428 False clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17818 False clock 1000.0 poll False
+WARM_REFUSAL changed_indices [] age 1000.0 value False pending False closed False captured_current True stored_current False
+RETURN warm 428 False clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17622 False clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17622 False clock 1000.0 poll False
+RETURN project_console_tick 696 True clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17829 True clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17622 False clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll False
+RETURN project_console_tick 696 True clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17829 True clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll False
+RETURN project_console_tick 696 True clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll False
+RETURN project_console_tick 696 True clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll False
+RETURN project_console_tick 696 True clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 False clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17612 False clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll False
+RETURN project_console_tick 667 True clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17818 False clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17612 False clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll False
+RETURN project_console_tick 667 True clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 696 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 696 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll False
+RETURN project_console_tick 696 True clock 1000.0 poll False
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll False
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.0 poll True
+RETURN project_console_tick 667 True clock 1000.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.0 poll True
+RETURN warm 428 True clock 1000.6 poll True
+RETURN project_console_tick 667 True clock 1000.6 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1000.6 poll True
+RETURN warm 428 True clock 1001.0 poll True
+RETURN warm 428 True clock 1001.0 poll True
+RETURN project_console_tick 696 True clock 1001.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1001.0 poll True
+RETURN warm 428 True clock 1001.0 poll True
+RETURN project_console_tick 667 True clock 1001.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1001.0 poll True
+RETURN warm 428 True clock 1002.0 poll True
+RETURN warm 428 True clock 1002.0 poll True
+RETURN project_console_tick 696 True clock 1002.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1002.0 poll True
+RETURN warm 428 True clock 1002.0 poll True
+RETURN project_console_tick 667 True clock 1002.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1002.0 poll True
+RETURN warm 428 True clock 1002.0 poll True
+RETURN project_console_tick 667 True clock 1002.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1002.0 poll True
+RETURN warm 428 True clock 1002.0 poll True
+RETURN project_console_tick 667 True clock 1002.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1002.0 poll True
+RETURN warm 428 True clock 1002.0 poll True
+RETURN warm 428 True clock 1002.0 poll True
+RETURN project_console_tick 696 True clock 1002.0 poll True
+RETURN _sync_native_console_chat_ui 17622 False clock 1002.0 poll False
+RETURN _sync_native_console_chat_ui 17829 True clock 1002.0 poll True
+RETURN warm 428 True clock 1002.0 poll False
+RETURN project_console_tick 667 True clock 1002.0 poll False
+RETURN _sync_native_console_chat_ui 17818 True clock 1002.0 poll False
+RETURN warm 428 True clock 1002.0 poll False
+RETURN warm 428 True clock 1002.0 poll False
+RETURN project_console_tick 696 True clock 1002.0 poll False
+RETURN _sync_native_console_chat_ui 17818 True clock 1002.0 poll False
+RETURN warm 428 True clock 1002.0 poll True
+RETURN project_console_tick 667 True clock 1002.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1002.0 poll True
+RETURN warm 428 True clock 1002.0 poll True
+RETURN project_console_tick 667 True clock 1002.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1002.0 poll True
+RETURN warm 428 True clock 1002.0 poll True
+RETURN project_console_tick 667 True clock 1002.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1002.0 poll True
+RETURN warm 428 True clock 1002.0 poll True
+RETURN project_console_tick 667 True clock 1002.0 poll True
+RETURN _sync_native_console_chat_ui 17818 True clock 1002.0 poll True
+WARM_REFUSAL changed_indices [0] age 1.0 value True pending False closed False captured_current False stored_current False
+RETURN warm 428 False clock 1003.0 poll True
+RETURN _sync_native_console_chat_ui 17818 False clock 1003.0 poll True
+FAILED[32m2026-10-31 12:49:47.869[0m | [1mINFO    [0m | [36mtldw_chatbook.Chat.console_runtime[0m:[36m_dispose_owned[0m:[36m6596[0m - [1mConsole trace compatibility totals: normalized_write=0 normalized_read=0 legacy_read=0 fallback_read=0 incomplete=0[0m
+
+
+================================== FAILURES ===================================
+___ test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run ___
+Tests\UI\test_console_config_sync_cadence.py:376: in test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run
+    assert seen.calls == tail + 1, "no backstop in the run's tail"
+E   AssertionError: no backstop in the run's tail
+E   assert 4 == (4 + 1)
+E    +  where 4 = <Tests.UI.test_console_config_sync_cadence._Projections object at 0x0000017AB60DE8D0>.calls
+------------------------------ Captured log call ------------------------------
+INFO     root:app.py:1423 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1530 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1551 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1098 No capability information found for llama_cpp/test-model, using defaults
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage app_version=0.2.3 attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=0 phase=ui_action python_version=3.12.10 sqlite_version=3.49.1 status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=32 phase=ui_dispatch status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=4375 phase=ui_submit status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=4516 phase=ui_submit status=accepted
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=4532 phase=ui_dispatch status=sent
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=4532 phase=ui_action status=dispatched
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=4532 phase=controller_submit status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=6907 phase=provider_resolution status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 capture_enabled=false component=console duration_ms=7734 phase=capture_policy status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=8452 phase=durable_commit status=entered
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=8594 phase=durable_commit status=succeeded
+INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:275 event=console_send_stage attempt_id=fe9772473d7e4e0193f631c668eee466 component=console duration_ms=12077 phase=controller_submit status=completed
+============================== warnings summary ===============================
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+..\..\..\..\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydub\utils.py:14: DeprecationWarning: 'audioop' is deprecated and slated for removal in Python 3.13
+    import audioop
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+59.90s call     Tests/UI/test_console_config_sync_cadence.py::test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run
+1.19s teardown Tests/UI/test_console_config_sync_cadence.py::test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run
+
+(1 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/UI/test_console_config_sync_cadence.py::test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run
+================== 1 failed, 2 warnings in 82.91s (0:01:22) ===================

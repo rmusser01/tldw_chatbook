@@ -1,0 +1,10 @@
+{
+  "archive_path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/continuation-final60-evidence.tar.gz",
+  "sha256": "27e09ffe2235f0de0e13de72d1eecac16f1461cff5f9a5b8139ae6d47692ee06",
+  "bytes": 1136751,
+  "member_count": 247,
+  "regular_member_bytes_verified": 246,
+  "symlink_targets_verified": 1,
+  "excluded": "Offline pytest fixture directories and bytecode caches; their result log is retained.",
+  "verification_note": "Fixture symlinks are preserved and their link-target text verified, not followed during archive verification."
+}

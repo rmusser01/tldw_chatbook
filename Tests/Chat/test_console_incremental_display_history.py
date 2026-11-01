@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.provider_continuation import (
     ContinuationCall,
+    ContinuationRestoreTarget,
     ContinuationResult,
     ContinuationRound,
     ProviderContinuationCheckpoint,
@@ -242,10 +243,18 @@ def test_continuation_publication_refreshes_warm_history(publication):
             ),
         )
         event = ToolBatchReady(context, active, None)
+        # Persistent writes are bound to the host-captured run target.
+        target = ContinuationRestoreTarget(
+            provider="moonshot",
+            protocol="chat_completions",
+            model="kimi-k3",
+            api_base_url="https://api.moonshot.ai/v1",
+            selected_provider="moonshot",
+        )
         expected_content = prefix
         expected_request_ids = {user.id}
         if publication == "final":
-            store.persist_provider_continuation_event(event)
+            store.persist_provider_continuation_event(event, continuation_target=target)
             expected_content = "The answer is 4."
             completed_round = replace(
                 active.rounds[0],
@@ -286,7 +295,7 @@ def test_continuation_publication_refreshes_warm_history(publication):
             {user.id, owner.id} if publication == "tool_batch" else {user.id}
         )
 
-        store.persist_provider_continuation_event(event)
+        store.persist_provider_continuation_event(event, continuation_target=target)
         after = ConsoleContextSpendController._console_display_history(
             context_spend_for_test(screen), store, session.id, controller
         )

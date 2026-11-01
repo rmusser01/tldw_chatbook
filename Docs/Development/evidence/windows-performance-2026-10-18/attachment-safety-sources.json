@@ -1,0 +1,50 @@
+{
+  "baseline": "3742efae9428dc10f879606b519215913263ac4e",
+  "sources": {
+    "tldw_chatbook/config.py": {
+      "sha256": "866c6cf615b8f7c6054de50db24f683e9e7a4de1036690c8bdaf58e570e2099a",
+      "unchanged": true
+    },
+    "tldw_chatbook/Backup_Recovery/storage_admission.py": {
+      "sha256": "548f803a0098931a42f1af7ad35a5e6021127f132060baa3b77ce79f1c36da72",
+      "unchanged": true
+    },
+    "tldw_chatbook/Backup_Recovery/config_participants.py": {
+      "sha256": "fa786f6bf98612be9e8d83c9c91f038ff3ab3485651d273c3591275a0abf0ab2",
+      "unchanged": true
+    },
+    "tldw_chatbook/UI/Console_Modules/config_sync.py": {
+      "sha256": "2ed60c11cdbd614e99ad6f733c29cab1dc97c478ca21215440ecd2978442e75e",
+      "unchanged": true
+    },
+    "tldw_chatbook/UI/Console_Modules/console_spend_projection.py": {
+      "sha256": "ba968c98a4352a7cca450a6f2414b418f9fb97dedda9d54ca134c9bffe36a2f3",
+      "unchanged": true
+    },
+    "tldw_chatbook/Chat/console_preparation_reads.py": {
+      "sha256": "160c2463e9ec5451853828ef305f5fe45ecdf50ac1839524aaefd60bbefafa31",
+      "unchanged": true
+    },
+    "tldw_chatbook/UI/Console_Modules/attach_visit.py": {
+      "sha256": "288ea7563a5e9e73b03b4914e4e04323d1f85414af630bbb4682cccb7b729dcf",
+      "unchanged": true
+    },
+    "tldw_chatbook/UI/Console_Modules/workspace.py": {
+      "sha256": "424163c933ad0ea68ddc114e31ae1d8cfe0312bb155279cf006228c849d40afd",
+      "unchanged": true
+    },
+    "tldw_chatbook/Chat/conversation_local_marks_service.py": {
+      "sha256": "6f4f92831eb43fdc366d5943b66d82bcb01f9a35fad647066f0061f27ac1e650",
+      "unchanged": true
+    }
+  },
+  "unchanged_reminder_methods": [
+    "begin_manual_read_visit",
+    "_claim_manual_read_visit",
+    "_read_claimed_visit",
+    "_prepare_manual_read_visit",
+    "complete_manual_read_visit",
+    "schedule_manual_read_acknowledgement",
+    "_acknowledge_manual_read_visit"
+  ]
+}

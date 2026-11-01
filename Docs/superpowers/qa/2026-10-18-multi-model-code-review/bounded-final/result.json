@@ -1,0 +1,122 @@
+{
+  "source_head": "47093a3175c59db846a746c70b6f45d8b70cc50c",
+  "preflight_requests": [
+    2,
+    3
+  ],
+  "final_requests": 54,
+  "new_requests": 59,
+  "cumulative_requests": 314,
+  "approved_ceiling": 321,
+  "financially_unused_requests": 7,
+  "final_invocations_remaining": 0,
+  "preflight_retries_remaining": 0,
+  "new_children": 3,
+  "cumulative_children": 21,
+  "fresh_children_remaining": 0,
+  "per_model_final": {
+    "claude-haiku-5-5": 11,
+    "deepseek-flash": 8,
+    "unsloth/Qwen3.8-27B-GGUF:Q8_0": 29,
+    "gpt-6-luna": 6
+  },
+  "result_gate": "live_report_incomplete_R2",
+  "runner_exit": 2,
+  "manifest_financially_unused_attempts_field": "stale preparation label of0; derived actual unused is321-314=7, not replay authority",
+  "raw_evidence": "/private/tmp/task35582-bounded-recovery/qualification/attempt-bmrxalk1",
+  "manifest_sha256": "364be08861a8649fa7df380e292678f3c028ce4ab93f30f14d7f1e804a3aef58",
+  "ac24": "unchecked",
+  "report_statuses": {
+    "R1": "sealed",
+    "R2": "incomplete",
+    "V1": "incomplete"
+  },
+  "original_ids": [
+    "R2-F1",
+    "R2-F2"
+  ],
+  "expanded_original_ids": [
+    "R2-F1",
+    "R2-F2"
+  ],
+  "unified_next_offsets": [
+    8192,
+    null
+  ],
+  "launches_per_primary": [
+    2,
+    1
+  ],
+  "work_chain_count": 1,
+  "source_unchanged": true,
+  "temporary_team_unchanged": true,
+  "native_shutdown_completed": true,
+  "remaining_running_runs": [],
+  "remaining_fleet_threads": [],
+  "retirement_uncertain": false,
+  "evidence_preservation": {
+    "archive": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/bounded-recovery-evidence.tar.gz",
+    "sha256": "a1aa6dffe1ae90a523a64f8e72f40410c9a4e644feba5f845288ad651fa96471",
+    "bytes": 44042687,
+    "files": 9012,
+    "configured_credential_matches": 0,
+    "scope": "Structured evidence, drivers, concise reports and command logs; excludes profiles, data directories, synthetic fixture repositories and databases. All original private files remain intact.",
+    "original_history_bundle": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/implementation-history.bundle",
+    "original_history_bundle_sha256": "a34611fa85d92e1344ff5ab6f0457cb2e5c97ef0ef8097497569fbde43110fec",
+    "closeout_files": {
+      "final-outcome-review.md": {
+        "path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/closeout/final-outcome-review.md",
+        "sha256": "223ebd1516dbb9658428bf59760fb9c9e74f12e3bdeace17f44f3a814e66e7ec"
+      },
+      "ci-fast-lane-47093.log": {
+        "path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/closeout/ci-fast-lane-47093.log",
+        "sha256": "ef3ebb69e059a86fcce2203de1aef06bcfb84415ee4659a15c68ebe41d94bb87"
+      },
+      "ci-size-exact-reproduction.log": {
+        "path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/closeout/ci-size-exact-reproduction.log",
+        "sha256": "d7c7d481c8d836aef10c91294623aba15821c3216012f1726f4fb344c24b3111"
+      },
+      "ci-composer-exact-reproduction.log": {
+        "path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/closeout/ci-composer-exact-reproduction.log",
+        "sha256": "db46673c3ccd95cda2437afaf0c0cada6f9bf19710e54d090393dc8f6cf49398"
+      },
+      "qualification/final-spending-reconciliation.json": {
+        "path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/closeout/qualification/final-spending-reconciliation.json",
+        "sha256": "48e3ac5e3a2f6e81e8deef8deb843129924b8820eff84a673c8e1f92008a8b2b"
+      },
+      "qualification/final-boundary-control-39teze3_/result.json": {
+        "path": "/Users/macbook-dev/.codex/artifacts/task-35582-bounded-recovery/closeout/qualification/final-boundary-control-39teze3_/result.json",
+        "sha256": "add4e6a0152979001922f62d3d627cf1d9d7e5fc56c638de457a05131dc424b9"
+      }
+    }
+  },
+  "receipts": {
+    "qualification/human-authorization.json": {
+      "sha256": "69ced52dc4f2959ec1af58b8bf5bdc1b07edd4e8924a3783a2ede658b4cf0ecd"
+    },
+    "qualification/preflight-retry.json": {
+      "sha256": "2243ba998a907306d09420845a882e464167c2540547f767a4e0667827bcf333"
+    },
+    "qualification/preflight-1/manifest.json": {
+      "sha256": "03d4a07030593778772283e0aae80c8b06da8136f32837d79a98eb8ae98a1980"
+    },
+    "qualification/preflight-2/manifest.json": {
+      "sha256": "29ab2de3971804801470f5e94ef754441a66429e68320aa09be6d917a1f1f903"
+    },
+    "qualification/attempt-bmrxalk1/manifest.json": {
+      "sha256": "364be08861a8649fa7df380e292678f3c028ce4ab93f30f14d7f1e804a3aef58"
+    },
+    "qualification/attempt-bmrxalk1/runner-refusal.json": {
+      "sha256": "caf092c8cd29f87d8e182941791def03ef655fa02e0b5ec0598017511c9d768f"
+    },
+    "qualification/attempt-bmrxalk1/latest-accepted-submissions.json": {
+      "sha256": "606333092c2ae6a2ab3e3adca75468e968e6d32a9323599448d3290d758bbfcd"
+    },
+    "qualification/attempt-bmrxalk1/first-tool-refusals.json": {
+      "sha256": "15d7c3181d033b399fbea975ca7ca49a8c2d07fbd7e93342080f7902ffae2000"
+    },
+    "qualification/attempt-bmrxalk1/child-disclosure-feedback.json": {
+      "sha256": "727c7453b752cb355e6f5b2e78a2afefdb4e1760aa3cfde727728d0054215098"
+    }
+  }
+}

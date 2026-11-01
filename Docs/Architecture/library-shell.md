@@ -23,6 +23,20 @@ This document describes the Library destination: the rail/canvas navigation mode
 4. Leaving side-effects: media browse invalidates unless the target is media; collections capture unmounts unless the target is collections. When mounted, context application runs as a worker that first flushes pending editor saves — a save-guard refusal aborts the switch and keeps the current route.
 5. Row selection → `build_library_shell_state` → one canvas child (conversations / media / notes / prompts / skills / export / search / ingest / landing). **Collections is the exception** — it changes whole-route topology (rail scopes + Items + Work panes) and goes through the central recompose path instead of the one-child seam.
 
+## Notes-sync preparation
+
+Library construction reuses an already-built Notes-sync owner without invoking
+the app's lazy property. When needed, the first mounted refresh prepares the
+original safe reader through the finite Library service worker, then attaches
+the same app-owned runtime to the sync controller on the UI loop. Until then the
+sync view is preparing; construction failures retain their distinct failed
+status. Unmounting discards late presentation, while runtime lifecycle remains
+owned by the app. Direct Notes attention/location reads also prepare the owner
+through that finite-worker boundary. Synchronous listener access reads only an
+already-built owner; a failed preparation preserves known attention. The app's
+safe reader serializes failure publication as well as construction so concurrent
+initial readers share one outcome.
+
 ## Adaptive reader
 
 `LibraryBrowseReaderShell` is **one resident shell** shared by the Media and Notes routes (route-neutral id, marker classes, single writer `apply_route`) — the decomposition spec records that per-route shells previously caused 177 mounts per media switch, 55 of them pure rebuild waste. Reader modes: read / analysis / highlights / info. Pane visibility and widths persist to `[library.reader]` and per-destination `[library.<dest>_reader]` sections.
@@ -31,12 +45,13 @@ This document describes the Library destination: the rail/canvas navigation mode
 
 Media canvas views: list / viewer / trash through one shared builder. Read-it-later is a `MediaReadItLaterState` row in the media DB (Home deep-links via the browse-subview context); reading progress is upserted per item and surfaced through the reading service. Saving a single reading item deliberately restores a trashed duplicate (an explicit user decision); the **bulk** import path stays non-restoring.
 
-## Prompts and skills surfaces
+## Notes, prompts and skills surfaces
 
+- Notes Markdown/text export captures its payload, validated destination and existing Notes operation token before admitting a screen-owned `library-note-export` worker in `UI/Library_Modules/library_file_export.py`. FileSave and explicit Replace callbacks return after admission; only the synchronous atomic write runs in a thread. Late no-clobber collisions reopen the existing confirmation on-loop; metadata recheck failures use recoverable export feedback. Notes keeps its single-operation admission and region-scoped result handling; a later worker does not cancel an accepted write. Native screen retirement stops UI publication while an already-running atomic write can finish. Mounted private-profile regressions use the real picker/writer with seeded Notes service stand-ins, verify App key dispatch before writer release, literal output bytes/source preservation, failure/retry, collisions and changed result owners. Existing format and newline policy remain with the shared writer.
 - Prompts canvas consumes `PromptsDatabase` row shapes with typed conflicts (`ExpectedVersionConflictError`, `PromptNameConflictError`) classified at save; create vs browse is an editor-view sentinel, not a separate canvas. Prompt insertion into the Console is covered in [chat-pipeline.md](./chat-pipeline.md).
 - Pending Prompt Save uses `UI/Library_Modules/prompt_save_ack.py`: the existing scope service writes the submitted snapshot, then the controller adopts the committed identity/version while retaining newer raw metadata and Basic/Advanced block controls as dirty. The next Save updates that same record. Basic first-block mounts and Save acknowledgement re-read both live lanes after structural awaits and refresh every affected Advanced card; obsolete queued semantic projections cannot replace the current child state. Back/navigation/quit use the existing dirty guards.
 - Saved Prompt Markdown export captures the live editor payload and picked destination in `UI/Library_Modules/library_file_export.py`. Both FileSave and explicit Replace callbacks synchronously hand the write to a screen-owned `library-prompt-export` worker; only `write_export_text` runs in a thread. No-clobber collisions reopen the existing Replace confirmation on the UI loop. Completion and failure use the captured Prompt identity through the existing reporter, preserving the current editor's status/focus after navigation. Independent exports keep their own payload/destination and are not cancelled by a later export.
-- Skills canvas consumes `LocalSkillsService` envelopes (available/blocked + trust fields); import staging lives on the screen. Skills was retired as a destination into Library (ADR-015; route alias `skills` → `library`).
+- Skills canvas consumes `LocalSkillsService` envelopes (available/blocked + trust fields); import staging lives on the screen. Skills was retired as a destination into Library (ADR-015; route alias `skills` → `library`). Automatic failed keyring unlocks cool down for 60 seconds after completion; the trust header’s explicit Retry refreshes transient key/marker caches through the posture worker, retaining restored-root review gates (ADR-009). A successful current Retry also refreshes the latest requested browse scope so row trust and blocked totals reflect the recovered session without reverting a newer pending filter or page.
 
 Managed Parakeet installation keeps its consented artifact/preference lifecycle. `UI/Library_Modules/parakeet_install_selection.py` selects INT8 for the requesting form only when form identity, accepted-edit generation, source and live transcription controls still match. An obsolete completion retains current choices and reports installation without claiming current-batch selection.
 

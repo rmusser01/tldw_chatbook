@@ -275,6 +275,7 @@ CSS_MODULES = [
     "features/_library_artifacts.tcss",
     "components/_settings_personal_context.tcss",
     "features/_settings.tcss",
+    "features/_plugins.tcss",
     "features/_home.tcss",
     "features/_chat.tcss",
     # task-577 T4: "features/_chat_tabs.tcss" removed -- every selector in it
@@ -467,6 +468,15 @@ class ScreenOwnedSplit:
 #: ``build_screen_owned_sheets``), because two lazily-loaded sheets have
 #: visit-order-dependent cascade order between them.
 SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
+    # PluginsScreen alone composes plugins-* (including its inline form).
+    # Shared selectors and singular plugin-review/modal rules remain in the
+    # boot remainder so standalone modals work before a Plugins route visit.
+    ScreenOwnedSplit(
+        modules=("features/_plugins.tcss",),
+        sheets={"plugins": "screen_feature_plugins.tcss"},
+        prefixes={"plugins": ("plugins",)},
+        pinned=frozenset(),
+    ),
     # ADR-161 task 10: the library vocabulary's split source (carved out of
     # the agentic-terminal monolith 2026-09-14). The generated sheet and its
     # moved selector set are IDENTICAL to the pre-carve agentic split's

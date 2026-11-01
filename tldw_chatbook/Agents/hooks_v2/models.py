@@ -44,6 +44,7 @@ class HookHandler(_FrozenModel):
     argv: tuple[str, ...] | None = None
     env: Mapping[str, str | Mapping[str, str]] | None = None
     cwd: str | None = None
+    vendor_protocol: str | None = None
     server: str | None = None
     tool: str | None = None
     input: Mapping[str, Any] | None = None

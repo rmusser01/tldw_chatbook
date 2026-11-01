@@ -63,7 +63,26 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: path -> max line count. LOWER these when a module shrinks. Never raise
 #: them to silence a failure — see the module docstring.
+# 2026-10-31: user waived size limits for the PR backlog. PR3148 rebase
+# pins changed owners at measured sizes without extra size-only moves.
+# 2026-10-31: user waived size limits for PR3156 backlog integration;
+# its three touched owners are pinned at exact current measurements.
+# 2026-10-31, PR #3162: the user explicitly waived size limits for this
+# backlog rebase. Affected rows are pinned to exact measured values; see
+# Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
+# 2026-10-31 PR3166: exact final integration measurements under the user
+# backlog size-limit waiver; no spare budget and no behavioral guard changes.
 _BUDGETS: dict[str, int] = {
+    # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
+    "tldw_chatbook/Utils/app_shutdown.py": 776,
+    "tldw_chatbook/Chat/console_display_state.py": 2873,
+    "tldw_chatbook/Widgets/Console/console_selection.py": 379,
+    "tldw_chatbook/Widgets/Console/console_canvas_card.py": 244,
+    "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": 1680,
+    "tldw_chatbook/tldw_api/exceptions.py": 139,
+    "tldw_chatbook/tldw_api/utils.py": 175,
+    "tldw_chatbook/UI/LLM_Management/vllm_setup_view.py": 1861,
+    "tldw_chatbook/UI/Console_Modules/character_avatar_layout.py": 244,
     # TASK-33011 decomposition: lowered as each extraction PR lands
     # (entry tail -> app_entry.py: 21,234 measured -> 20,484; destinations
     # D/K2/K3 -> app_destinations.py: 20,484 -> 19,658; task-33081 on dev
@@ -86,7 +105,7 @@ _BUDGETS: dict[str, int] = {
     # ``_notes_sync_runtime_lazy_start_task`` slot beside the start-task
     # slot, so the Library's bounded settle wait can tell the task it
     # scheduled from boot's own (M-1).
-    "tldw_chatbook/app.py": 5712,
+    "tldw_chatbook/app.py": 5704,
     # TASK-34406.5: unchanged startup/footer wiring, born governed.
     "tldw_chatbook/app_startup.py": 176,
     # TASK-34406.7: app-owned served control and relay bodies, born governed.
@@ -96,7 +115,8 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-03 (PR #2993): TASK-20973's provenance block added 16 lines;
     # the signature probe moved beside the poller's other pure helpers in
     # Library/server_ingest_reconcile.py: 5,015 -> 4,985.
-    "tldw_chatbook/app_ingest_queue.py": 4985,
+    # 2026-10-31 backlog owner size waiver: explicit URL source handoff.
+    "tldw_chatbook/app_ingest_queue.py": 5020,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
@@ -111,12 +131,12 @@ _BUDGETS: dict[str, int] = {
     # while the owner still reports "starting" (M-2), tolerates a sync or
     # Future-returning ``start`` (M-3), records the lazy task (M-1); three
     # module helpers carry those predicates.
-    "tldw_chatbook/app_service_wiring.py": 3690,
+    "tldw_chatbook/app_service_wiring.py": 3701,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
     # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
     # into app_keep_alive.py).
-    "tldw_chatbook/app_lifecycle.py": 2134,
+    "tldw_chatbook/app_lifecycle.py": 2135,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
@@ -146,9 +166,16 @@ _BUDGETS: dict[str, int] = {
     # (29,043), the Library-pause fixes measure 29,055: dev's TASK-35992
     # extraction already moved out the Library preparation body that these
     # fixes used to shrink here, so their stop/shelf/card wiring now shows.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29055,
+    # TASK-33621.51 (2026-10-29): the Library preparation record builders
+    # moved to console_library_preparation (preparation_contribution,
+    # bypass_contribution): 29,055 -> 29,038 on dev ed7481a30c.
+    # TASK-35582 review fixes: review delivery, project-dispatch callbacks and
+    # continuation binding moved to console_review_delivery/_project_dispatch/
+    # _continuation_binding; rows below re-pinned at their measured sizes.
+    # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
+    "tldw_chatbook/Chat/console_chat_controller.py": 29252,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
-    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6307,
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
     "tldw_chatbook/Chat/console_chat_store.py": 22338,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
@@ -359,7 +386,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-36361: staged completion delegates to the same-owner helper (-45).
     # TASK-36387: five badge branches read the category list's table (-3).
     # TASK-36388: the context-window suppress queue nothing wrote goes (-13).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35602,
+    #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
+    #: Keep canonical notification settings together; exact measured size,
+    #: with no reflow/extraction solely to satisfy the old ceiling.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35726,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -398,7 +428,12 @@ _BUDGETS: dict[str, int] = {
     # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 2,468.
     # TASK-35011: the Saved model list block and its title summaries move to
     # saved_model_list.py (-100): 2,365.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2365,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +33.
+    # 2026-10-20, TASK-34100.6 review v3r1 (R1-03), re-measured on dev
+    # 2026-10-27: 2,365 -> 2,398. The Inspector's Key block says where to get
+    # a key from the shared catalog (key_url_line, its compose and its
+    # refresh), as first-run setup does.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2398,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and
@@ -416,7 +451,15 @@ _BUDGETS: dict[str, int] = {
     # 505. Round 2: a key the save would refuse is named in its receipt: 516.
     # Round 3: a model id it cannot write is named, not the key: 518.
     "tldw_chatbook/UI/Settings_Modules/saved_model_list.py": 518,
-    "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
+    # TASK-33621.51 (2026-10-29, owner rule 2026-10-04: a fix over a size
+    # ratchet raises the row by its own lines, dated, never squeezes other
+    # code): +27 for the Automatic Library outcome row under a USER turn
+    # (setter, row plan, Static build, protected click class, and the row
+    # kind Literal naming library-outcome and library-activity). Raised by this
+    # branch's delta only: dev ed7481a30c already measures 8,821 against the
+    # old 8,353, and that overrun is not this task's to absorb, so the row
+    # stays red until it is decomposed or re-pinned by its owner.
+    "tldw_chatbook/Widgets/Console/console_transcript.py": 8549,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
@@ -456,7 +499,7 @@ _BUDGETS: dict[str, int] = {
     # TASK-35578: 6,159; the dead _snapshot_model went, the saved-list note came.
     # Its review: 6,162; a named custom endpoint's listing gets its own note.
     "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6162,
-    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
+    "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 7011,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
     # (TTSProfileRepository 4,880 lines / 118 methods; TTSService 2,825 / 93)
@@ -471,7 +514,7 @@ _BUDGETS: dict[str, int] = {
     # `_request(...)` -> `Model.model_validate` shape, so the honest
     # decomposition is per-API-namespace delegates -- `MCPUnifiedClient` is
     # the precedent already in the package.
-    "tldw_chatbook/tldw_api/client.py": 16687,
+    "tldw_chatbook/tldw_api/client.py": 16678,
     # Added 2026-09-21 (task-32901), each at its exact measured size as of
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14283,
@@ -485,8 +528,12 @@ _BUDGETS: dict[str, int] = {
     # screen. TASK-34100.8: the Voice resume restore moved onto the step
     # (VoiceSetupStep.restore_checkpoint) -> 3,145; review round 1 moved the
     # refused-Next suffix onto SetupStep.refusal_message -> 3,144.
-    # TASK-33008 (Phase 8) -> 3,136.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3136,
+    # TASK-33008 (Phase 8) -> 3,136. TASK-34100.4 moved the tracker glyph and
+    # the finish-later flow into helpers (3,123); its review round 1 moved
+    # Skip setup's save into first_run_finish_later.skip_setup (3,119); its
+    # review v5r1 dropped the resume's stale Protect status line (3,106).
+    # 2026-10-31 user size waiver: preserve provider warning via shared tracker.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3107,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
@@ -501,8 +548,19 @@ _BUDGETS: dict[str, int] = {
     # the Test-evidence line moved there too -> 2,456. Review round 2: the
     # failed-listing line and the key line went there as well -> 2,453.
     # Round 3: the key mark came back to the listing's call site, where a
-    # reader sees it (that line stays pure) -> 2,454.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2454,
+    # reader sees it (that line stays pure) -> 2,454. TASK-34100.6: the
+    # localhost detection, skip, key entry, provider list, connection test,
+    # key check and status copy moved to first_run_provider_{detection,skip,
+    # key_entry,list,check}.py (TASK-33008's listing and Test lines with
+    # them); merged onto dev -> 1,665.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +13.
+    # 2026-10-20, TASK-34100.6 review v3r1: 1,665 -> 1,678. Skip always skips
+    # and never outlives its press (R1-02, R1-07: commit's skip branch, the
+    # advance fence, cleared on a provider change or key edit), and 'test
+    # again' waits for Test to be enabled (G6-BV3-05). In place, in the
+    # methods that own them.
+    # 2026-10-31 PR3294 review repair: exact 1690 lines under user size waiver.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 1690,
     # owner decision 2026-10-04 (expand limits): TASK-34100.14 +60 -- the
     # download's cancel switch, its live status line and the cancelled
     # outcome are wired on the step (its @on handlers must stay on the
@@ -528,9 +586,16 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 892,
     # TASK-33008 (Phase 8): 1,012 -> 994; its review's fixes -> 997.
     # TASK-35578: 990; the subtitle moved to first_run_model_discovery.
-    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 990,
-    "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
-    "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
+    # TASK-34100.6: Model's failed-discovery copy moved to
+    # first_run_model_discovery.connection_failed_text and the evidence
+    # category mapping there too; rebased onto dev -> 973.
+    # owner decision 2026-10-04 (expand limits): TASK-34100.6 +2.
+    # 2026-10-27, review v3r1 G6-BV3-03: Model keeps the rendered failure
+    # category beside its rendered probe failure, so a 403 still marks
+    # Provider '!' after Model hides -> 975.
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 975,
+    "tldw_chatbook/UI/Screens/llm_screen.py": 5143,
+    "tldw_chatbook/UI/Screens/change_review_screen.py": 4930,
     # TASK-36942.1 (architecture review 2026-10-25, F16): every module of
     # 4,000+ lines that had no row in any of the three size ratchets, each
     # pinned at its measured size on dev 2b296e60b3. The review filed 40
@@ -540,37 +605,60 @@ _BUDGETS: dict[str, int] = {
     # unified_control_plane_service 5,917 -> 5,920, library_notes_canvas
     # 4,463 -> 4,646). Later phases lower these rows;
     # `test_every_module_of_the_guard_size_has_a_row` keeps new gaps from opening.
-    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25693,
     # TASK-37270: removed the dead local map shadowed by TOML-derived defaults.
-    "tldw_chatbook/config.py": 12251,
-    "tldw_chatbook/Chat/console_agent_bridge.py": 12088,
+    # 2026-10-29, TASK-33622.6 (owner decision: a fix over a size ratchet
+    # raises the row with a dated comment; never squeeze code to fit):
+    # 25693 -> 25705 (+12). The conversation search gains `title_only` (the
+    # Console rail filter's count and page match titles, as a literal
+    # substring), threaded through the shared filter and the page query.
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 25693 -> 25705.
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": 25870,
+    #: 2026-10-31, PR #3155 / TASK-18925: explicit user size-limit waiver.
+    #: The OS notification defaults add 12 lines; pin the exact measurement.
+    "tldw_chatbook/config.py": 12245,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 11729,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
-    "tldw_chatbook/Agents/agent_service.py": 9620,
-    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9532,
+    "tldw_chatbook/Agents/agent_service.py": 9656,
+    # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
+    # actual current-base N-32 file-body F6 integration at 9,541 lines.
+    "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9541,
     "tldw_chatbook/DB/Client_Media_DB_v2.py": 9426,
-    "tldw_chatbook/UI/Console_Modules/workspace.py": 8747,
     # TASK-37270: bounded template reads moved to local_reasoning_metadata.
-    "tldw_chatbook/Chat/console_provider_gateway.py": 8179,
+    # 2026-10-29, TASK-33622.6 (owner decision: raise with a dated comment):
+    # 8747 -> 8763 (+16). The flat Conversations lane filters its rows and
+    # asks storage for its count by title only (owner decision 2026-10-27),
+    # so the two can no longer disagree.
+    # 2026-10-30: re-measured after rebasing onto dev 134108dd84 (owner rule: the row is the exact measurement): 8747 -> 8763.
+    # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
+    "tldw_chatbook/UI/Console_Modules/workspace.py": 8938,
+    # 2026-10-31, PR #3293: explicit user size-limit waiver; final review entry
+    # credential/readiness repair, exact integrated measurement (8181 -> 8183).
+    "tldw_chatbook/Chat/console_provider_gateway.py": 8183,
     # 2026-10-27, TASK-33620.15.22 (owner decision: a fix over a size ratchet
     # raises the row with a dated comment; never squeeze code to fit):
     # 7024 -> 7043 (+19). Send's readiness gets one owner,
     # ConsoleComposerBar.has_sendable_payload, read by both sync sites and
     # the Workbench, fed by the screen's send-gate attachment predicate.
-    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7043,
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": 7047,
     # TASK-37620: document the live workspace-alignment seam rather than
     # historical extraction call counts, retaining activation notifications.
-    "tldw_chatbook/UI/Console_Modules/session.py": 6990,
-    "tldw_chatbook/DB/Subscriptions_DB.py": 6987,
+    # 2026-10-31, PR #3173: user size-limit waiver; exact current-base measurement.
+    "tldw_chatbook/UI/Console_Modules/session.py": 7065,
+    # 2026-10-29, TASK-36941.1 (owner decision: a fix over a size ratchet
+    # raises the row with a dated comment; never squeeze code to fit):
+    # 6987 -> 6993 (+6). transaction() rolls back on BaseException, and its
+    # docstring says so.
+    "tldw_chatbook/DB/Subscriptions_DB.py": 6993,
     "tldw_chatbook/Media/local_media_reading_service.py": 6911,
-    "tldw_chatbook/Chat/console_runtime.py": 6686,
-    "tldw_chatbook/Chat/console_trace_service.py": 6674,
+    "tldw_chatbook/Chat/console_runtime.py": 7067,
+    "tldw_chatbook/Chat/console_trace_service.py": 6679,
     "tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py": 6108,
     "tldw_chatbook/Notes/notes_sync_executor.py": 6007,
-    "tldw_chatbook/MCP/unified_control_plane_service.py": 5920,
-    "tldw_chatbook/Agents/local_tool_provider.py": 5749,
+    "tldw_chatbook/MCP/unified_control_plane_service.py": 6054,
+    "tldw_chatbook/Agents/local_tool_provider.py": 5750,
     "tldw_chatbook/Tools/remote_worker_bundle.py": 5706,
     "tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py": 5532,
-    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5186,
+    "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": 5176,
     "tldw_chatbook/Notes/notes_sync_runtime.py": 5167,
     "tldw_chatbook/Personal_Context/repository.py": 4997,
     "tldw_chatbook/Event_Handlers/TTS_Events/tts_events.py": 4968,
@@ -582,13 +670,20 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": 4775,
     "tldw_chatbook/DB/Prompts_DB.py": 4760,
     "tldw_chatbook/Chat/citation_trace_repository.py": 4719,
-    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4646,
+    # 2026-10-29, TASK-34000.28/.40 polish-1a (PR #3259), rebased onto dev
+    # 38c9d2edcf: 4,646 -> 4,736 (+90: the filter fast path, kept draft and
+    # one-hop link-back on the Notes canvas). Owner rule "expand limits,
+    # don't contort code".
+    # 2026-10-31 PR3259: exact integrated measurement under the user size-limit waiver.
+    "tldw_chatbook/Widgets/Library/library_notes_canvas.py": 4738,
     "tldw_chatbook/Web_Scraping/WebSearch_APIs.py": 4611,
     "tldw_chatbook/RAG_Search/simplified/rag_service.py": 4507,
-    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4494,
+    # owner decision 2026-10-04 (expand limits): TASK-34100.4 +2 (remote
+    # Whisper never sends an enc: key).
+    "tldw_chatbook/Local_Ingestion/transcription_service.py": 4496,
     "tldw_chatbook/Chat/chat_persistence_service.py": 4263,
     "tldw_chatbook/UI/Screens/evals_screen.py": 4211,
-    "tldw_chatbook/Workspaces/registry_service.py": 4232,
+    "tldw_chatbook/Workspaces/registry_service.py": 4304,
     "tldw_chatbook/Widgets/Library/library_file_notes_git_panel.py": 4207,
     "tldw_chatbook/UI/MCP_Modules/mcp_inspector.py": 4174,
     "tldw_chatbook/Dreams/track_service.py": 4061,

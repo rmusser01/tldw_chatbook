@@ -258,6 +258,209 @@ class CredentialBindingService:
             lambda: self.resolve(reference_id, expected_generation, origin)
         )
 
+    @staticmethod
+    def _variable_value(value_type, value):
+        expected = (
+            {"string": str, "integer": int, "boolean": bool}.get(value_type)
+            if type(value_type) is str
+            else None
+        )
+        if (
+            expected is None
+            or type(value) is not expected
+            or (
+                type(value) is str
+                and (len(value.encode("utf-8")) > 16384 or "\0" in value)
+            )
+            or (type(value) is int and not -(2**63) <= value < 2**63)
+        ):
+            raise CredentialError("plugin_variable_invalid")
+
+    def _read_variable(self, reference_id):
+        if not isinstance(reference_id, str) or not re.fullmatch(
+            r"[0-9a-f]{32}", reference_id
+        ):
+            raise CredentialError("plugin_variable_invalid")
+        raw = self.backend.read(reference_id)
+        if raw is None:
+            raise CredentialError("plugin_variable_missing")
+        try:
+            if not isinstance(raw, str) or len(raw.encode("utf-8")) > 131072:
+                raise ValueError
+            record = json.loads(raw)
+            fields = {
+                "schema",
+                "kind",
+                "reference_id",
+                "authority_generation",
+                "installation_id",
+                "name",
+                "value_type",
+                "secret",
+                "revoked",
+            }
+            if (
+                type(record) is not dict
+                or record["schema"] != 2
+                or record["kind"] != "plugin_variable"
+                or record["reference_id"] != reference_id
+                or type(record["authority_generation"]) is not int
+                or not 1 <= record["authority_generation"] < 2**63
+                or type(record["revoked"]) is not bool
+                or set(record) != fields | (set() if record["revoked"] else {"value"})
+            ):
+                raise ValueError
+            self._variable_identity(
+                record["installation_id"],
+                record["name"],
+                record["value_type"],
+                record["secret"],
+            )
+            if not record["revoked"]:
+                self._variable_value(record["value_type"], record["value"])
+            return record
+        except (KeyError, TypeError, ValueError, UnicodeError):
+            raise CredentialError("plugin_variable_invalid") from None
+
+    @staticmethod
+    def _variable_identity(installation_id, name, value_type, secret):
+        if (
+            type(installation_id) is not str
+            or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", installation_id)
+            or type(name) is not str
+            or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", name)
+            or name in {"PLUGIN_ROOT", "PLUGIN_DATA", "CHATBOOK_WORKSPACE_DATA"}
+            or type(value_type) is not str
+            or value_type not in {"string", "integer", "boolean"}
+            or type(secret) is not bool
+        ):
+            raise CredentialError("plugin_variable_invalid")
+
+    @staticmethod
+    def _variable_metadata(record):
+        return {key: value for key, value in record.items() if key != "value"}
+
+    def create_variable(
+        self,
+        *,
+        installation_id: str,
+        name: str,
+        value_type: str,
+        secret: bool,
+        value: str | int | bool,
+    ) -> dict:
+        """Create fresh protected typed identity; return value-free metadata only."""
+        self._variable_identity(installation_id, name, value_type, secret)
+        try:
+            self._variable_value(value_type, value)
+        except UnicodeError:
+            raise CredentialError("plugin_variable_invalid") from None
+        reference_id = uuid4().hex
+        record = {
+            "schema": 2,
+            "kind": "plugin_variable",
+            "reference_id": reference_id,
+            "authority_generation": 1,
+            "installation_id": installation_id,
+            "name": name,
+            "value_type": value_type,
+            "secret": secret,
+            "value": value,
+            "revoked": False,
+        }
+        with self._transaction():
+            if self.backend.read(reference_id) is not None:
+                raise CredentialError("plugin_variable_changed")
+            self.backend.write(reference_id, json.dumps(record, separators=(",", ":")))
+        return self._variable_metadata(record)
+
+    def _checked_variable(
+        self,
+        reference_id,
+        expected_generation,
+        installation_id,
+        name,
+        value_type,
+        secret,
+    ):
+        self._variable_identity(installation_id, name, value_type, secret)
+        record = self._read_variable(reference_id)
+        if (
+            type(expected_generation) is not int
+            or record["revoked"]
+            or (
+                record["authority_generation"],
+                record["installation_id"],
+                record["name"],
+                record["value_type"],
+                record["secret"],
+            )
+            != (expected_generation, installation_id, name, value_type, secret)
+        ):
+            raise CredentialError("plugin_variable_changed")
+        return record
+
+    def validate_variable(
+        self,
+        reference_id: str,
+        expected_generation: int,
+        *,
+        installation_id: str,
+        name: str,
+        value_type: str,
+        secret: bool,
+    ) -> dict:
+        """Validate exact declaration/reference identity without returning its value."""
+        with self._transaction():
+            return self._variable_metadata(
+                self._checked_variable(
+                    reference_id,
+                    expected_generation,
+                    installation_id,
+                    name,
+                    value_type,
+                    secret,
+                )
+            )
+
+    def resolve_variable(
+        self,
+        reference_id: str,
+        expected_generation: int,
+        *,
+        installation_id: str,
+        name: str,
+        value_type: str,
+        secret: bool,
+    ) -> str | int | bool:
+        """Resolve only for a current actual launch, under the protected owner lock."""
+        with self._transaction():
+            return self._checked_variable(
+                reference_id,
+                expected_generation,
+                installation_id,
+                name,
+                value_type,
+                secret,
+            )["value"]
+
+    def revoke_variable(self, reference_id: str, *, installation_id: str) -> dict:
+        """Atomically revoke only the exact installation's protected reference."""
+        with self._transaction():
+            record = self._read_variable(reference_id)
+            if record["installation_id"] != installation_id:
+                raise CredentialError("plugin_variable_changed")
+            if not record["revoked"]:
+                if record["authority_generation"] >= 2**63 - 1:
+                    raise CredentialError("plugin_variable_changed")
+                record["authority_generation"] += 1
+                record["revoked"] = True
+                record.pop("value", None)
+                self.backend.write(
+                    reference_id, json.dumps(record, separators=(",", ":"))
+                )
+            return self._variable_metadata(record)
+
     def _renew_state(self, reference_id, *, allow_revoked=False):
         with self._transaction():
             record = self._read(reference_id)

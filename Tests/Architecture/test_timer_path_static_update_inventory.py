@@ -676,6 +676,43 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-PER-TICK: behind the same two poll equality gates as "
         "_set_static_text above."
     ),
+    # PR3166 integration 2026-10-31: individually reviewed new prompt-summary
+    # reachability; retain the config-identity and category branch gates.
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._refresh_internal_prompts_customized_widgets",
+        "row",
+    ): "NOT-PER-TICK: the subscription poll reaches the loading/count rows only after _request_internal_prompts_count detects a changed config identity; the completed worker publishes once for that identity. The status can change width and wrap.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_category_state_banner",
+        "banner",
+    ): "NOT-PER-TICK: prompt-summary refresh enters after the config-identity gate (or its finite completion), then recomputes a variable-length category banner; unchanged polls return before this path.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_draft_status_widgets",
+        "self.query_one('#settings-selected-category-draft-status', Static)",
+    ): "NOT-PER-TICK: the new prompt-summary path passes INTERNAL_PROMPTS only after the config-identity gate or worker completion. Dirty status changes preserve their natural layout.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_draft_status_widgets",
+        "note",
+    ): "NOT-PER-TICK: this write is inside the PROVIDERS_MODELS branch; the new clock-reachable prompt-summary path passes INTERNAL_PROMPTS and cannot execute it. Explicit provider draft edits may change wrapped note height.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_provider_return_widgets",
+        "existing",
+    ): "NOT-PER-TICK: the new prompt-summary path cannot enter the PROVIDERS_MODELS branch calling this helper; actual provider return events change variable-length handoff copy.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_provider_return_widgets",
+        "self.query_one('#settings-provider-navigation-conflict-summary', Static)",
+    ): "NOT-PER-TICK: the prompt-summary clock path passes INTERNAL_PROMPTS, so its draft-status helper cannot call the provider-return branch. Explicit conflict changes require natural wrapped layout.",
+    (
+        "tldw_chatbook/UI/Screens/settings_screen.py",
+        "SettingsScreen._update_provider_return_widgets",
+        "self.query_one('#settings-provider-return-continuation-status', Static)",
+    ): "NOT-PER-TICK: the prompt-summary clock path passes INTERNAL_PROMPTS, so its draft-status helper cannot call the provider-return branch. Explicit continuation changes may change wrapped height.",
     # -- UI/Library_Modules/skills_trust_modals.py (moved verbatim out of
     #    UI/Screens/skills_screen.py by task-34893; the row follows it)
     (
@@ -2194,7 +2231,7 @@ def _collect_clock_roots(
 
             # Nothing resolved. The only excusable shape is a pass-through
             # wrapper whose exposed name is itself in the clock family.
-            rel = str(module.path.relative_to(REPO_ROOT))
+            rel = module.path.relative_to(REPO_ROOT).as_posix()
             where = f"{cls}.{fn}"
             call_text = ast.unparse(node)
             starred = {
@@ -2238,6 +2275,22 @@ def _collect_clock_roots(
                 for keyword in call.keywords:
                     if keyword.arg == "callback":
                         names.extend(_callback_names(keyword.value))
+                # A same-class launcher may hand this body to Textual's
+                # finite worker manager instead of awaiting it on the pump.
+                # Keep that exact one-hop back-edge visible in the census.
+                for name in tuple(names):
+                    launcher = module.methods.get((cls, name))
+                    if launcher is None:
+                        continue
+                    if any(
+                        isinstance(edge, ast.Call)
+                        and ast.unparse(edge.func) == "self.run_worker"
+                        and edge.args
+                        and isinstance(edge.args[0], ast.Attribute)
+                        and ast.unparse(edge.args[0]) == f"self.{method}"
+                        for edge in ast.walk(launcher)
+                    ):
+                        names.append(method)
                 if method in names:
                     roots.append((f"rearming-{ONE_SHOT_CLOCK}", dotted, cls, method))
     return roots, problems
@@ -2295,7 +2348,7 @@ def census(
     for kind, dotted, cls, callback in roots:
         for mod, klass, meth, node in graph.reachable(dotted, cls, callback):
             module = modules[mod]
-            rel = str(module.path.relative_to(REPO_ROOT))
+            rel = module.path.relative_to(REPO_ROOT).as_posix()
             for call in (n for n in ast.walk(node) if isinstance(n, ast.Call)):
                 if _callee(call) != "update":
                     continue
@@ -2515,7 +2568,7 @@ def test_clock_root_set_is_pinned() -> None:
     modules = _load_package()
     roots, _problems = _package_clock_roots()
     rel_of = {
-        dotted: str(module.path.relative_to(REPO_ROOT))
+        dotted: module.path.relative_to(REPO_ROOT).as_posix()
         for dotted, module in modules.items()
     }
     actual = frozenset(
@@ -2586,6 +2639,32 @@ def test_wrapper_spelled_interval_is_censused() -> None:
     assert key in sites and not sites[key]["explicit"], (
         "the wrapper-spelled clock's repaint did not reach the census"
     )
+
+
+def test_worker_backed_retry_remains_a_clock_root() -> None:
+    """A finite worker launcher must not hide its body's rearming timer."""
+    modules = _modules_from_source(
+        """
+        class RetryWorker:
+            def launch(self):
+                self.run_worker(self.reconcile, group="retry", exclusive=False)
+
+            async def reconcile(self):
+                self.status.update("n")
+                self.set_timer(0.1, self.launch)
+        """
+    )
+    roots, problems = _collect_clock_roots(modules, _CallGraph(modules))
+    assert not problems
+    assert len(roots) == 1
+    assert roots[0][0:1] + roots[0][2:] == (
+        "rearming-set_timer", "RetryWorker", "reconcile"
+    )
+    assert (
+        "tldw_chatbook/timer_census_fixture.py",
+        "RetryWorker.reconcile",
+        "self.status",
+    ) in census(modules)
 
 
 def test_deferral_shim_callback_resolves_through() -> None:

@@ -256,6 +256,14 @@ class WorkspaceRegistryServiceError(Exception):
     """Base exception for workspace registry failures."""
 
 
+class WorkspaceArchiveConflict(WorkspaceRegistryServiceError):
+    """The captured workspace archive episode or name no longer matches."""
+
+    def __init__(self, workspace_id: str) -> None:
+        super().__init__("Workspace archive state changed. Refresh and try again.")
+        self.workspace_id = workspace_id
+
+
 class WorkspaceNotFound(WorkspaceRegistryServiceError):
     """Raised when a workspace operation targets a missing workspace."""
 
@@ -1002,105 +1010,128 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError("Workspace rename failed.")
         return renamed
 
-    def archive_workspace(self, workspace_id: str) -> WorkspaceRecord:
-        """Archive a workspace, hiding it from listings (TASK-714).
-
-        Conversations and memberships are untouched - archiving only removes
-        the workspace from the switcher/browser. When the archived workspace
-        was active, the built-in Default workspace becomes active so Console
-        always has a real context.
+    def archive_workspace(
+        self, workspace_id: str, *, expected_archive_revision: int | None = None
+    ) -> WorkspaceRecord:
+        """Archive a workspace with an atomic lifecycle revision check.
 
         Args:
             workspace_id: Workspace to archive.
+            expected_archive_revision: Captured revision, or current state when omitted.
 
         Returns:
-            The archived workspace record.
+            The archived record. Conversations and memberships retain their identity.
 
         Raises:
-            WorkspaceNotFound: Unknown or already-archived workspace.
-            WorkspaceRegistryServiceError: Default workspace or storage
-                failure.
+            WorkspaceArchiveConflict: Captured lifecycle state no longer matches.
+            WorkspaceNotFound: Unknown or already-archived workspace without a snapshot.
+            WorkspaceRegistryServiceError: Default workspace or storage failure.
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         if safe_workspace_id == DEFAULT_WORKSPACE_ID:
             raise WorkspaceRegistryServiceError(
                 "The Default workspace cannot be archived."
             )
-        record = self.get_workspace(safe_workspace_id)
-        if record is None or record.archived:
-            raise WorkspaceNotFound(safe_workspace_id)
-        was_active = record.active
         now = self._now_factory()
         try:
-            with self.db.transaction() as conn:
+            with self.db.transaction(immediate=True) as conn:
                 index_bindings = tuple(row[0] for row in conn.execute(
                     "SELECT binding_id FROM workspace_runtime_bindings WHERE workspace_id=?",
                     (safe_workspace_id,),
                 ))
-                conn.execute(
+                record = self._archive_lifecycle_record(
+                    conn,
+                    safe_workspace_id,
+                    archived=False,
+                    expected_archive_revision=expected_archive_revision,
+                )
+                cursor = conn.execute(
                     """
                     UPDATE workspace_records
-                    SET archived = 1, active = 0, updated_at = ?
-                    WHERE workspace_id = ?
+                    SET archived = 1, active = 0, archived_at = ?,
+                        archive_revision = archive_revision + 1, updated_at = ?
+                    WHERE workspace_id = ? AND archived = 0 AND archive_revision = ?
                     """,
-                    (now, safe_workspace_id),
+                    (now, now, safe_workspace_id, record.archive_revision),
                 )
+                if cursor.rowcount != 1:
+                    raise WorkspaceArchiveConflict(safe_workspace_id)
+                archived = self.get_workspace(safe_workspace_id)
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
         for binding_id in index_bindings:
             self._notify_project_index_change(binding_id)
-        if was_active:
+        if record.active:
             self.ensure_default_workspace()
             self.set_active_workspace(DEFAULT_WORKSPACE_ID)
-        archived = self.get_workspace(safe_workspace_id)
         if archived is None:
             raise WorkspaceRegistryServiceError("Workspace archive failed.")
         return archived
 
     def unarchive_workspace(
-        self, workspace_id: str, *, name: str | None = None
+        self,
+        workspace_id: str,
+        *,
+        name: str | None = None,
+        expected_archive_revision: int | None = None,
+        expected_name: str | None = None,
     ) -> WorkspaceRecord:
-        """Restore an archived workspace to listings (spec §2).
-
-        Never auto-activates: the user chooses when to switch. A replacement
-        name resolves name reuse in the same transaction as restoration.
+        """Restore the captured archive episode without activating the workspace.
 
         Args:
             workspace_id: Archived workspace to restore.
-            name: Optional replacement display name; strict text, trimmed
-                and nonblank.
+            name: Optional replacement display name.
+            expected_archive_revision: Captured revision, or current state when omitted.
+            expected_name: Captured display name, or current name when omitted.
+
+        Returns:
+            The restored workspace record.
 
         Raises:
-            WorkspaceNotFound: Unknown, not-archived, or concurrently restored
-                workspace.
-            WorkspaceRegistryServiceError: Invalid name, duplicate name, or
-                storage failure.
+            WorkspaceArchiveConflict: Captured lifecycle state or name changed.
+            WorkspaceNotFound: Unknown or active workspace without a snapshot.
+            WorkspaceRegistryServiceError: Invalid/duplicate name or storage failure.
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
-        record = self.get_workspace(safe_workspace_id)
-        if record is None or not record.archived:
-            raise WorkspaceNotFound(safe_workspace_id)
-        try:
-            safe_name = validate_workspace_name(record.name if name is None else name)
-        except ValueError as exc:
-            raise WorkspaceRegistryServiceError(str(exc)) from exc
         now = self._now_factory()
         try:
             with self.db.transaction(immediate=True) as conn:
+                record = self._archive_lifecycle_record(
+                    conn,
+                    safe_workspace_id,
+                    archived=True,
+                    expected_archive_revision=expected_archive_revision,
+                    expected_name=expected_name,
+                )
+                try:
+                    safe_name = validate_workspace_name(
+                        record.name if name is None else name
+                    )
+                except ValueError as exc:
+                    raise WorkspaceRegistryServiceError(str(exc)) from exc
                 self._reject_duplicate_name(
                     safe_name, exclude_workspace_id=safe_workspace_id
                 )
                 cursor = conn.execute(
                     """
                     UPDATE workspace_records
-                    SET archived = 0, name = ?, updated_at = ?
+                    SET archived = 0, archived_at = NULL,
+                        archive_revision = archive_revision + 1, name = ?, updated_at = ?
                     WHERE workspace_id = ? AND archived = 1
+                      AND archive_revision = ? AND name = ?
                     """,
-                    (safe_name, now, safe_workspace_id),
+                    (
+                        safe_name,
+                        now,
+                        safe_workspace_id,
+                        record.archive_revision,
+                        record.name,
+                    ),
                 )
                 if cursor.rowcount != 1:
-                    raise WorkspaceNotFound(safe_workspace_id)
+                    raise WorkspaceArchiveConflict(safe_workspace_id)
+                restored = self.get_workspace(safe_workspace_id)
         except sqlite3.IntegrityError as exc:
             raise WorkspaceRegistryServiceError(
                 f"A workspace named {safe_name} already exists. Choose Restore as with another name."
@@ -1108,10 +1139,38 @@ class LocalWorkspaceRegistryService:
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
-        restored = self.get_workspace(safe_workspace_id)
         if restored is None:
             raise WorkspaceRegistryServiceError("Workspace unarchive failed.")
         return restored
+
+    @staticmethod
+    def _archive_lifecycle_record(
+        conn: sqlite3.Connection,
+        workspace_id: str,
+        *,
+        archived: bool,
+        expected_archive_revision: int | None,
+        expected_name: str | None = None,
+    ) -> WorkspaceRecord:
+        """Capture and validate lifecycle state inside the reserved write transaction."""
+        row = conn.execute(
+            "SELECT * FROM workspace_records WHERE workspace_id = ?", (workspace_id,)
+        ).fetchone()
+        record = _workspace_from_row(row) if row is not None else None
+        captured = expected_archive_revision is not None or expected_name is not None
+        if record is None or record.archived != archived:
+            if captured:
+                raise WorkspaceArchiveConflict(workspace_id)
+            raise WorkspaceNotFound(workspace_id)
+        if (
+            expected_archive_revision is not None
+            and (
+                type(expected_archive_revision) is not int
+                or record.archive_revision != expected_archive_revision
+            )
+        ) or (expected_name is not None and record.name != expected_name):
+            raise WorkspaceArchiveConflict(workspace_id)
+        return record
 
     def set_assistant_defaults(
         self,
@@ -3275,25 +3334,25 @@ class LocalWorkspaceRegistryService:
         """Return one runtime binding if it exists."""
 
         safe_binding_id = _normalize_required_text(binding_id, "binding_id")
-        try:
-            with self.db.connection() as conn:
-                row = conn.execute(
-                    """
-                    SELECT *
-                    FROM workspace_runtime_bindings
-                    WHERE binding_id = ?
-                    """,
-                    (safe_binding_id,),
-                ).fetchone()
-        except sqlite3.Error as exc:
-            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        if row is None:
-            return None
-        if row["workspace_id"] == DEFAULT_WORKSPACE_ID:
-            self._delete_default_runtime_bindings()
-            return None
-        binding = _runtime_binding_from_row(row)
-        return binding
+        with operation_owned_connection(self.db):
+            try:
+                with self.db.connection() as conn:
+                    row = conn.execute(
+                        """
+                        SELECT *
+                        FROM workspace_runtime_bindings
+                        WHERE binding_id = ?
+                        """,
+                        (safe_binding_id,),
+                    ).fetchone()
+            except sqlite3.Error as exc:
+                raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
+            if row is None:
+                return None
+            if row["workspace_id"] == DEFAULT_WORKSPACE_ID:
+                self._delete_default_runtime_bindings()
+                return None
+            return _runtime_binding_from_row(row)
 
     def list_runtime_bindings(
         self,
@@ -3746,17 +3805,25 @@ class LocalWorkspaceRegistryService:
 
         now = self._now_factory()
         try:
-            with self.db.transaction() as conn:
-                conn.execute(
+            with self.db.transaction(immediate=True) as conn:
+                row = conn.execute(
+                    "SELECT * FROM workspace_records WHERE workspace_id = ?",
+                    (DEFAULT_WORKSPACE_ID,),
+                ).fetchone()
+                if row is None or not row["archived"]:
+                    return
+                record = _workspace_from_row(row)
+                cursor = conn.execute(
                     """
                     UPDATE workspace_records
                     SET name = ?,
                         description = ?,
                         authority = ?,
                         sync_status = ?,
-                        archived = 0,
+                        archived = 0, archived_at = NULL,
+                        archive_revision = archive_revision + 1,
                         updated_at = ?
-                    WHERE workspace_id = ?
+                    WHERE workspace_id = ? AND archived = 1 AND archive_revision = ?
                     """,
                     (
                         DEFAULT_WORKSPACE_NAME,
@@ -3765,8 +3832,11 @@ class LocalWorkspaceRegistryService:
                         WorkspaceSyncStatus.NOT_CONFIGURED.value,
                         now,
                         DEFAULT_WORKSPACE_ID,
+                        record.archive_revision,
                     ),
                 )
+                if cursor.rowcount != 1:
+                    raise WorkspaceArchiveConflict(DEFAULT_WORKSPACE_ID)
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
         self._bump_mutation_generation()
@@ -3781,6 +3851,8 @@ def _workspace_from_row(row: sqlite3.Row) -> WorkspaceRecord:
         sync_status=WorkspaceSyncStatus(row["sync_status"]),
         active=bool(row["active"]),
         archived=bool(row["archived"]),
+        archived_at=row["archived_at"],
+        archive_revision=row["archive_revision"],
         assistant_defaults=_assistant_defaults_from_json(row["assistant_defaults"]),
         assistant_defaults_explicit_none=bool(row["assistant_defaults_explicit_none"]),
         created_at=row["created_at"],

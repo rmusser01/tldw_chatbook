@@ -211,9 +211,9 @@ class ContinuationRound:
 
 @dataclass(frozen=True, repr=False)
 class ProviderContinuationCheckpoint:
-    """Canonical V1 durable provider continuation."""
+    """Canonical durable provider continuation with optional host binding."""
 
-    schema_version: Literal[1, 2]
+    schema_version: Literal[1, 2, 3]
     checkpoint_revision: int
     provider: ContinuationProvider
     protocol: ContinuationProtocol
@@ -222,6 +222,7 @@ class ProviderContinuationCheckpoint:
     state: ContinuationState
     rounds: tuple[ContinuationRound, ...]
     managed_resume: str | None = None
+    selected_provider: str | None = None
 
     def __repr__(self) -> str:
         return (
@@ -272,6 +273,7 @@ class ContinuationRestoreTarget:
     model: str
     protocol: str
     api_base_url: str
+    selected_provider: str | None = None
 
     def __repr__(self) -> str:
         return (
@@ -509,7 +511,16 @@ def _checkpoint_value(checkpoint: ProviderContinuationCheckpoint) -> dict[str, o
         "rounds": rounds,
     }
 
-    if checkpoint.schema_version == 2:
+    if checkpoint.schema_version == 3:
+        value["selected_provider"] = checkpoint.selected_provider
+        value["managed_resume"] = (
+            _strict_json_loads(checkpoint.managed_resume)
+            if checkpoint.managed_resume is not None
+            else None
+        )
+    elif checkpoint.selected_provider is not None:
+        _fail()
+    elif checkpoint.schema_version == 2:
         value["managed_resume"] = _strict_json_loads(checkpoint.managed_resume)
     elif checkpoint.managed_resume is not None:
         _fail()
@@ -543,13 +554,20 @@ def _parse_value(value: object) -> ProviderContinuationCheckpoint:
         value = _strict_json_loads(raw)
     payload_nodes, _ = _json_shape(value)
     version = value.get("schema_version") if type(value) is dict else None
-    if type(version) is not int or version not in {1, 2}:
+    if type(version) is not int or version not in {1, 2, 3}:
         _fail()
-    item = _exact_mapping(
-        value, _TOP_LEVEL_KEYS | {"managed_resume"} if version == 2 else _TOP_LEVEL_KEYS
-    )
+    keys = _TOP_LEVEL_KEYS
+    if version in {2, 3}:
+        keys = keys | {"managed_resume"}
+    if version == 3:
+        keys = keys | {"selected_provider"}
+    item = _exact_mapping(value, keys)
+    selected_provider = None
+    if version == 3:
+        selected_provider = _exact_string(item["selected_provider"], nonblank=True)
+        _bounded_utf8(selected_provider, _MAX_IDENTITY_BYTES)
     managed_resume = None
-    if version == 2:
+    if version == 2 or (version == 3 and item["managed_resume"] is not None):
         # Ordinary V1 parsing/startup must not import the plugin service/trust stack.
         from tldw_chatbook.Plugins.continuation import validate_envelope
 
@@ -640,6 +658,7 @@ def _parse_value(value: object) -> ProviderContinuationCheckpoint:
     checkpoint = ProviderContinuationCheckpoint(
         schema_version=version,
         managed_resume=managed_resume,
+        selected_provider=selected_provider,
         checkpoint_revision=cast(int, revision),
         provider=cast(ContinuationProvider, provider),
         protocol=cast(ContinuationProtocol, protocol),
@@ -789,7 +808,68 @@ def transition_provider_call(
     raise ContinuationValidationError(_INVALID_MESSAGE) from None
 
 
+def validate_continuation_target(target: ContinuationRestoreTarget) -> None:
+    """Validate a host-captured canonical tuple without resolving configuration."""
+    try:
+        if type(target) is not ContinuationRestoreTarget:
+            _fail()
+        if (target.provider, target.protocol) not in _PAIRINGS:
+            _fail()
+        for value in (target.model, target.api_base_url):
+            _bounded_utf8(_exact_string(value, nonblank=True), _MAX_IDENTITY_BYTES)
+        _validate_base_url(target.api_base_url)
+        if target.selected_provider is not None:
+            _bounded_utf8(
+                _exact_string(target.selected_provider, nonblank=True),
+                _MAX_IDENTITY_BYTES,
+            )
+    except Exception:
+        raise ContinuationValidationError(_INVALID_MESSAGE) from None
+
+
 def validate_continuation_restore(
+    checkpoint: ProviderContinuationCheckpoint,
+    target: ContinuationRestoreTarget,
+) -> None:
+    """Require the exact host selection as well as canonical execution identity."""
+    validate_continuation_execution_target(checkpoint, target)
+    if checkpoint.schema_version == 3:
+        matches = checkpoint.selected_provider == target.selected_provider
+    else:
+        # Pinless virtual state cannot prove the original selected destination.
+        from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+        matches = checkpoint.provider != "custom-hosted" and (
+            target.selected_provider is None
+            or provider_config_key(target.selected_provider) == checkpoint.provider
+        )
+    if not matches:
+        raise ContinuationConflictError(
+            "Continuation restore target mismatch."
+        ) from None
+
+
+def bind_continuation_to_target(
+    checkpoint: ProviderContinuationCheckpoint,
+    target: ContinuationRestoreTarget,
+) -> ProviderContinuationCheckpoint:
+    """Bind a neutral provider candidate to its actual immutable host resolution."""
+    validate_continuation_execution_target(checkpoint, target)
+    if target.selected_provider is None:
+        raise ContinuationValidationError(_INVALID_MESSAGE)
+    if checkpoint.schema_version == 3:
+        validate_continuation_restore(checkpoint, target)
+        return checkpoint
+    if checkpoint.managed_resume is not None:
+        raise ContinuationConflictError("Managed continuation cannot be rebound.")
+    return _parse_checkpoint(
+        replace(
+            checkpoint, schema_version=3, selected_provider=target.selected_provider
+        )
+    )
+
+
+def validate_continuation_execution_target(
     checkpoint: ProviderContinuationCheckpoint,
     target: ContinuationRestoreTarget,
 ) -> None:
@@ -867,3 +947,41 @@ def continuation_owner_group(
         checkpoint=canonical,
         rounds=canonical.rounds,
     )
+
+
+def project_provider_continuation(
+    checkpoint: ProviderContinuationCheckpoint,
+) -> list[dict[str, Any]]:
+    """Project recorded native rows; callers retain admission and execution gates."""
+    canonical = parse_provider_continuation_json(
+        dump_provider_continuation_json(checkpoint)
+    )
+    rows: list[dict[str, Any]] = []
+    for round_ in canonical.rounds:
+        assistant: dict[str, Any] = {
+            "role": "assistant",
+            "content": round_.assistant_content,
+        }
+        if round_.calls:
+            assistant["tool_calls"] = [
+                {
+                    "id": call.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": call.arguments,
+                    },
+                }
+                for call in round_.calls
+            ]
+        rows.append(assistant)
+        rows.extend(
+            {
+                "role": "tool",
+                "tool_call_id": call.call_id,
+                "content": call.result.value,
+            }
+            for call in round_.calls
+            if call.result is not None
+        )
+    return rows

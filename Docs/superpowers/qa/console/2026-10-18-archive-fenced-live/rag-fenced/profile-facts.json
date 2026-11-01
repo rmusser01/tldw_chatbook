@@ -1,0 +1,19 @@
+{
+  "mode": "RAG-only",
+  "direct_library_tools": false,
+  "exchange_capture": true,
+  "max_model_turns": 2,
+  "model_retries": 0,
+  "native_tool_overrides": {},
+  "reasoning_history_overrides": {},
+  "config_sha256": "f5998a85031c88f95cab3efd6e6981a5f96aacb2f2fff0bcd9a09229637abaed",
+  "real_deny_only_rag_hook": {
+    "parsed_hook_count": 1,
+    "rag_blocked": true,
+    "reason": "Generic RAG is disabled for this no-index archive verification. Use archive recovery for archived conversations.",
+    "archive_search_hook_unblocked": true,
+    "restore_hook_unblocked": true,
+    "note": "Restriction only; normal permission/runtime/confirmation gates were not bypassed."
+  },
+  "system_prompt": "native Clear before send; narrowing Persona remains"
+}

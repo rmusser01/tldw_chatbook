@@ -89,7 +89,9 @@ class SQLiteStoreKernel:
             )
         self._thread_local = threading.local()
 
-    def _open_connection(self) -> sqlite3.Connection:
+    def _open_connection(
+        self, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """Open a raw connection; BaseDB-provenance stores override this.
 
         The default opens through private-sqlite under
@@ -98,10 +100,22 @@ class SQLiteStoreKernel:
         method to delegate there instead, keeping their participants
         identity intact (ADR-228, BaseDB-provenance section).
         """
-        return connect_private_sqlite(self._kernel_sqlite_owner, self.db_path_str)
+        kwargs = (
+            {}
+            if operation_deadline is None
+            else {
+                "operation_deadline": operation_deadline,
+                "timeout": max(0.0, min(5.0, operation_deadline - time.monotonic())),
+            }
+        )
+        return connect_private_sqlite(
+            self._kernel_sqlite_owner, self.db_path_str, **kwargs
+        )
 
     @_core_getter
-    def _get_connection(self) -> sqlite3.Connection:
+    def _get_connection(
+        self, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """Open and configure a NEW database connection.
 
         This is the single place a connection is created, so every
@@ -109,15 +123,27 @@ class SQLiteStoreKernel:
         ``_configure_connection`` override.
         """
         _core_access(self)
-        conn = self._open_connection()
+        if operation_deadline is not None and time.monotonic() >= operation_deadline:
+            raise TimeoutError("Database connection budget exhausted")
+        conn = (
+            self._open_connection()
+            if operation_deadline is None
+            else self._open_connection(operation_deadline=operation_deadline)
+        )
         _register_core_connection(self, conn)
         try:
-            return self._configure_connection(conn)
+            if operation_deadline is None:
+                return self._configure_connection(conn)
+            return self._configure_connection(
+                conn, operation_deadline=operation_deadline
+            )
         except BaseException:
             conn.close()
             raise
 
-    def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
+    def _configure_connection(
+        self, conn: sqlite3.Connection, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """Apply per-connection settings; override for store PRAGMA policy.
 
         The kernel defaults cover only what the held-connection contract
@@ -128,7 +154,9 @@ class SQLiteStoreKernel:
         return conn
 
     @_core_getter
-    def _held_connection(self) -> sqlite3.Connection:
+    def _held_connection(
+        self, *, operation_deadline: float | None = None
+    ) -> sqlite3.Connection:
         """Return this thread's held connection, opening or reviving it.
 
         The liveness probe is a plain no-op statement; a connection another
@@ -136,6 +164,8 @@ class SQLiteStoreKernel:
         replaced.
         """
         _core_access(self)
+        if operation_deadline is not None and time.monotonic() >= operation_deadline:
+            raise TimeoutError("Database connection budget exhausted")
         conn = getattr(self._thread_local, "conn", None)
         conn = _core_cached_connection(self, conn)
         if conn is not None:
@@ -145,7 +175,24 @@ class SQLiteStoreKernel:
                 or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
             ):
                 try:
-                    conn.execute("SELECT 1")
+                    if operation_deadline is None:
+                        conn.execute("SELECT 1")
+                    else:
+                        previous_timeout = conn.execute(
+                            "PRAGMA busy_timeout"
+                        ).fetchone()[0]
+                        try:
+                            remaining = operation_deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise TimeoutError(
+                                    "Database connection budget exhausted"
+                                )
+                            conn.execute(
+                                f"PRAGMA busy_timeout = {max(0, int(remaining * 1000))}"
+                            )
+                            conn.execute("SELECT 1")
+                        finally:
+                            conn.execute(f"PRAGMA busy_timeout = {previous_timeout}")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
                     try:
                         sqlite3.Connection.in_transaction.__get__(conn)
@@ -154,21 +201,46 @@ class SQLiteStoreKernel:
                     else:
                         raise
                     conn = None
+        opened_here = conn is None
         if conn is None:
-            conn = self._get_connection()
+            conn = (
+                self._get_connection()
+                if operation_deadline is None
+                else self._get_connection(operation_deadline=operation_deadline)
+            )
             self._thread_local.conn = conn
+            self._on_connection_opened(conn)
+        if operation_deadline is not None and time.monotonic() >= operation_deadline:
+            if opened_here:
+                self.close()
+            raise TimeoutError("Database connection budget exhausted")
         self._thread_local.conn_last_used = time.monotonic()
         return conn
 
+    def _on_connection_opened(self, conn: sqlite3.Connection) -> None:
+        """Hook: a fresh connection just entered this thread's cache.
+
+        Stores that track ALL connections they own for cross-thread
+        shutdown (e.g. Dreams_DB's ``close_all``) override this to
+        register; the kernel itself keeps no global registry.
+        """
+
+
     @_core_transaction
     @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
+    def connection(
+        self, *, operation_deadline: float | None = None
+    ) -> Iterator[sqlite3.Connection]:
         """Yield the calling thread's held connection (no transaction).
 
         In autocommit mode a single statement is its own transaction, so
         reads and single-statement writes need nothing more than this.
         """
-        yield self._held_connection()
+        yield (
+            self._held_connection()
+            if operation_deadline is None
+            else self._held_connection(operation_deadline=operation_deadline)
+        )
 
     @_core_transaction
     @contextmanager

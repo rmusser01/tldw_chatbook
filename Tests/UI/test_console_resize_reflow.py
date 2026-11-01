@@ -1069,6 +1069,7 @@ async def test_resize_priority_hands_inspector_focus_to_reveal_button() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_resize_event_width_drives_priority_and_focus(monkeypatch) -> None:
     """The Resize width wins over a stale screen-width lookup."""
     host = _ready_console_host()
@@ -1093,6 +1094,7 @@ async def test_resize_event_width_drives_priority_and_focus(monkeypatch) -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_live_resize_converges_to_cold_start_layout() -> None:
     """A live resize converges to the cold-start layout at that size.
 

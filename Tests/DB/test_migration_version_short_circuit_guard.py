@@ -74,10 +74,10 @@ ALLOWLIST: dict[tuple[str, str, str], str] = {
     (
         "Tests/Evals/test_evals_db_v5_to_v6_migration.py",
         "test_opening_a_v5_database_drops_the_inert_version_columns",
-        "assert SCHEMA_VERSION == 6",
+        "assert SCHEMA_VERSION == 7",
     ): (
         "Deliberate suite pin, self-documented in the source: the suite "
-        "tests the v5 -> v6 hop specifically and MUST stop passing (and "
+        "tests the v5 -> v6 hop plus the v7 results index and MUST stop passing (and "
         "be updated) when EvalsDB's schema advances; the comment on the "
         "line says exactly this."
     ),

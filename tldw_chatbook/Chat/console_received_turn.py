@@ -83,6 +83,7 @@ class ConsoleReceivedTurnAdmissionMixin:
         *,
         origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
         draft_revision: int | None = None,
+        _allow_draft_change: bool = False,
     ) -> ConsoleReceivedTurnClaim | None:
         """Reserve one live session before moving complete-request inputs.
 
@@ -107,7 +108,9 @@ class ConsoleReceivedTurnAdmissionMixin:
         with self._preparation_lock:
             session = self._sessions.get(session_id)
             if session is None or (
-                draft_revision is not None and session.draft_revision != draft_revision
+                draft_revision is not None
+                and not _allow_draft_change
+                and session.draft_revision != draft_revision
             ):
                 return None
             current = self._preparations_by_session.get(session_id)

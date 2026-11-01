@@ -852,3 +852,17 @@ fork decisions.
 - [DeepSeek reconstructable-request decision](https://github.com/deepseek-ai/deepseek-harness/blob/master/.agents/notes/implemented/architecture/2026-07-05-reconstructable-requests.md)
 - [DeepSeek telemetry/redaction separation](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-telemetry.md)
 - [DeepSeek chunk-row codec reference for TASK-24206](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/session/src/chunk-rows.ts)
+
+
+## Adopted live-native tool-loop extension (2026-10-27)
+
+TASK-35582 actual CaptureOn loops require exact message suffix append together
+with one evolving current continuation node. The [ADR097 amendment](../../../backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md)
+and [focused contract](../qa/2026-10-18-multi-model-code-review/ac24/native-trace-delta-design/design.md)
+are adopted before implementation. Use separate host custody/witness, exact raw
+prefix/batch/destination/policy/version, one-node replacement plus suffix appends
+in one existing transaction, and a trace-only round delta on existing graph edges.
+Preserve complete historical reconstruction, legacy reads, privacy, fork/archive/GC
+and linear trace-owned bytes. Existing provider/checkpoint formats and ordinary/
+completed-turn/retry contracts do not change. Cold proof is re-established through
+existing host authority or refuses explicitly. No new workflow owner or paid calls.

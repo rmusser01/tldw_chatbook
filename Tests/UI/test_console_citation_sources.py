@@ -548,6 +548,10 @@ def _bare_screen(
         project=lambda projected_messages: projected_messages
     )
     screen._library_activity = SimpleNamespace(sync_transcript=lambda _transcript: {})
+    # TASK-33621.51: the sync also projects Library outcome lines.
+    screen._library_outcome = SimpleNamespace(
+        sync_transcript=lambda _transcript, _messages: {}
+    )
     screen.app_instance = SimpleNamespace(
         citation_trace_repository=repository,
         chachanotes_db=app_db,

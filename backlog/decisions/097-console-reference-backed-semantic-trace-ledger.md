@@ -660,3 +660,174 @@ call; it never rewrites the failed call or relabels it as a tool response.
 ## Current-owner integration amendment (2026-10-13)
 
 Canonical message/revision identity and predecessor ancestry remain reachable independently of archived payload. The existing admitted checkpoint roots and graph-epoch invalidation remain authoritative before reservation; metadata roots cannot retain deleted payload through another call sharing a policy. Retry capture compares canonical JSON bytes (including boolean/integer/float identity), and frozen arrays thaw only when forming PersistRequest fields.
+
+
+## Live native continuation advance amendment (TASK-35582, 2026-10-27)
+
+Actual native CaptureOn tool loops exposed a missing admission shape after the
+custom-hosted endpoint projection was repaired: a completed new native batch
+appends message rows while extending one live continuation surface value. The
+existing one-value replacement and completed-saved-turn witness cannot authorize
+that live mixed-domain operation. This amendment is adopted before implementation.
+Detailed design and controller boundary: [focused design](../../Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/native-trace-delta-design/design.md),
+[controller adoption](../../Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/native-trace-delta-design/controller-adoption.md).
+
+- Add one separately typed, host-issued live-native witness to existing capture
+  admission/capability machinery. It is restricted to the exact tool-loop run,
+  originating source/turn, segment, previous eligible call and predecessor head.
+  Completed-turn authorization and ordinary append/replacement/retry rules retain
+  their existing meaning; witness construction alone grants no authority.
+- Revalidate the current assistant generation, active path, acknowledged message/
+  checkpoint version, raw selected-provider identity and canonical protocol/model/
+  full-base binding under existing custody/CAS. Reuse host projection/signing
+  provenance where raw and durable checkpoints differ. Broad ignored-field or
+  redacted-byte equality cannot establish raw custody.
+- Admit exactly one changed current continuation: old rounds are byte/structure
+  exact, one new finished native batch has exact IDs/names/raw arguments/results,
+  no pending/executing calls remain, and its attachment is the newest exact batch.
+  The prior message domain is an unchanged prefix; the appended suffix and any
+  steering retain host provenance/order. Other continuation groups retain exact
+  value/order/descriptor. Bind suffix/span to existing limits and frozen policy.
+- Replace only that continuation node (span1) and append the message suffix using
+  existing surface_replace/surface_append events in the same transaction as header
+  and call dispatch binding. Preserve per-domain ordinals and old call heads.
+  Recheck predecessor and owner/version at final binding; rollback/ambiguous
+  commit uses existing owned reconciliation, with no automatic redispatch.
+- Preserve linear trace-owned storage: after the first full base, a distinct
+  versioned trace-only continuation-advance projection stores bounded top-level
+  metadata, prior round count and the single new sanitized round. Its predecessor
+  comes from the exact existing one-node replacement edge, never a caller-supplied
+  JSON reference. Do not store full growing checkpoints or growing prior-ID arrays.
+  Provider kwargs and current assistant V3 remain their full original formats.
+- Sanitize the full candidate under frozen policy and verify the old projected
+  prefix before compacting it. A projection change, missing/corrupt/cyclic/wrong-
+  lineage/policy edge, count/depth/byte overflow or failed custody is an explicit
+  refusal/unavailable outcome. Encoded deltas never become execution/Resume state.
+- Use a shared node-aware resolver in durable comparisons and native readers.
+  Legacy full values stay readable without reinterpretation. Fork/archive/copy
+  and GC must preserve actual graph dependencies, and final-owner deletion must
+  reclaim them. Verify raw artifact/metadata growth; reconstruction CPU and other
+  checkpoint owners are separate costs. No new mutable owner/table is planned.
+- Cold live advance requires existing explicit host custody evidence or refuses
+  before provider entry. Matching old bytes or a historical trace reference cannot
+  recreate execution authority. This does not add durable review-job recovery.
+
+Rejected alternatives: moving checkpoints into headers would lose their surface
+lineage; raising replacement counts admits unauthenticated history changes; using
+completed-turn proof mislabels a live chain; full-checkpoint snapshots duplicate
+old rounds; mutable-latest references lose old calls; dropping capture/private
+groups changes fidelity; a general patch engine or new registry is unnecessary.
+
+Existing ADR063/179 owns provider/current-checkpoint custody and is unchanged.
+TASK-35582/ADR281 links this amendment. No SQL migration is asserted until artifact
+codec/enum/archive constraints are audited; any required DDL uses normal versioned
+migration and a revised plan before source work. Required evidence includes actual
+normal Console2/3-round/multicall CaptureOn, strict owner/prefix/policy negatives,
+atomicity/races/privacy, legacy/corrupt graph reads, retention/forks and linear
+artifact-plus-metadata growth. No live provider allowance follows from this ADR.
+
+
+Runtime custody prerequisite (Ruling61, before this runtime edit): the existing
+continuation persistence callback receives only projected checkpoints/events and
+returns None. Exact raw-to-projected provenance is currently discarded. Add one
+optional capture-only host acknowledgment after that callback succeeds; carry
+exact invocation raw/projected relation to bounded current adapter custody, then
+existing store projection/sealing and final owner/version/CAS validation. Keep
+ordinary/CaptureOff behavior, durable persistence barriers and transition semantics.
+Raw values never enter generic event serialization, provider kwargs, DB bodies,
+logs, diagnostics or a history registry. Failed/missing/stale acknowledgment grants
+no capture witness or execution power. Cover private-body projection, managed
+sealing, persistence callback failure and no duplicated side effects explicitly.
+No SQL/checkpoint-format or review-job owner change is introduced.
+
+
+### Canonical completed-history replay amendment (Ruling64, before code)
+
+Adopt QA/ac24/review-wake-repair-design/completed-replay-correction.md and
+completed-replay-controller-assessment.md. Preserve the corrected existing
+transcript SYSTEM/payload USER policy; carrier-only work is removed. The real
+accepted-wake failure is retained complete checkpoint forwarding without its
+canonical native owner rows, alongside the independently proved capacity/tool loss.
+
+After existing host owner/target admission, derive canonical recorded assistant/
+tool history at final preparation from the exact complete persisted checkpoint.
+Reuse the existing translator; keep one collapsed semantic owner plus attachment
+as the atomic budget/eviction unit. Preserve exact IDs/args/results and one final
+content, private reasoning sidecar, all retained complete groups alongside current
+active groups, child isolation and explicit active Resume gates. No re-execution,
+fuzzy owner match, missing group tolerance or engine relaxation. Count the same
+projection before fit and avoid duplicate completed-expanded body charge.
+
+A narrowly deterministic one-to-many trace derivation may reuse existing completed
+owner/revision, private attachment and terminal lineage/range machinery. Recompute
+all output rows under frozen policy; derived rows are not fabricated saved ordinary
+revisions. Preserve count/span/source/actor/turn/CAS and final shadow gates. No
+arbitrary tool span acceptance, active-custody resurrection, growing per-call
+history arrays, codec/GC change, registry or new schema. Any needed durable shape
+requires concrete assessment before adding it. Existing provider/checkpointV3 and
+legacy readers remain. Actual handler-backed [2,1] plus CaptureOff/On, replay/live
+coexistence, counting/eviction and strict negatives are required before closure.
+
+
+Completed replay compound-transition clarification (Ruling67): the actual later
+MANUAL CaptureOn request changes both the old native tool span and its same-owner
+active checkpoint attachment. Permit only this exact compound replacement under
+the existing saved-response/terminal witness, canonical replay derivation and
+frozen-policy recorded-round/target proof. Preserve the whole unchanged prefix,
+other attachments, source/run/turn/policy lineage,256 span/count and CAS/final
+shadow checks. Changed/foreign checkpoints, altered recorded rounds and pending/
+executing ownership cannot pass. Use the existing graph transaction and retention;
+no generic mixed span, codec/GC/schema or active custody extension. The required
+negative controls and independent review must establish this boundary.
+
+
+Completed-history plus live-group append clarification (Ruling68): when old message
+and continuation domains each remain exact prefixes, append only the new native
+message rows/current checkpoint through existing surface_append and domain
+ordinals. The flat request concatenation may otherwise misclassify the unchanged
+historical checkpoint as a mixed replacement. Retain every historical node,
+exact descriptor/value/policy and the separate current host live-custody proof.
+Preserve final reconstruction/count/CAS, quotas/atomic rollback and all target/
+permission gates; reject changed history, insertion/reordering or foreign/changed
+attachments. No new durable shape, generic replacement, codec/GC/schema change or
+historical-to-live authority transfer.
+
+
+Recorded-value/privacy clarification (Ruling69): exact replay follows the admitted
+persisted checkpoint after existing tool-record projection. In particular the
+unchanged CodeReviewToolProvider intentionally persists schema_version/tool_name
+and body-free results rather than original ephemeral review args/source/report
+bodies. Do not restore those raw values or equate saved replay to old volatile
+wire bytes. Compare exact canonical saved strings/IDs/results; apply existing
+frozen credential/PII projection only when comparing disclosure trace artifacts.
+Raw provider/recompute/live-custody checks remain separate and strict. Masked
+byte equality cannot create custody; no ignored fields, disclosure or policy
+change. The final oracle and focused mask regression must state this distinction.
+
+
+Implementation evidence through c3f99ec: the corrected accepted-wake/completed
+replay contract passes scoped independent review after transient-credential and
+incoming-owner fixes. Canonical persisted replay, eligible MANUAL Safe/Full,
+strict negatives and final binding are covered in
+Docs/superpowers/qa/2026-10-18-multi-model-code-review/ac24/review-wake-repair-fix/.
+One nonblocking precedence-fixture coverage gap and retained pending-refusal
+shutdown limitation remain explicit. No automatic capture-policy, durable format,
+codec/GC, execution authority or recovery expansion follows. Live qualification
+remains incomplete.
+### Clarification recorded 2026-10-18: thinking-serialized tool-call surface identity
+
+[TASK-33164](../tasks/task-33164%20-%20Preserve-captured-archive-recovery-follow-up-ownership.md) reproduced a completed native tool run whose compatible thinking serialization correctly produced MESSAGE_REWRITE provenance, with a THINKING artifact over its original TOOL_CALL artifact and matching THINKING_ATTACHMENT. Surface storage classified the whole rewritten tool-call row as thinking, so the existing completed-tool range validator refused the next captured user turn. The typed rewrite and the strict validator are both required; the surface classification must retain the causal tool-call identity.
+
+For new surface references, only an exact DerivedTraceProvenance MESSAGE_REWRITE with an outer THINKING artifact and direct ProviderArtifactTraceProvenance TOOL_CALL first input retains the tool_call component kind. Existing typed attachment validation remains mandatory. The complete serialized artifact bytes, causal inputs, capture policy, credential/PII projection and thinking/privacy semantics do not change. Ordinary assistant-thinking rewrites, standalone thinking artifacts, unknown transforms and other inputs retain their existing classification. Reference creation, lookup, durable comparison and node matching use the same classification.
+
+Completed-tool source, response-link, exact-value, bounded-range, run/owner/turn, route and policy checks remain unchanged. This does not add thinking to the generic permitted replacement kinds. Existing stored thinking nodes lack per-node causal descriptor proof; their bytes or labels alone cannot authorize retrospective promotion. They remain immutable and subject to the existing refusals. No schema migration or historical trace rewrite is introduced.
+
+This corrects the existing provenance handoff under [ADR090](090-console-thinking-block-ownership-and-replay.md), rather than creating a new authority or provider contract. [Implementation plan](../../Docs/superpowers/plans/2026-09-27-agent-archive-recovery-capture-on.md) records the bounded correction and qualification limits.
+
+### Amendment recorded 2026-10-18: version2 local-thinking response formats
+
+The owner approved a prospective versioned response-profile repair after native Qwen reasoning_content responses failed exact version1 tagged-thinking projection. New displayable local profiles use version2 and source_formats instead of scalar source_format, with the other existing profile fields unchanged. The closed adapter keys are llama_cpp, local_llamacpp, vllm and local_vllm, with a nonblank model. Canonical formats are start_anchored_think followed by reasoning_content, except a model name containing kimi case-insensitively permits only start_anchored_think because the existing structured parser excludes it. Producer and canonical projector share one closed rule; the profile must match its complete ordered result exactly. This declares supported parser formats, not template/native-tool/replay authority.
+
+The exact terminal block retains its concrete source_format and provider/model/protocol/status/text. Version2 validates the exact shape and integer versions, unchanged terminal-round/type/single-block evidence and process-keyed raw equality proof. Credential/PII projection and completed-tool revision/range/lineage/policy checks are unchanged. A scalar version1 profile remains strict; hosted proprietary profiles and legacy visible-only responses retain their meanings. Old headers, links, artifacts, revisions and reconstructions remain immutable; no relinking, migration or retrospective source inference is permitted. Fresh captures establish the new contract.
+
+The contract uses the existing immutable request-header defaults JSON; no schema/storage expansion or new retained raw bodies. Rejected alternatives are widening v1, rewriting old artifact links, relabeling actual parser provenance, weakening equality/completed-tool checks, or disabling capture/thinking. Design: Docs/superpowers/specs/2026-10-18-versioned-thinking-response-profile-design.md; recovery task TASK-33164 and its existing correction plan link this amendment.

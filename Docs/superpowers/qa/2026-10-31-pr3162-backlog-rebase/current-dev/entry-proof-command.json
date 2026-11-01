@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe",
+    "-X",
+    "utf8",
+    "-m",
+    "pytest",
+    "-q",
+    "--maxfail=1",
+    "--junitxml=Docs\\superpowers\\qa\\2026-10-31-pr3162-backlog-rebase\\current-dev\\entry-proof.xml",
+    "Tests/Chat/test_console_async_mcp_snapshot.py::test_actual_wired_user_entry_issues_archive_proof_without_widening_temporary_mcp_maximum"
+  ],
+  "profile": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\pr3162-resync\\test-runtime\\current-dev-proof-5b53af448d",
+  "outer_timeout_seconds": 150
+}

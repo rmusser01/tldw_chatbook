@@ -287,6 +287,10 @@ class PluginMCPProvider(MCPToolProvider):
 class MCPProviderGroup:
     """Route catalogs/review to their actual owners; retain each owner's stamps."""
 
+    def hook_operation(self, tool_id: str) -> str | None:
+        owner = self.owners.get(tool_id)
+        return owner.hook_operation(tool_id) if owner is not None else None
+
     def __init__(self, providers: Sequence[MCPToolProvider]) -> None:
         self.providers = tuple(providers)
         self.owners = {}

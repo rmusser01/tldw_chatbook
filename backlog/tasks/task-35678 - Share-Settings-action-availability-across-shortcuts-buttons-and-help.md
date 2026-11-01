@@ -30,7 +30,7 @@ Reason: behavior-preserving consolidation of the accepted action/help and settin
 
 Deduplication: TASK-1340, TASK-1580, TASK-1714 and TASK-16265 cover existing footer/help and feedback improvements; retain those contracts, do not reopen them.
 
-Other recommendations from this book review already have owners and are explicitly outside this task: message-pump/blocking-I/O work belongs to TASK-2834 and TASK-32804; worker/post-await checking to TASK-32800.4; held-attachment keyboard responsiveness is fixed by TASK-35614, with measured follow-up under TASK-35645. Console polling/reconciliation belongs to TASK-34563.33 and TASK-34563.34 under ADR-231. That ADR's general proposal remains Proposed; this filing neither authorizes a polling rewrite nor creates a competing owner.
+Other recommendations from this book review already have owners and are explicitly outside this task: message-pump/blocking-I/O work belongs to TASK-2834 and TASK-32804; worker/post-await checking to TASK-32800.4; held-attachment keyboard responsiveness is fixed by TASK-35614, with measured follow-up under TASK-38267. Console polling/reconciliation belongs to TASK-34563.33 and TASK-34563.34 under ADR-231. That ADR's general proposal remains Proposed; this filing neither authorizes a polling rewrite nor creates a competing owner.
 
 ### Related work and decisions
 
@@ -41,7 +41,7 @@ Other recommendations from this book review already have owners and are explicit
 - [TASK-2834](../tasks/task-2834%20-%20Guard-against-blocking-IO-reachable-from-a-Textual-message-handler.md): existing owner or precedent described above.
 - [TASK-32804](../tasks/task-32804%20-%20Work-stream-synchronous-work-on-the-Textual-event-loop.md): existing owner or precedent described above.
 - [TASK-32800.4](../tasks/task-32800.4%20-%20Add-a-guard-for-the-Textual-worker-and-post-await-DOM-contract.md): existing owner or precedent described above.
-- [TASK-35614 / TASK-35645 — PR #3166](https://github.com/rmusser01/tldw_chatbook/pull/3166): existing keyboard-responsiveness fix and measured native-attachment follow-up. Their task files exist in the primary checkout but are not on this branch's dev base; link their existing PR without copying unrelated work.
+- [TASK-35614 / TASK-38267 — PR #3166](https://github.com/rmusser01/tldw_chatbook/pull/3166): existing keyboard-responsiveness fix and measured native-attachment follow-up. Their task files exist in the primary checkout but are not on this branch's dev base; link their existing PR without copying unrelated work.
 - [TASK-34563.33](../tasks/task-34563.33%20-%20Plan-Console-polling-and-full-state-reconciliation.md): existing owner or precedent described above.
 - [TASK-34563.34](../tasks/task-34563.34%20-%20Verify-Console-polling-reconciliation-boundaries.md): existing owner or precedent described above.
 - [031-tui-keybinding-and-footer-hint-conventions](../decisions/031-tui-keybinding-and-footer-hint-conventions.md)

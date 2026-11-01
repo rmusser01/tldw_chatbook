@@ -29,6 +29,7 @@ from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
     FIELD_SCHEMA,
     RETENTION_CHOICES,
     RETENTION_SELECT_ID,
+    VideoGenDraftValues,
     build_backend_rows,
     effective_placeholder,
     load_user_video_generation_table,
@@ -376,3 +377,74 @@ class VideoGenSettingsPanel(Vertical):
             id="settings-videogen-save-result",
             classes="settings-imagegen-hint",
         )
+
+
+def _draft_values_for_save(panel, values) -> VideoGenDraftValues:
+    from tldw_chatbook.UI.Screens import settings_screen as _owner
+
+    backend_fields: dict = {}
+    cleared_fields: dict[str, list[str]] = {}
+    for key, value in values.items():
+        if key.startswith("field::"):
+            _prefix, backend_id, toml_key = key.split("::", 2)
+            backend_fields.setdefault(backend_id, {})[toml_key] = value
+        elif key.startswith("cleared::"):
+            _prefix, backend_id, toml_key = key.split("::", 2)
+            cleared_fields.setdefault(backend_id, []).append(toml_key)
+
+    # Checkbox/Select values are ALWAYS read live (no blank ambiguity --
+    # the image block's rule), so an untouched toggle still lands.
+    enabled_backends = [
+        backend_id
+        for backend_id in _owner.VIDEO_GEN_BACKEND_IDS
+        if panel.query_one(
+            f"#settings-videogen-enabled-{backend_id}", _owner.Checkbox
+        ).value
+    ]
+    default_backend_widget_value = panel.query_one(
+        "#settings-videogen-default_backend", _owner.Select
+    ).value
+    default_backend = (
+        default_backend_widget_value
+        if isinstance(default_backend_widget_value, str)
+        else None
+    )
+    retention_widget_value = panel.query_one(
+        "#settings-videogen-retention", _owner.Select
+    ).value
+    retention = (
+        retention_widget_value if isinstance(retention_widget_value, str) else None
+    )
+    confirm_cost_estimate = bool(
+        panel.query_one(
+            "#settings-videogen-confirm_cost_estimate", _owner.Checkbox
+        ).value
+    )
+    # bool-kind backend fields (e.g. minimax allow_uploads) read live too.
+    from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
+        FIELD_SCHEMA as VIDEO_GEN_FIELD_SCHEMA,
+    )
+
+    for backend_id in _owner.VIDEO_GEN_BACKEND_IDS:
+        for spec in VIDEO_GEN_FIELD_SCHEMA.get(backend_id, ()):
+            if spec.kind != "bool":
+                continue
+            try:
+                value = panel.query_one(
+                    f"#settings-videogen-field-{backend_id}-{spec.toml_key}",
+                    _owner.Checkbox,
+                ).value
+            except _owner.QueryError:
+                continue
+            backend_fields.setdefault(backend_id, {})[spec.toml_key] = bool(value)
+
+    return _owner.VideoGenDraftValues(
+        default_backend=default_backend,
+        enabled_backends=enabled_backends,
+        retention=retention,
+        retention_ttl_hours=values.get("retention_ttl_hours"),
+        max_store_mb=values.get("max_store_mb"),
+        confirm_cost_estimate=confirm_cost_estimate,
+        backend_fields=backend_fields,
+        cleared_fields=cleared_fields,
+    )

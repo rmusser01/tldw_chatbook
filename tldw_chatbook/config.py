@@ -2812,6 +2812,8 @@ def _load_settings_uncached(
         # [skills] disabled_builtins is read from app_config on every skills
         # read (TASK-32954); without this a disabled built-in returned on restart.
         "skills": copy.deepcopy(toml_config_data.get("skills", {})),
+        "agents": copy.deepcopy(toml_config_data.get("agents", {})),
+        "tools": copy.deepcopy(toml_config_data.get("tools", {})),
         # [analysis_defaults] is the Library's analysis provider/model/call
         # shape: the Media reader's Generate, bulk Analyze and
         # Analyze-after-import all resolve it from app_config through
@@ -4169,6 +4171,18 @@ scope = "transcript"  # transcript, workbench
 intensity = "low"  # low, medium, high
 fps = 6  # 1-12
 
+# Opt-in OS notifications for background Console events (TASK-18925):
+# desktop notifications for run finished / run failed / needs approval when
+# the terminal window is buried. Off by default; the body carries only the
+# conversation/tab name and the outcome category -- never message content.
+# macOS uses osascript, Linux uses notify-send; other platforms skip with a
+# debug log. Cadence matches the in-app toasts (one per guarded event).
+[console.os_notifications]
+enabled = false
+run_finished = true
+run_failed = true
+needs_approval = true
+
 [console_ssh]
 # SSH ControlMaster lifecycle for remote workspace bindings (spec
 # 2026-09-24-ssh-remote-workspace-bindings). `control_persist` rides the
@@ -4431,6 +4445,10 @@ openai_cache_key = false
 # provider id ("llama_cpp", "custom-ep:qwen-local") or "provider/model-glob"
 # ("llama_cpp/qwen3.8-*"). Presets are user-authored and never gated.
 # spawn_override_allowlist = []
+
+[agents.code_review]
+reviewers = []
+verifier_preset_id = ""
 
 [splash_screen]
 # Splash screen configuration for startup animations
@@ -6115,6 +6133,7 @@ log_unknown_models = true      # Whether to log when an unknown model is queried
 # Deep-Search Configuration
 # ==========================================================
 [tools]
+code_review_enabled = true
 # web_deep_search_enabled = false    # Opt-in deep-search tool; the Console picks this up on its next agent run (each run rebuilds its tool catalog fresh, no app restart needed); external MCP clients only see it on their next client launch, and only when [mcp] expose_local_tools = true; each call makes ~2x-results+3 LLM calls plus page fetches (real money on paid providers)
 
 [SearchSettings]
@@ -9960,37 +9979,12 @@ def get_chat_defaults_streaming(default: bool = True) -> bool:
 
 
 def get_chat_defaults_user_display_name(default: str = "User") -> str:
-    """Return the validated global human-facing Console chat name.
-
-    Args:
-        default: Fallback used when ``chat_defaults.user_display_name`` is
-            absent.
-
-    Returns:
-        The configured validated name, or the neutral ``"User"`` fallback
-        when the configured/default value is invalid.
-    """
-    # Import lazily because ``tldw_chatbook.Chat.__init__`` reaches runtime
-    # policy modules that import this configuration module during startup.
+    """Return the validated global human-facing Console chat name."""
     from tldw_chatbook.Chat.console_roleplay_identity import (
-        ChatDisplayNameError,
-        normalize_chat_display_name,
+        configured_chat_display_name,
     )
 
-    config = load_cli_config_and_ensure_existence()
-    chat_defaults = config.get("chat_defaults")
-    raw_value = (
-        chat_defaults.get("user_display_name", default)
-        if isinstance(chat_defaults, dict)
-        else default
-    )
-    try:
-        return normalize_chat_display_name(raw_value, blank_means_none=False) or "User"
-    except ChatDisplayNameError:
-        logger.warning(
-            "Invalid chat display name in [chat_defaults]; using the neutral default."
-        )
-        return "User"
+    return configured_chat_display_name(load_cli_config_and_ensure_existence(), default)
 
 
 def get_rag_citation_canonical_writes_enabled() -> bool:

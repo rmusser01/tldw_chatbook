@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence, cast
@@ -268,6 +269,7 @@ def normalize_conversation_row(
         "created_at": conversation_row.get("created_at"),
         "deleted": conversation_row.get("deleted"),
         "archived": bool(conversation_row.get("archived", False)),
+        "archived_at": conversation_row.get("archived_at"),
         "message_count": int(
             message_count
             if message_count is not None
@@ -855,6 +857,20 @@ class ChatConversationService:
             conversation_ids, archived=archived, expected_versions=expected_versions
         )
 
+    def query_archive_recovery_page(
+        self,
+        request_data: Mapping[str, object],
+        workspace_rows: tuple[Mapping[str, object], ...],
+        *,
+        after: tuple[int, str, str] | None,
+        deadline: float,
+        monotonic: Callable[[], float],
+    ) -> dict[str, object]:
+        """Delegate bounded storage-side archive discovery (ADR-166)."""
+        return self.db.query_archive_recovery_page(
+            request_data, workspace_rows, after=after, deadline=deadline, monotonic=monotonic
+        )
+
     def get_conversation_archive_states(
         self, conversation_ids: Iterable[str]
     ) -> dict[str, bool]:
@@ -881,6 +897,7 @@ class ChatConversationService:
         topic_label: str | None = None,
         character_id: int | None = None,
         character_scope: str | None = None,
+        title_only: bool = False,
     ) -> dict[str, Any]:
         """Return one normalized, bounded page of local conversations.
 
@@ -913,6 +930,10 @@ class ChatConversationService:
                 Applied before counts and pagination, so lane owners can
                 exclude conversations they do not display without wasting
                 page slots on them.
+            title_only: Match ``query`` against titles only, as a literal
+                substring, in both the page and its total (TASK-33622.6: the
+                Console rail's 'Filter visible titles'). Not combinable with
+                ``query_terms``.
 
         Returns:
             A mapping containing normalized ``items`` and a ``pagination``
@@ -970,6 +991,7 @@ class ChatConversationService:
             topic_label=_clean_text(topic_label),
             character_id=character_id,
             character_scope=character_scope,
+            title_only=title_only,
             limit=limit,
             offset=offset,
         )

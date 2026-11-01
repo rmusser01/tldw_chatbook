@@ -874,7 +874,7 @@ class _StdioJSONRPCConnection:
                 except Exception:
                     logger.warning("MCP transport task failed during cleanup")
 
-            self._cleanup_complete = True
+            self._cleanup_complete = self.process.returncode is not None
 
     async def _send_message(
         self,

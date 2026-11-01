@@ -1,0 +1,258 @@
+diff --git a/Tests/UI/test_console_tab_publication_read_barrier.py b/Tests/UI/test_console_tab_publication_read_barrier.py
+index 6bdd8d94ac..655e200827 100644
+--- a/Tests/UI/test_console_tab_publication_read_barrier.py
++++ b/Tests/UI/test_console_tab_publication_read_barrier.py
+@@ -7,6 +7,7 @@ import json
+ import os
+ import sys
+ import threading
++import time
+ from contextlib import contextmanager
+ from dataclasses import replace
+ from pathlib import Path
+@@ -232,6 +233,9 @@ class _OriginalReadGate:
+         )
+         self.entered, self.release = threading.Event(), threading.Event()
+         self.reader_returned = threading.Event()
++        self.loop = asyncio.get_running_loop()
++        self.entered_async = asyncio.Event()
++        self.returned_async = asyncio.Event()
+         self.reader_actor = None
+         self.held_frame = None
+         self.main_actor = threading.current_thread()
+@@ -266,6 +270,7 @@ class _OriginalReadGate:
+                 self._capture_held_future(frame)
+                 assert self.reader_actor is not self.main_actor
+                 self.entered.set()
++                self.loop.call_soon_threadsafe(self.entered_async.set)
+                 assert self.release.wait(
+                     30
+                 ), "test never released the original stock reader"
+@@ -296,6 +301,7 @@ class _OriginalReadGate:
+                     and value._display_proof is not None
+                 )
+                 self.reader_returned.set()
++                self.loop.call_soon_threadsafe(self.returned_async.set)
+             self.live.frame = None
+ 
+     def _future_bindings_current(self):
+@@ -576,7 +582,12 @@ def _original_close_read_drain(runtime, session_id):
+     code = function.__code__
+     assert function.__globals__ is module.__dict__
+     assert _shape(code) == _shape(_source_code(module, function.__qualname__))
+-    facts = {"entered": asyncio.Event(), "reads": ()}
++    close = type(runtime).close_session
++    close_code = close.__code__
++    close_module = sys.modules[close.__module__]
++    assert close.__globals__ is close_module.__dict__
++    assert _shape(close_code) == _shape(_source_code(close_module, close.__qualname__))
++    facts = {"entered": asyncio.Event(), "returned": asyncio.Event(), "reads": ()}
+     monitor = sys.monitoring
+     tool = next(slot for slot in range(6) if monitor.get_tool(slot) is None)
+     monitor.use_tool_id(tool, "tab-close-physical-drain")
+@@ -591,15 +602,125 @@ def _original_close_read_drain(runtime, session_id):
+             facts["reads"] = selected
+             facts["entered"].set()
+ 
++    def returned(actual_code, offset, value):
++        frame = sys._getframe(1)
++        assert frame.f_code is actual_code is close_code
++        if (frame.f_locals.get("self") is runtime
++                and frame.f_locals.get("session_id") == session_id):
++            facts["returned"].set()
++
+     assert monitor.register_callback(tool, monitor.events.PY_YIELD, observed) is None
++    assert monitor.register_callback(tool, monitor.events.PY_RETURN, returned) is None
+     monitor.set_local_events(tool, code, monitor.events.PY_YIELD)
++    monitor.set_local_events(tool, close_code, monitor.events.PY_RETURN)
+     try:
+         yield facts
+     finally:
+         monitor.set_local_events(tool, code, 0)
++        monitor.set_local_events(tool, close_code, 0)
+         assert monitor.register_callback(tool, monitor.events.PY_YIELD, None) is observed
++        assert monitor.register_callback(tool, monitor.events.PY_RETURN, None) is returned
+         monitor.free_tool_id(tool)
+         assert module.drain_preparation_reads is function and function.__code__ is code
++        assert type(runtime).close_session is close and close.__code__ is close_code
++
++
++async def _event_within(event, *, timeout=10.0):
++    """Observe an existing completion event without periodic UI work."""
++    try:
++        await asyncio.wait_for(event.wait(), timeout)
++    except TimeoutError:
++        return event.is_set()
++    return True
++
++
++async def _readiness_settled(console, projection, *, no_replay, deadline=None):
++    """Keep the original setup predicate/deadline while awaiting its owners.
++
++    Pilot.pause(0.01) repeatedly waits on UI pumps while the native reader runs. The
++    Windows clock can resolve only 15.625ms; existing worker completion is the
++    relevant signal, and asyncio.wait never cancels those production tasks.
++    """
++    def ready():
++        return (
++            not projection.pending
++            and not console._console_sync_in_progress
++            and (not no_replay or not getattr(
++                console, "_console_control_bar_replay_whole_sync", False
++            ))
++        )
++
++    if deadline is None:
++        deadline = time.monotonic() + 10.0
++    while not ready():
++        remaining = deadline - time.monotonic()
++        if remaining <= 0:
++            return ready()
++        tasks = {
++            worker._task for worker in console.workers
++            if worker.node is console and not worker.is_finished
++            and worker.group in {
++                "console-sync", "console-readiness-config",
++                "console-readiness-publication",
++            }
++            and worker._task is not None and not worker._task.done()
++        }
++        if tasks:
++            done, _ = await asyncio.wait(
++                tasks, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
++            )
++            if not done:
++                return ready()
++        else:
++            # A queued after-refresh callback may start the next owner.
++            refreshed = asyncio.Event()
++            console.call_after_refresh(refreshed.set)
++            if not await _event_within(refreshed, timeout=remaining):
++                return ready()
++    return True
++
++
++async def _finish_startup_publication(console, *, deadline):
++    """Finish the exact attach owner before holding its downstream Surface lock.
++
++    Attach schedules FULL on the screen pump via call_after_refresh. Taking
++    the Surface lock before that callback retires blocks real Pilot delivery.
++    This prerequisite shares the original ten-second readiness deadline.
++    """
++    while not console._console_attach_reconciled:
++        remaining = deadline - time.monotonic()
++        if remaining <= 0:
++            return False
++        tasks = {
++            worker._task for worker in console.workers
++            if worker.node is console and not worker.is_finished
++            and worker.group in {
++                "console-attach-reconciliation", "console-sync",
++                "console-readiness-config", "console-readiness-publication",
++            }
++            and worker._task is not None and not worker._task.done()
++        }
++        if tasks:
++            done, _ = await asyncio.wait(
++                tasks, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
++            )
++            if not done:
++                return False
++        else:
++            refreshed = asyncio.Event()
++            console.call_after_refresh(refreshed.set)
++            if not await _event_within(refreshed, timeout=remaining):
++                return False
++    # The reconciler schedules startup FULL before marking itself reconciled.
++    # A later callback on that same pump proves this publication has retired.
++    published = asyncio.Event()
++    console.call_after_refresh(published.set)
++    remaining = deadline - time.monotonic()
++    return (
++        remaining > 0 and await _event_within(published, timeout=remaining)
++        and console._console_attach_view_started
++        and console._console_attach_reconciled
++    )
+ 
+ 
+ @pytest.mark.ui
+@@ -627,22 +748,20 @@ async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+         projection = spend.ConsoleReadinessConfigProjection.for_screen(console)
+         assert type(projection) is spend.ConsoleReadinessConfigProjection
+         assert projection.max_age == 1.0
+-        assert await _settle(
+-            pilot,
+-            lambda: not projection.pending
+-            and not console._console_sync_in_progress
+-            and not getattr(console, "_console_control_bar_replay_whole_sync", False),
+-        )
++        if phase in {"coalesced", "same_session_drain"}:
++            deadline = time.monotonic() + 10.0
++            assert await _finish_startup_publication(console, deadline=deadline)
++            assert await _readiness_settled(
++                console, projection, no_replay=True, deadline=deadline
++            )
++        else:
++            assert await _readiness_settled(console, projection, no_replay=True)
+         if phase == "after_close":
+             controller.switch_session(doomed.id)
+             await _show_tabs(console, pilot, {keeper, doomed.id})
+             assert await projection.warm()
+             assert projection.key[5] == doomed.id
+-            assert await _settle(
+-                pilot,
+-                lambda: not projection.pending
+-                and not console._console_sync_in_progress,
+-            )
++            assert await _readiness_settled(console, projection, no_replay=False)
+         gate = _OriginalReadGate(
+             projection, controller.store, doomed.id,
+             "coalesced" if phase == "same_session_drain" else phase,
+@@ -678,25 +797,27 @@ async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+                 # Current FULL returns False for cold readiness. Hold its real
+                 # earlier Surface await, and admit the original read separately.
+                 warming = asyncio.create_task(projection.warm())
+-                assert await _settle(pilot, entry.entered.is_set)
+-                assert await _settle(
+-                    pilot, gate.entered.is_set
+-                ), "original reader was never admitted"
++                assert await _event_within(entry.entered)
++                assert await _event_within(gate.entered_async), "original reader was never admitted"
+                 assert console._console_sync_in_progress
+                 assert doomed.id in _session_ids(controller.store)
+             await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+             if phase == "same_session_drain":
+-                assert await _settle(pilot, drain_facts["entered"].is_set)
++                assert await _event_within(drain_facts["entered"])
+                 assert doomed.id in _session_ids(controller.store)
+                 assert not gate.release.is_set() and not gate.completed_checked_read
+                 assert all(not item.retired.done() for item in drain_facts["reads"])
+                 gate.release.set()
+-            assert await _settle(
+-                pilot, lambda: doomed.id not in _session_ids(controller.store)
+-            )
+-            assert await _settle(
+-                pilot, gate.entered.is_set
+-            ), "no held original post-Close reader"
++                # The exact runtime close owns physical retirement and removal.
++                # Await its original return at the same ten-second bound instead
++                # of driving sub-resolution Pilot polls during native work.
++                assert await _event_within(drain_facts["returned"])
++                assert doomed.id not in _session_ids(controller.store)
++            else:
++                assert await _settle(
++                    pilot, lambda: doomed.id not in _session_ids(controller.store)
++                )
++            assert await _event_within(gate.entered_async), "no held original post-Close reader"
+             assert gate.release.is_set() == (phase == "same_session_drain")
+             assert gate.reader_actor is not threading.current_thread()
+             if phase in {"coalesced", "same_session_drain"}:
+@@ -715,7 +836,7 @@ async def test_actual_close_publishes_real_tabs_before_stock_read_release(
+             if lock_owned:
+                 surface._session_sync_lock.release()
+             try:
+-                reader_returned = await _settle(pilot, gate.reader_returned.is_set)
++                reader_returned = await _event_within(gate.returned_async)
+                 assert reader_returned, (
+                     "released original held reader never returned; "
+                     + json.dumps(gate.reader_diagnostic(), sort_keys=True)
