@@ -9,7 +9,7 @@ labels:
 - ci
 - testing
 priority: high
-updated_date: 2026-11-01 12:03
+updated_date: 2026-11-01 12:42
 ---
 
 ## Description
@@ -42,6 +42,7 @@ Validation: 18 initial red tests, then 195 focused reporting/gate/queue tests pa
 Modified derived-artifacts.yml, the queue-pressure contract and new test_ci_cost_report.py; added the cost-reporting spec and plan and amended ADR-103. ADR required: yes; backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md records the narrow diagnostic exception. No application test selection, dependencies, timeouts or merge protection changed; no runner job added.
 
 Hosted summary rendering, timestamp availability and timeout behavior still require qualification. Local tests verify calls to Octokit pagination, not real multipage delivery. No full suite or live performance improvement is claimed. Task remains In Progress pending hosted evidence and integration after PR3316.
+2026-11-01 final integration onto confirmed PR3316 merge a68971781f3826a108d8116f06bb778aeffa3ae4. All three patches preserve source behavior. Parsed workflow comparison confirms only aggregate actions: read and the final diagnostic step differ; all prior jobs/verdicts remain. Five affected modules: 195 passed, 32 unchanged exhaustive shard-distribution cases deselected, stable source hashes. Receipt pr3317-final-b907bde1; details in Docs/superpowers/qa/2026-11-01-pr3317-backlog-integration.md. Scoped Ruff/AST/diff checks pass. No real pagination, hosted cancellation, throughput or billing qualification is claimed; hosted CI is user-waived. Independent final-head review and exact-lease merge follow. ADR-103 applies; no new ADR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

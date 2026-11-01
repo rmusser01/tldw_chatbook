@@ -16,3 +16,7 @@ User scope: oldest eligible first; independent requested skill replaces Qodo; ho
 Initial source review: no Critical/Important/Minor findings; pr3315-resync/pr3317-initial-review.md. This is not final-head approval.
 
 Provisional base: e6563cc734411c84816b075e5d2da1f1cd0510e1. PR3316's pending baseline-selector and literal-notification repairs must arrive with its final merge before final qualification.
+
+## Final integration result
+
+Rebased onto confirmed PR3316 merge a68971781f3826a108d8116f06bb778aeffa3ae4; all three patches are unchanged. The PR now targets dev. Parsed final-base comparison preserves all other jobs and prior aggregate verdicts. All five directly related test modules pass: 195 passed, 32 unchanged exhaustive distribution cases deselected. Source hashes stayed stable. See Docs/superpowers/qa/2026-11-01-pr3317-backlog-integration.md for the exact receipt and unqualified hosted behavior. Final independent review and verified merge follow.
