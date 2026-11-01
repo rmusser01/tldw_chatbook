@@ -107,6 +107,16 @@ async def _mounted(host, pilot, *, messages: bool = True):
     console = host.screen_stack[-1]
     await _wait_for_selector(console, pilot, "#console-native-composer")
     composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+    # Current dev reconciles attach/resume in a worker. Its later resume
+    # schedules another focus restore after the old mount timer is spent.
+    await _wait_for(
+        pilot,
+        lambda: console._console_attach_reconciled
+        and not console._console_attach_resume_in_progress,
+        "Console attach/resume never settled",
+        timeout=30.0,
+    )
+    await pilot.pause()
     restore = console._restore_console_workbench_focus
 
     def restore_pending() -> bool:
@@ -861,3 +871,99 @@ def test_a_detached_transcript_has_no_escape_layer():
     transcript = ConsoleTranscript()
     assert transcript.has_escape_layer() is False
     assert transcript.check_action("clear_selection", ()) is False
+
+
+@pytest.mark.asyncio
+async def test_terminal_escape_ownership_keeps_the_composer_cue_truthful(
+    tmp_path, monkeypatch
+):
+    """The cue follows real focus and input mode without stealing Terminal keys."""
+    from Tests.UI.test_console_terminal_integration import (
+        _create_running_terminal,
+        _terminal_app,
+    )
+    from tldw_chatbook.Widgets.Console.console_terminal_workspace import TerminalViewport
+    from tldw_chatbook.Widgets.Console.console_terminal_messages import (
+        ConsoleTerminalInputRequested,
+    )
+
+    app, manager, _backends = _terminal_app(permitted=True)
+    _create_running_terminal(manager, tmp_path)
+    host = ConsoleHarness(app)
+    try:
+        async with host.run_test(size=(160, 45)) as pilot:
+            console, composer, _ = await _mounted(host, pilot, messages=False)
+            console.action_open_console_terminal()
+            await _wait_for_selector(console, pilot, "#console-terminal-viewport")
+            viewport = console.query_one("#console-terminal-viewport", TerminalViewport)
+            await _wait_for(
+                pilot, lambda: console.focused is viewport, "no Terminal focus"
+            )
+            await pilot.pause()
+            viewport.focus()
+            await pilot.pause()
+            assert console.focused is viewport
+            assert viewport.input_focused
+            assert not composer.collapsed
+            assert composer.draft_text() == ""
+
+            terminal_input = []
+            post_message = viewport.post_message
+
+            def record_input(message):
+                if isinstance(message, ConsoleTerminalInputRequested):
+                    terminal_input.append(message.data)
+                return post_message(message)
+
+            monkeypatch.setattr(viewport, "post_message", record_input)
+            # Record the actual viewport message; the backend worker drains
+            # the manager queue concurrently, so take_input is not an oracle.
+            await pilot.press("escape")
+            await pilot.pause()
+            assert console.focused is viewport, (console.focused, composer.draft_text())
+            await pilot.press("x")
+            await pilot.pause()
+            assert terminal_input == [b"\x1b", b"x"], (
+                console.focused, composer.draft_text(), viewport.input_focused
+            )
+            assert console.focused is viewport
+            assert composer.draft_text() == ""
+            assert _COMPOSER_CUE not in _draft_render(composer)
+
+            # Neither transition blurs the already-unfocused composer.
+            help_button = console.query_one("#console-control-help", Button)
+            help_button.focus()
+            await _wait_for(
+                pilot,
+                lambda: _COMPOSER_CUE in _draft_render(composer),
+                "cue did not return outside Terminal capture",
+            )
+            viewport.focus()
+            await _wait_for(
+                pilot,
+                lambda: _COMPOSER_CUE not in _draft_render(composer),
+                "stale cue after returning to Terminal capture",
+            )
+
+            # Mode changes also happen without any focus transition.
+            await pilot.press("ctrl+right_square_bracket")
+            assert console.focused is viewport
+            assert not viewport.input_focused
+            await _wait_for(
+                pilot,
+                lambda: _COMPOSER_CUE in _draft_render(composer),
+                "released Terminal did not restore the Escape cue",
+            )
+            await pilot.press("enter")
+            assert viewport.input_focused
+            await _wait_for(
+                pilot,
+                lambda: _COMPOSER_CUE not in _draft_render(composer),
+                "reacquiring Terminal input left a false Escape cue",
+            )
+            await pilot.press("ctrl+right_square_bracket", "escape", "y")
+            assert composer.draft_has_focus
+            assert composer.draft_text() == "y"
+            assert terminal_input == [b"\x1b", b"x"]
+    finally:
+        manager.finalize_shutdown()

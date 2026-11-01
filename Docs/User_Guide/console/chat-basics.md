@@ -232,7 +232,8 @@ tool, code, and link styling keeps priority over immersive coloring.
   text-selection menu, a conversation or workspace row menu) closes the menu
   and lands in the draft the same way. While the composer is collapsed,
   such keys are not typed anywhere. While focus is elsewhere the draft area
-  says **Esc to type**, unless that would push the draft onto another row.
+  says **Esc to type**, unless that would push the draft onto another row
+  or the focused Terminal is capturing input (Escape belongs to the terminal).
 - **Enter sends or queues.** During an accepted agent turn, **Send** becomes
   **Queue** and Enter adds the exact text draft after that turn. For a newline
   inside the draft use **Ctrl+J** (works in

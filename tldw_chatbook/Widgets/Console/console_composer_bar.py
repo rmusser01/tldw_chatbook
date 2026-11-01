@@ -3999,7 +3999,8 @@ class ConsoleComposerBar(Horizontal):
         a text field keeps them), so the draft area says how to get back.
         Empty while focus is anywhere in the composer (a focused composer
         button already types into the draft), while collapsed, and while the
-        composer cannot take focus (the first-run setup card).
+        composer cannot take focus (the first-run setup card). A capturing
+        Terminal keeps Escape, so it must not advertise this route either.
 
         Returns:
             `` · Esc to type`` (appended to a draft; the placeholder leads
@@ -4009,6 +4010,12 @@ class ConsoleComposerBar(Horizontal):
             return ""
         try:
             if self.has_focus_within:
+                return ""
+            focused = self.screen.focused
+            if (
+                getattr(focused, "id", None) == "console-terminal-viewport"
+                and focused.input_focused
+            ):
                 return ""
         except NoScreen:
             return ""
@@ -4043,11 +4050,22 @@ class ConsoleComposerBar(Horizontal):
         if self.is_mounted:
             self._refresh_visible_draft()
 
+    def _sync_focus_cue(self) -> None:
+        """Repaint the cue when focus or Terminal's local input mode changes."""
+        focused = self.screen.focused
+        if getattr(focused, "id", None) == "console-terminal-viewport":
+            # The viewport owns this reactive; watch deduplicates the callback.
+            # Keep Terminal lazy: ordinary composer focus needs no Terminal import.
+            self.watch(
+                focused, "input_focused", self._render_visible_draft_only, init=False
+            )
+        self._render_visible_draft_only()
+
     def _render_visible_draft_only(self) -> None:
         """Re-render the visible-draft Static without recomputing composer height.
 
-        Used by the cursor blink tick (its only caller), which must stay cheap
-        and must not trigger a layout recompute on every blink phase.
+        Used by cursor ticks and the dimension-stable focus cue, which must
+        stay cheap and must not trigger a layout recompute on each change.
 
         TASK-21692: ``Static.update`` defaults to ``layout=True``, so this
         method used to arm a full screen layout pass ~2x/second for as long
@@ -4165,6 +4183,7 @@ class ConsoleComposerBar(Horizontal):
         )
         self._sync_cursor_blink_state()
         self._refresh_visible_draft()
+        self.watch(self.screen, "focused", self._sync_focus_cue)
         self._sync_interaction_classes()
         self._sync_improvement_recovery()
         self._sync_current_action_state()
