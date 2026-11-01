@@ -6,21 +6,13 @@ import json
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
 from pathlib import Path
-from typing import ClassVar, Iterator, Union
-
-from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
-)
+from typing import ClassVar, Union
 
 from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
+from .store_kernel import SQLiteStoreKernel
+from tldw_chatbook.Backup_Recovery.participants import _core_closing  # close() override keeps its retirement gate
 
 #: Upper bound for any list read the UI pages through.
 MAX_LIST_LIMIT = 200
@@ -58,7 +50,7 @@ class DreamsSchemaError(RuntimeError):
         super().__init__(reason)
 
 
-class DreamsDB(BaseDB):
+class DreamsDB(SQLiteStoreKernel, BaseDB):
     """Database wrapper for the Dreams subsystem (discovery + track loops).
 
     Schema v1 covered the Phase 1 discovery tables (spec §Data model); v2
@@ -97,8 +89,11 @@ class DreamsDB(BaseDB):
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
     #: Pinging a recently-used held connection on every call roughly doubles
     #: the statement count on query-heavy paths (task-261/3011); idle ones
-    #: are probed so another component's close is transparently healed.
-    _LIVENESS_PING_IDLE_SECONDS = 30.0
+    #: BaseDB-provenance (ADR-228): connections open through BaseDB's
+    #: per-call path under the db.base owner; participants identity
+    #: stays db.base, so no per-store policy entry is minted.
+    _kernel_sqlite_owner = "db.base"
+
 
     _SCHEMA_DDL = (
         """
@@ -257,7 +252,7 @@ class DreamsDB(BaseDB):
                              "shared across its per-thread connections")
         # Must precede super().__init__: BaseDB.__init__ calls
         # _initialize_schema(), which already needs the held connection.
-        self._thread_local = threading.local()
+        self._init_store_kernel()
         # Every held connection this object opened and has not closed,
         # whatever thread holds it -- what ``close_all`` closes. Strong
         # references on purpose: a connection has to be closed explicitly
@@ -278,27 +273,30 @@ class DreamsDB(BaseDB):
     # Connection handling (Library_Collections_DB idiom)
     # ------------------------------------------------------------------
 
-    @_core_getter
-    def _get_connection(self) -> sqlite3.Connection:
-        _core_access(self)
-        # ``check_same_thread=False`` (the other thread-local stores here --
-        # ChaChaNotes, Prompts, Media -- open theirs the same way): each
-        # thread still USES only the connection it holds; the one call
-        # that crosses threads is ``close_all`` closing them.
-        conn = super()._get_connection(check_same_thread=False)
-        _register_core_connection(self, conn)
-        try:
-            _core_access(self)
-            # Refuse unknown stores before WAL changes their header/journal state.
-            self._validate_schema_lineage(conn)
-            conn.execute("PRAGMA foreign_keys = ON")
-            if not self.is_memory_db:
-                self._enable_wal(conn)
-            conn.execute("PRAGMA synchronous = NORMAL")
-            conn.isolation_level = None
-        except BaseException:
-            conn.close()
-            raise
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open through BaseDB's db.base path with cross-thread close support.
+
+        ``check_same_thread=False`` (as before): each thread still USES only
+        the connection it holds; the one call that crosses threads is
+        ``close_all`` closing them (ADR-228 provenance + the kernel's
+        ``_on_connection_opened`` hook registering into ``_opened``).
+        """
+        return BaseDB._get_connection(self, check_same_thread=False)
+
+    def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
+        """Dreams per-connection policy (kernel wraps registration/gating).
+
+        Refuse unknown stores before WAL changes their header/journal
+        state; NORMAL under WAL avoids an fsync per commit (task-15465
+        lineage); task-3012: the held connection needs true autocommit.
+        WAL goes through the retry helper (concurrent-opener tolerance).
+        """
+        self._validate_schema_lineage(conn)
+        conn.execute("PRAGMA foreign_keys = ON")
+        if not self.is_memory_db:
+            self._enable_wal(conn)
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.isolation_level = None
         return conn
 
     def _enable_wal(self, conn: sqlite3.Connection) -> None:
@@ -313,69 +311,13 @@ class DreamsDB(BaseDB):
                     raise
                 time.sleep(0.01)
 
-    @_core_getter
-    def _held_connection(self) -> sqlite3.Connection:
-        _core_access(self)
-        """Return this thread's held connection, opening or reviving it."""
-        conn = _core_cached_connection(self, getattr(self._thread_local, "conn", None))
-        if conn is not None:
-            last_used = getattr(self._thread_local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    try:
-                        sqlite3.Connection.in_transaction.__get__(conn)
-                    except sqlite3.ProgrammingError:
-                        self._close_connection(conn)
-                    else:
-                        raise
-                    conn = None
-        if conn is None:
-            conn = self._get_connection()
-            self._thread_local.conn = conn
-            with self._opened_lock:
-                self._opened.append(conn)
-        self._thread_local.conn_last_used = time.monotonic()
-        return conn
 
-    @_core_transaction
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        """Yield the thread's held connection (row factory, foreign keys on).
-
-        No transaction is opened: in autocommit mode each statement is its
-        own implicit transaction, so single-statement reads cost nothing
-        extra and never pin a WAL read snapshot between calls.
-        """
-        yield self._held_connection()
-
-    @_core_transaction
-    @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Yield the held connection inside a write transaction.
-
-        ``BEGIN IMMEDIATE`` takes the write lock up front so a read-then-
-        write block cannot fail to upgrade under a concurrent writer. On any
-        error or interruption inside the ``with`` block the transaction is
-        rolled back and the exception re-raised; on clean exit it commits.
-
-        The yielded object is the connection: call ``conn.execute(...)`` and
-        use the returned cursor's ``lastrowid``/``rowcount``.
-        """
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield conn
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
+    def _on_connection_opened(self, conn: sqlite3.Connection) -> None:
+        """Register into the cross-thread close_all registry (strong refs
+        on purpose: a connection must be closed explicitly to give back
+        its descriptors; sqlite3.Connection cannot be weakly referenced)."""
+        with self._opened_lock:
+            self._opened.append(conn)
 
     def close(self) -> None:
         """Retire only the calling thread's handle when its owner permits."""
