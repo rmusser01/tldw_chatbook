@@ -72,10 +72,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
 # 2026-10-31 PR3166: exact final integration measurements under the user
 # backlog size-limit waiver; no spare budget and no behavioral guard changes.
+# 2026-10-31 PR3295: user-authorized backlog size waiver; only changed
+# owners pinned to exact measured sizes, with no spare budget.
 _BUDGETS: dict[str, int] = {
     # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
     "tldw_chatbook/Utils/app_shutdown.py": 776,
-    "tldw_chatbook/Chat/console_display_state.py": 2873,
+    "tldw_chatbook/Chat/console_display_state.py": 2882,
     "tldw_chatbook/Widgets/Console/console_selection.py": 379,
     "tldw_chatbook/Widgets/Console/console_canvas_card.py": 244,
     "tldw_chatbook/UI/MCP_Modules/mcp_permissions_mode.py": 1680,
@@ -174,11 +176,11 @@ _BUDGETS: dict[str, int] = {
     # _continuation_binding; rows below re-pinned at their measured sizes.
     # PR3173 integration, 2026-10-31: explicit user size waiver; exact measured tree.
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_chat_controller.py": 29253,
+    "tldw_chatbook/Chat/console_chat_controller.py": 29277,
     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6303,
     # PR3295, 2026-10-31: explicit user size waiver; measured integrated owner.
-    "tldw_chatbook/Chat/console_context_compaction.py": 4182,
+    "tldw_chatbook/Chat/console_context_compaction.py": 4198,
     "tldw_chatbook/Chat/console_chat_store.py": 22338,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
@@ -620,10 +622,10 @@ _BUDGETS: dict[str, int] = {
     #: The OS notification defaults add 12 lines; pin the exact measurement.
     "tldw_chatbook/config.py": 12245,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Chat/console_agent_bridge.py": 12052,
+    "tldw_chatbook/Chat/console_agent_bridge.py": 12050,
     "tldw_chatbook/Notes/file_notes_git_service.py": 11400,
     # PR3295, 2026-10-31: user size waiver; exact integrated measurement.
-    "tldw_chatbook/Agents/agent_service.py": 9690,
+    "tldw_chatbook/Agents/agent_service.py": 9715,
     # 2026-10-31, PR #3259: explicit user size-limit waiver. Pin the
     # actual current-base N-32 file-body F6 integration at 9,541 lines.
     "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py": 9541,

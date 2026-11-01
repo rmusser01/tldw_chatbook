@@ -307,7 +307,9 @@ def _meter_state(tool_schema_tokens: int):
         build_console_context_control_state,
     )
 
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="qwen", max_tokens=4096)
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="qwen", max_tokens=4096
+    )
     estimate = ConsoleSettingsContextEstimate(
         used_tokens=14,
         token_limit=8_192,
@@ -323,8 +325,12 @@ def _meter_state(tool_schema_tokens: int):
         active_request_tokens=4,
         tool_schema_tokens=tool_schema_tokens,
     )
-    return settings, estimate, build_console_context_control_state(
-        settings=settings, estimate=estimate, accounting=accounting
+    return (
+        settings,
+        estimate,
+        build_console_context_control_state(
+            settings=settings, estimate=estimate, accounting=accounting
+        ),
     )
 
 
@@ -778,9 +784,7 @@ def test_the_preflight_counts_what_the_send_carries_for_this_conversation(
     elif shape == "discovery":
         assert "find_tools" in sent, sorted(sent)
     elif shape == "compact":
-        assert sent == {"find_tools", "load_tools", "read_agent_messages"}, sorted(
-            sent
-        )
+        assert sent == {"find_tools", "load_tools", "read_agent_messages"}, sorted(sent)
     elif shape == "light":
         assert sent == LIGHT, sorted(sent)
     else:
@@ -865,9 +869,10 @@ def test_a_first_message_in_the_gateways_safety_margin_goes_out_without_tools(
     )
 
     assert verdicts == [None]
-    assert bridge.preview_tool_schemas(
-        resolution, session_id=session.id, messages=message
-    ) == []
+    assert (
+        bridge.preview_tool_schemas(resolution, session_id=session.id, messages=message)
+        == []
+    )
 
 
 # -- review round 3: the safe set survives capacity trimming (R3-3) ---------
@@ -1094,8 +1099,206 @@ def test_the_history_preflight_counts_what_the_send_carries(
     if shape == "light":
         assert sent == LIGHT, sorted(sent)
     elif shape == "compact":
-        assert sent == {"find_tools", "load_tools", "read_agent_messages"}, sorted(
-            sent
-        )
+        assert sent == {"find_tools", "load_tools", "read_agent_messages"}, sorted(sent)
     else:
         assert sent == set(), sorted(sent)
+
+
+# PR3295 review: compare preflight representation with the actual service request.
+def _capacity_request(bridge, resolution, session_id, messages, **kwargs):
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    controller = ConsoleChatController(store=bridge._store, provider_gateway=None)
+    controller._agent_bridge = bridge
+    captured = []
+
+    def prepare(_resolution, rows, *, tools=(), **_kwargs):
+        captured.append((list(rows), list(tools)))
+        raise _Captured
+
+    with pytest.raises(_Captured):
+        controller._assess_request_capacity_only(
+            session_id=session_id,
+            owner=SimpleNamespace(context_policy_overrides=None),
+            resolution=resolution,
+            provider_messages=messages,
+            prepare=prepare,
+            agent_tools_enabled=True,
+            assessment_sink=lambda *_args: None,
+            **kwargs,
+        )
+    return captured[0]
+
+
+@pytest.mark.parametrize("native", [True, False], ids=["native", "fenced"])
+@pytest.mark.parametrize("full", [False, True], ids=["light", "full"])
+def test_review_preflight_matches_service_request_representation(
+    tmp_path, native, full
+):
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+
+    assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", full)
+    bridge, gateway, session, assistant = _production_bridge(tmp_path, [["hi"], ["hi"]])
+    bridge._native_tools_enabled = lambda: native
+    resolution = _roomy_native()
+    request = [{"role": "user", "content": "Reply with just: hi"}]
+    _send(bridge, session, assistant, resolution, local_provider=_AskUserProvider())
+    rows, tools = _capacity_request(bridge, resolution, session.id, request)
+    _send(bridge, session, assistant, resolution, local_provider=_AskUserProvider())
+    sent_rows, sent_tools = gateway.messages_seen[-1], gateway.tools_seen[-1] or []
+    assert rows == sent_rows
+    assert tools == sent_tools
+    if not full:
+        assert (
+            "Answer directly; call a tool only when the request needs one."
+            in rows[0]["content"]
+        )
+    if not native:
+        assert tools == []
+        assert "calculator" in rows[0]["content"]
+    prepare = ConsoleProviderGateway(environ={}).prepare_chat_request
+    assert (
+        prepare(resolution, rows, tools=tools).accounting
+        == prepare(resolution, sent_rows, tools=sent_tools).accounting
+    )
+
+
+@pytest.mark.parametrize(
+    "current_words,warm_words,other_session",
+    [(3000, 0, False), (0, 3000, False), (3000, 0, True)],
+)
+def test_review_full_preview_uses_current_session_prompt(
+    tmp_path, current_words, warm_words, other_session
+):
+    assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    bridge, gateway, session, assistant = _production_bridge(tmp_path, [["hi"], ["hi"]])
+    _send(
+        bridge,
+        session,
+        assistant,
+        _roomy_native(),
+        session_system_prompt=_words(warm_words),
+    )
+    prompt = _words(current_words)
+    request = [{"role": "user", "content": "Reply with just: hi"}]
+    resolution = _gpt4_8k()
+    rows, tools = _capacity_request(
+        bridge,
+        resolution,
+        "other-session" if other_session else session.id,
+        [{"role": "system", "content": prompt}, *request],
+    )
+    _send(
+        bridge,
+        session,
+        assistant,
+        resolution,
+        session_system_prompt=prompt,
+        agent_messages=request,
+    )
+    assert tools == (gateway.tools_seen[-1] or [])
+    assert rows == gateway.messages_seen[-1]
+
+
+def test_review_full_plain_fallback_never_resurrects_progress_reader(tmp_path):
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+
+    assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    bridge, gateway, session, assistant = _production_bridge(tmp_path, [["hi"], ["hi"]])
+    _send(bridge, session, assistant, _roomy_native())
+    request = [{"role": "user", "content": _words(3300)}]
+    resolution = _gpt4_8k()
+    rows, tools = _capacity_request(bridge, resolution, session.id, request)
+    _send(bridge, session, assistant, resolution, agent_messages=request)
+    assert (gateway.tools_seen[-1] or []) == []
+    assert tools == []
+    assert rows == gateway.messages_seen[-1]
+    assert (
+        not ConsoleProviderGateway(environ={})
+        .prepare_chat_request(resolution, rows, tools=tools)
+        .known_overflow
+    )
+
+
+@pytest.mark.parametrize(
+    "bindings", [(), ("summarize",)], ids=["ordinary", "admitted-skill"]
+)
+def test_review_controller_counts_admitted_skill_surface(tmp_path, bindings):
+    bridge, gateway, session, assistant = _production_bridge(tmp_path, [["hi"], ["hi"]])
+    resolution = _roomy_native()
+    _send(bridge, session, assistant, resolution, turn_skill_bindings=("summarize",))
+    request = [
+        {
+            "role": "user",
+            "content": "$summarize is ordinary text without an admitted binding",
+        }
+    ]
+    rows, tools = _capacity_request(
+        bridge, resolution, session.id, request, turn_skill_bindings=bindings
+    )
+    _send(
+        bridge,
+        session,
+        assistant,
+        resolution,
+        turn_skill_bindings=bindings,
+        agent_messages=request,
+        **({} if bindings else {"local_provider": _AskUserProvider()}),
+    )
+    assert tools == (gateway.tools_seen[-1] or [])
+    assert rows == gateway.messages_seen[-1]
+    assert ("spawn_subagent" in _row_names(tools)) is bool(bindings)
+
+
+@pytest.mark.parametrize("window,expected", [(4096, 0), (8192, 3)])
+def test_review_tools_chip_uses_selected_request_count(tmp_path, window, expected):
+    from Tests.Chat.test_console_agent_bridge import _test_resolution
+    from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+
+    assert save_setting_to_cli_config("tools", "read_file_enabled", True)
+    bridge, gateway, session, assistant = _production_bridge(tmp_path, [["hi"]])
+    bridge._native_tools_enabled = lambda: False
+    selected = []
+    resolution = _test_resolution(
+        max_tokens=1024,
+        context_window=ContextWindowResolution(window, "server metadata", True),
+    )
+    _send(
+        bridge,
+        session,
+        assistant,
+        resolution,
+        local_provider=_AskUserProvider(),
+        on_tool_surface_selected=selected.append,
+    )
+    assert selected == [expected]
+    chip = ConsoleControlState.from_values(
+        tool_count=4, selected_tool_count=selected[0], tools_estimate=True
+    )
+    assert chip.tools_label == ("Tools: —" if expected == 0 else "Tools: 3 offered")
+
+
+def test_review_catalog_only_chip_names_availability():
+    from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+
+    chip = ConsoleControlState.from_values(tool_count=4, tools_estimate=True)
+    assert chip.tools_label == "Tools: 4 available"
+
+
+def test_review_fenced_headline_counts_the_prepared_system_protocol():
+    from dataclasses import replace
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        ContextBreakdownRow,
+    )
+
+    _settings, estimate, state = _meter_state(0)
+    state = replace(
+        state,
+        breakdown_rows=(
+            ContextBreakdownRow("System prompt", 790),
+            ContextBreakdownRow("Conversation", 4),
+        ),
+    )
+    assert state.next_request_tokens == 794
+    assert state.request_estimate_label(estimate).startswith("794 / 8,192 tokens")
+    assert "last prepared" in state.request_estimate_label(estimate)

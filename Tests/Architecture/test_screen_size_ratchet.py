@@ -80,6 +80,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Docs/superpowers/qa/2026-10-31-pr3162-backlog-rebase.md.
 # 2026-10-31 PR3166: exact final integration measurements under the user
 # backlog size-limit waiver; no spare budget and no behavioral guard changes.
+# 2026-10-31 PR3295: user-authorized backlog size waiver; changed ChatScreen
+# pinned to exact 24,504 lines / 741 methods, with no spare budget.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-pinned 2026-09-19 (core-review TASK-32809.1). The ratchet had
     #: gone red on dev -- ~8,400 lines of feature work re-consumed the
@@ -241,7 +243,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: 'Set up provider' opens (AC#11). Methods unchanged. 24340/737, the
     #: exact measurement, never above it.
     #: 2026-10-31, PR #3294 on dev21fe53a3: explicit user size waiver; exact24500/741.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24500, 741),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24504, 741),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

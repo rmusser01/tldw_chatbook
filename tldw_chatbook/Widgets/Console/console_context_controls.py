@@ -145,16 +145,10 @@ class ConsoleContextControlState:
 
     @property
     def next_request_tokens(self) -> int | None:
-        """The meter's figure: the estimate plus the tools the send carries.
-
-        TASK-34100.5.3 review round 1 (B-F1): the estimate counts the system
-        prompt, messages and draft, but no tool schemas -- live on an 8,192-
-        token server the strip read "Context 0%" while the request carried
-        ~500 tokens of tools. The last request's tool share is added.
-        """
-        if self.request_tokens is None:
-            return None
-        return self.request_tokens + self.tool_schema_tokens
+        """Last prepared request estimate, including fenced/system overhead."""
+        if self.breakdown_rows:
+            return sum(row.tokens for row in self.breakdown_rows)
+        return self.request_tokens
 
     def overhead_label(self) -> str:
         """The "Request overhead" value, naming the tool schemas' share.
@@ -174,24 +168,17 @@ class ConsoleContextControlState:
         return f"{text} (tool schemas {format_context_tokens(tools)})" if tools else text
 
     def request_estimate_label(self, estimate: ConsoleSettingsContextEstimate) -> str:
-        """The model tab's "Request estimate" text, counting the tools too.
-
-        Args:
-            estimate: The settings estimate whose label leads with
-                ``"<used> / <limit> tokens"``.
-
-        Returns:
-            That label with the last request's tool share added to ``used``
-            and named, or the label unchanged when no tools were sent.
-        """
+        """Name the prepared estimate honestly; retain the pre-send fallback."""
         label = estimate.label.strip() or "Not estimated"
-        used, limit, tools = estimate.used_tokens, estimate.token_limit, self.tool_schema_tokens
+        used, limit = estimate.used_tokens, estimate.token_limit
         head = f"{used:,} / {limit:,} tokens" if used is not None and limit else ""
-        if not tools or not head or not label.startswith(head):
+        if not self.breakdown_rows or not head or not label.startswith(head):
             return label
+        tools = self.tool_schema_tokens
+        tool_note = f" (tool schemas {tools:,})" if tools else ""
         return (
-            f"{used + tools:,} / {limit:,} tokens (tool schemas {tools:,})"
-            f"{label[len(head):]}"
+            f"{self.next_request_tokens:,} / {limit:,} tokens{tool_note}"
+            f"{label[len(head):]} (last prepared estimate)"
         )
 
     @property

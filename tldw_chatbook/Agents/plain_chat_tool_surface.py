@@ -537,7 +537,8 @@ def tools_step_posture(summary: ToolSurfaceSummary) -> str:
     small_window = SMALL_WINDOW_NOTE[0].lower() + SMALL_WINDOW_NOTE[1:]
     return (
         f"Chat starts with {_join(summary.light_names)}; {small_window} "
-        "Everything below is off until you switch it on; tools that read or "
+        "The switches below show your saved choices and control additional tools; "
+        "tools that read or "
         "change your files ask before they run."
     )
 
@@ -551,8 +552,8 @@ def light_surface_note(summary: ToolSurfaceSummary) -> str:
     cards read "on" by default yet add nothing to plain chat.
     """
     return (
-        f"Plain chat: {_join(summary.light_names)}, plus any Agent built-in or "
-        f"Deep web research switched on. {FULL_AGENT_TOOLS_TITLE} adds the "
+        f"Plain chat: {_join(summary.light_names)}, plus enabled file/note tools and "
+        f"Deep web research. {FULL_AGENT_TOOLS_TITLE} adds the "
         "rest: sub-agents, skills, web, Watchlists, workspace tools and characters."
     )
 

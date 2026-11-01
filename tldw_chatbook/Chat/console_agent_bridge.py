@@ -5582,7 +5582,7 @@ class ConsoleAgentBridge:
                     session_id,
                     SchemaCatalog.from_registry(
                         plan.registry, plan.user_source_names
-                    ).schemas,
+                    ).schemas, config=plan.config,
                 )
             else:
                 memory.remember_full(session_id, plan.tool_surface_inputs())
@@ -5591,46 +5591,19 @@ class ConsoleAgentBridge:
                 "ConsoleAgentBridge: could not record the tool surface for the meter"
             )
 
-    def preview_tool_schemas(
+    def preview_tool_surface(
         self,
         resolution: Any = None,
         *,
         session_id: str | None = None,
         messages: Sequence[Mapping[str, Any]] = (),
-    ) -> list[dict[str, Any]]:
-        """Provider tool rows the next plain send discloses (the context meter).
+        turn_skill_bindings: tuple[str, ...] = (),
+    ) -> Any:
+        """Estimate the selected request using current prompt and admitted skills.
 
-        TASK-34100.5.3 AC#5: the Console send preflight and its capacity
-        check ask for this so the request accounting -- the context
-        breakdown's "Tool schemas" row and the meter -- counts the tools the
-        send actually carries. It had never been implemented, so the meter
-        counted none.
-
-        The rows are the send's own schema planner re-run against
-        ``resolution`` and the request in ``messages``
-        (``console_tool_surface_preview``), never a list remembered from an
-        earlier send: the same tools can be disclosed directly on a 1M-token
-        window and not at all on an 8,192-token one (review round 1, F2), and
-        directly beside a short conversation but not beside a long one
-        (review round 2, V2-1/R2-1).
-
-        * Light surface: the light set read fresh from config, plus the tools
-          from the user's own sources that ``session_id``'s last send
-          carried.
-        * Full surface: ``session_id``'s last full-surface send's catalog,
-          else the most recent one, else the shared registry's. Until a
-          full-surface send has gone out, the tools it composes per send
-          (local, MCP, skills) are not visible here.
-
-        Args:
-            resolution: The send's provider resolution, when the caller has it.
-            session_id: The Console session the send belongs to.
-            messages: The provider request being assessed, leading system
-                row (the session prompt) included; empty sizes the tools
-                against a one-row stand-in.
-
-        Returns:
-            One OpenAI-shaped ``{"type": "function", ...}`` row per tool.
+        Catalog/runtime capabilities come from the latest composed snapshot;
+        source changes remain an estimate until dispatch. This performs no
+        provider composition, I/O, or permission admission.
         """
         from tldw_chatbook.Chat.console_tool_surface_preview import (
             light_surface_plan_inputs,
@@ -5645,18 +5618,37 @@ class ConsoleAgentBridge:
         )
         session_prompt, conversation = split_session_prompt(messages)
         memory = self._surface_memory()
-        if self.light_surface_for((), session_id=session_id):
+        if self.light_surface_for(turn_skill_bindings, session_id=session_id):
             inputs = light_surface_plan_inputs(
                 memory.light_sources(session_id),
                 local_tools_available=self.light_surface_local_tools_available(),
                 session_system_prompt=session_prompt,
+                previous_config=memory.light_config(session_id),
             )
         else:
             inputs = memory.full_inputs(session_id) or shared_registry_plan_inputs(
                 self._registry, self._allowed_tools, console_run_budget()
             )
-        return inputs.tool_rows(
-            resolution, native_tools=native, messages=conversation
+        return inputs.preview(
+            resolution,
+            native_tools=native,
+            messages=conversation,
+            session_system_prompt=session_prompt,
+            turn_skill_bindings=turn_skill_bindings,
+        )
+
+    def preview_tool_schemas(
+        self,
+        resolution: Any = None,
+        *,
+        session_id: str | None = None,
+        messages: Sequence[Mapping[str, Any]] = (),
+    ) -> list[dict[str, Any]]:
+        """Selected native tool rows; use preview_tool_surface for full accounting."""
+        return list(
+            self.preview_tool_surface(
+                resolution, session_id=session_id, messages=messages
+            ).tools
         )
 
     def _preview_conversation_id(self, session_id: str | None) -> str | None:
@@ -6001,6 +5993,7 @@ class ConsoleAgentBridge:
         change_root_aliases: Sequence[str] = (),
         change_review_skipped_roots: Sequence[SkippedReviewRoot] = (),
         turn_skill_bindings: tuple[str, ...] = (),
+        on_tool_surface_selected: Callable[[int], None] | None = None,
         turn_bundle_block: str = "",
         request_skill_install_confirm: Callable[[str], bool] | None = None,
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
@@ -6471,6 +6464,11 @@ class ConsoleAgentBridge:
         self._remember_tool_surface(
             session_id, first_request_plan, light_surface=light_surface
         )
+        if on_tool_surface_selected is not None:
+            on_tool_surface_selected(
+                len(first_request_plan.schemas.runtime_schemas)
+                + len(first_request_plan.schemas.active_schemas)
+            )
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools
         config = first_request_plan.config

@@ -23463,3 +23463,21 @@ from one function (`request_safety_margin_tokens` now feeds both the gateway and
 the prediction against the real acceptor (`prepare_chat_request(...).known_overflow`)
 and assert "counted rows == dispatched rows" over several input sizes, not each side
 against its own formula.
+
+
+## The pytest profile variable does not isolate standalone imports (PR #3295, 2026-10-31)
+
+A standalone preview diagnostic set `TLDW_TEST_CONFIG_ROOT` and then imported the
+application helper directly. That selector belongs to `Tests/conftest.py`; without
+pytest bootstrap, config loaded the ordinary CLI profile. Existing logs showed the
+load and an ensured chat-dictionaries directory. The source permits directory
+creation/hardening and participant bookkeeping, so those side effects could not
+be excluded; the profile was not reopened to investigate. No provider request was
+reached and no secret values were printed. Use the private pytest harness for
+application probes, with fresh native 0700 config/TEMP roots and the real-profile
+guard installed before importing application modules.
+
+The same repair also produced a mixed-source RED attempt when production edits
+started before the remaining cases finished. That receipt is explicitly
+unqualified. Subsequent campaigns freeze the source and record start/end hashes;
+the independent frozen single-case RED remains the causal omission evidence.

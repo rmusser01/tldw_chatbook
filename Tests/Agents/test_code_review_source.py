@@ -42,7 +42,7 @@ def git(root, *args):
 
 
 @pytest.fixture
-def source_case(tmp_path):
+def source_case(tmp_path, request):
     root = tmp_path / "repo"
     root.mkdir()
     git(root, "init", "-q")
@@ -66,7 +66,10 @@ def source_case(tmp_path):
     (root / "main.py").write_text("captured bytes\n")
     (root / "extra.py").write_text("selected untracked\n")
     (root / "binary").write_bytes(b"\x00\xff")
-    (root / "escape").symlink_to(tmp_path / "outside")
+    # Catalog-only tests never capture sources; retain escape-link coverage
+    # for every source/capture fixture consumer.
+    if getattr(request, "param", None) != "catalog_only":
+        (root / "escape").symlink_to(tmp_path / "outside")
     (tmp_path / "outside").write_text("outside secret")
     admitted = RunAdmittedWorkspaceRoot(
         workspace_id="workspace",

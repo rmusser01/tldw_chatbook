@@ -1015,6 +1015,8 @@ class ConsoleControlState:
         approval_count: int = 0,
         system_prompt_set: bool = False,
         app_config: Mapping[str, object] | None = None,
+        selected_tool_count: int | None = None,
+        tools_estimate: bool = False,
     ) -> "ConsoleControlState":
         """Build the Console control-bar chip state from raw run values.
 
@@ -1075,7 +1077,14 @@ class ConsoleControlState:
         # count > 0`. TASK-2154.12 (TX-04): the placeholder is now an inert
         # dash and the chip HIDES at zero, so the lazy-loading detail
         # ("not loaded") no longer renders at all.
-        tools_label = f"Tools: {_tools_ready_text(effective_tool_count)}"
+        if selected_tool_count is not None:
+            effective_tool_count = selected_tool_count
+            tool_text = f"{effective_tool_count} offered" if effective_tool_count else "—"
+        elif tools_estimate and effective_tool_count:
+            tool_text = f"{effective_tool_count} available"
+        else:
+            tool_text = _tools_ready_text(effective_tool_count)
+        tools_label = f"Tools: {tool_text}"
         if library_policy is None:
             library_policy = ConsoleLibraryPolicySnapshot(
                 auto_retrieve=ConsoleAutoRetrieve.NEVER,

@@ -33,7 +33,7 @@ async def test_the_tool_gates_pane_leads_with_full_agent_tools(monkeypatch):
         heading = str(app.query_one("#mcp-gate-heading-agent", Static).renderable)
         assert heading.startswith(
             "Plain chat: date and time, calculator and ask you a question, plus "
-            "any Agent built-in or Deep web research switched on."
+            "enabled file/note tools and Deep web research."
         )
         # Review round 1 (B-F3): the local master and Character cards read
         # "on" by default, yet add nothing to plain chat -- so the line must

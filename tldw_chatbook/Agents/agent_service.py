@@ -1011,6 +1011,72 @@ def build_first_request_schema_plan(
         return discovery
 
 
+def compose_model_request_surface(
+    config: AgentConfig,
+    schemas: list[ToolSchema],
+    messages: list[dict],
+    *,
+    native: bool,
+    log_active: bool = False,
+    trusted_role: Literal["primary", "subagent"] = "primary",
+    repository_target_enabled: bool = False,
+    protocol_cache: dict | None = None,
+) -> tuple[str, list[dict]]:
+    """Compose the shared provider-visible system prompt and native tool rows.
+
+    Preview and dispatch use identical protocol and runtime guidance. This pure
+    projection neither composes providers nor grants execution authority.
+    """
+    if protocol_cache is None:
+        protocol_cache = {}
+    system_content = config.system_prompt
+    tools: list[dict] = []
+    if native:
+        tools = schemas_to_openai_tools(schemas)
+    else:
+        # The cache spans the parent/child run tree, so key the complete
+        # immutable schema representation rather than names alone: a child
+        # may legitimately expose a narrower definition under the same name.
+        protocol_key = tuple(repr(schema) for schema in schemas)
+        protocol_text = protocol_cache.get(protocol_key)
+        if protocol_text is None:
+            protocol_text = render_tool_protocol(schemas)
+            protocol_cache[protocol_key] = protocol_text
+        if protocol_text:
+            system_content = f"{system_content}\n\n{protocol_text}"
+    if log_active:
+        system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
+    from .canvas_tool_provider import build_canvas_runtime_guidance
+
+    canvas_guidance = build_canvas_runtime_guidance(
+        schemas, messages=messages, system_prompt=config.system_prompt
+    )
+    if canvas_guidance:
+        system_content = f"{system_content}\n\n{canvas_guidance}"
+    from tldw_chatbook.Notes.agent_lessons import (
+        build_agent_lessons_runtime_guidance,
+    )
+    from .agent_lesson_promotion import build_agent_lesson_promotion_guidance
+
+    guidance = build_agent_lessons_runtime_guidance(schemas, trusted_role=trusted_role)
+    if guidance:
+        system_content = f"{system_content}\n\n{guidance}"
+    promotion_guidance = build_agent_lesson_promotion_guidance(
+        schemas,
+        trusted_role=trusted_role,
+        repository_target_enabled=repository_target_enabled,
+    )
+    if promotion_guidance:
+        system_content = f"{system_content}\n\n{promotion_guidance}"
+    system_content = _append_workspace_context_note(
+        system_content, config.workspace_context_note
+    )
+    system_content = append_personal_context(
+        system_content, config.personal_context_block
+    )
+    return system_content, tools
+
+
 def catalog_schema_tokens(
     schemas: tuple[ToolSchema, ...],
     *,
@@ -2663,52 +2729,11 @@ class AgentService:
             reasoning_replay=config.reasoning_replay,
         )
         schemas = runtime_schemas + list(active_schemas)
-        system_content = config.system_prompt
-        tools: list[dict] = []
-        if native:
-            tools = schemas_to_openai_tools(schemas)
-        else:
-            # The cache spans the parent/child run tree, so key the complete
-            # immutable schema representation rather than names alone: a child
-            # may legitimately expose a narrower definition under the same name.
-            protocol_key = tuple(repr(schema) for schema in schemas)
-            protocol_text = self._tool_protocol_cache.get(protocol_key)
-            if protocol_text is None:
-                protocol_text = render_tool_protocol(schemas)
-                self._tool_protocol_cache[protocol_key] = protocol_text
-            if protocol_text:
-                system_content = f"{system_content}\n\n{protocol_text}"
-        if log_active:
-            system_content = f"{system_content}\n\n{RUN_LOG_PROMPT_SECTION}"
-        from .canvas_tool_provider import build_canvas_runtime_guidance
-
-        canvas_guidance = build_canvas_runtime_guidance(
-            schemas, messages=messages, system_prompt=config.system_prompt
-        )
-        if canvas_guidance:
-            system_content = f"{system_content}\n\n{canvas_guidance}"
-        from tldw_chatbook.Notes.agent_lessons import (
-            build_agent_lessons_runtime_guidance,
-        )
-        from .agent_lesson_promotion import build_agent_lesson_promotion_guidance
-
-        guidance = build_agent_lessons_runtime_guidance(
-            schemas, trusted_role=trusted_role
-        )
-        if guidance:
-            system_content = f"{system_content}\n\n{guidance}"
-        promotion_guidance = build_agent_lesson_promotion_guidance(
-            schemas,
+        system_content, tools = compose_model_request_surface(
+            config, schemas, messages, native=native, log_active=log_active,
             trusted_role=trusted_role,
             repository_target_enabled=self.project_instruction_context is not None,
-        )
-        if promotion_guidance:
-            system_content = f"{system_content}\n\n{promotion_guidance}"
-        system_content = _append_workspace_context_note(
-            system_content, config.workspace_context_note
-        )
-        system_content = append_personal_context(
-            system_content, config.personal_context_block
+            protocol_cache=self._tool_protocol_cache,
         )
         raw_payload = [{"role": "system", "content": system_content}, *messages]
         if config.review_binding is not None:

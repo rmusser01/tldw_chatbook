@@ -26,7 +26,10 @@ pytestmark = pytest.mark.bootstrap_profile
 
 
 def _tools_row(config):
-    rows = {row.label: row for row in build_summary_rows(config, {}, rag_deps_installed=False)}
+    rows = {
+        row.label: row
+        for row in build_summary_rows(config, {}, rag_deps_installed=False)
+    }
     return rows["Tools"]
 
 
@@ -81,12 +84,14 @@ def test_full_agent_tools_on_names_the_agent_groups():
 def test_the_light_set_follows_the_ask_user_gate_and_the_local_master():
     """ask_user is composed by the local provider: its own gate off, or the
     [console] master that composes the provider off, removes it."""
-    assert "ask you a question" not in _tools_row(
-        {"tools": {"ask_user_enabled": False}}
-    ).detail
-    assert "ask you a question" not in _tools_row(
-        {"console": {"local_tools_enabled": False}}
-    ).detail
+    assert (
+        "ask you a question"
+        not in _tools_row({"tools": {"ask_user_enabled": False}}).detail
+    )
+    assert (
+        "ask you a question"
+        not in _tools_row({"console": {"local_tools_enabled": False}}).detail
+    )
 
 
 def test_the_quick_track_note_describes_the_light_surface():
@@ -150,3 +155,18 @@ async def test_the_tools_step_states_the_light_set_and_offers_full_agent_tools()
         assert ok
         committed = wizard.commit_config.call_args.args[0]
         assert committed == {"tools": {"full_agent_tools_enabled": True}}
+
+
+@pytest.mark.parametrize("gate", ["read_file_enabled", "full_agent_tools_enabled"])
+def test_review_rerun_intro_respects_prefilled_enabled_switches(gate):
+    from tldw_chatbook.Agents.plain_chat_tool_surface import (
+        summarize_tool_surface,
+        tools_step_posture,
+    )
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import read_wizard_prefill
+
+    config = {"tools": {gate: True}}
+    assert dict(read_wizard_prefill(config).tool_gates)[gate] is True
+    posture = tools_step_posture(summarize_tool_surface(config))
+    assert "Everything below is off" not in posture
+    assert "switches" in posture.lower()
