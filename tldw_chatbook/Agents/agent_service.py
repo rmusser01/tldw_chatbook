@@ -725,6 +725,20 @@ def _append_workspace_context_note(system_content: str, note: str) -> str:
 _UNCAPTURED_INSTRUCTIONS = object()
 
 
+class _WorkflowChildWait(PermissionError):
+    """Typed no-dispatch wait; retry only the original prepared authorization."""
+
+    def __init__(
+        self, reason: Literal["worktree_activity", "fleet_capacity"], message: str
+    ):
+        super().__init__(message)
+        self.reason = reason
+
+
+class _FleetAdmissionWait(SpawnAdmissionRefusal):
+    """No fleet handle was reserved; original workflow preparation may retry."""
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class WorkflowChildReceipt:
     """Native launch identity and physical owner; never execution authority."""
@@ -4718,6 +4732,8 @@ class AgentService:
             The original native receipt, including on a completed duplicate call.
 
         Raises:
+            _WorkflowChildWait: No-dispatch activity or fleet admission wait.
+            CapacityRefused: Native runtime capacity wait before child admission.
             PermissionError: Missing custody, mismatched preparation or claimed launch.
         """
         self._check_workflow_launch_authorization(authorization)
@@ -4751,7 +4767,9 @@ class AgentService:
             try:
                 with activity.prelaunch(footprint=authorization.footprint) as claim:
                     if claim is None:
-                        raise PermissionError("workflow worktree activity busy")
+                        raise _WorkflowChildWait(
+                            "worktree_activity", "workflow worktree activity busy"
+                        )
                     owner = self.runtime_capacity.begin_execution(
                         origin=self.work_origin,
                         conversation_id=authorization.claim.conversation_id,
@@ -4782,6 +4800,9 @@ class AgentService:
                         child_reservation=authorization.claim.reservation_id,
                         child_outlives_turn=False,
                     )
+                    if isinstance(failure, _FleetAdmissionWait):
+                        dispatched = False
+                        raise _WorkflowChildWait("fleet_capacity", failure.error)
                     if failure is not None:
                         # Only known pre-dispatch failure may retire without a result.
                         if owner.run_id is None:
@@ -5164,6 +5185,7 @@ class AgentService:
     ):
         """The native fleet launch/settlement tail, with captured parent inputs."""
         launched = False
+        preserve_workflow_reservation = False
         try:
             # -- FLEET path: register, launch, return a handle.
             handle = fleet.reserve(
@@ -5184,7 +5206,10 @@ class AgentService:
                 # ("a typo costs no sub-agent slot"). The check/increment
                 # itself stays where it has always been; only this one
                 # no-child-was-created path unwinds it.
-                return None, SpawnAdmissionRefusal(
+                preserve_workflow_reservation = (
+                    child_kwargs.get("workflow_task_authorization") is not None
+                )
+                return None, _FleetAdmissionWait(
                     ok=False,
                     error=(
                         f"live sub-agent limit reached ({fleet.live_count()} "
@@ -5675,7 +5700,10 @@ class AgentService:
         finally:
             if not launched:
                 try:
-                    if child_reservation is not None:
+                    if (
+                        child_reservation is not None
+                        and not preserve_workflow_reservation
+                    ):
                         self._automatic_work.ledger.release(
                             child_reservation,
                             owner_id=self._automatic_work.owner_id,

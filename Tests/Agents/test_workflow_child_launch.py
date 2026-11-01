@@ -7,7 +7,7 @@ import pytest
 from Tests.Agents.test_workflow_task_scope import (
     task_host as task_host,  # noqa: PLC0414
 )
-from tldw_chatbook.Agents.agent_service import AgentService
+from tldw_chatbook.Agents.agent_service import AgentService, _WorkflowChildWait
 from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
@@ -325,8 +325,9 @@ def test_activity_precedes_capacity_and_conflict_never_starts_worker(
             "begin_execution",
             lambda **_: pytest.fail("capacity preceded activity"),
         )
-        with pytest.raises(PermissionError, match="activity busy"):
+        with pytest.raises(_WorkflowChildWait, match="activity busy") as wait:
             _launch(service, host)
+        assert wait.value.reason == "worktree_activity"
     assert host.db.list_runs(host.authorization.claim.conversation_id) == []
     assert not host.authorization._native_preparation[0].threads
 
@@ -791,3 +792,68 @@ def test_task_with_genuine_parent_never_finalizes_shared_parent_writer(
         assert writer.log_dir.name == parent.run_id
     finally:
         parent.finish_root()
+
+
+def test_real_fleet_capacity_wait_preserves_original_launch_for_retry(
+    workflow_host, monkeypatch
+):
+    from Tests.Agents.test_agent_service import ScriptedChat
+
+    host = workflow_host
+    chat = ScriptedChat(["done"])
+    service, _ = _prepared_service(host, chat)
+    prepared = host.authorization._native_preparation[0]
+    fleet = prepared.fleet
+    blockers = [fleet.reserve(task=f"occupied-{i}", agent=None) for i in range(3)]
+    assert all(blockers)
+    assert service.runtime_capacity.snapshot().child_executions == 0
+    reservation_id = host.authorization.claim.reservation_id
+    commits, owners = [], []
+    commit = host.db.automatic_work.commit
+    begin = service.runtime_capacity.begin_execution
+
+    def counted_commit(reservation, **kwargs):
+        commits.append(reservation)
+        return commit(reservation, **kwargs)
+
+    def counted_owner(**kwargs):
+        owner = begin(**kwargs)
+        owners.append(owner)
+        return owner
+
+    monkeypatch.setattr(host.db.automatic_work, "commit", counted_commit)
+    monkeypatch.setattr(service.runtime_capacity, "begin_execution", counted_owner)
+    with pytest.raises(_WorkflowChildWait, match="live sub-agent limit") as wait:
+        _launch(service, host)
+    assert wait.value.reason == "fleet_capacity"
+    assert not chat.calls
+    assert not commits
+    assert host.db.list_runs(host.authorization.claim.conversation_id) == []
+    assert service.runtime_capacity.snapshot().child_executions == 0
+    assert len(owners) == 1 and owners[0].run_id is None
+    assert host.authorization._native_preparation[0] is prepared
+    assert not prepared.activity_claims
+    assert not prepared.log_finalized
+    with host.activity.prelaunch(footprint=host.authorization.footprint) as available:
+        assert available is not None
+    with host.db.connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT state FROM automatic_work_reservations WHERE id=?",
+                (reservation_id,),
+            ).fetchone()[0]
+            == "reserved"
+        )
+    for blocker in blockers:
+        fleet.finish(blocker.handle_id, "done")
+    receipt = _launch(service, host)
+    _join(host)
+    assert _launch(service, host) is receipt
+    assert receipt.run_id == host.authorization.claim.launch_run_id
+    assert receipt.owner is owners[1]
+    assert [owner.run_id for owner in owners] == [None, receipt.run_id]
+    assert commits == [reservation_id]
+    assert len(chat.calls) == 1
+    assert len(host.db.list_runs(host.authorization.claim.conversation_id)) == 1
+    assert host.db.get_run(receipt.run_id)["status"] == "done"
+    assert service.runtime_capacity.snapshot().child_executions == 0

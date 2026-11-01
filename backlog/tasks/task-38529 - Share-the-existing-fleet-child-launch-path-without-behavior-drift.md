@@ -16,7 +16,7 @@ references:
 documentation:
 - Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md
 - backlog/decisions/285-native-phased-agent-workflows.md
-updated_date: 2026-11-01 21:20
+updated_date: 2026-11-01 21:30
 ---
 
 ## Description
@@ -53,6 +53,7 @@ Shared the existing native child composition and fleet launch/settlement tail wi
 Extended real native host/duplicate/failure/client-drain tests, ordinary owner/continuation assertions and exact hook lifecycle counts. The full named regression run executed422 passing bodies with four inherited isolated-worktree scope failures; exact BASE consumer import reproduced those four without replacing shared source. Original source-profile failures and exact-node supported-profile qualifications remain separately recorded. Scoped lint/format/compile and preservation checks passed; legacy lint/format findings were not broadly rewritten. The task remains In Progress with AC pending independent review.
 
 ADR: backlog/decisions/285-native-phased-agent-workflows.md. Architecture and the observed source-profile masking lesson updated. Full commands/results/contracts/limits are in .superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-6-report.md. Real coordinator wiring and required-result settlement remain with their existing subsequent implementation slices; workflow hooks/scripts stay unsupported.
+Review fix1 (I1): a proven no-handle fleet-capacity wait now keeps the original workflow allowance/preparation, unwinds transient activity/capacity and leaves the task log pending. Typed host wait signals distinguish activity/fleet waits from terminal refusal; native runtime CapacityRefused remains unchanged. Real fleet exhaustion/drain retries the same authorization and produces exactly one eventual row/commit/bound owner. Host plus affected ordinary fleet controls:28 passed; original automatic refund/setup-charge controls:4 passed. Static/preservation evidence and exact commands appended to the Task6 report. Status/AC remain pending independent re-review.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

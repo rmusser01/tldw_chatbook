@@ -363,7 +363,12 @@ shared launcher. `_run_owned` still owns the final allowance commit and
 `_run_one` still binds the actual owner/run. Concurrent duplicate launch claims
 refuse before touching rows, capacity or clients; completed duplicate delivery
 returns the same `WorkflowChildReceipt`. Capacity/activity waits keep original
-preparation available; uncertain dispatch never replays automatically. Physical
+preparation and reserved allowance available; uncertain dispatch never replays
+automatically. The internal host caller catches `_WorkflowChildWait` (a
+`PermissionError` subtype, with `worktree_activity` or `fleet_capacity` reason)
+and native `CapacityRefused` separately from terminal launch refusal. A fleet
+wait with no reserved handle unwinds transient owner/activity without finalizing
+the pending task log; retry uses the same authorization and native request. Physical
 drain alone does not settle the required task-result journal. The receipt keeps
 the original activity claim, including a client-setup failure before run binding,
 so the coordinator can settle that exact claim after durable result capture.
