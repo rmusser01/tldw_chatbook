@@ -16,7 +16,7 @@
 
 **Baseline:** finalized design commit `8f989edc9f`. Source mapping was inspected in the current dirty checkout; unrelated staged additions are not implied to be committed prerequisites. Recheck the integrated source, symbols and schema before execution.
 
-**Status:** Implementation in progress. Tasks 1–2 passed their independent review gates; Tasks 3–10 remain pending. Runtime/UI delivery is incomplete.
+**Status:** Implementation in progress. Tasks 1–3 passed their independent review gates; Tasks 4–10 remain pending. Runtime/UI delivery is incomplete.
 
 ```text
 ADR required: no
@@ -198,10 +198,10 @@ def test_workflow_policy_does_not_inherit_goal_or_wake_settings(monkeypatch):
 
 **Consumes:** captured admitted roots and `ExecutionOwner`. **Produces:** immutable `WorktreeFootprint(reads, writes, opaque)` with exact/subtree scope entries and a `WorktreeActivity` owner. `try_acquire(*, owner: ExecutionOwner, footprint: WorktreeFootprint) -> WorktreeActivityClaim | None` acquires a complete claim without waiting. `claim.settle(*, durable: bool)` records conclusive journal settlement; release requires that plus `on_drained(True)`. No public force-release. `WorktreeFootprint.opaque` is runtime-wide; ordinary unclassified root work is whole-root exclusive. Scope paths have `path: Path` and `subtree: bool`; inputs must come from the existing admitted resolver.
 
-- [ ] **1. Add real-path/barrier tests** for read/read sharing, write/read conflicts, directory create/list conflicts, alias/nested-root overlap, complete multi-root admission, refusal unwind and opaque effects. Use actual ExecutionOwner operations and stable real root identity controls.
-- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Workspaces/test_worktree_activity.py`.
-- [ ] **3. Implement only reservation logic.** All-or-none under one short owner lock; no I/O, callbacks or model calls in that lock. Take a runtime-wide opaque claim before any per-root claims, never upgrade while holding a partial claim. Acquire footprint before nonblocking native capacity; capacity refusal unwinds the unlaunched footprint. Use absolute canonical target relationships with captured identities to reconcile alias/case/subtree semantics. This module never launches work or charges a budget.
-- [ ] **4. Bind retirement exactly:**
+- [x] **1. Add real-path/barrier tests** for read/read sharing, write/read conflicts, directory create/list conflicts, alias/nested-root overlap, complete multi-root admission, refusal unwind and opaque effects. Use actual ExecutionOwner operations and stable real root identity controls.
+- [x] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Workspaces/test_worktree_activity.py`.
+- [x] **3. Implement only reservation logic.** All-or-none under one short owner lock; no I/O, callbacks or model calls in that lock. Take a runtime-wide opaque claim before any per-root claims, never upgrade while holding a partial claim. Acquire footprint before nonblocking native capacity; capacity refusal unwinds the unlaunched footprint. Use absolute canonical target relationships with captured identities to reconcile alias/case/subtree semantics. This module never launches work or charges a budget.
+- [x] **4. Bind retirement exactly:**
 
 ```python
 # Registration pattern inside the activity owner; the callback receives proof.
@@ -209,8 +209,8 @@ owner.on_drained(lambda proven: activity.record_drain(claim.id, proven=proven))
 ```
 
 `record_drain(claim_id, *, proven: bool)` is a private idempotent method of `WorktreeActivity`; `settle(durable=True)` and a positive drain must both exist before removing a claim. A negative outcome, terminal row or Stop preserves the claim. `claim.attach_child(owner: ExecutionOwner)` retains a normal turn tree's existing reservation for a genuinely admitted native child before thread start; it does not reacquire a conflicting footprint. Release waits for every attached owner's positive drain and required durable settlement. Only trusted launch custody can attach a child, never a model-supplied ID. Callbacks run outside the capacity lock. Add the regression with a timed-out tool physically held after its caller returned and a second attempted claim refused until release.
-- [ ] **5. Run new tests plus** `Tests/Agents/test_execution_capacity.py`, `Tests/Chat/test_fleet_execution_ownership.py`, `Tests/Workspaces/test_change_review_finalization.py`. Check actual native fixture file existence before selecting each regression; changed names are reconciled in task notes rather than replaced by weaker tests.
-- [ ] **6. Review and commit** `feat: coordinate runtime worktree activity through physical drain`. Actual ordinary-turn/phase admission wiring is Task 8; this slice creates no global singleton or second scheduler.
+- [x] **5. Run new tests plus** `Tests/Agents/test_execution_capacity.py`, `Tests/Chat/test_fleet_execution_ownership.py`, `Tests/Workspaces/test_change_review_finalization.py`. Check actual native fixture file existence before selecting each regression; changed names are reconciled in task notes rather than replaced by weaker tests.
+- [x] **6. Review and commit** `feat: coordinate runtime worktree activity through physical drain`. Actual ordinary-turn/phase admission wiring is Task 8; this slice creates no global singleton or second scheduler.
 
 <a id="task-4"></a>
 ## Task 4: Atomic observed-content checks for edit and patch

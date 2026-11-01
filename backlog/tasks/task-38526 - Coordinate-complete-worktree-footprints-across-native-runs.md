@@ -1,7 +1,7 @@
 ---
 id: TASK-38526
 title: Coordinate complete worktree footprints across native runs
-status: In Progress
+status: Done
 created_date: 2026-11-01 17:30
 dependencies:
 - TASK-38524
@@ -16,7 +16,7 @@ documentation:
 - backlog/decisions/285-native-phased-agent-workflows.md
 assignee:
 - '@codex'
-updated_date: 2026-11-01 19:25
+updated_date: 2026-11-01 19:35
 ---
 
 ## Description
@@ -27,9 +27,9 @@ Deliver implementation slice 3 of the accepted native shared-worktree workflow d
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Canonical aliases, nested roots and read/write dependencies share correct nonblocking activity claims.
-- [ ] #2 Opaque-capable work claims runtime-wide exclusivity before root-specific reservations; refusal creates no partial-lock deadlock.
-- [ ] #3 Claims remain held until positive physical drain and conclusive durable settlement, including ordinary runs and survivors.
+- [x] #1 Canonical aliases, nested roots and read/write dependencies share correct nonblocking activity claims.
+- [x] #2 Opaque-capable work claims runtime-wide exclusivity before root-specific reservations; refusal creates no partial-lock deadlock.
+- [x] #3 Claims remain held until positive physical drain and conclusive durable settlement, including ordinary runs and survivors.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -54,12 +54,13 @@ Implemented complete, runtime-owned read/write/opaque activity reservations unde
 Controller-approved interface refinements: prelaunch(...)/bind_owner(...) resolves child-capacity ordering without a phantom owner; attach_child(...) returns a child-specific settlement handle. A metadata-only ExecutionOwner.is_admitted query rejects fabricated/retired owners outside the activity lock; no capacity accounting or dispatch algorithm changed. Case-only names may serialize on case-sensitive filesystems. Actual ordinary-turn and phase wiring remains Task 8.
 
 Evidence: initial RED on missing module; targeted reparse RED (1) and fabricated/retired membership RED (5), then GREEN. Final exact activity/capacity/fleet/finalization target set: 99 passed in 4.05s using supported bootstrap_profile only on the three source-bound fleet nodes. Original unmodified invocation separately retained 84 pass/3 raw_source_selection_changed pre-body fixture failures; no guard reset or unrelated fixture mutation. New modules/tests Ruff clean, four non-runtime files formatter-clean, py_compile/diff-check pass. Existing runtime/capacity lint debt unchanged against BASE 78e297e8892061e587c7f9788d03197d61f0da98 (24/1 findings; zero introduced). Full report/evidence: .superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-3-report.md. Status/AC intentionally remain pending independent review.
+Independent spec/quality gate passed after Unicode collision correction2145552ea6 (base implementation9a491602ff). Complete prelaunch footprints bind genuine native owners after capacity; child settlement is per owner; release requires positive drain and conclusive durability. NFC/casefold comparison keys preserve admitted paths while conservatively colliding aliases. Final correction48 activity tests pass; earlier final qualified99 native/activity checks pass with supported bootstrap fixture only on exact3 source-bound fleet nodes. Original84 pass/3 raw_source_selection_changed remains explicit, not called green. Scoped lint/format/compile/diff checks pass with no introduced baseline findings. Unrelated index preserved. ADR-285 applies; actual ordinary/phase launch, shutdown and journal wiring remains Task8.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Runtime-owned activity reservation interfaces implemented and independently reviewed, with exact/native-owner retention and conservative alias collision. No live workflow scheduling is enabled by this slice.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done

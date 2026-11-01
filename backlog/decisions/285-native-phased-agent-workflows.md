@@ -1,11 +1,11 @@
 # ADR-285: Native phased agent workflows in a shared worktree
 
-- Status: Accepted 2026-11-01 (design only; implementation not started)
+- Status: Accepted 2026-11-01 (implementation in progress; runtime qualification pending)
 - Date: 2026-11-01
 - Task: [TASK-38493](../tasks/task-38493%20-%20Design-native-phased-agent-workflows-in-a-shared-worktree.md)
 - Spec: [Shared-worktree workflow design](../../Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md)
-- Plan: [Native shared-worktree workflows](../../Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md) (planning only)
-- Implementation: Not started
+- Plan: [Native shared-worktree workflows](../../Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md) (implementation in progress)
+- Implementation: Tasks 1–3 independently reviewed; remaining delivery and qualification are tracked in the linked plan.
 - Governing contracts: [project instructions](069-console-project-instruction-local-state-and-preflight.md),
   [Change Review consent](084-change-review-consent-and-asynchronous-finalization.md),
   [per-turn review ownership](089-console-per-turn-change-review-ownership.md),
@@ -128,7 +128,7 @@ remote effects, full Git rollback or execution while the app is closed.
 The spec maps each review correction to real-file/SQLite/native-dispatch tests,
 duplicate-decision and held-worker cases, active-time/restart controls, optional
 logging controls, snapshot/privacy failures, mounted interactions and a real
-failed-command → correction → passing-command journey. No implementation or
-runtime qualification is claimed by this accepted design-only ADR. Link this
+failed-command → correction → passing-command journey. Runtime qualification is tracked by the implementation plan and is not implied
+by this accepted decision. Link this
 ADR from the implementation plan and task notes; select the
 next actual schema version only when implementing.
