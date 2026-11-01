@@ -575,7 +575,7 @@ ConsoleTerminalWorkspace#console-main-column {
 /* TASK-33625.3: the grid cell is each control's frame. Buttons keep
    Textual's one-cell line pad but drop the side padding, so a 13-cell column
    at 80x24 shows "Terminal 1" whole; narrower cells get compact labels. */
-ConsoleTerminalWorkspace#console-main-column > Button {
+ConsoleTerminalWorkspace#console-main-column > Button.console-terminal-control {
     padding: $ds-space-0;
 }
 

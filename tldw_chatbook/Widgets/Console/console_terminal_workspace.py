@@ -444,15 +444,27 @@ class ConsoleTerminalWorkspace(Static):
     def compose(self) -> ComposeResult:
         yield Static("", id="console-terminal-danger", markup=False)
         yield Static("Terminal is locked.", id="console-terminal-access", markup=False)
-        yield Button("Open Privacy & Security", id="console-terminal-open-settings")
-        yield Button("Arm Terminal", id="console-terminal-arm")
+        yield Button(
+            "Open Privacy & Security",
+            id="console-terminal-open-settings",
+            classes="console-terminal-control",
+        )
+        yield Button(
+            "Arm Terminal", id="console-terminal-arm", classes="console-terminal-control"
+        )
         for index in range(MAX_SESSION_RECORDS):
-            yield Button("", id=f"console-terminal-session-{index}")
-        yield Button("New", id="console-terminal-new")
+            yield Button(
+                "",
+                id=f"console-terminal-session-{index}",
+                classes="console-terminal-control",
+            )
+        yield Button("New", id="console-terminal-new", classes="console-terminal-control")
         yield Static("", id="console-terminal-metadata", markup=False)
         yield TerminalViewport(id="console-terminal-viewport")
         for name, (label, _compact) in _ACTION_LABELS.items():
-            yield Button(label, id=f"console-terminal-{name}")
+            yield Button(
+                label, id=f"console-terminal-{name}", classes="console-terminal-control"
+            )
         yield Static("", id="console-terminal-status", markup=False)
 
     def on_mount(self) -> None:

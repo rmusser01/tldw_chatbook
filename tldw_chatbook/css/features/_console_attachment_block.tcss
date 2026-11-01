@@ -1,0 +1,51 @@
+/* TASK-33620.2: a staged image the selected model can't take. Its own
+   blocker row (copy, Remove images, Switch model), never the setup-wizard
+   link; hidden until composer_run_controls.sync_attachment_block shows it.
+   The copy wears the Send reason strip's blocker style ($ds-status-blocked
+   measured 2.5:1 on this row live; warning-bold matches the strip). */
+#console-attachment-block {
+    display: none;
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    layout: horizontal;
+}
+
+#console-attachment-block.-visible {
+    display: block;
+}
+
+#console-attachment-block-copy {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    color: $ds-status-warning;
+    text-style: bold;
+    text-overflow: ellipsis;
+    text-wrap: nowrap;
+}
+
+Button#console-attachment-block-remove,
+Button#console-attachment-block-switch-model {
+    width: auto;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+}
+
+Button#console-attachment-block-remove:hover,
+Button#console-attachment-block-switch-model:hover {
+    background: $ds-hover-bg;
+    color: $ds-hover-fg;
+}
+
+Button#console-attachment-block-remove:focus,
+Button#console-attachment-block-switch-model:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
+}

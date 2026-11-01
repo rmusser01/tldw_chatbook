@@ -448,6 +448,6 @@ def test_pin_rejects_active_css_extension_without_writing_baseline(request, tmp_
         check=False,
     )
     assert result.returncode != 0
-    assert "components/active.css" in result.stderr
+    assert str(Path("components") / "active.css") in result.stderr
     assert "refusing to pin: raw numeric dimension literals" in result.stderr
     assert not (test_dir / "pattern_ratchet_baseline.json").exists()
