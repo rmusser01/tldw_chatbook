@@ -15,12 +15,14 @@ idle, on its daemon thread.
 from __future__ import annotations
 
 import builtins
+import contextlib
 import importlib.util
 import json
 import os
 import subprocess
 import sys
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -98,6 +100,22 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Tools.remote_session_registry",
     "Tools.remote_session_worker",
     "UI.Console_Modules.citation_counts",
+)
+
+#: TASK-33620.15.19, live on origin/dev 7536ac3b87 (2026-10-30, Anthropic
+#: haiku, 160x45, a note in Library, the conversation's Auto set to Automatic,
+#: RAG profile BM25 Only, first send 60 s after launch with the warm-up done):
+#: the only modules the UI loop loaded between Enter and the provider call
+#: were these two, both inside the send's own run-start callback (5-30 ms wall
+#: across five launches), where Library preparation begins. Everything else
+#: the retrieval path reaches is resident at UI-ready, and the Library
+#: service's runtime build runs on a worker thread. They cost 0.5-3.6 ms wall
+#: per first Automatic send, and they stay lazy, out of ``FIRST_SEND_MODULES``:
+#: warming them would raise ADR-097's first-send warm-up row, and the owner
+#: declined that on 2026-10-31 ("Don't raise it").
+LIVE_LIBRARY_FIRST_SEND_IMPORTS = (
+    "Chat.console_library_preparation",
+    "Chat.console_library_search",
 )
 
 _PASS_SCRIPT = """
@@ -414,7 +432,10 @@ def test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm(pass_outcom
     }
     assert _not_warmed(flake, warm, _covered_by_the_warm_up()) == {}
     # Still a guard: the send's own lazy modules are not warm at UI-ready.
-    record = {f"tldw_chatbook.{name}": "live" for name in LIVE_FIRST_SEND_IMPORTS}
+    record = {
+        f"tldw_chatbook.{name}": "live"
+        for name in LIVE_FIRST_SEND_IMPORTS + LIVE_LIBRARY_FIRST_SEND_IMPORTS
+    }
     assert _not_warmed(record, warm, set()) == record
 
 
@@ -440,29 +461,15 @@ def _in_send() -> bool:
     return False
 
 
-@pytest.mark.asyncio
-async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome):
-    """Every import a send runs inside a function is warm at UI-ready or listed.
+@contextlib.contextmanager
+def _recording_send_imports() -> Iterator[dict[str, str]]:
+    """Record every function-local import statement the send's frames run.
 
-    The mounted harness's send (llama.cpp, a held gateway, no agent tools)
-    covers admission, hooks and the durable commit; the live record covers
-    the agent's tool providers. Function-local import statements under the
-    send's own frames are recorded whether or not the module is already
-    loaded, so the check does not depend on what earlier tests imported.
-    Which UI-loop work lands inside those frames depends on timing (the
-    cost chip's rebuild sometimes does), so "warm" is everything resident at
-    UI-ready, not only the snapshot's possibly stale contents.
+    Yields the record (module name -> the importing function's qualname),
+    filled while the block runs. Import statements are recorded whether or
+    not the module is already loaded, so the record does not depend on what
+    earlier tests imported.
     """
-    from Tests.UI.test_console_send_acknowledgement import (
-        build,
-        eager_tasks,
-        press,
-        ready_console,
-        until,
-    )
-
-    ready = _warm_at_ui_ready(pass_outcome)
-    covered = _covered_by_the_warm_up()
     seen: dict[str, str] = {}
     real = builtins.__import__
     main = threading.main_thread()
@@ -488,18 +495,46 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome)
                     seen.setdefault(f"{full}.{item}", caller.co_qualname)
         return module
 
+    builtins.__import__ = recording
+    try:
+        yield seen
+    finally:
+        builtins.__import__ = real
+
+
+@pytest.mark.asyncio
+async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome):
+    """Every import a send runs inside a function is warm at UI-ready or listed.
+
+    The mounted harness's send (llama.cpp, a held gateway, no agent tools)
+    covers admission, hooks and the durable commit; the live record covers
+    the agent's tool providers. Function-local import statements under the
+    send's own frames are recorded whether or not the module is already
+    loaded, so the check does not depend on what earlier tests imported.
+    Which UI-loop work lands inside those frames depends on timing (the
+    cost chip's rebuild sometimes does), so "warm" is everything resident at
+    UI-ready, not only the snapshot's possibly stale contents.
+    """
+    from Tests.UI.test_console_send_acknowledgement import (
+        build,
+        eager_tasks,
+        press,
+        ready_console,
+        until,
+    )
+
+    ready = _warm_at_ui_ready(pass_outcome)
+    covered = _covered_by_the_warm_up()
+
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
             await ready_console(host, pilot, gateway)
-            builtins.__import__ = recording
-            try:
+            with _recording_send_imports() as seen:
                 press(host, "enter", "\r")
                 await until(gateway.validation_started.is_set)
                 gateway.validation_release.set()
                 await until(lambda: gateway.stream_calls == 1)
-            finally:
-                builtins.__import__ = real
 
     lazy = _not_warmed(seen, ready, covered)
     assert not lazy, f"imported on the UI loop by the send, not warmed: {lazy}"
@@ -509,4 +544,111 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome)
     # makes; seeing it keeps that path of the guard non-vacuous.
     assert "tldw_chatbook.Chat.console_voice_input" in seen, (
         "the guard no longer records `from package import submodule`"
+    )
+
+
+_EVIDENCE = "The Fresnel lens lets a lighthouse beam reach ships far away."
+
+
+class _EvidenceLibrary:
+    """A started Library whose search finds one note, as the live BM25 run did."""
+
+    def __init__(self) -> None:
+        self.prewarms = 0
+        self.searches = 0
+
+    async def prewarm(self) -> bool:
+        self.prewarms += 1
+        return True
+
+    async def search(self, query, source_types, mode, **kwargs):
+        self.searches += 1
+        return {
+            "runtime_backend": "local",
+            "results": [
+                {
+                    "source_id": "note-1",
+                    "chunk_id": "chunk-1",
+                    "title": "Lighthouse keeping notes",
+                    "content": _EVIDENCE,
+                    "score": 0.9,
+                    "source_type": "notes",
+                }
+            ],
+        }
+
+
+@pytest.mark.asyncio
+async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazily(
+    pass_outcome,
+):
+    """TASK-33620.15.19: an Automatic send adds exactly the measured pair.
+
+    Same guard as the harness send above, on a send whose conversation has
+    Auto set to Automatic and whose Library search returns evidence: Library
+    preparation, the bounded search and the evidence bundle run under the
+    send's frames. The controller's function-local imports of
+    ``console_library_preparation`` and ``console_library_search`` are
+    neither warm at UI-ready nor listed, so this send loads them on the UI
+    loop, as the live first send did (0.5-3.6 ms wall). They stay lazy by the
+    owner's 2026-10-31 decision, so they are the only lazy imports allowed
+    here. Red if the path picks up any other unwarmed import, and red if the
+    pair stops being lazy, so the record above is revisited either way.
+    """
+    from Tests.UI.test_console_send_acknowledgement import (
+        build,
+        eager_tasks,
+        press,
+        ready_console,
+        until,
+    )
+    from tldw_chatbook.Chat.console_library_policy import (
+        ConsoleAssistantLibraryAccess,
+        ConsoleAutoRetrieve,
+        ConsoleLibraryPolicyCandidate,
+    )
+
+    ready = _warm_at_ui_ready(pass_outcome)
+    covered = _covered_by_the_warm_up()
+    library = _EvidenceLibrary()
+
+    host, gateway, _timeline = build()
+    host.app_instance.library_rag_search_service = library
+    requests: list[object] = []
+    held_stream = gateway.stream_chat
+
+    async def recorded_stream(resolution, messages, **kwargs):
+        requests.append(messages)
+        async for chunk in held_stream(resolution, messages, **kwargs):
+            yield chunk
+
+    gateway.stream_chat = recorded_stream
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            store = console._ensure_console_chat_controller().store
+            store.stage_session_library_policy(
+                store.active_session_id,
+                ConsoleLibraryPolicyCandidate(
+                    auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+                    assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                ),
+            )
+            with _recording_send_imports() as seen:
+                press(host, "enter", "\r")
+                await until(gateway.validation_started.is_set)
+                gateway.validation_release.set()
+                await until(lambda: gateway.stream_calls == 1)
+
+    # Non-vacuity: the send searched the Library, found the note and carried it.
+    assert (library.prewarms, library.searches) == (1, 1)
+    assert len(requests) == 1 and _EVIDENCE in str(requests[0]), requests
+    for name in LIVE_LIBRARY_FIRST_SEND_IMPORTS:
+        assert f"tldw_chatbook.{name}" in seen, f"the send never imported {name}"
+    lazy = _not_warmed(seen, ready, covered)
+    assert set(lazy) == {
+        f"tldw_chatbook.{name}" for name in LIVE_LIBRARY_FIRST_SEND_IMPORTS
+    }, (
+        "an Automatic send's UI-loop imports are no longer exactly the two "
+        f"Library modules left lazy on 2026-10-31: {lazy}"
     )
