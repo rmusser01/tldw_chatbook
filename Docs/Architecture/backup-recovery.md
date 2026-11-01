@@ -217,8 +217,9 @@ a mounted new manual turn, absent/present-marker Notes startup and full native
 included-artwork restoration also have targeted evidence, detailed below.
 Imported-history holds remain enforced throughout. Targeted integrations now
 qualify the restored-generation observer and recovery under the current accounting.
-Final delivery and original-BASE review remain before canonical mobile API wiring
-can proceed.
+The original-BASE review and scoped accounting correction review are complete.
+Canonical mobile API wiring remains the next task; the legacy mobile engine has
+not yet been retired.
 
 
 ## Native mobile consolidation admission (ADR-244/125/126)
