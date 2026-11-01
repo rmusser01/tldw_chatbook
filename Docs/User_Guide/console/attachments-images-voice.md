@@ -99,7 +99,7 @@ disabled and a row above the status line names the model and the cause —
   can keep typing or press Enter to send.
 
 From the composer, **Shift+Tab** reaches **Switch model**, then **Remove
-image**; **Enter** presses the focused one.
+images**; **Enter** presses the focused one.
 
 A model name too long for the row is cut short with `…`; hover the row's
 text for the full message. If no model is chosen yet, the row stays hidden

@@ -88,7 +88,7 @@ Retry layers: transport retries inside handlers (idempotent POST, 429/5xx) → s
 
 ## model_capabilities
 
-`ModelCapabilities` resolves per-model facts from `[model_capabilities]`: direct `models` mappings > per-provider `patterns` regex > models.dev gap-fill (opt-in, network-free) > defaults. Consumers: vision gating for attachments (`Chat/attachment_core`), context-window-based truncation (`Utils/token_counter`), per-provider tools payload builders, and thinking configuration (Anthropic enabled/disabled/adaptive budgets vs effort-style shapes; thinking budgets auto-grow `max_tokens` when needed; per-family predicates for moonshot/zai/deepseek too).
+`ModelCapabilities` resolves per-model facts from `[model_capabilities]`: direct `models` mappings > per-provider `patterns` regex > models.dev gap-fill (opt-in, network-free) > defaults. Explicit model/pattern rows retain precedence. When no explicit row matches an Anthropic Claude4+ family, its vision capability is overlaid on the models.dev result while preserving other metadata, such as the context window; without a catalog row the family rule supplies vision alone. Consumers: vision gating for attachments (`Chat/attachment_core`), context-window-based truncation (`Utils/token_counter`), per-provider tools payload builders, and thinking configuration (Anthropic enabled/disabled/adaptive budgets vs effort-style shapes; thinking budgets auto-grow `max_tokens` when needed; per-family predicates for moonshot/zai/deepseek too).
 
 The exact Haiku 5.5 family rejects `temperature`, `top_p`, `top_k` and fixed
 `thinking.budget_tokens`, per its [migration guide](https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide).
