@@ -1,11 +1,12 @@
 ---
 id: TASK-36381
-title: Settings provider and discovery test files that no PR lane runs are red on dev
-status: Done
+title: Settings provider and discovery test files that no PR lane runs are red on
+  dev
+status: In Progress
 assignee:
 - '@claude'
 created_date: 2026-10-22 23:58
-updated_date: 2026-10-30 04:59
+updated_date: 2026-11-01 11:33
 labels:
 - follow-up
 - tests
@@ -45,6 +46,12 @@ TASK-35572 already lists two of the hub file's nodes for lane placement. This ta
 - [x] #2 Each named file runs on a PR lane, or the reason it does not is recorded
 - [x] #3 The task notes explain why load_settings() raises RecoveryRequired in these files' plain tests, and the cause is either fixed or recorded as intended
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Backlog integration 2026-11-01: rebase source 98cd750 onto the confirmed PR3312 merge 3e55f1f. Preserve current-dev Settings assertions, active-profile diagnostics seeding, census order and security guards. Add only the remaining private-profile/DNS/JSON isolation and Tools inspector changes. Verify touched suites and added census nodes through the private-fixture runner; obtain final independent requesting-code-review approval before exact-head publication. ADR required: no new ADR. ADR paths: backlog/decisions/126-complete-local-backup-and-recovery.md; backlog/decisions/240-mcp-destination-retirement-tools-hub-in-settings.md. Reason: test isolation repairs and inspector copy implement existing boundaries.
+<!-- SECTION:PLAN:END -->
 
 ## Implementation Plan
 
