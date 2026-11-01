@@ -5,6 +5,7 @@
 - Design task: [TASK-38493](../../../backlog/tasks/task-38493%20-%20Design-native-phased-agent-workflows-in-a-shared-worktree.md)
 - ADR required: yes
 - ADR path: [ADR-285](../../../backlog/decisions/285-native-phased-agent-workflows.md) (Accepted; design only)
+- Implementation plan: [Native shared-worktree workflows](../plans/2026-11-01-native-phased-agent-workflows-implementation.md) (planning only)
 - Reason: Introduces durable phase/task authority, shared-worktree coordination,
   workflow timing and result ownership across Console and AgentRunsDB.
 - Approval state: the user selected native Console orchestration, coding before

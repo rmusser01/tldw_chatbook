@@ -1,0 +1,431 @@
+# Native Shared-Worktree Workflows Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Execute approved coding phases with native agents in one existing worktree, retaining truthful results and explicit restart recovery.
+
+**Architecture:** Keep execution in ConsoleRuntime, the controller/bridge and AgentService/FleetCoordinator. Extend existing automatic admission, physical ownership, atomic file tools, evidence and Change Review owners with workflow-specific authority, activity reservations and durable results. Views project state; they never launch workers or own grants.
+
+**Tech Stack:** Python >=3.12, Textual >=8.0.0,<9, SQLite, Pydantic, existing native provider/tool integrations, pytest. No new runtime dependency.
+
+**Spec:** [Approved shared-worktree design](../specs/2026-11-01-native-phased-agent-workflows-design.md)
+
+**Decision:** [ADR-285](../../../backlog/decisions/285-native-phased-agent-workflows.md)
+
+**Planning task:** [TASK-38523](../../../backlog/tasks/task-38523%20-%20Plan-native-shared-worktree-workflow-implementation.md)
+
+**Baseline:** finalized design commit `8f989edc9f`. Source mapping was inspected in the current dirty checkout; unrelated staged additions are not implied to be committed prerequisites. Recheck the integrated source, symbols and schema before execution.
+
+**Status:** Written for implementation review; all ten implementation tasks remain To Do. This plan authorizes no product execution by itself.
+
+```text
+ADR required: no
+ADR path: backlog/decisions/285-native-phased-agent-workflows.md
+Reason: Direct implementation of the accepted design. Amend that ADR/spec
+before changing scope, authority, timing, recovery or storage contracts.
+```
+
+## Global Constraints
+
+These constraints apply to every task; quoted requirements are copied from the spec.
+
+- "Tasks work in the same selected worktree, including its existing uncommitted content."
+- "Stop preserves edits." No child/integration checkout, automatic Git mutation, PR publishing, daemon or general DAG engine.
+- "Tool access narrows existing permissions; plan prose and task results grant no authority."
+- "Goal and fleet absolute deadlines remain unchanged." Goals retain their no-child policy.
+- "Restore, import, UI selection or a transcript row cannot reconstitute an old execution capability."
+- "Opening history or constructing the workflow service never runs a second global sweep."
+- "Detailed native run logs remain supplementary and may be disabled or truncated without losing required handoffs."
+- "No workflow feature silently enables capture or turns snapshots into a general rollback guarantee."
+- The execution coordinator is app-owned; no additional repeating workflow poller, permission store, execution loop or budget ledger.
+- Read each Backlog task before changing code, set it In Progress and add its own Implementation Plan then. The linked To Do records intentionally contain outcomes, dependencies and document references rather than premature per-task plans.
+- Honor the user's shared-worktree instruction during execution too. Preserve unrelated work and stage/commit only the current task's paths/hunks. Never run broad add/reset/clean/stash commands.
+- Run targeted checks only. Do not run a full suite without the user's explicit request. Read the applicable testing/live-verification lessons and UI constitution before those slices.
+
+### Bounds and policy names
+
+| Contract | Exact value |
+| --- | --- |
+| Plan | 128 KiB; six execution phases; twelve task definitions; 64 footprint entries per task |
+| Required result storage | 128 KiB per record; 4 MiB per workflow; 128 MiB aggregate workflow payloads |
+| Settings gate | `[agents] workflow_runs_enabled = false` |
+| Accepted planning/execution attempts | `max_workflow_generations = 8` |
+| Task launches | `max_workflow_child_launches = 12` |
+| Provider calls, including helpers/fallback | `max_workflow_model_calls = 32` |
+| Tokens | `max_workflow_budget_tokens = 500000` |
+| Per-call output tokens | `max_workflow_output_tokens = 8192` |
+| Cumulative active seconds | `max_workflow_wall_seconds = 900`; label as active time, not ordinary elapsed deadline |
+| History/task page | At most 50 rows |
+
+Use existing finite-integer parsing; booleans/nonfinite values never become limits. Zero disables admission. Limits snapshot at creation, intersect live reductions, and never refill on approval/revision/resume. Normal task-native budgets also apply. Insufficient remaining allowance pauses useful work honestly rather than promising plan completion.
+
+## Before starting Task 1
+
+- [ ] Read the spec, ADR, `Docs/Architecture/{console,agent-runtime,tool-catalog,console-file-authority,database-layer,backup-recovery}.md` and `backlog/docs/lessons-{testing-evidence,live-verification,backlog-hygiene}.md`.
+- [ ] Record exact checkout/root, HEAD, source changes and AgentRuns schema. Schema 24 was inspected; allocate the next actual integrated version at execution, without reserving or renumbering a shipped migration here.
+- [ ] Reproduce the historical bootstrap failure with existing isolated configuration fixtures:
+
+```bash
+.venv/bin/python -m pytest -q --tb=short Tests/Agents/test_fs_read_ledger.py Tests/Agents/test_local_tool_provider.py::test_two_writer_race_refuses_second_writer Tests/Agents/test_fleet_runtime.py::test_two_children_run_concurrently_and_wait_collects_both
+```
+
+Expected prerequisite: those existing paths execute their claimed bodies. Earlier observations were seven ledger passes, five provider/fleet failures and a teardown error; the isolated provider failed at `raw_source_selection_changed` before useful execution. Attribute any current failure before editing workflow code. Do not bypass bootstrap/storage admission, alter live config, or call an unrelated red green by testing a replacement harness. If a prerequisite has an existing task owner, report that dependency instead of repairing it under an unrelated slice.
+
+- [ ] Pin tests to private temporary profile/data/config paths and existing bootstrap markers. Use actual native owners for acceptance tests; scripted provider turns are suitable for deterministic control flow, not live-provider qualification.
+
+## File and ownership map
+
+New modules are proposed exact paths; create only the responsibility described. Existing large owners receive narrow wiring, not wholesale rewrites.
+Product paths in task file lists are relative to `tldw_chatbook/`; `Tests/`,
+`Docs/` and `backlog/` paths are repository-relative. Inline API signatures are
+contracts to implement, not claims that those new APIs already exist.
+
+| Owner | Responsibility |
+| --- | --- |
+| `Agents/workflow_models.py` | Strict immutable requests, revisions, tasks, decisions, results and snapshots; reuse compatible Goal binding/provider value types and AutomaticWorkLimits. |
+| `DB/workflow_runs.py` | Workflow structural state, private payload reservations, revision and task-launch/result CAS in AgentRunsDB. |
+| `DB/recovery_workflow_schema.py` | Exact installed constructor/migration catalog delta and inert restored-row validation. |
+| `Workspaces/worktree_activity.py` | Runtime-owned complete read/write/opaque activity claims, tied to ExecutionOwner drain. No execution or accounting. |
+| `Agents/workflow_task_scope.py` | Private per-run task authorization and restriction adapters; actual provider ownership/path validation remains authoritative. |
+| `Agents/workflow_run_service.py` | Finite offloaded lifecycle/read/checkpoint/evidence/recovery operations over existing persistence owners. |
+| `Chat/console_workflow_runs.py` | Phase authority, native scheduling, dependency settlement and Console lifecycle integration. |
+| `UI/Console_Modules/workflows.py` | Late-bound view/controller wiring only. |
+| `Widgets/Console/console_workflow_setup.py`, `console_workflow_status.py` | Setup and bounded status/history/detail projections, using existing patterns. |
+| Existing `AgentService`, controller/bridge/runtime, automatic ledger/context, file workers and Change Review | Keep provider execution, permissions, accounting, physical retirement and change ownership. |
+
+Do not add a child executor alongside AgentService, a second database connection pool, generic plugin registry or abstract workflow engine. Put SQL behind the existing AgentRunsDB transaction owner. The first storage slice includes constructor/recovery/backup compatibility so there is no interval where shipped schema cannot be restored.
+
+## Delivery order
+
+| Step | Task | Dependencies | Reviewable deliverable |
+| --- | --- | --- | --- |
+| 1 | [TASK-38524](../../../backlog/tasks/task-38524%20-%20Persist-bounded-workflow-plans-and-private-task-results.md) | Planning | Passive durable plans/results with exact recovery catalogs |
+| 2 | [TASK-38525](../../../backlog/tasks/task-38525%20-%20Admit-workflow-attempts-with-cumulative-active-time-budgets.md) | 1 | Typed admission and distinct workflow timing/settings |
+| 3 | [TASK-38526](../../../backlog/tasks/task-38526%20-%20Coordinate-complete-worktree-footprints-across-native-runs.md) | 1 | Pure/testable activity reservation owner |
+| 4 | [TASK-38527](../../../backlog/tasks/task-38527%20-%20Preserve-observed-content-preconditions-through-edits-and-patches.md) | 1 | Existing atomic file operations retain observed digests |
+| 5 | [TASK-38528](../../../backlog/tasks/task-38528%20-%20Enforce-workflow-task-scope-at-native-tool-invocation.md) | 1–4 | Enforced run-bound task scope |
+| 6 | [TASK-38529](../../../backlog/tasks/task-38529%20-%20Share-the-existing-fleet-child-launch-path-without-behavior-drift.md) | 1, 2, 5 | Shared native child-launch seam with parity evidence |
+| 7 | [TASK-38530](../../../backlog/tasks/task-38530%20-%20Checkpoint-workflow-evidence-and-recover-explicit-resume.md) | 1–3 | Exact checkpoint/freshness and conservative restart service |
+| 8 | [TASK-38531](../../../backlog/tasks/task-38531%20-%20Schedule-approved-phases-through-the-existing-Console-runtime.md) | 1–7 | Complete headless native phase path, disabled by default |
+| 9 | [TASK-38532](../../../backlog/tasks/task-38532%20-%20Expose-workflow-setup-and-phase-controls-in-Console.md) | 8 | Mounted native controls and navigation |
+| 10 | [TASK-38533](../../../backlog/tasks/task-38533%20-%20Qualify-shared-worktree-workflows-across-execution-and-restart.md) | 8–9 | Retained A1–A12 and real-provider qualification |
+
+Each task ends with targeted checks, diff/self-review, concise implementation notes, AC updates and a scoped commit. Do not mark a task Done on a planned test or unexecuted assertion. The default order is sequential; task independence is not authorization to launch subagents during planning.
+
+<a id="task-1"></a>
+## Task 1: Bounded models, durable state and private results
+
+**Task:** TASK-38524. **Coverage:** spec 2–3, 7–8; A9/A11/A12 foundations.
+
+**Files:** Create `Agents/workflow_models.py`, `DB/workflow_runs.py`, `DB/recovery_workflow_schema.py`, `Tests/Agents/workflow_support.py`, `Tests/Agents/test_workflow_models.py`, `Tests/DB/test_workflow_runs.py`, `Tests/DB/test_workflow_runs_migration.py`, `Tests/Backup_Recovery/test_workflow_recovery_schema.py`. Modify `DB/AgentRuns_DB.py`, `DB/recovery_core_schema.py`, `DB/recovery_core.py`, relevant existing `DB/recovery_operations.py` paths, and the next actual `DB/migrations/agent_runs_*.sql`. All product paths here are under `tldw_chatbook/`.
+
+**Interfaces produced:** strict `WorkflowRequest`, `WorkflowPlan`, `WorkflowTaskSpec`, `WorkflowDecision`, `WorkflowTaskResult`, `WorkflowSnapshot`, `WorkflowTaskAttempt`, `WorkflowCheck` and `WorkflowPayloadReservation` values. `WorkflowRequest` contains `conversation_id`, `objective`, `binding`, `targets` and `policy`; reuse compatible `GoalBindingRef`, `GoalProviderRef`, and `AutomaticWorkLimits` as structural values, not Goal execution authority. `WorkflowSnapshot` includes `id`, `chain_id`, immutable `request`, `control_revision`, separate `progress_cursor`, `status`, saved revisions/results and accounting. `WorkflowRunsStore(db)` exposes `create(request, *, launch_id) -> WorkflowSnapshot`, `get(workflow_id) -> WorkflowSnapshot`, bounded `list_for_conversation(conversation_id, *, limit, offset)`, result capacity reservation/read/removal and revision CAS. These create no execution capability.
+
+- [ ] **1. Add real failing boundary and SQLite tests.** Reject duplicate JSON keys, boolean/nonfinite limits, more than six phases/twelve tasks/64 scopes, invalid earlier dependencies and multibyte overflow. Prove duplicate launch identity and all-or-nothing chain creation. Define the following small shared test factory; it grants no live authority:
+
+```python
+from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits
+from tldw_chatbook.Agents.goal_models import GoalBindingRef, GoalProviderRef
+from tldw_chatbook.Agents.workflow_models import WorkflowRequest
+
+def make_workflow_request(root):
+    return WorkflowRequest(
+        conversation_id="workflow-test-chat", objective="Correct the selected source",
+        binding=GoalBindingRef(workspace_id="w", binding_id="b",
+            locator=str(root.resolve()), access="rw"),
+        targets=(GoalProviderRef(provider="openai", model="test-model",
+            config_ref="api_settings.openai", authority_ref="unauthenticated",
+            endpoint_ref="provider-default"),),
+        policy=AutomaticWorkLimits(generations=8, child_launches=12),
+    )
+```
+
+```python
+def test_duplicate_start_preserves_identity_and_no_dispatch(tmp_path):
+    from contextlib import closing
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.workflow_runs import WorkflowRunsStore
+    from Tests.Agents.workflow_support import make_workflow_request
+    with closing(AgentRunsDB(tmp_path / "runs.db")) as db:
+        store = WorkflowRunsStore(db)
+        first = store.create(make_workflow_request(tmp_path), launch_id="start-1")
+        again = store.create(make_workflow_request(tmp_path), launch_id="start-1")
+        assert (first.id, first.chain_id) == (again.id, again.chain_id)
+        assert first.status == "awaiting_plan"
+```
+
+- [ ] **2. Run the two new focused modules red.** Expected failure is absent workflow behavior, not bootstrap, an invalid fixture or unrelated source import. Run `.venv/bin/python -m pytest -q Tests/Agents/test_workflow_models.py Tests/DB/test_workflow_runs.py`.
+- [ ] **3. Implement storage behind the existing transaction owner.** Use immutable plan rows, separate control/progress revisions, unique workflow/phase/task identities and parameterized SQL. Create the chain and workflow structural rows in one existing connection-taking FULL transaction; never nest independent commits. Reserve required payload storage before dispatch, refuse overflow without truncating success, and retain tombstones after settled payload removal. Check exact run/workflow/attempt ownership before result publication. Missing required payload is a failure, not empty success.
+- [ ] **4. Migrate and qualify recovery in this slice.** Choose the next actual version; preserve every shipped migration and existing catalog. Capture exact installed SQL via the current recovery catalog pattern; add workflow tables/indices/triggers, row validation, staging and inert-import handling. Cover actual old-schema data, upgrade, reopen, duplicate migration, malformed/cross-owned rows, active evidence retention, capacity refusal, and complete backup/rebackup. Required payload storage stays within the existing admitted private store; do not introduce another root.
+- [ ] **5. Run new tests plus** `Tests/DB/test_automatic_work_migration.py`, `Tests/DB/test_goal_runs_migration.py`, `Tests/Backup_Recovery/test_agent_runs_recovery_schema.py`, `Tests/Backup_Recovery/test_goal_recovery_schema.py`. Expected: all named checks execute the real SQLite/catalog paths and pass.
+- [ ] **6. Review and commit only this slice.** Confirm ordinary DB opens create no new runtime or global recovery sweep. Record exact chosen migration/catalog changes, tested archive paths and payload limits; commit message `feat: persist bounded native workflow state`.
+
+<a id="task-2"></a>
+## Task 2: Workflow admission, accounting, active intervals and Settings
+
+**Task:** TASK-38525. **Coverage:** spec 5–6/8; A5/A7/A11.
+
+**Files:** Modify `Agents/workflow_models.py`, `Agents/automatic_work_budget.py`, `Agents/automatic_work_runtime.py`, `DB/automatic_work.py`, `Chat/console_chat_models.py`, `Chat/console_automatic_submission.py`, `DB/recovery_workflow_schema.py`, `DB/recovery_core_schema.py`, `DB/recovery_core.py`, `config.py`, `UI/Screens/settings_screen.py`; create the phase-authorization portion of `Chat/console_workflow_runs.py`, `UI/Screens/settings_workflow_policy.py`, `Tests/DB/test_workflow_attempts.py`, `Tests/DB/test_workflow_active_time.py`, `Tests/Agents/test_workflow_policy.py`, `Tests/UI/test_console_workflow_settings.py`. Extend the exact storage/catalog delta introduced in Task 1 using the next unshipped migration, never editing a shipped one.
+
+**Consumes:** Task 1 state and native automatic reservations. **Produces:** `ConsoleSubmissionOrigin.WORKFLOW_PHASE`; `AutomaticWorkContext.attempt_kind == "workflow_phase"`; immutable-origin `policy_kind == "workflow_phase"`. Add ledger APIs `prepare_workflow_phase(workflow_id, *, revision_id, phase_id, owner_id, session_id, command_id) -> WorkflowPhaseAttempt`, `accept_workflow_phase(attempt_id, *, owner_id) -> bool`, and `claim_workflow_task(attempt_id, *, task_id, owner_id) -> WorkflowTaskAttempt`. The attempt values contain exact workflow/revision/phase/chain/session/owner/state and stable identities. `WorkflowPhaseAuthorization` is private process-local custody issued only after native owner validation and FULL acceptance; an accepted database ID alone is not its constructor.
+
+- [ ] **1. Add failing duplicate-acceptance, wrong-owner and active-time tests** using real SQLite and injected wall/monotonic clocks, following `Tests/DB/test_automatic_work_deadlines.py`. Check identical decisions return the original attempt, conflicting payloads refuse, revocation wins before effect dispatch, and prepared/uncertain work never grants replay.
+- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/DB/test_workflow_attempts.py Tests/DB/test_workflow_active_time.py Tests/Agents/test_workflow_policy.py`. Inspect failure cause before implementation.
+- [ ] **3. Extend every automatic-kind reader/acceptance/recovery branch together.** Audit the controller's origin-specific handling, `_read_attempt`, `policy_kind`, enabled-setting selection, SQL attempt-kind constraints, active-per-conversation index, admission guards and restore activation. Reuse physical attempt storage without inventing child completion claims. Workflow calls/children charge their one workflow allowance; manual requests stay manual. Example required policy assertion:
+
+```python
+def test_workflow_policy_does_not_inherit_goal_or_wake_settings(monkeypatch):
+    from tldw_chatbook.Agents import run_log
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkLimits
+    monkeypatch.setattr(run_log, "_setting", lambda key, default: default)
+    limits = AutomaticWorkLimits.from_settings("workflow_phase")
+    assert limits.generations == 8
+    assert limits.child_launches == 12
+    assert limits.wall_seconds == 900
+    assert AutomaticWorkLimits.from_settings("goal_iteration").child_launches == 0
+```
+
+- [ ] **4. Implement workflow-only union-of-active-interval accounting.** Open before attributable dispatch, retain charging through alive/unknown cleanup, and close only after positive drain and durable settlement. Parallel task durations overlap rather than add. Fully drained persisted review/capacity waits exclude time; an unproven permission wait does not. Persist charged time and clock owner; foreign open intervals cannot become zero after restart. No workflow deadline reset through approvals or limits raised later. Keep existing Goal/wake absolute deadlines byte/behavior compatible.
+- [ ] **5. Fold canonical Settings and config into this slice.** Follow `settings_goal_policy.py` draft/Save/Revert/validation patterns using the exact workflow keys/defaults above, labels that distinguish active seconds, and zero-disable behavior. Do not add the retired settings surface. Run new tests plus `Tests/DB/test_automatic_work_budget.py`, `Tests/DB/test_automatic_work_deadlines.py`, `Tests/Agents/test_goal_models.py`, `Tests/UI/test_console_goal_settings.py` and the new workflow Settings tests.
+- [ ] **6. Review and commit.** Include overnight review, two overlapping clocks, live reduction, exhaustion, clock reversal and interrupted interval receipts. Commit `feat: admit workflow phases with retained active-time budgets`.
+
+<a id="task-3"></a>
+## Task 3: Complete runtime worktree activity claims
+
+**Task:** TASK-38526. **Coverage:** spec 4; A3/A4/A6/A8.
+
+**Files:** Create `Workspaces/worktree_activity.py`, `Tests/Workspaces/test_worktree_activity.py`; modify `Chat/console_runtime.py` for lazy construction and `Agents/execution_capacity.py` only where existing drain integration requires it. Reuse existing path/root identity validation, not a new normalization algorithm.
+
+**Consumes:** captured admitted roots and `ExecutionOwner`. **Produces:** immutable `WorktreeFootprint(reads, writes, opaque)` with exact/subtree scope entries and a `WorktreeActivity` owner. `try_acquire(*, owner: ExecutionOwner, footprint: WorktreeFootprint) -> WorktreeActivityClaim | None` acquires a complete claim without waiting. `claim.settle(*, durable: bool)` records conclusive journal settlement; release requires that plus `on_drained(True)`. No public force-release. `WorktreeFootprint.opaque` is runtime-wide; ordinary unclassified root work is whole-root exclusive. Scope paths have `path: Path` and `subtree: bool`; inputs must come from the existing admitted resolver.
+
+- [ ] **1. Add real-path/barrier tests** for read/read sharing, write/read conflicts, directory create/list conflicts, alias/nested-root overlap, complete multi-root admission, refusal unwind and opaque effects. Use actual ExecutionOwner operations and stable real root identity controls.
+- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Workspaces/test_worktree_activity.py`.
+- [ ] **3. Implement only reservation logic.** All-or-none under one short owner lock; no I/O, callbacks or model calls in that lock. Take a runtime-wide opaque claim before any per-root claims, never upgrade while holding a partial claim. Acquire footprint before nonblocking native capacity; capacity refusal unwinds the unlaunched footprint. Use absolute canonical target relationships with captured identities to reconcile alias/case/subtree semantics. This module never launches work or charges a budget.
+- [ ] **4. Bind retirement exactly:**
+
+```python
+# Registration pattern inside the activity owner; the callback receives proof.
+owner.on_drained(lambda proven: activity.record_drain(claim.id, proven=proven))
+```
+
+`record_drain(claim_id, *, proven: bool)` is a private idempotent method of `WorktreeActivity`; `settle(durable=True)` and a positive drain must both exist before removing a claim. A negative outcome, terminal row or Stop preserves the claim. `claim.attach_child(owner: ExecutionOwner)` retains a normal turn tree's existing reservation for a genuinely admitted native child before thread start; it does not reacquire a conflicting footprint. Release waits for every attached owner's positive drain and required durable settlement. Only trusted launch custody can attach a child, never a model-supplied ID. Callbacks run outside the capacity lock. Add the regression with a timed-out tool physically held after its caller returned and a second attempted claim refused until release.
+- [ ] **5. Run new tests plus** `Tests/Agents/test_execution_capacity.py`, `Tests/Chat/test_fleet_execution_ownership.py`, `Tests/Workspaces/test_change_review_finalization.py`. Check actual native fixture file existence before selecting each regression; changed names are reconciled in task notes rather than replaced by weaker tests.
+- [ ] **6. Review and commit** `feat: coordinate runtime worktree activity through physical drain`. Actual ordinary-turn/phase admission wiring is Task 8; this slice creates no global singleton or second scheduler.
+
+<a id="task-4"></a>
+## Task 4: Atomic observed-content checks for edit and patch
+
+**Task:** TASK-38527. **Coverage:** spec 4; A2/A3/A10.
+
+**Files:** Modify `Tools/local_tool_impls.py`, `Tools/patch_tool_impls.py`, `Tools/workspace_tool_worker.py`, `Tools/workspace_tool_protocol.py` only if the existing closed request schema needs a precondition field, and `Agents/local_tool_provider.py`; extend `Tests/Tools/test_patch_tool_impls.py`, `Tests/Agents/test_local_tool_provider.py`; create `Tests/Tools/test_edit_patch_preconditions.py`. Reuse existing local/remote worker dispatch and read-ledger parsing.
+
+**Consumes:** existing `_atomic_write_target`, digest/absence validation, workspace workers. **Produces:** edit/patch mutation carries the digest of its actual read bytes into the existing atomic writer; workflow dispatch can require a non-blind precondition. No second file-writing implementation and no promise of whole-patch transactionality.
+
+- [ ] **1. Add a held-read race** that replaces bytes between edit/patch read and mutation, then prove the peer's bytes survive. Also test absent→created, disappearing targets, ledger eviction, same-agent repeated writes and multi-target partial effect reporting. Do not rely only on a sequential provider stale check.
+- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Tools/test_edit_patch_preconditions.py`.
+- [ ] **3. Carry observed bytes through the existing primitive:**
+
+```python
+import hashlib
+
+def observed_digest(original_bytes):
+    return hashlib.sha256(original_bytes).hexdigest()
+
+# At the existing edit/modify-patch write site, hash the actual read bytes,
+# preserve newline bytes, then pass expected_sha256 into _atomic_write_target.
+```
+
+The example demonstrates the calculation, not a required new one-line helper. Keep it inline at the existing read/write sites. Preserve path validation, descriptor/no-follow behavior, permission errors, dry-run semantics and lock-contention classification. Workflow `fs_write` requires an actual read/absence precondition even when the bounded ledger evicts an entry; the ordinary non-workflow blind-write contract stays unchanged.
+- [ ] **4. Exercise local and remote protocol paths.** Any added host-originated precondition is validated by the closed worker schema; never allow model arguments to forge workflow authority. Distinguish pre-dispatch refusal, settled mutation and uncertain/partial effects using existing typed worker receipts. A partial multi-file patch is not automatically retried wholesale.
+- [ ] **5. Run** the new module, `Tests/Tools/test_patch_tool_impls.py`, relevant stale-write cases in `Tests/Agents/test_local_tool_provider.py`, `Tests/Agents/test_fs_read_ledger.py`, and affected `Tests/Tools/test_remote_executor_loopback.py` cases. Include platform-supported lock races without claiming advisory locks constrain arbitrary external editors.
+- [ ] **6. Review and commit** `fix: preserve observed bytes through atomic edit and patch`. Check every caller of changed functions and update worker fixtures in the same slice.
+
+<a id="task-5"></a>
+## Task 5: Run-bound scope at every native invocation
+
+**Task:** TASK-38528. **Coverage:** spec 3–5; A2/A3/A5.
+
+**Files:** Create `Agents/workflow_task_scope.py`, `Tests/Agents/test_workflow_task_scope.py`; modify `Agents/agent_runtime.py`, `Agents/agent_service.py`, `Agents/tool_catalog.py`, `Agents/local_tool_provider.py` and necessary existing builtin/raw-shell/virtual/skill dispatch seams. No new tool provider with duplicate filesystem behavior.
+
+**Consumes:** accepted phase custody from Task 2, task definitions from Task 1, footprints from Task 3 and required atomic preconditions from Task 4. **Produces:** private `WorkflowTaskAuthorization` containing its exact phase/task attempt, native run, immutable mode/tools/scopes and live authority guard. `check_task_call(authorization, *, registry, call: ToolCall) -> None` raises a stable refusal on mismatch; its host-owned issuer requires a live accepted phase authorization and claimed task. IDs in tool arguments never select authority. Final invocation uses the same bound restriction after waits.
+
+- [ ] **1. Add negative tests** covering wrong/outside/nested alias, readonly/revoked binding, shared-provider sibling identity, alternate builtin `write_file`, a previously approved-session shell, progressive discovery, skill spawning, child/new-chat callbacks and unknown-effect MCP. Test the actual dispatch entry, not just the pure scope predicate.
+- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Agents/test_workflow_task_scope.py`.
+- [ ] **3. Wire narrowing around existing owners:**
+
+```python
+# Existing guard/dispatch closures retain actual registry owner resolution.
+check_task_call(authorization, registry=registry, call=call)
+# Only then proceed through the unchanged native permission owner.
+```
+
+Filter advertised tools by captured mode, but enforce the same boundary at runtime callbacks and actual invocation. Invoke-bound checks use the actual current run/task, captured native binding and registry owner; `PathAwareToolProvider.path_targets` is not a new permission grant. A sibling sharing LocalToolProvider must not see or overwrite another task's restriction. Do not replace configured hooks; compose restriction-only behavior with their current ordering and fail-closed rules.
+- [ ] **4. Check opaque mode separately.** It requires the Task 3 runtime-wide reservation and existing exact tool permission, shell arming or script trust. Serialization never converts shell/remote authority into confinement. Additional scope/dependency needs stop for replanning; neither Allow nor task prose widens the footprint. Required input/handoff paths must resolve to admitted sources.
+- [ ] **5. Run new tests plus** `Tests/Agents/test_tool_catalog.py`, `Tests/Agents/test_tool_catalog_owner_cache.py`, `Tests/Agents/test_local_tool_provider.py` affected cases, `Tests/Agents/test_fleet_runtime.py` runtime-tool gates and `Tests/Chat/test_response_rules_goal_intersection.py` to preserve existing hook/Goal separation. Add typed private-source and negative forged-ID tests at every new callback.
+- [ ] **6. Review and commit** `feat: enforce native workflow task scope at dispatch`. Inventory each supported effect route and its negative test in task notes; unsupported opaque operations refuse rather than silently falling back.
+
+<a id="task-6"></a>
+## Task 6: Share native child launch without changing ordinary fleet behavior
+
+**Task:** TASK-38529. **Coverage:** spec 2/5; A1/A5/A6.
+
+**Files:** Modify `Agents/agent_service.py`, `Agents/fleet_coordinator.py` only where needed for typed durable membership; create `Tests/Agents/test_workflow_child_launch.py`; extend `Tests/Agents/test_fleet_runtime.py`, `Tests/Agents/test_fleet_continuation.py`, and affected routing/hook/client tests. Keep execution helpers in the existing service unless a cohesive child-launch implementation warrants a single adjacent file; no generic worker framework.
+
+**Consumes:** native spawn/continuation, Task 2 phase/task claims and Task 5 authorization. **Produces:** a shared private prepared-child launch path and, for Task 8 integration, `AgentService.launch_workflow_task(task: WorkflowTaskSpec, *, authorization: WorkflowTaskAuthorization, should_cancel: Callable[[], bool]) -> WorkflowChildReceipt`. `WorkflowChildReceipt` contains `attempt_id`, `run_id`, `handle_id` and its `ExecutionOwner`; it grants no new authority. The runtime-only caller must supply Task 5 custody; that module, including its type, must be present before positive workflow dispatch is enabled. Ordinary spawning still enters the same shared private launcher with ordinary native custody. A persisted identifier cannot call this seam directly.
+
+- [ ] **1. Characterize actual `_launch_fleet_child`, `spawn`, continuation and finalization callers** before moving code. Add assertions for one capacity reservation, one persisted run, owner/run binding, exactly one hook lifecycle, frozen endpoint/fallback refs, current per-run approval stamps, provider closure and result settlement. Cover a child surviving its parent, cancelled/uncertain workers and failed thread start.
+- [ ] **2. Run the existing cases before refactoring:** `.venv/bin/python -m pytest -q Tests/Agents/test_fleet_runtime.py Tests/Agents/test_fleet_continuation.py Tests/Chat/test_fleet_client_lifecycle.py`. Retain actual bootstrap failures separately; do not use the refactor to hide them.
+- [ ] **3. Extract the existing composition/launch tail with explicit captured inputs.** Preserve per-turn roster, instruction activation, task budget, native origin, model client and cancellation closures. Never retain a closure into a later phase's mutable turn state. Ordinary inline/skill paths and `max_live_subagents <= 1` behavior remain unchanged. Host-planned shared-worktree tasks use the same authority and capacity owners and cannot select isolation as a side effect.
+
+```python
+def test_untrusted_host_launch_never_creates_a_child(service):
+    import pytest
+    # `service` is the existing real AgentService fixture used by this module.
+    with pytest.raises(PermissionError):
+        service.launch_workflow_task(
+            None, authorization=None, should_cancel=lambda: False
+        )
+```
+
+Define the `service` fixture in the new test module with the same real temporary AgentRunsDB/registry construction used in `Tests/Agents/test_fleet_runtime.py`; record its original row and capacity counts and assert both remain unchanged. The deliberately invalid arguments must fail authorization before task construction or child creation.
+- [ ] **4. Preserve failure unwind.** Proven pre-dispatch refusal refunds only unconsumed reservations. An already claimed launch with unknown thread/provider/effect state remains inspectable and unavailable for replay. Root completion cannot release held model/tool operations. Do not change automatic survivor delivery yet; Task 8 adds typed membership handling with end-to-end tests.
+- [ ] **5. Run parity plus** `Tests/Agents/test_agent_routing_integration.py`, `Tests/Agents/test_fleet_stop_semantics.py`, `Tests/Chat/test_individual_fleet_settlement.py` and the new negative-launch module. Add positive approved-task tests when Task 5 custody is available; Task 8 must exercise the same seam with the actual coordinator.
+- [ ] **6. Review and commit** `refactor: share native fleet child launch custody`. Report moved behavior and measured regression results rather than claiming a new executor was built.
+
+<a id="task-7"></a>
+## Task 7: Required evidence, checkpoint settlement and explicit recovery
+
+**Task:** TASK-38530. **Coverage:** spec 7–8/11; A8/A9/A10/A11.
+
+**Files:** Create `Agents/workflow_run_service.py`, `Tests/Agents/test_workflow_run_service.py`, `Tests/Chat/test_workflow_recovery.py`, `Tests/DB/test_workflow_evidence_retention.py`, `Tests/DB/workflow_restart_child.py`; extend Task 1 store/recovery files and existing `Agents/goal_iteration.py` only for a genuinely shared bounded evidence primitive. Modify `Chat/console_runtime.py` startup-audit wiring, not a second global sweep.
+
+**Consumes:** Task 1 durable state, Task 2 claims/active time, Task 3 physical claims and existing persistence/manifest/recovery services. **Produces:** `WorkflowRunService(db, persistence)` with `call(operation, *args, **kwargs)` finite DB offload; `get(workflow_id) -> WorkflowSnapshot`; `checkpoint_task(result: WorkflowTaskResult, *, drained: bool) -> WorkflowSnapshot`; `prepare_decision(workflow_id, *, phase_id) -> WorkflowDecision`; `resume(workflow_id, *, expected_control_revision, command_id) -> WorkflowSnapshot`; `project_recovery(audit)`. `WorkflowDecision` captures `workflow_id`, `revision_id`, `phase_id`, `control_revision`, `predecessor_digest` and `input_manifest`. Quality-review and execution-recovery decisions have separate tagged types; one cannot clear the other.
+
+- [ ] **1. Add failing real-file/SQLite tests:** exact output/verifier/argument digests, stale inputs after review opens, missing/oversize mandatory data, wrong native run ownership, same-result idempotency and changed-result conflict. Turn native logs off or force truncation; reopen a fresh DB/process and require complete authoritative handoffs.
+- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Agents/test_workflow_run_service.py Tests/DB/test_workflow_evidence_retention.py Tests/Chat/test_workflow_recovery.py`.
+- [ ] **3. Adapt existing Goal evidence and lifetime patterns.** Use current bounded `capture_manifest`/freshness checks and typed process observations; do not call Goal execution, change its no-child policy or create another authority grant. Reserve/copy required results within Task 1 limits and retain active/uncertain references against pruning. Reuse `run_owned_db_call`/`operation_owned_connection` custody for the complete finite callback, including preflight work; never abandon thread-owned SQLite handles.
+
+```python
+def test_model_done_is_not_a_passed_check():
+    from tldw_chatbook.Agents.workflow_models import WorkflowCheck
+    check = WorkflowCheck(
+        verifier_id="unit-tests", outcome="missing", exit_code=None,
+        input_manifest=None, verifier_sha256=None,
+    )
+    assert check.outcome != "passed"
+```
+
+`WorkflowCheck`, introduced with Task 1 models, records `verifier_id`, `outcome` (`passed/failed/skipped/stale/missing`), optional typed exit code, input manifest and verifier digest. Real service tests must demonstrate how model-reported done plus missing process evidence prevents phase completion; the value assertion above is only the minimum schema example.
+- [ ] **4. Settle result, checkpoint/evidence, task status and its accounting in one FULL transaction after positive physical retirement.** Reuse existing Change Review window references with consent/exclusion/attribution disclosure; do not manufacture per-task diffs or force-enable capture. Stale evidence remains history but cannot authorize a dependent phase. Failure after a known effect retains uncertainty, charges and claim protection.
+- [ ] **5. Recover only through the existing startup owner.** Feed its one audit into workflow projection. Test fresh processes at prepared, accepted, thread-start, effect and result-commit boundaries. Clean waiting becomes Resume required, unknown effects Recovery required. Revalidate captured binding, provider/tools, results, input manifests and remaining allowance; fresh Resume custody never replays uncertain work or resets counters. A recovered/imported row is inert.
+- [ ] **6. Run new cases plus** `Tests/DB/test_goal_evidence_retention.py`, `Tests/DB/test_goal_restart_process.py`, `Tests/Chat/test_goal_storage_lifetime.py`, `Tests/Chat/test_console_goal_recovery.py` and relevant exact-schema backup cases. Review private payload removal/tombstones and commit `feat: checkpoint workflow evidence and conservative resume`.
+
+<a id="task-8"></a>
+## Task 8: Native phase scheduling and runtime-wide admission
+
+**Task:** TASK-38531. **Coverage:** spec 2/4–8/11; A1–A11 native integration.
+
+**Files:** Extend `Chat/console_workflow_runs.py`; modify `Chat/console_runtime.py`, `Chat/console_chat_controller.py`, `Chat/console_agent_bridge.py`, `Chat/console_automatic_submission.py`, `Chat/console_chat_models.py`, `Chat/console_fleet_wake.py`, relevant received-dispatch/lifecycle seams, and existing `Agents/agent_service.py` wiring. Create `Tests/Chat/workflow_rig.py`, `Tests/Chat/test_console_workflow_dispatch.py`, `Tests/Chat/test_console_workflow_scheduling.py`, `Tests/Chat/test_workflow_activity_admission.py`, `Tests/Chat/test_workflow_settlement_delivery.py`.
+
+**Consumes:** all Task 1–7 contracts. **Produces:** `ConsoleWorkflowCoordinator`, lazily owned by ConsoleRuntime, with `start(request: WorkflowRequest, *, launch_id) -> WorkflowSnapshot`; `approve(decision: WorkflowDecision, *, command_id) -> WorkflowSnapshot`; `pause(workflow_id, *, expected_control_revision)`, `stop(workflow_id, *, expected_control_revision)`, `resume(workflow_id, *, expected_control_revision, command_id)`, `revise(workflow_id, *, expected_control_revision, instruction, command_id)` and `subscribe(callback) -> Callable[[], None]`. Controls act on explicit IDs, never the viewed tab by inference. Reuse existing controller submission/native origin, runtime shutdown and progress/settlement events.
+
+- [ ] **1. Build failing integration journeys around real native owners.** In `Tests/Chat/workflow_rig.py`, provide `build_workflow_rig(tmp_path, monkeypatch, provider) -> WorkflowRig`, using existing isolated store/controller/gateway fixture construction and the Task 1 request factory. Its fields are `workflow`, `service`, `coordinator`, `controller`, `store`, `gateway`; methods are `wait_for_status(status, *, timeout=5)`, `close()`, `provider_release()` and `wait_for_provider_entry()`. Native owners must positively drain in cleanup. The test provider addresses roles/task IDs independently so concurrent agents cannot consume each other's scripted replies.
+- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/Chat/test_console_workflow_dispatch.py Tests/Chat/test_console_workflow_scheduling.py Tests/Chat/test_workflow_activity_admission.py Tests/Chat/test_workflow_settlement_delivery.py`.
+- [ ] **3. Admit read-only planning through typed custody and native per-session acceptance before billable preparation.** Persist the exact chosen existing chat and binding; an unsaved chat uses the current persistence owner before execution, not a second provisioning store. Plan review/approval validates exact control revision, target, inputs and remaining limits; repeated command IDs reuse receipts. Snapshot provider/preset/fallback choices and inherit current project-instruction/permission narrowing for each task.
+
+```python
+async def approve_same_decision_twice(rig, decision):
+    first = await rig.coordinator.approve(decision, command_id="approve-1")
+    again = await rig.coordinator.approve(decision, command_id="approve-1")
+    assert first.id == again.id
+    assert first.control_revision == again.control_revision
+```
+
+This helper is used by the real dispatch test with a held first task; additionally count physical provider entries, durable phase/task attempts and owner reservations. Identical snapshots alone cannot prove no duplicate launch.
+- [ ] **4. Schedule only eligible tasks from the accepted phase.** Use actual completion events, full footprint acquisition and the Task 6 native launch seam with Task 5 authority. Missing capacity leaves a task unlaunched and visibly pending; release any unconsumed claims. Hold phase authority/primary slot through settlement, but do not spend lead generations polling. The workflow phase coordinator holds its existing primary admission slot, not a second whole-worktree footprint that would conflict with its own tasks. Persist typed workflow child membership, exclude those children from ordinary fleet-autowake synthesis, and preserve unrelated fleet delivery. Reject recursive delegation and cross-phase source leakage.
+- [ ] **5. Wire activity admission for ordinary turns, Goals and survivor children too.** Unknown native root footprints claim whole admitted roots. Opaque-capable work acquires the runtime-wide opaque claim before any per-root claim, even when cwd is scratch. Resolve alias/nested overlap consistently. Acquire all claims without partial waits, before worker start; keep manual capacity reserves and existing explicit prompt-queue semantics. Ordinary parent/child trees share their captured reservation using `attach_child` rather than self-deadlocking on a second exclusive acquisition; survivor ownership keeps it alive after the parent returns. No ordinary run gets new budget or permission rules from this coordination. An active conflicting run receives the existing visible busy/refusal path, not a hidden persisted manual queue.
+- [ ] **6. Implement control transitions and finalization.** Status vocabulary: `awaiting_plan`, `planning`, `awaiting_phase_review`, `running`, `pausing`, `paused`, `stopping`, `stopped`, `recovery_required`, `awaiting_result_review`, `completed`, `removed`. Pause stops new task launches and drains admitted work; Stop also revokes/cancels. No callback from an older revision/owner can publish completion, release replacement claims or launch the next phase. A partial phase resumes only against a new explicit validated decision, retaining successful fresh results and old spend. Failed/blocked dependents require a repair plan. Distinguish task execution, objective verification, human quality acceptance and cleanup recovery.
+- [ ] **7. Run the new journeys plus** `Tests/Chat/test_fleet_runtime_admission.py`, `Tests/Chat/test_automatic_work_lineage.py`, `Tests/Chat/test_console_goal_dispatch.py`, `Tests/Chat/test_fleet_settle_fanout.py`, `Tests/Chat/test_console_runtime_lifetime.py`, `Tests/Chat/test_console_runtime_shutdown.py`, `Tests/Agents/test_execution_capacity.py`, and affected received/queued/voice dispatch cases selected from actual call-site changes. Retain held-worker Stop-before-dispatch, result-write failure and no-duplicate-wake controls. Commit `feat: schedule approved workflows through native Console owners` only after those pass.
+
+<a id="task-9"></a>
+## Task 9: Console setup, history, review and controls
+
+**Task:** TASK-38532. **Coverage:** spec 10–11; A8/A10/A12 UI.
+
+**Files:** Create `UI/Console_Modules/workflows.py`, `Widgets/Console/console_workflow_setup.py`, `Widgets/Console/console_workflow_status.py`, `Tests/UI/test_console_workflow_command.py`, `Tests/UI/test_console_workflow_controls.py`, `Tests/UI/test_console_workflow_navigation.py`. Modify `Chat/console_command_grammar.py`, `Chat/console_command_suggestions.py`, `UI/console_command_provider.py`, narrow handlers in `UI/Screens/chat_screen.py`, existing Console compose/status wiring, and source CSS/build manifest only if existing component patterns cannot express required states. Never edit the generated CSS bundle directly; rebuild it if sources change.
+
+**Consumes:** Task 8 coordinator snapshot/subscription and Task 7 service reads. **Produces:** `/workflow new` launch review and `/workflow` this-chat history; setup/status/history modal and a compact native status line. Detail view constructors take explicit coordinator/workflow identity and read no active-tab execution authority. The finite setup uses canonical workflow Settings from Task 2. Histories/task lists are paginated at at most 50 rows.
+
+- [ ] **1. Read** `backlog/docs/design-language.md`, `component-patterns.md`, `lessons-live-verification.md`, current Goal status/setup UI and existing mounted command tests. Add red native command and mounted tests using the Task 8 real rig, existing Textual App/Pilot and `Tests/UI/consolidated_css.py` patterns. Do not turn tests into method calls that skip real button/command paths.
+- [ ] **2. Run red:** `.venv/bin/python -m pytest -q Tests/UI/test_console_workflow_command.py Tests/UI/test_console_workflow_controls.py Tests/UI/test_console_workflow_navigation.py`.
+- [ ] **3. Wire late-bound commands and projections.** Show the current goal/binding, uncommitted-input baseline, frozen targets, task scopes/dependencies, limits and capture readiness before `Approve plan and start`. Never consume an unrelated draft or implicitly start from history selection. Views subscribe/unsubscribe to bounded snapshots and offload finite history/payload reads via the existing service; no timer or worker owns accepted execution.
+- [ ] **4. Implement exactly the approved controls.** At boundaries offer `Approve next phase`, `Revise remaining plan`, `Stop`; during execution `Pause`, `Stop`, existing task inspection/steering; final review `Accept result` or requested repair. Initial-plan approval starts phase one. Resume required and Recovery required are distinct. Quality acceptance cannot resolve execution uncertainty. Default focus is not the approving action. Old controls refuse/refresh against exact revision; duplicate clicks return the existing receipt.
+
+```python
+def test_workflow_commands_are_not_dispatched_as_ordinary_prompts():
+    from tldw_chatbook.Chat.console_command_grammar import (
+        CommandParse, default_console_registry,
+    )
+    parsed = default_console_registry().parse("/workflow new")
+    assert parsed == CommandParse("command", "workflow", "new")
+```
+
+The example uses the current `CommandParse` fields verified in `Tests/Chat/test_console_command_grammar.py`. Also test the full composer path through the native command provider and real launch review, preserving the draft/attachments.
+- [ ] **5. Exercise mounted layout and lifecycle.** Wait for actual visible/enabled hit geometry, assert each Pilot click returned true, and inspect durable state/charges after decisions. Cover Tab/Enter/Escape, narrow/wide layouts, disabled reasons, pending tool decisions, tab switches, background attention, view detach/remount and reopened saved workflows. Reuse fleet and exact Changes links; display consent off/exclusions/missing checks honestly. Preserve token-backed focus/contrast and existing global keybindings.
+- [ ] **6. Run new modules plus** affected existing command grammar/suggestion/composer tests, `Tests/UI/test_console_goal_controls.py`, `Tests/UI/test_console_goal_navigation.py`, `Tests/UI/test_design_token_governance.py`, `Tests/UI/test_component_pattern_governance.py`, `Tests/UI/test_css_bundle_sync_guard.py` if stylesheet integration changed. Update Console user guidance and commit `feat: expose native workflow phase controls in Console`.
+
+<a id="task-10"></a>
+## Task 10: Qualification and truthful documentation
+
+**Task:** TASK-38533. **Coverage:** all spec sections and A1–A12.
+
+**Files:** Add `Tests/Chat/test_workflow_native_journeys.py`, `Tests/DB/test_workflow_restart_process.py`, bounded actual-provider evidence under `Docs/superpowers/qa/2026-11-01-native-phased-agent-workflows/`; extend the Task 1–9 tests where the actual owner behavior belongs. Update `Docs/Architecture/console.md`, `Docs/Architecture/agent-runtime.md`, `Docs/Architecture/tool-catalog.md`, `Docs/Architecture/database-layer.md`, `Docs/Architecture/backup-recovery.md`, existing Console user/Settings guidance and task notes with the delivered contract. Add a lesson only if an actual incident yields reusable evidence.
+
+**Consumes:** the real accepted Console path and exact retained outputs, native process results and source/evidence manifests. **Produces:** an A1–A12 receipt matrix stating platform, source revision, actual path exercised, expected/observed behavior and limits. No new benchmark/eval framework or full-suite substitution.
+
+- [ ] **1. Run a deterministic native journey** with a goal that requires a small same-worktree correction, two independent tasks, an ordered dependent check and an independent review. Use actual SQLite and workers; count provider entries and effects. Keep a pre-existing user modification and assert it remains part of input and survives Stop.
+
+```python
+def assert_checked_process_result(evidence):
+    assert evidence.outcome == "passed"
+    assert evidence.exit_code == 0
+    assert evidence.input_manifest
+    assert evidence.verifier_sha256
+```
+
+Apply this to runtime-owned retained evidence, not model text or a fabricated fixture. Preserve a separate failed-command record (`failed`, nonzero actual code), the authorized correction, and a fresh passing record over the resulting exact inputs.
+- [ ] **2. Hold the real boundaries.** Exercise duplicate/reordered approvals, old revision decisions, Stop before start, unknown/late worker completion, callback ordering and failing FULL result commits. Verify no second launch, no released claim while a worker lives and no ordinary fleet wake for workflow-owned children. Exercise simultaneous edit/patch races and runtime-wide opaque admission across unrelated chats/aliases.
+- [ ] **3. Reopen fresh processes and actual backup candidates.** Cover prepared/accepted/result-commit crashes, read-only/stale bindings, source/verifier/config changes, logs off/truncated, missing/removed payloads, archive rebackup and inert restored history. A clean overnight review waits without active-time spend; unknown active intervals retain conservative charges. Preserve negative Goal/fleet timing controls.
+- [ ] **4. Qualify a real configured provider in a private profile/workspace** through actual mounted controls: start, plan approval, phase approvals, failed check, authorized correction, fresh passing check, final review, view detach and restart Resume. Do not use real user databases or request provider secrets in task files. Retain exact commands/outcomes/receipts with sensitive source/credentials excluded. If no suitable provider is available, keep this task In Progress and report the missing qualification; scripted tests are not a live pass.
+- [ ] **5. Run only the named affected modules from the earlier tasks and new journey modules.** Ruff lint/format the changed Python/test files using project tools, rebuild/check generated CSS only when affected, validate schema/recovery catalogs, links and scoped diff. Ask before any full sweep. For platform-specific filesystem/lock behavior, retain actual supported-platform results; modelled races are supplementary evidence.
+- [ ] **6. Update docs and completion records.** Distinguish present behavior from later research/general-task scope. Keep the feature disabled by default until this qualification is recorded; enabling it remains the user's explicit Settings action. Self-review code, confirm each AC and exact receipts, record no full-suite claim, and commit `test: qualify native shared-worktree workflows and recovery`. Do not push, merge or start unrelated work as part of closeout.
+
+## Coverage and handoff
+
+| Spec acceptance | Implemented/qualified by tasks |
+| --- | --- |
+| A1 Shared execution and launch compatibility | 3, 6, 8, 10 |
+| A2 Invocation scope and file races | 4, 5, 8, 10 |
+| A3 Dependencies | 1, 3, 5, 8, 10 |
+| A4 Coordination | 3, 8, 10 |
+| A5 Approval/dispatch | 1, 2, 5, 6, 8, 10 |
+| A6 Actual retirement | 3, 6, 7, 8, 10 |
+| A7 Time/accounting | 2, 7, 8, 10 |
+| A8 Freshness | 3, 7, 8, 9, 10 |
+| A9 Durable results | 1, 7, 8, 10 |
+| A10 Review truth | 4, 7, 9, 10 |
+| A11 Recovery/storage | 1, 2, 7, 8, 10 |
+| A12 Mounted/live flow and bounded reuse | 1, 6, 8, 9, 10 |
+
+Before handing the plan to an implementer, verify all file owners against the
+execution checkout, keep new APIs' names/types consistent across tasks, compile
+the Python examples as syntax checks, validate all local links/anchors and
+Backlog dependencies, scan placeholders, and check task IDs and whitespace.
+These documentation checks do not establish product behavior or resolve the
+historical bootstrap failure.
+
+Planning ends with this document and To Do tasks. Execution requires the user's
+next instruction. Offer either task-by-task inline execution using executing-plans
+or, if explicitly chosen, subagent-driven execution with review gates. Preserve
+the shared worktree in either case and never start implementation simply because
+the plan exists.

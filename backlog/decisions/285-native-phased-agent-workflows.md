@@ -4,6 +4,7 @@
 - Date: 2026-11-01
 - Task: [TASK-38493](../tasks/task-38493%20-%20Design-native-phased-agent-workflows-in-a-shared-worktree.md)
 - Spec: [Shared-worktree workflow design](../../Docs/superpowers/specs/2026-11-01-native-phased-agent-workflows-design.md)
+- Plan: [Native shared-worktree workflows](../../Docs/superpowers/plans/2026-11-01-native-phased-agent-workflows-implementation.md) (planning only)
 - Implementation: Not started
 - Governing contracts: [project instructions](069-console-project-instruction-local-state-and-preflight.md),
   [Change Review consent](084-change-review-consent-and-asynchronous-finalization.md),
