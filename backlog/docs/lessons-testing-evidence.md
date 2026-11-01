@@ -20499,3 +20499,22 @@ journey instead witnessed exact corrections consumed, unrelated work remaining
 live, actual worker Threads retired, durable worker results and successful native
 log/hook outcomes before app disposal. A receipt or whole-stack exit is not a
 worker-retirement witness. Generator yield/await events are not final returns.
+
+
+## Outcome uncertainty needs a target-isolation test
+
+**TASK-36769 final whole-feature review, 2026-11-01.** The existing66-case
+portable file passed while a same-target unknown-receipt case expected disabled
+controls. Native discovery actually returns retained pending/unknown receipts
+from the whole profile, including replaced owners. The client's global unknown
+flag consequently disabled unrelated freshly confirmed Chats, exact Stop and
+answerability indefinitely. Receiptless Stop/decision rows also lacked their
+original target, so filtering only received receipt targets would lose custody.
+The final correction retains action/target before the effect, scopes ambiguity
+and labels by applicable identity, preserves historical unknowns/no replay and
+keeps confirmed native Stop available. The93-case final epoch combines90 browser
+cases, actual native owner-replacement/discovery controls and the TLS original-ID
+journey. A same-target test is not cross-target isolation evidence: use a real
+retained predecessor outcome and an independently confirmed current target, and
+prove both old-outcome visibility and current control/decision behavior. Receipt
+delivery negatives must await the specific response and client processing.

@@ -1,9 +1,9 @@
 # Shared served Console and mobile qualification
 
-Task11 implementation and bounded qualification passed its original review and
-scoped fix rereview. This packet separates source/unit evidence, actual
-served-browser evidence, and physical phone/VPN qualification. Final whole-feature
-review remains pending; physical hardware and VPN checks remain open.
+Task reviews and whole-feature review, including their scoped corrections, are
+complete. This packet separates source/unit evidence, actual served-browser
+evidence, and physical phone/VPN qualification. The final code review covers
+the recorded source; physical hardware and VPN checks remain open.
 
 ## Actual served-browser evidence
 
@@ -204,7 +204,7 @@ The local handoff is
 and `task-11-final-manifest.json` in that directory, with exact commands, source
 hashes, raw failures, private fixture paths and process exits. These local evidence
 artifacts are not packaged runtime data. Task11 original review and scoped FIX1
-rereview are complete; final whole-feature review remains pending.
+rereview are complete; final whole-feature review and scoped correction are complete.
 Physical phone/VPN qualification remains **UNVERIFIED**;
 the full repository test suite was not run.
 
@@ -279,7 +279,7 @@ unrelated-receipt observer and T11-R06's Evals persistence error remain deferred
 minor findings. FIX1 evidence is appended to the local implementation report and
 recorded in `task-11-fix1-final-manifest.json`. Scoped rereview approved all four
 Important findings with no new findings at commit `2356c7ae94c1`; final whole-feature
-review remains pending. Physical phone/VPN remains **UNVERIFIED**.
+review and its scoped correction are complete. Physical phone/VPN remains **UNVERIFIED**.
 
 
 ## Final whole-feature correction
@@ -307,6 +307,12 @@ counts overlap and are not summed. Full-file Ruff/formatter on both changed Pyth
 files, native AST, JavaScript syntax and diff check pass without exclusions.
 New report/manifest: whole-feature-fix-implementer-report.md and
 whole-feature-fix-final-manifest.json in the existing local SDD directory. Earlier
-reports/manifests remain frozen. Scoped rereview is pending; Evals R06 and original
+reports/manifests remain frozen. Scoped rereview approved all three findings; Evals R06 and original
 warning/third-Create origin limits remain disclosed. Physical phone/VPN remains
 **UNVERIFIED**. No full repository test sweep was run.
+
+The same whole-feature reviewer approved WF-I01, WF-M01 and WF-M02 at
+`22bae10d3dd6`, with no new findings. The local
+`whole-feature-fix-rereview-findings.md` records the scoped verdict; the original
+review retains its stated coverage and CV-01–CV-03 qualifications. Completion
+metadata does not change the tested executable source.
