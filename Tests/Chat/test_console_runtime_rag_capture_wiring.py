@@ -38,6 +38,7 @@ def _runtime_controller(tmp_path: Path):
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
     store.create_session(session_id="session-1", title="Chat 1")
     runtime = ConsoleRuntime(type("App", (), {"app_config": {}})())
+    runtime.set_chat_store(store)
     controller = runtime.ensure_chat_controller(
         store=store,
         provider_gateway=_CheckpointObservingGateway(db),

@@ -1116,9 +1116,10 @@ needs one, when you send a reply with Library evidence. Until then
 Chatbook doesn't touch the keyring. Once records exist, it reads the key
 in the background just after startup to maintain them.
 
-When citation records can't be saved, the reply has no `[S1]` labels.
-Chatbook still sends the evidence, and asks the model to refer to each
-source by its title. This happens when no secure system keyring is
+When citation records can't be saved, Chatbook sends the evidence without
+`[S1]` labels and asks the model to refer to each source by its title.
+The model may still produce labels; these have no saved source map.
+This happens when no secure system keyring is
 available, or when records are turned off (`canonical_writes_enabled =
 false` under `[rag_citations]` in `config.toml`). A reply whose saved
 record can no longer be checked, for example because the keyring was

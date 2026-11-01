@@ -5030,6 +5030,13 @@ class TldwCli(
             and type(db) is CharactersRAGDB
             and not db.is_memory_db
         )
+        if type(repository) is CitationTraceRepository:
+            from .Chat.citation_key_first_use import (
+                ensure_fingerprint_key_off_loop, run_citation_db_call,
+            )
+
+            if await run_citation_db_call(db, repository.fingerprint_bearing_rows_exist):
+                await ensure_fingerprint_key_off_loop(repository)
         reconcile = coordinator.reconcile_pending
 
         def reconcile_in_worker():
@@ -5086,6 +5093,13 @@ class TldwCli(
                     and type(db) is CharactersRAGDB
                     and not db.is_memory_db
                 )
+                if type(repository) is CitationTraceRepository:
+                    from .Chat.citation_key_first_use import (
+                        ensure_fingerprint_key_off_loop, run_citation_db_call,
+                    )
+
+                    if await run_citation_db_call(db, os.path.lexists, migration.sidecar_path):
+                        await ensure_fingerprint_key_off_loop(repository)
                 migrate = migration.migrate_idle_unit
 
                 def migrate_in_worker():

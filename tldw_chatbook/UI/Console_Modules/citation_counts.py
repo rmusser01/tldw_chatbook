@@ -1,6 +1,5 @@
 """Finite citation-footer database work owned by its Console view worker."""
 
-import asyncio
 from collections.abc import Callable
 from typing import Any
 
@@ -21,13 +20,11 @@ def _read_with_first_use_key(
     repository: Any,
     eligible: tuple[tuple[str, str, str, str], ...],
 ) -> dict[str, int]:
-    """Acquire the deferred key, read counts, and mark unverifiable records.
+    """Read counts after readiness and mark genuinely unverifiable records.
 
     Runs on the owned worker thread (an in-memory database runs where it
-    lives), so the first-use keyring call never blocks the UI loop.
+    lives). Interactive key acquisition has already left DB custody.
     """
-    if getattr(repository, "fingerprint_key_pending", False):
-        repository.ensure_local_fingerprint_key()
     counts = reader(repository, eligible)
     if getattr(repository, "fingerprint_key_state", "ready") not in (
         _UNVERIFIABLE_KEY_STATES
@@ -53,31 +50,16 @@ async def read_citation_counts(
     eligible: tuple[tuple[str, str, str, str], ...],
 ) -> dict[str, int]:
     """Run the captured reader, retiring stock file-backed work before cancellation."""
-    from ...Chat.citation_trace_repository import CitationTraceRepository
-    from ...DB.base_db import run_owned_db_call
-    from ...DB.ChaChaNotes_DB import CharactersRAGDB
-
-    database = getattr(repository, "db", None)
-    operation = run_owned_db_call(
-        database, _read_with_first_use_key, reader, repository, eligible
+    from ...Chat.citation_key_first_use import (
+        ensure_fingerprint_key_off_loop,
+        run_citation_db_call,
     )
-    if (
-        type(repository) is not CitationTraceRepository
-        or type(database) is not CharactersRAGDB
-        or database.is_memory_db
-    ):
-        return await operation
-    worker = asyncio.Task(operation)
-    try:
-        return await asyncio.shield(worker)
-    except asyncio.CancelledError:
-        while not worker.done():
-            try:
-                await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                continue
-            except Exception:  # noqa: BLE001 - cancellation wins.
-                break
-        if not worker.cancelled():
-            worker.exception()
-        raise
+
+    await ensure_fingerprint_key_off_loop(repository)
+    return await run_citation_db_call(
+        getattr(repository, "db", None),
+        _read_with_first_use_key,
+        reader,
+        repository,
+        eligible,
+    )

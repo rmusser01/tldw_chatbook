@@ -1484,6 +1484,23 @@ async def test_footer_activation_opens_same_lazy_modal_at_narrow_and_wide_sizes(
 
 
 @pytest.mark.asyncio
+async def test_ready_key_modal_hydrates_after_eager_mount() -> None:
+    from Tests.UI.test_console_send_acknowledgement import eager_tasks, until
+
+    app, _screen, repository, _message = _citation_harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        with eager_tasks():
+            app.query_one("#console-citation-sources-assistant-1", Button).press()
+            await until(
+                lambda: isinstance(app.screen, ConsoleCitationSourcesModal)
+                and bool(app.screen.display_rows),
+                timeout=2,
+            )
+        assert len(repository.hydrate_calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_modal_authorization_and_revalidation_are_exact_and_ordered() -> None:
     app, _screen, repository, _message = _citation_harness()
 
@@ -1671,7 +1688,10 @@ async def test_citation_unsupported_source_renders_no_open_source_action() -> No
             _hydration_result(state=CitationHydrationState.PROFILE_DENIED),
             "sources_removed",
         ),
-        (_hydration_result(omitted_snapshot_ordinals=frozenset({1})), "load_failed"),
+        (
+            _hydration_result(omitted_snapshot_ordinals=frozenset({1})),
+            "record_incomplete",
+        ),
     ],
 )
 async def test_denied_or_incomplete_hydration_shows_one_unavailable_state(
@@ -1687,6 +1707,7 @@ async def test_denied_or_incomplete_hydration_shows_one_unavailable_state(
 
         modal = app.screen
         assert isinstance(modal, ConsoleCitationSourcesModal)
+        assert modal.unavailable_cause == cause
         states = [
             widget
             for widget in modal.query(".console-citation-sources-state")
@@ -1699,6 +1720,32 @@ async def test_denied_or_incomplete_hydration_shows_one_unavailable_state(
             len(modal.query_one("#console-citation-source-list", ListView).children)
             == 0
         )
+
+
+@pytest.mark.asyncio
+async def test_changed_record_after_hydration_has_deterministic_unavailable_copy(
+    monkeypatch,
+):
+    app, _screen, repository, _message = _citation_harness()
+    checks = []
+
+    def verify(result):
+        checks.append(result)
+        return len(checks) == 1
+
+    monkeypatch.setattr(repository, "verify_active_trace_result", verify)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#console-citation-sources-assistant-1")
+        await pilot.pause(0.1)
+        modal = app.screen
+        assert len(checks) == 2
+        assert modal.unavailable_cause == "record_changed"
+        assert (
+            modal.query_one("#console-citation-sources-state", Static).renderable
+            == CITATION_SOURCES_UNAVAILABLE_COPY["record_changed"]
+        )
+        assert not modal.display_rows
 
 
 @pytest.mark.asyncio

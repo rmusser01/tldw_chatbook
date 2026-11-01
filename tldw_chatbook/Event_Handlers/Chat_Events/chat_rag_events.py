@@ -1895,13 +1895,13 @@ async def _capture_console_evidence_bundle(
         )
         return LocalRagContextResult(unrecorded or None, None)
 
-    formatted = format_console_evidence_context(authorization.candidates)
-    context = formatted.context if formatted.context.strip() else None
-    if context is None:
-        return LocalRagContextResult(None, None)
-    repair_contract = _repair_contract_for_local_evidence(formatted, require_markers=False)
-
     try:
+        formatted = format_console_evidence_context(authorization.candidates)
+        context = formatted.context if formatted.context.strip() else None
+        if context is None:
+            return LocalRagContextResult(None, None)
+        repair_contract = _repair_contract_for_local_evidence(formatted, require_markers=False)
+
         scope_resolution = await resolve_scope_for_session(
             app,
             request_session,
@@ -1927,11 +1927,8 @@ async def _capture_console_evidence_bundle(
             stage=stage,
             raw_query=bundle.query or user_message,
             candidates=tuple(
-                candidate.to_candidate_capture(candidate_rank=rank)
-                for rank, candidate in enumerate(
-                    authorization.candidates,
-                    start=1,
-                )
+                candidate.to_candidate_capture()
+                for candidate in authorization.candidates
             ),
             retrieval_metadata=LocalRetrievalRunMetadata(
                 search_mode=stage,
@@ -1957,9 +1954,8 @@ async def _capture_console_evidence_bundle(
             f"authorized_candidates={len(authorization.candidates)}"
         )
         return LocalRagContextResult(
-            context,
+            format_unrecorded_console_evidence(authorization.candidates) or None,
             None,
-            citation_repair_contract=repair_contract,
         )
 
     logger.info(

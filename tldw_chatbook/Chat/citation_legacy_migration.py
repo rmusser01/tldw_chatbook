@@ -712,6 +712,7 @@ class CitationLegacyMigrationService:
                 )
             now = datetime.now(UTC).isoformat()
             with self.db.transaction() as cursor:
+                self.repository._require_repository_cursor(cursor)
                 changed = cursor.execute(
                     """
                     UPDATE rag_legacy_migration_journal
@@ -752,6 +753,7 @@ class CitationLegacyMigrationService:
             )
         now = datetime.now(UTC).isoformat()
         with self.db.transaction() as cursor:
+            self.repository._require_repository_cursor(cursor)
             inserted = cursor.execute(
                 """
                 INSERT INTO rag_legacy_migration_journal(
@@ -938,6 +940,7 @@ class CitationLegacyMigrationService:
         next_cursor = batch_ids[-1] if batch_ids else cursor_after
         try:
             with self.db.transaction() as cursor:
+                self.repository._require_repository_cursor(cursor)
                 if journal is None:
                     claimed = cursor.execute(
                         """
@@ -1081,6 +1084,7 @@ class CitationLegacyMigrationService:
         completed_at = datetime.now(UTC).isoformat()
         try:
             with self.db.transaction() as cursor:
+                self.repository._require_repository_cursor(cursor)
                 completed = cursor.execute(
                     """
                     UPDATE rag_legacy_migration_journal
@@ -1147,6 +1151,7 @@ class CitationLegacyMigrationService:
             )
         try:
             with self.db.transaction() as cursor:
+                self.repository._require_repository_cursor(cursor)
                 message = cursor.execute(
                     """
                     SELECT id, conversation_id, content, version, timestamp
@@ -1224,11 +1229,6 @@ class CitationLegacyMigrationService:
     def migrate_idle_unit(self) -> LegacyMigrationBatchResult:
         """Run at most one conversation batch after application readiness."""
 
-        # TASK-33620.8: the app defers the key to first use; migrating a
-        # legacy sidecar is one. Without a sidecar there is nothing to migrate.
-        ensure_key = getattr(self.repository, "ensure_local_fingerprint_key", None)
-        if callable(ensure_key) and os.path.lexists(self.sidecar_path):
-            ensure_key()
         if not self.ready:
             return LegacyMigrationBatchResult(state=LegacyMigrationState.PENDING)
         try:
@@ -1517,6 +1517,7 @@ class CitationLegacyMigrationService:
                 "citation_identity_context_unavailable"
             )
         with self.db.transaction() as cursor:
+            self.repository._require_repository_cursor(cursor)
             row = cursor.execute(
                 """
                 SELECT state FROM rag_legacy_migration_journal

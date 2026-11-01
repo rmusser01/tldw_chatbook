@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -248,6 +247,14 @@ CITATION_SOURCES_UNAVAILABLE_COPY: dict[str, str] = {
         "Sources unavailable: these sources were removed or are no longer "
         "available to this profile."
     ),
+    "record_changed": (
+        "Sources unavailable: this reply's citation record changed while it was "
+        "loading. Reopen the chat to inspect its current reply."
+    ),
+    "record_incomplete": (
+        "Sources unavailable: part of this reply's saved citation record is "
+        "missing. Regenerate the reply to save new sources."
+    ),
     "load_failed": (
         "Sources unavailable: the sources couldn't be loaded. Close this window "
         "and try again; if this keeps happening, check the app log."
@@ -287,6 +294,12 @@ def citation_sources_unavailable_cause(
         CitationHydrationState.TRACE_NOT_FOUND,
     ):
         return "sources_removed"
+    if hydration_state is CitationHydrationState.AUTHORIZED:
+        return "record_incomplete"
+    if hydration_state is CitationHydrationState.TRACE_NOT_FOUND:
+        return "record_missing"
+    if state is ActiveCitationTraceState.ACTIVE:
+        return "record_changed"
     return "load_failed"
 
 
@@ -386,10 +399,6 @@ class ConsoleCitationSourcesModal(
     def _hydrate_rows(self) -> tuple[ConsoleCitationSourceRow, ...] | None:
         repository = self._repository
         self.unavailable_cause = "load_failed"
-        # TASK-33620.8: the app defers the key to first use (off the loop).
-        ensure_key = getattr(repository, "ensure_local_fingerprint_key", None)
-        if callable(ensure_key):
-            ensure_key()
         active = repository.get_active_trace_for_current_message(
             self._persisted_message_id,
             self._current_body,
@@ -419,6 +428,7 @@ class ConsoleCitationSourcesModal(
             authorization=authorization,
         )
         if not repository.verify_active_trace_result(active):
+            self.unavailable_cause = "record_changed"
             return None
         rows = build_console_citation_source_rows(hydration)
         if not rows:
@@ -436,8 +446,21 @@ class ConsoleCitationSourcesModal(
             return False
 
     async def _load_sources(self, generation: int) -> None:
+        from ...Chat.citation_key_first_use import (
+            ensure_fingerprint_key_off_loop,
+            run_citation_db_call,
+        )
+
         try:
-            rows = await asyncio.to_thread(self._hydrate_rows)
+            # Eager workers can enter from on_mount before Textual completes
+            # Mount. Wait for that lifecycle boundary before checking liveness.
+            await self._mounted_event.wait()
+            await ensure_fingerprint_key_off_loop(self._repository)
+            if not self._request_is_current(generation):
+                return
+            rows = await run_citation_db_call(
+                getattr(self._repository, "db", None), self._hydrate_rows,
+            )
         except Exception:
             rows = None
             self.unavailable_cause = "load_failed"

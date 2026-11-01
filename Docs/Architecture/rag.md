@@ -70,6 +70,29 @@ Families: cross-encoder (local, offline — loads with `local_files_only=True`; 
 - The Library service owns the four-seam keyword path and UI recovery states; answer generation deliberately lives outside it as a pure seam with an injected `chat` callable.
 - `RAG_Search/simplified/search_service.py` exposes MCP-facing search that falls back to keyword FTS when the RAG runtime is unavailable (fallback rows carry `score: None`, never a fabricated 1.0).
 
+## Console citation key readiness
+
+`Chat/citation_key_first_use.py` separates finite owned SQLite snapshot and
+publication callbacks from a retained key-only `Thread`/`Future`. First use
+loads the original key; only an empty protected record set permits adoption
+of a fresh unpublished key ID by an immediate identity compare-and-swap.
+Original keys remain loadable with existing records. Repository readers use
+the published identity/codec pair; transactional writer guards reject a stale
+repository identity, including legacy migration journal writes.
+
+Cancelling a key waiter does not physically cancel its OS keyring operation.
+That worker owns no DB, UI or native lease and cannot publish state on its own.
+An already-issued finite DB callback instead drains its actual outcome through
+cancellation. An unused fresh key may remain as an inert keyring entry; no
+opportunistic deletion or generic lifecycle service is introduced (ADR-024).
+
+Console edits and forks await readiness before classifying cited owners and
+recheck their original targets. Sources hydration waits for Textual's mounted
+event before checking liveness, including eager worker scheduling. Authorization
+shrink retains candidate ranks while prompt markers stay contiguous. Failed
+capture sends only authorized unlabelled evidence without repair instructions;
+this is a prompt guarantee, not removal of unsolicited model labels.
+
 ## Governing decisions and docs
 
 ADR-005 (invest in local RAG mirroring tldw server), ADR-013 (plain-text vs FTS match boundary), ADR-024 (citation provenance and source resolution), ADR-003/030 (library RAG defaults, derived-index lifecycle). User guide: `Docs/User_Guide/library/search-and-rag.md`. QA evidence: `Docs/superpowers/qa/2026-08-14-rag-answer-first-query-hang/` (first-query stall — model load), `2026-08-17-cross-encoder/`, `2026-08-18-*` (merge tiering, granularity, prompts seam).

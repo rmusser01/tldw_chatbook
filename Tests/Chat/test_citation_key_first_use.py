@@ -114,9 +114,7 @@ def test_first_use_reuses_the_key_a_previous_run_provisioned(db, tmp_path):
     assert [kind for kind, _thread in backend.calls].count("set") == 1
 
 
-def test_chatbook_ownership_wiring_composes_without_the_key(
-    db, tmp_path, monkeypatch
-):
+def test_chatbook_ownership_wiring_composes_without_the_key(db, tmp_path, monkeypatch):
     """The app's second composition site defers the key as well.
 
     ``_wire_citation_artifact_ownership`` builds its own repository whenever
@@ -187,9 +185,12 @@ def test_insecure_keyring_fails_closed_without_provisioning(db, tmp_path):
         CitationKeyState.KEYRING_UNAVAILABLE.value
     )
     assert repository.fingerprint_key_pending is False
-    assert repository.create_local_trace_builder(
-        request_id="request-1", generation_id="generation-1"
-    ) is None
+    assert (
+        repository.create_local_trace_builder(
+            request_id="request-1", generation_id="generation-1"
+        )
+        is None
+    )
 
 
 def test_missing_key_for_existing_records_is_never_replaced(db, tmp_path):
@@ -268,3 +269,182 @@ def test_off_loop_acquisition_is_a_no_op_once_settled(db, tmp_path):
     asyncio.run(ensure_fingerprint_key_off_loop(None))
 
     assert len(backend.calls) == calls
+
+
+def test_keyring_never_runs_inside_a_write_transaction(db, tmp_path):
+    transactions = []
+
+    class ObservedKeyring(_Keyring):
+        __module__ = "keyring.backends.macOS"
+
+        def get_password(self, service, account):
+            connection = getattr(db._local, "conn", None)
+            transactions.append(bool(connection and connection.in_transaction))
+            return super().get_password(service, account)
+
+        def set_password(self, service, account, value):
+            connection = getattr(db._local, "conn", None)
+            transactions.append(bool(connection and connection.in_transaction))
+            return super().set_password(service, account, value)
+
+    backend = ObservedKeyring()
+    repository = _compose(db, tmp_path, backend)
+    old_id = repository.identity_context.fingerprint_key_id
+    assert repository.ensure_local_fingerprint_key()
+    assert transactions and not any(transactions)
+    assert repository.identity_context.fingerprint_key_id != old_id
+    assert (CITATION_FINGERPRINT_KEYRING_SERVICE, old_id) not in backend.secrets
+
+
+@pytest.mark.asyncio
+async def test_cancelled_count_wait_does_not_drain_interactive_keyring(db, tmp_path):
+    from tldw_chatbook.UI.Console_Modules.citation_counts import read_citation_counts
+
+    entered, release = threading.Event(), threading.Event()
+
+    class HeldKeyring(_Keyring):
+        __module__ = "keyring.backends.macOS"
+
+        def get_password(self, service, account):
+            entered.set()
+            assert release.wait(10)
+            return super().get_password(service, account)
+
+    repository = _compose(db, tmp_path, HeldKeyring())
+    original_identity = repository.identity_context
+    read = []
+    task = asyncio.create_task(
+        read_citation_counts(
+            repository,
+            lambda *_: read.append(True) or {},
+            (),
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        task.cancel()
+        done, _ = await asyncio.wait({task}, timeout=0.15)
+        assert task in done, "Footer drain still owns the interactive keyring wait"
+        assert task.cancelled()
+        assert read == []
+        assert repository.fingerprint_key_pending
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        operation = getattr(repository, "_key_acquisition", None)
+        if operation is not None:
+            await asyncio.to_thread(operation.thread.join, 5)
+            assert not operation.thread.is_alive()
+    assert operation.future.done() and not operation.future.cancelled()
+    assert repository.identity_context == original_identity
+    assert load_local_citation_identity_context(db) == original_identity
+    assert repository.fingerprint_key_pending
+    await ensure_fingerprint_key_off_loop(repository)
+    assert repository._key_acquisition is operation
+    assert repository.local_citation_writes_ready
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_issued_cas_drains_its_actual_commit(
+    db, tmp_path, monkeypatch
+):
+    from tldw_chatbook.Chat import citation_key_first_use as first_use
+
+    repository = _compose(db, tmp_path, _Keyring())
+    original = repository.identity_context
+    entered, release = threading.Event(), threading.Event()
+    publish = first_use._publish
+    committed = []
+
+    def held_publish(*args):
+        entered.set()
+        assert release.wait(10)
+        result = publish(*args)
+        committed.append(load_local_citation_identity_context(db))
+        return result
+
+    monkeypatch.setattr(first_use, "_publish", held_publish)
+    task = asyncio.create_task(ensure_fingerprint_key_off_loop(repository))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        for _ in range(3):
+            task.cancel()
+            done, _ = await asyncio.wait({task}, timeout=0.03)
+            assert task not in done
+        assert not committed
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+    assert task.cancelled()
+    assert committed == [repository.identity_context]
+    assert repository.identity_context != original
+    assert load_local_citation_identity_context(db) == repository.identity_context
+    assert repository.local_citation_writes_ready
+
+
+def test_pending_key_edit_rolls_back_instead_of_invalidating_owner(db, tmp_path):
+    from Tests.Chat.test_console_chat_fork_persistence import _active_citation_snapshot
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.Chat.citation_trace_repository import (
+        CitationPersistenceUnavailable,
+    )
+
+    _active_citation_snapshot(db)
+    repository = _compose(db, tmp_path, _Keyring())
+    service = ChatPersistenceService(db, citation_repository=repository)
+    before = dict(db.get_message_by_id("source-assistant"))
+    owners = [
+        tuple(row)
+        for row in db.get_connection().execute("SELECT * FROM rag_message_trace_owners")
+    ]
+    with pytest.raises(CitationPersistenceUnavailable, match="fingerprint_key_pending"):
+        service.update_message_content(
+            message_id="source-assistant",
+            content="Answer [S1].",
+            image_data=None,
+            image_mime_type=None,
+        )
+    assert dict(db.get_message_by_id("source-assistant")) == before
+    assert [
+        tuple(row)
+        for row in db.get_connection().execute("SELECT * FROM rag_message_trace_owners")
+    ] == owners
+
+
+@pytest.mark.asyncio
+async def test_concurrent_waiters_share_one_key_operation_despite_cancellation(
+    db, tmp_path
+):
+    entered, release = threading.Event(), threading.Event()
+
+    class HeldKeyring(_Keyring):
+        __module__ = "keyring.backends.macOS"
+
+        def get_password(self, service, account):
+            entered.set()
+            assert release.wait(10)
+            return super().get_password(service, account)
+
+    backend = HeldKeyring()
+    repository = _compose(db, tmp_path, backend)
+    first = asyncio.create_task(ensure_fingerprint_key_off_loop(repository))
+    second = None
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        operation = repository._key_acquisition
+        second = asyncio.create_task(ensure_fingerprint_key_off_loop(repository))
+        await asyncio.sleep(0)
+        first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+        assert not operation.future.done() and operation.thread.is_alive()
+        release.set()
+        await second
+        assert repository._key_acquisition is operation
+        assert repository.local_citation_writes_ready
+        assert [kind for kind, _ in backend.calls].count("set") == 1
+    finally:
+        release.set()
+        await asyncio.gather(
+            *(task for task in (first, second) if task), return_exceptions=True
+        )
+        await asyncio.to_thread(repository._key_acquisition.thread.join, 5)

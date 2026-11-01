@@ -423,12 +423,12 @@ class CitationTraceRepository:
             raise ValueError("unknown citation row-family failure point")
         self.db = db
         self.policy = policy
-        self.identity_context = identity_context
-        self._fingerprint_codec = fingerprint_codec
+        self._key_context = (identity_context, fingerprint_codec)
         # TASK-33620.8: a provider defers the key to its first use.
         self._key_provider = key_provider
         self._key_lock = threading.Lock()
         self._key_state: str | None = None
+        self._key_acquisition = None
         self._failure_after_row_family = failure_after_row_family
         self._prepared_write_token = object()
         self._issued_prepared_writes: dict[
@@ -518,29 +518,25 @@ class CitationTraceRepository:
             return self._key_state
         return "pending" if self._key_provider is not None else "key_unreadable"
 
+    @property
+    def identity_context(self) -> LocalCitationIdentityContext | None:
+        """Identity of the atomically published key context."""
+        return self._key_context[0]
+
+    @property
+    def _fingerprint_codec(self) -> CitationFingerprintCodec | None:
+        return self._key_context[1]
+
     def ensure_local_fingerprint_key(self) -> bool:
-        """Acquire, or provision on first use, the deferred fingerprint key.
+        """Blocking eager-batch readiness; live callers await the async seam."""
+        if self.fingerprint_key_pending and self._key_provider is not None:
+            from .citation_key_first_use import acquire_local_fingerprint_codec
 
-        Blocking (keyring and a guarded write transaction); idempotent and
-        thread-safe. A definitive outcome is kept for the repository's life;
-        an unexpected failure is retried at the next use. Call it off the
-        UI loop.
-
-        Returns:
-            Whether local canonical writes are ready afterwards.
-        """
-
-        with self._key_lock:
-            provider = self._key_provider
-            if self.fingerprint_key_pending and provider is not None:
-                from .citation_key_first_use import acquire_local_fingerprint_codec
-
-                try:
-                    codec, state = acquire_local_fingerprint_codec(self, provider)
-                except Exception:
-                    codec, state = None, "unavailable"
-                self._fingerprint_codec = codec
-                self._key_state = getattr(state, "value", state)
+            try:
+                acquire_local_fingerprint_codec(self, self._key_provider)
+            except Exception:
+                if self._fingerprint_codec is None:
+                    self._key_state = "unavailable"
         return self.local_citation_writes_ready
 
     @property
@@ -554,8 +550,8 @@ class CitationTraceRepository:
 
         if not self.policy.canonical_writes_enabled:
             return False
-        identity = self.identity_context
-        if identity is None or self._fingerprint_codec is None:
+        identity, codec = self._key_context
+        if identity is None or codec is None:
             return False
         try:
             persisted = load_local_citation_identity_context(self.db)
@@ -582,8 +578,7 @@ class CitationTraceRepository:
 
         if not self.local_citation_writes_ready:
             return None
-        identity = self.identity_context
-        codec = self._fingerprint_codec
+        identity, codec = self._key_context
         if identity is None or codec is None:
             return None
         return CitationTraceBuilder.local(
@@ -1029,12 +1024,11 @@ class CitationTraceRepository:
 
         if not self.policy.canonical_writes_enabled:
             raise CitationPersistenceUnavailable("canonical_citation_writes_disabled")
-        identity = self.identity_context
+        identity, codec = self._key_context
         if identity is None:
             raise CitationPersistenceUnavailable(
                 "citation_identity_context_unavailable"
             )
-        codec = self._fingerprint_codec
         if codec is None:
             raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
         persisted = load_local_citation_identity_context(self.db)
@@ -1779,8 +1773,7 @@ class CitationTraceRepository:
             raise CitationPersistenceUnavailable(
                 "fork_source_owner_authority_ambiguous"
             )
-        identity = self.identity_context
-        codec = self._fingerprint_codec
+        identity, codec = self._key_context
         if (
             len(active) != 1
             or not self.local_citation_writes_ready
@@ -2252,8 +2245,7 @@ class CitationTraceRepository:
             binding.model_dump(mode="python"),
             strict=True,
         )
-        codec = self._fingerprint_codec
-        identity = self.identity_context
+        identity, codec = self._key_context
         if not self.policy.canonical_writes_enabled:
             raise CitationPersistenceUnavailable("canonical_citation_writes_disabled")
         if codec is None or identity is None:
@@ -2290,8 +2282,7 @@ class CitationTraceRepository:
             binding.model_dump(mode="python"),
             strict=True,
         )
-        codec = self._fingerprint_codec
-        identity = self.identity_context
+        identity, codec = self._key_context
         if codec is None or identity is None:
             raise CitationPersistenceUnavailable("fingerprint_key_unavailable")
         if (
@@ -2802,6 +2793,8 @@ class CitationTraceRepository:
             or message["content"] != new_body
         ):
             raise CitationPersistenceUnavailable("message_revision_identity_conflict")
+        if self.fingerprint_key_pending:
+            raise CitationPersistenceUnavailable("fingerprint_key_pending")
         codec = self._fingerprint_codec
         if codec is None:
             self._mark_owner_body_mismatch(

@@ -24,7 +24,11 @@ installs is exactly the fail-closed case and is covered separately.
 
 from __future__ import annotations
 
+import asyncio
+import os
+import sys
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 
 import pytest
@@ -36,7 +40,6 @@ from Tests.UI.test_console_native_chat_flow import (
     _wait_for_selector,
 )
 from Tests.UI.test_console_send_acknowledgement import eager_tasks, press, until
-from Tests.UI.test_console_send_admission_off_pump import _allow_second_turns
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -212,10 +215,17 @@ def _build_app(db_path: Path, send_path: _SendPath):
     db = CharactersRAGDB(db_path, client_id="cited-sources-ui")
     app.chachanotes_db = db
     app._wire_chat_conversation_services()
+    # The factory initially composes without a chat DB. Rebind its real
+    # dictionary participant alongside the real conversation service.
+    from tldw_chatbook.Backup_Recovery.chat_source_participants import (
+        build_dictionary_service,
+    )
+
+    app.local_chat_dictionary_service = build_dictionary_service(db)
+    app.chat_dictionary_scope_service.local_service = app.local_chat_dictionary_service
     gateway = _CitingGateway()
     app.console_provider_gateway_factory = lambda: gateway
     host = ConsoleHarness(app)
-    _allow_second_turns(host)
     return host, app, db, gateway
 
 
@@ -278,13 +288,54 @@ def _cited_sources_buttons(console):
     return list(console.query(".console-transcript-citation-sources"))
 
 
-async def _send(host, pilot, console, text: str) -> None:
+async def _send(host, pilot, console, text: str, record_property) -> None:
     composer = console.query_one("#console-native-composer", ConsoleComposerBar)
     composer.focus()
     composer.load_draft(text)
     await pilot.pause()
     press(host, "enter", "\r")
-    await until(lambda: _completed_assistant(console) is not None, timeout=20)
+    started = asyncio.get_running_loop().time()
+    # Real Windows admission exceeded the former 20s first-send bound while
+    # progressing through guarded native work (PR3323 r-ceca463c). Keep the
+    # bound finite and retain per-send timing in the receipt, not only stdout.
+    observations = []
+    for interval in range(3 if os.name == "nt" else 1):
+        try:
+            await until(lambda: _completed_assistant(console) is not None, timeout=20)
+            break
+        except AssertionError:
+            observations.append(_send_phase(console, started))
+    else:
+        record_property("first_send_phases", json.dumps(observations))
+        raise AssertionError(
+            "Citation send did not complete within its native readiness bound"
+        )
+    record_property("first_send_phases", json.dumps(observations))
+    record_property(
+        "first_send_seconds", round(asyncio.get_running_loop().time() - started, 3)
+    )
+
+
+def _send_phase(console, started):
+    """Content-free phase evidence; no locals, arguments, source IDs or body."""
+    chains = []
+    for frame in sys._current_frames().values():
+        chain = []
+        while frame is not None:
+            chain.append(
+                f"{Path(frame.f_code.co_filename).name}:{frame.f_code.co_name}:{frame.f_lineno}"
+            )
+            frame = frame.f_back
+        if any(
+            "storage_admission.py" in item or "console_agent_bridge.py" in item
+            for item in chain
+        ):
+            chains.append(chain[:8])
+    return {
+        "elapsed": round(asyncio.get_running_loop().time() - started, 3),
+        "state": console._ensure_console_chat_controller().run_state.status.value,
+        "native_frames": chains,
+    }
 
 
 async def _open_sources(host, console):
@@ -292,11 +343,20 @@ async def _open_sources(host, console):
     button = _cited_sources_buttons(console)[0]
     label = str(button.label)
     button.press()
-    await until(
-        lambda: isinstance(host.screen, ConsoleCitationSourcesModal)
-        and bool(host.screen.display_rows),
-        timeout=20,
-    )
+    try:
+        await until(
+            lambda: isinstance(host.screen, ConsoleCitationSourcesModal)
+            and bool(host.screen.display_rows),
+            timeout=20,
+        )
+    except AssertionError:
+        modal = host.screen
+        raise AssertionError(
+            f"Sources did not open: screen={type(modal).__name__}; "
+            f"cause={getattr(modal, 'unavailable_cause', None)}; "
+            f"mounted={modal.is_mounted}; "
+            f"current={modal._request_is_current(modal._request_generation) if isinstance(modal, ConsoleCitationSourcesModal) else None}"
+        ) from None
     return label, host.screen.display_rows
 
 
@@ -311,9 +371,11 @@ def _assert_note_row(rows, note_id: str) -> None:
 
 
 def _trace_count(db: CharactersRAGDB) -> int:
-    return db.get_connection().execute(
-        "SELECT COUNT(*) FROM rag_citation_traces"
-    ).fetchone()[0]
+    return (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM rag_citation_traces")
+        .fetchone()[0]
+    )
 
 
 def _assert_export_carries_the_record(db_path: Path, conversation_id: str) -> None:
@@ -362,7 +424,7 @@ async def _reopen_after_restart(
 
 @pytest.mark.asyncio
 async def test_staged_note_reply_shows_cited_sources_and_survives_restart(
-    tmp_path, secure_keyring, send_path
+    tmp_path, secure_keyring, send_path, record_property
 ):
     """AC#1/#3/#6/#7: staged Library evidence -> persisted Cited sources row."""
     assert config_module.get_rag_citation_canonical_writes_enabled() is True
@@ -378,7 +440,7 @@ async def test_staged_note_reply_shows_cited_sources_and_survives_restart(
                 assert secure_keyring.calls == []
                 console._stage_handoff_as_console_live_work(_note_payload(note_id))
                 await pilot.pause()
-                await _send(host, pilot, console, QUESTION)
+                await _send(host, pilot, console, QUESTION, record_property)
                 assert "set_password" in secure_keyring.calls
                 label, rows = await _open_sources(host, console)
                 conversation_id = _active_conversation_id(console)
@@ -410,7 +472,7 @@ async def test_staged_note_reply_shows_cited_sources_and_survives_restart(
 
 @pytest.mark.asyncio
 async def test_automatic_note_reply_shows_cited_sources_and_survives_restart(
-    tmp_path, secure_keyring, send_path
+    tmp_path, secure_keyring, send_path, record_property
 ):
     """AC#2/#3/#6: Automatic retrieval gets the staged path's canonical capture."""
     assert config_module.get_rag_citation_canonical_writes_enabled() is True
@@ -431,7 +493,7 @@ async def test_automatic_note_reply_shows_cited_sources_and_survives_restart(
                         assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
                     ),
                 )
-                await _send(host, pilot, console, QUESTION)
+                await _send(host, pilot, console, QUESTION, record_property)
                 label, rows = await _open_sources(host, console)
                 conversation_id = _active_conversation_id(console)
         assert library.calls == 1
@@ -453,7 +515,7 @@ def _assistant_counted(console) -> bool:
 
 @pytest.mark.asyncio
 async def test_without_a_secure_keyring_evidence_goes_out_unlabelled_and_unrecorded(
-    tmp_path, shipped_send_path
+    tmp_path, shipped_send_path, record_property
 ):
     """AC#4: the suite's null keyring is the fail-closed case.
 
@@ -470,7 +532,7 @@ async def test_without_a_secure_keyring_evidence_goes_out_unlabelled_and_unrecor
                 console = await _ready_console(host, pilot)
                 console._stage_handoff_as_console_live_work(_note_payload(note_id))
                 await pilot.pause()
-                await _send(host, pilot, console, QUESTION)
+                await _send(host, pilot, console, QUESTION, record_property)
                 await until(lambda: _assistant_counted(console), timeout=20)
                 await pilot.pause(0.3)
                 buttons = _cited_sources_buttons(console)
@@ -478,7 +540,7 @@ async def test_without_a_secure_keyring_evidence_goes_out_unlabelled_and_unrecor
         prompt = gateway.requests[0][-1]["content"]
         assert "marigold-73" in prompt
         assert "not saved as citations for this reply" in prompt
-        assert f"[S1] NOTE — {NOTE_TITLE}" not in prompt
+        assert f"[S1] NOTES — {NOTE_TITLE}" not in prompt
         assert "[S#] labels only" not in prompt
         assert buttons == []
         shipped_send_path.assert_taken(sends=1)
@@ -492,7 +554,7 @@ async def test_without_a_secure_keyring_evidence_goes_out_unlabelled_and_unrecor
 
 @pytest.mark.asyncio
 async def test_a_record_whose_key_is_gone_says_so_and_names_the_next_step(
-    tmp_path, secure_keyring, shipped_send_path
+    tmp_path, secure_keyring, shipped_send_path, record_property
 ):
     """AC#4/#5: a saved record the key no longer verifies is not hidden.
 
@@ -509,7 +571,7 @@ async def test_a_record_whose_key_is_gone_says_so_and_names_the_next_step(
                 console = await _ready_console(host, pilot)
                 console._stage_handoff_as_console_live_work(_note_payload(note_id))
                 await pilot.pause()
-                await _send(host, pilot, console, QUESTION)
+                await _send(host, pilot, console, QUESTION, record_property)
                 await _open_sources(host, console)
                 conversation_id = _active_conversation_id(console)
         shipped_send_path.assert_taken(sends=1)
@@ -547,3 +609,139 @@ async def test_a_record_whose_key_is_gone_says_so_and_names_the_next_step(
         assert secure_keyring.secrets == {}  # never silently replaced
     finally:
         db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter", ["staged", "automatic"])
+@pytest.mark.parametrize(
+    "failure", [None, "record_retrieval_run", "record_prompt_evidence_set"]
+)
+async def test_authority_shrink_preserves_rank_or_dispatches_only_unlabelled_survivor(
+    tmp_path,
+    secure_keyring,
+    shipped_send_path,
+    monkeypatch,
+    adapter,
+    failure,
+    record_property,
+):
+    from tldw_chatbook.Chat.citation_evidence_models import (
+        EvidenceBundle,
+        EvidenceReference,
+    )
+    from tldw_chatbook.Chat.citation_trace_builder import CitationTraceBuilder
+    from tldw_chatbook.Chat.console_live_work import ConsoleLiveWorkLaunch
+
+    db_path = tmp_path / "shrunk.sqlite"
+    host, app, db, gateway = _build_app(db_path, shipped_send_path)
+    note_id = db.add_note(title=NOTE_TITLE, content=NOTE_BODY)
+    missing_title = "Removed source must never reach dispatch"
+    references = (
+        EvidenceReference(
+            evidence_id="S1",
+            source_id="missing-note",
+            source_type="note",
+            title=missing_title,
+            snippet="REMOVED_PAYLOAD",
+            authority_label="local",
+        ),
+        EvidenceReference(
+            evidence_id="S2",
+            source_id=note_id,
+            source_type="note",
+            title=NOTE_TITLE,
+            snippet=NOTE_BODY,
+            authority_label="local",
+        ),
+    )
+
+    class TwoNoteLibrary:
+        async def search(self, *args, **kwargs):
+            return {
+                "runtime_backend": "local",
+                "results": [
+                    {
+                        "source_id": ref.source_id,
+                        "source_type": "notes",
+                        "title": ref.title,
+                        "snippet": ref.snippet,
+                        "score": 0.9,
+                        "runtime_backend": "local",
+                    }
+                    for ref in references
+                ],
+            }
+
+    if failure:
+
+        def reject(*args, **kwargs):
+            raise RuntimeError("controlled recording failure")
+
+        monkeypatch.setattr(CitationTraceBuilder, failure, reject)
+    try:
+        async with host.run_test(size=(140, 44)) as pilot:
+            with eager_tasks():
+                console = await _ready_console(host, pilot)
+                if adapter == "staged":
+                    console._retrieval._stage_console_library_rag_launch(
+                        ConsoleLiveWorkLaunch.from_values(
+                            source="Library Search/RAG",
+                            title="Two sources",
+                            payload={
+                                "evidence_bundle": EvidenceBundle(
+                                    bundle_id="shrinking",
+                                    query=QUESTION,
+                                    references=references,
+                                ).to_payload()
+                            },
+                        )
+                    )
+                else:
+                    app.library_rag_search_service = TwoNoteLibrary()
+                    store = console._ensure_console_chat_store()
+                    store.stage_session_library_policy(
+                        store.active_session_id,
+                        ConsoleLibraryPolicyCandidate(
+                            auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+                            assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                        ),
+                    )
+                await _send(host, pilot, console, QUESTION, record_property)
+                if failure is None:
+                    label, rows = await _open_sources(host, console)
+                    assert label == "Cited sources (1)"
+                    _assert_note_row(rows, note_id)
+                    conversation_id = _active_conversation_id(console)
+                else:
+                    await until(lambda: _assistant_counted(console), timeout=20)
+                    assert _cited_sources_buttons(console) == []
+        prompt = gateway.requests[0][-1]["content"]
+        assert NOTE_BODY in prompt
+        assert missing_title not in prompt and "REMOVED_PAYLOAD" not in prompt
+        shipped_send_path.assert_taken(sends=1)
+        if failure is None:
+            assert f"[S1] NOTES — {NOTE_TITLE}" in prompt
+            payloads = [
+                json.loads(row[0])
+                for row in db.get_connection().execute(
+                    "SELECT run_payload_json FROM rag_evidence_runs"
+                )
+            ]
+            candidates = [
+                item for payload in payloads for item in payload["candidates"]
+            ]
+            assert [
+                (item["rank"], item["source_identity"]["source_id"])
+                for item in candidates
+            ] == [(2, note_id)]
+        else:
+            assert "not saved as citations for this reply" in prompt
+            assert f"[S1] NOTES — {NOTE_TITLE}" not in prompt
+            assert "[S#] labels only" not in prompt
+            assert _trace_count(db) == 0
+    finally:
+        db.close_connection()
+    if failure is None:
+        await _reopen_after_restart(
+            db_path, conversation_id, note_id, shipped_send_path
+        )
