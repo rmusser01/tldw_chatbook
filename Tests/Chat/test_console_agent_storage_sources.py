@@ -1,5 +1,6 @@
 """Original Console storage admission survives real MCP context and child models."""
 
+import asyncio
 import threading
 
 import pytest
@@ -40,6 +41,8 @@ pytestmark = [
         ("none", 2),
         ("logging_disabled", 1),
         ("workspace", 1),
+        ("workspace_distinct_registry", 1),
+        ("admission_refused", 1),
         ("workspace_disable", 1),
         ("workspace_switch", 1),
         ("workspace_retarget", 1),
@@ -48,6 +51,10 @@ pytestmark = [
         ("mcp_deny", 1),
         ("database", 1),
         ("writer", 1),
+        ("writer_segment_path", 1),
+        ("writer_write_bytes", 1),
+        ("writer_manifest", 1),
+        ("writer_close", 1),
         ("writer_source", 1),
         ("root", 1),
         ("log_dir", 1),
@@ -121,9 +128,49 @@ async def test_original_console_mcp_context_reaches_child_model(
     assert _approve(permissions).ready
     monkeypatch.setenv("TLDW_AGENTS_MAX_LIVE_SUBAGENTS", str(workers))
     monkeypatch.setenv("TLDW_AGENTS_AUTOWAKE_ENABLED", "false")
+    global_registry = rig.registry
+    if mutation == "workspace_distinct_registry":
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+        from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+        global_registry = LocalWorkspaceRegistryService(
+            WorkspaceDB(tmp_path / "global-workspaces.sqlite", client_id="source-tree")
+        )
+        global_registry.ensure_default_workspace()
     monkeypatch.setattr(
-        workspace_file_roots, "_default_registry_instance", rig.registry
+        workspace_file_roots, "_default_registry_instance", global_registry
     )
+
+    admission_errors = []
+    if mutation == "admission_refused":
+        from tldw_chatbook.Agents.mcp_tool_provider import (
+            current_mcp_invocation_policies,
+        )
+        from tldw_chatbook.Backup_Recovery.storage_admission import _begin_local_pause
+
+        submit_coroutine = asyncio.run_coroutine_threadsafe
+
+        def pause_original_admission(coroutine, loop):
+            if (
+                not current_mcp_invocation_policies()
+                or coroutine.cr_code.co_qualname
+                not in {
+                    "async_worker_guard.<locals>.decorate.<locals>.call",
+                    "MCPToolProvider._execute.<locals>.execute_completed",
+                }
+            ):
+                return submit_coroutine(coroutine, loop)
+            pause = _begin_local_pause()
+            try:
+                future = submit_coroutine(coroutine, loop)
+                admission_errors.append(future.exception(timeout=8))
+                return future
+            finally:
+                pause.resume()
+
+        monkeypatch.setattr(
+            asyncio, "run_coroutine_threadsafe", pause_original_admission
+        )
 
     if mutation == "logging_disabled":
         monkeypatch.setenv("TLDW_AGENTS_RUN_LOG_ENABLED", "false")
@@ -147,10 +194,12 @@ async def test_original_console_mcp_context_reaches_child_model(
         return permission_check(grant)
 
     monkeypatch.setattr(MCPResultPermission, "check", checked_permission)
-    edited_at = []
+    edited_at, writer_callbacks = [], []
+    sentinel = None
 
     class Gateway(_RecordingGateway):
         async def stream_chat(self, resolution, messages, **kwargs):
+            nonlocal sentinel
             self.payloads.append(messages)
             model_sources.append(_guard.captured_sources(None))
             model_runs.append(current_run_id())
@@ -170,6 +219,31 @@ async def test_original_console_mcp_context_reaches_child_model(
                     bridge._db = replacement_database
                 elif mutation == "writer":
                     source.writer.append = lambda **kwargs: None
+                elif mutation in {
+                    "writer_segment_path",
+                    "writer_write_bytes",
+                    "writer_manifest",
+                    "writer_close",
+                }:
+                    sentinel = source.root / "visible-user-file.txt"
+                    sentinel.write_text("original user file")
+
+                    def changed_callback(*args, **kwargs):
+                        writer_callbacks.append(mutation)
+                        if mutation == "writer_segment_path":
+                            return sentinel
+                        sentinel.write_text("changed writer invoked")
+
+                    setattr(
+                        source.writer,
+                        {
+                            "writer_segment_path": "_segment_path",
+                            "writer_write_bytes": "_write_bytes",
+                            "writer_manifest": "write_manifest",
+                            "writer_close": "close",
+                        }[mutation],
+                        changed_callback,
+                    )
                 elif mutation == "writer_source":
                     from types import SimpleNamespace
 
@@ -187,7 +261,11 @@ async def test_original_console_mcp_context_reaches_child_model(
                         source.writer.log_dir.with_name("replaced-run")
                     )
                     source.writer.log_dir.mkdir()
-                elif mutation.startswith("workspace_"):
+                elif mutation in {
+                    "workspace_disable",
+                    "workspace_switch",
+                    "workspace_retarget",
+                }:
                     from dataclasses import replace
 
                     from tldw_chatbook.Chat.console_chat_controller import (
@@ -260,11 +338,12 @@ async def test_original_console_mcp_context_reaches_child_model(
     replacement_database = AgentRunsDB(
         tmp_path / "replacement-runs.sqlite", client_id="source-tree"
     )
-    sources = []
+    sources, jobs = [], []
     start = MCPHookExecutor.start
 
     def observed(self, *args, **kwargs):
         job = start(self, *args, **kwargs)
+        jobs.append(job)
         sources.append(job.native_target.event.source)
         original_sources.append(current_agent_sources())
         return job
@@ -274,14 +353,46 @@ async def test_original_console_mcp_context_reaches_child_model(
         result = await rig.controller.submit_draft(
             "spawn a child", session_id=rig.session.id
         )
+        if mutation == "admission_refused":
+            from Tests.Chat.test_native_v2_command_events import opaque_busy, until
+
+            assert len(admission_errors) == 1
+            assert str(admission_errors[0]) == "agent_activation_required"
+            assert not case.service.execution_log.read_recent()
+            assert not gateway.payloads
+            job = jobs[0]
+            assert job.bridges[0].dispatch.state == "not_started"
+            assert job.bridges[0].completed.is_set(), (
+                "returned guard refusal lost completion"
+            )
+            await until(lambda: sources[0].custody.retired)
+            assert not job.executor.cleanup_pending
+            assert not opaque_busy(case.runtime)
+            assert case.runtime.execution_capacity.snapshot().tool_workers == 0
+            return
         assert result.accepted, result
+        if child_threads:
+            from Tests.Chat.test_native_v2_command_events import until
+
+            # The ordinary parent may return while its real child survives.
+            # Read terminal rows only after the observed worker actually exits.
+            await until(lambda: not any(thread.is_alive() for thread in child_threads))
         conversation = rig.session.persisted_conversation_id
         rows = [database.get_run(row["id"]) for row in database.list_runs(conversation)]
         if mutation == "workspace_custom_reader":
             assert project_notices and not gateway.payloads
             assert not any(row["agent_kind"] == "subagent" for row in rows)
             return
-        if mutation not in {"none", "unrelated", "logging_disabled", "workspace"}:
+        if sentinel is not None:
+            assert sentinel.read_text() == "original user file"
+            assert not writer_callbacks, "changed writer callback was invoked"
+        if mutation not in {
+            "none",
+            "unrelated",
+            "logging_disabled",
+            "workspace",
+            "workspace_distinct_registry",
+        }:
             child_ids = {row["id"] for row in rows if row["agent_kind"] == "subagent"}
             assert not child_ids.intersection(model_runs), (rows, model_runs)
             assert 1 <= len(gateway.payloads) <= 2, rows
@@ -304,11 +415,15 @@ async def test_original_console_mcp_context_reaches_child_model(
             rig.store.persistence.db.db_path,
         ) in source.sources
         assert ("agents.history", source.root) in source.sources
-        if mutation == "workspace":
+        if mutation in {"workspace", "workspace_distinct_registry"}:
             assert len(project_notices) == 1
         assert source.root == (
-            workspace_root if mutation == "workspace" else source.scratch.root
+            workspace_root if mutation.startswith("workspace") else source.scratch.root
         )
+        if mutation == "workspace_distinct_registry":
+            assert global_registry is not rig.registry
+            assert ("db.workspaces", rig.registry.db.db_path) in source.sources
+            assert ("db.workspaces", global_registry.db.db_path) in source.sources
         assert ("agents.history", source.writer.log_dir) not in source.sources
         assert all(
             "Original Console child instructions" in str(payload)
@@ -330,3 +445,5 @@ async def test_original_console_mcp_context_reaches_child_model(
         bridge._db = database
         database.close()
         replacement_database.close()
+        if global_registry is not rig.registry:
+            global_registry.db.close()

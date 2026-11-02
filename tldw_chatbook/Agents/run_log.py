@@ -564,12 +564,10 @@ class RunLogWriter:
             self._active = False
             return
         try:
-            with self._access_scope():
-                from tldw_chatbook.Chat.console_agent_sources import (
-                    console_writer_source,
-                )
+            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
 
-                source = console_writer_source(self)
+            source = console_writer_source(self)
+            with self._access_scope():
                 if source is not None:
                     source.check_storage()
                 self._bind_under_scope(run_id)
@@ -858,12 +856,10 @@ class RunLogWriter:
         if not self._active or self.log_dir is None:
             return None
         try:
-            with self._access_scope():
-                from tldw_chatbook.Chat.console_agent_sources import (
-                    console_writer_source,
-                )
+            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
 
-                source = console_writer_source(self)
+            source = console_writer_source(self)
+            with self._access_scope():
                 if source is not None:
                     source.check_storage()
                 return self._append_under_scope(
@@ -973,12 +969,10 @@ class RunLogWriter:
         if self.log_dir is None:
             return
         try:
-            with self._access_scope():
-                from tldw_chatbook.Chat.console_agent_sources import (
-                    console_writer_source,
-                )
+            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
 
-                source = console_writer_source(self)
+            source = console_writer_source(self)
+            with self._access_scope():
                 if source is not None:
                     source.check_storage()
                 self._write_manifest_under_scope(metadata)
@@ -1025,12 +1019,10 @@ class RunLogWriter:
         if not self._active or self.log_dir is None:
             return
         try:
-            with self._access_scope():
-                from tldw_chatbook.Chat.console_agent_sources import (
-                    console_writer_source,
-                )
+            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
 
-                source = console_writer_source(self)
+            source = console_writer_source(self)
+            with self._access_scope():
                 if source is not None:
                     source.check_storage()
                 self._close_under_scope()
@@ -1054,7 +1046,7 @@ class RunLogWriter:
             )
 
 
-# Only the current writer callbacks consumed by this synchronous path bind.
+# Concrete stock callbacks reached by bind, append and finalization.
 _RUN_LOG_PATH_WRITER_ORIGINAL = (
     RunLogWriter,
     tuple(
@@ -1065,6 +1057,13 @@ _RUN_LOG_PATH_WRITER_ORIGINAL = (
             "_bind_under_scope",
             "_migrate_legacy_dir",
             "append",
+            "_append_under_scope",
+            "_segment_path",
+            "_write_bytes",
+            "write_manifest",
+            "_write_manifest_under_scope",
+            "close",
+            "_close_under_scope",
         )
         for function in (RunLogWriter.__dict__[name],)
     ),

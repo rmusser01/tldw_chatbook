@@ -2117,11 +2117,8 @@ class MCPToolProvider:
                 )
 
             async def execute_observed():
-                try:
-                    check_mcp_invocation_policies()
-                    return await create_execution()
-                finally:
-                    execution_completed.set()
+                check_mcp_invocation_policies()
+                return await create_execution()
 
             policies = current_mcp_invocation_policies()
             # Ordinary submissions retain their exact original coroutine and
@@ -2154,40 +2151,48 @@ class MCPToolProvider:
                 async def execute_authorized():
                     # Scheduling on the main loop can itself wait. Bind the
                     # captured authority and check again at actual dispatch.
+                    with automatic_work.scope():
+                        automatic_work.check()
+                        if automatic_work.goal is not None:
+                            from tldw_chatbook.MCP.permission_store import (
+                                definition_hash,
+                            )
+
+                            from .automatic_work_budget import AutomaticWorkRefused
+
+                            binding = next(
+                                (
+                                    item
+                                    for item in automatic_work.goal.goal.request.tool_scope.mcp_bindings
+                                    if item.server_key == tool.server_key
+                                    and item.tool_name == tool.name
+                                ),
+                                None,
+                            )
+                            if (
+                                binding is None
+                                or binding.definition_sha256
+                                != definition_hash(tool.description, tool.input_schema)
+                            ):
+                                raise AutomaticWorkRefused("mcp_binding_changed")
+                        return await execution_factory()
+
+                invocation_factory = execute_authorized
+            else:
+                invocation_factory = execution_factory
+            if policies or automatic_work is not None:
+
+                async def execute_completed():
+                    # Publish actual return only after all receiving guards and
+                    # scopes unwind, including admission-before-callback refusal.
                     try:
-                        with automatic_work.scope():
-                            automatic_work.check()
-                            if automatic_work.goal is not None:
-                                from tldw_chatbook.MCP.permission_store import (
-                                    definition_hash,
-                                )
-
-                                from .automatic_work_budget import AutomaticWorkRefused
-
-                                binding = next(
-                                    (
-                                        item
-                                        for item in automatic_work.goal.goal.request.tool_scope.mcp_bindings
-                                        if item.server_key == tool.server_key
-                                        and item.tool_name == tool.name
-                                    ),
-                                    None,
-                                )
-                                if (
-                                    binding is None
-                                    or binding.definition_sha256
-                                    != definition_hash(
-                                        tool.description, tool.input_schema
-                                    )
-                                ):
-                                    raise AutomaticWorkRefused("mcp_binding_changed")
-                            return await execution_factory()
+                        return await invocation_factory()
                     finally:
                         execution_completed.set()
 
-                execution_coroutine = execute_authorized()
+                execution_coroutine = execute_completed()
             else:
-                execution_coroutine = execution_factory()
+                execution_coroutine = invocation_factory()
             with observe_dispatch(observation):
                 future = asyncio.run_coroutine_threadsafe(
                     execution_coroutine,

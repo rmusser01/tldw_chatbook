@@ -108,6 +108,11 @@ source after binding, with a receipt for the exact bound directory identity.
 Changed writers, roots, databases and late permission sources cannot inherit
 the original admission. Native hook admission workers and the MCP dispatch
 coroutine preserve the same tuple through their existing worker guards.
+The MCP completion observer surrounds guard entry and unwind, so a returned
+no-dispatch admission refusal can retire without weakening pending settlement.
+Stock writer qualification includes the actual segment-path, write, manifest
+and close callbacks, checked before invocation at the AgentService receiving
+boundaries as well as the original writer methods.
 
 Retained context checks original references without I/O under bookkeeping
 locks; passive permission refresh and real writer operations validate filesystem

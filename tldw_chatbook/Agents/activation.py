@@ -113,7 +113,7 @@ def _explicit_writer_root(service):
         type(AgentService) is not type
         or type(writer_class) is not type
         or type(methods) is not tuple
-        or len(methods) != 5
+        or len(methods) != 12
         or not all(
             type(row) is tuple
             and len(row) == 4

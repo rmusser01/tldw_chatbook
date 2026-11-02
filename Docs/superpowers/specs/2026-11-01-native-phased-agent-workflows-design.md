@@ -541,3 +541,13 @@ project consent record them. Custom/unknown readers retain their complete values
 Changed selection, disable and retarget still revoke; activation storage tuple
 matching remains strict. This is not a new consent grant or ordinary physical
 admission.
+
+
+Task8D2 partition A review fix1 clarifies the same original-source contract:
+MCP completion is published only by the actual guarded coroutine's outer
+finally, including source-admission entry and unwind; conclusively unlaunched
+refusals may retire after real return, while unknown physical/required settlement
+still retains custody. Stock run-log qualification covers the concrete segment
+path, append/write, manifest and close callbacks before their receiving calls;
+a same-root writer with changed callbacks is not stock. Detailed logs remain
+supplementary, including the existing disabled-log and standalone paths.

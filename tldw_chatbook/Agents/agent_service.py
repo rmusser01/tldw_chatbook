@@ -4914,6 +4914,14 @@ class AgentService:
     ) -> None:
         if writer is None:
             return
+        from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+
+        # Optional logging cannot invoke a replacement callback on the original
+        # Console writer, including when finalizing a refused child.
+        try:
+            console_writer_source(writer)
+        except RuntimeError:
+            return
         writer.write_manifest(
             {
                 "run_id": run_id,
@@ -4926,6 +4934,7 @@ class AgentService:
                 "total_tokens": total_tokens,
             }
         )
+        console_writer_source(writer)
         writer.close()
 
     def _compose_native_child(
@@ -6221,6 +6230,9 @@ class AgentService:
             and parent_run_id is None
             and writer is not None
         ):
+            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+
+            console_writer_source(writer)
             writer.bind(run_id)
         started = self.clock()
         if config.review_binding is not None:
@@ -8953,6 +8965,9 @@ class AgentService:
             )
             durable_content = _replace_process_handles(safe_content, durable_handle_ids)
             altered = altered or durable_content != safe_content
+            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+
+            console_writer_source(writer)
             record_number = writer.append(
                 run_id=run_id,
                 kind=agent_kind,
