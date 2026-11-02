@@ -89,6 +89,7 @@ class ChangeReviewCompletion(Enum):
 class _Completion:
     disposition: ChangeReviewCompletion = ChangeReviewCompletion.PENDING
     ticket: object = None
+    admission_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,7 @@ class ChangeReviewReservation:
     id: str
     roots: tuple[str, ...]
     _handle: TurnHandle
-    admission_error: str = ""
+    _admission_error: str = ""
     _publication_reserved: bool = False
     _terminal_lock: threading.Lock = field(
         default_factory=threading.Lock,
@@ -128,22 +129,45 @@ class ChangeReviewReservation:
     _baseline_completion: _Completion = field(
         default_factory=_Completion, compare=False, repr=False
     )
+    _on_unadmitted: Callable[[], None] | None = field(
+        default=None, compare=False, repr=False
+    )
+    _notice_sent: threading.Event = field(
+        default_factory=threading.Event, compare=False, repr=False
+    )
+
+    @property
+    def admission_error(self) -> str:
+        return self._admission_error or self._completion.admission_error
+
+    def notify_unadmitted(self) -> None:
+        """Disclose once to the captured display target, outside native locks."""
+        if not self.admission_error:
+            return
+        with self._terminal_lock:
+            if self._notice_sent.is_set() or self._on_unadmitted is None:
+                return
+            self._notice_sent.set()
+        try:
+            self._on_unadmitted()
+        except Exception:  # noqa: BLE001, S110 - vanished display cannot stop drain
+            pass
 
     @property
     def completion(self) -> ChangeReviewCompletion:
-        if self.admission_error:
-            return ChangeReviewCompletion.UNADMITTED
         if (
             self._completion.ticket is not None
             and not self._completion.ticket.retired.is_set()
         ):
             return ChangeReviewCompletion.PENDING
+        if self.admission_error:
+            return ChangeReviewCompletion.UNADMITTED
         return self._completion.disposition
 
     @property
     def baseline_completion(self) -> ChangeReviewCompletion:
         """Actual read handoff; the legacy bounded-wait event is not drain proof."""
-        if self.admission_error:
+        if self._admission_error:
             return ChangeReviewCompletion.UNADMITTED
         result = self._baseline_completion
         if result.ticket is not None and not result.ticket.retired.is_set():
@@ -302,9 +326,13 @@ class ChangeReviewFinalizationCoordinator:
         self._started = False
         if self._native is not None:
             self._native.coordinator = self
+
+    def _subscribe_native(self, capacity, activity) -> None:
+        """Bind once on first admission, before a reserve can miss a release."""
+        if not self._subscriptions:
             self._subscriptions = (
-                self._native.activity.subscribe(lambda: self._availability("activity")),
-                self._native.capacity.subscribe_tool_availability(
+                activity.subscribe(lambda: self._availability("activity")),
+                capacity.subscribe_tool_availability(
                     lambda: self._availability("capacity")
                 ),
             )
@@ -315,6 +343,7 @@ class ChangeReviewFinalizationCoordinator:
         *,
         survivor_key: str = "",
         native_source=None,
+        on_unadmitted: Callable[[], None] | None = None,
     ) -> ChangeReviewReservation | None:
         """Atomically admit one reservation to every canonical-root lane.
 
@@ -362,7 +391,12 @@ class ChangeReviewFinalizationCoordinator:
                 handle.errors.update(dict.fromkeys(canonical, source_error))
                 handle._baseline_ready.set()
                 return ChangeReviewReservation(
-                    reservation_id, canonical, handle, source_error, False
+                    reservation_id,
+                    canonical,
+                    handle,
+                    source_error,
+                    False,
+                    _on_unadmitted=on_unadmitted,
                 )
             degraded = tuple(root for root in canonical if root in self._degraded_roots)
             if degraded:
@@ -385,6 +419,7 @@ class ChangeReviewFinalizationCoordinator:
                     handle,
                     admission_error,
                     self._native is None and self._direct_slots.acquire(blocking=False),
+                    _on_unadmitted=on_unadmitted,
                 )
             if len(self._states) >= self._capacity:
                 admission_error = (
@@ -400,11 +435,13 @@ class ChangeReviewFinalizationCoordinator:
                     handle,
                     admission_error,
                     self._native is None and self._direct_slots.acquire(blocking=False),
+                    _on_unadmitted=on_unadmitted,
                 )
             public = ChangeReviewReservation(
                 reservation_id,
                 canonical,
                 handle,
+                _on_unadmitted=on_unadmitted,
             )
             state = _ReservationState(
                 public=public,
@@ -1063,13 +1100,13 @@ class ChangeReviewFinalizationCoordinator:
 
     def _consume_operation_result(self, result: _OperationResult) -> None:
         ticket = result.ticket
-        if ticket:
-            with self._lock:
-                state = self._states.get(result.reservation_id)
-                if state is not None:
-                    state.public._completion.ticket = ticket
-                    if result.kind in {"discover", "baseline"}:
-                        state.public._baseline_completion.ticket = ticket
+        with self._lock:
+            state = self._states.get(result.reservation_id)
+            public = state.public if state is not None else None
+            if ticket and state is not None:
+                state.public._completion.ticket = ticket
+                if result.kind in {"discover", "baseline"}:
+                    state.public._baseline_completion.ticket = ticket
         try:
             with ticket.source.activate(ticket.owner) if ticket else nullcontext():
                 self._consume_result(result)
@@ -1096,6 +1133,11 @@ class ChangeReviewFinalizationCoordinator:
         finally:
             if ticket:
                 ticket.returned(handoff=True)
+            elif (
+                public is not None
+                and public._completion.disposition is ChangeReviewCompletion.UNADMITTED
+            ):
+                public.notify_unadmitted()
 
     def _consume_result(self, result: _OperationResult) -> None:
         """Advance one filesystem result through durable publication."""
@@ -1114,6 +1156,20 @@ class ChangeReviewFinalizationCoordinator:
                     state.public._baseline_completion.disposition = (
                         ChangeReviewCompletion.CANCELLED
                     )
+                state.operation_inflight = False
+                self._complete_locked(state, published=False)
+                self._schedule_ready_locked()
+                return
+            if self._native is not None and result.ticket is None:
+                error = "native change-review admission unavailable"
+                state.public._handle.errors.update(dict.fromkeys(state.roots, error))
+                state.public._completion.admission_error = error
+                state.public._completion.disposition = ChangeReviewCompletion.UNADMITTED
+                if result.kind in {"discover", "baseline"}:
+                    state.public._baseline_completion.disposition = (
+                        ChangeReviewCompletion.UNADMITTED
+                    )
+                    state.public._handle._baseline_ready.set()
                 state.operation_inflight = False
                 self._complete_locked(state, published=False)
                 self._schedule_ready_locked()
@@ -1156,16 +1212,6 @@ class ChangeReviewFinalizationCoordinator:
                 # invalidate an already-complete B/E window.
                 state.survivor_window_opened = False
                 state.survivor_window_closed = True
-            if self._native is not None and result.ticket is None:
-                for root in state.roots:
-                    state.public._handle.errors[root] = (
-                        result.error or "native change-review admission unavailable"
-                    )
-                state.public._completion.disposition = ChangeReviewCompletion.UNADMITTED
-                state.operation_inflight = False
-                self._complete_locked(state, published=False)
-                self._schedule_ready_locked()
-                return
             state.phase = "publishing"
             records = result.records
             if result.error:

@@ -41,7 +41,9 @@ def native_review(tmp_path):
         chat.close_connection()
 
 
-def register(host, *, origin=WorkOrigin.MANUAL, owner=None, claim=None):
+def register(
+    host, *, origin=WorkOrigin.MANUAL, owner=None, claim=None, on_unadmitted=None
+):
     native = getattr(host.coordinator, "_native", None)
     kwargs = {}
     if native is not None:
@@ -54,7 +56,7 @@ def register(host, *, origin=WorkOrigin.MANUAL, owner=None, claim=None):
             owner=owner,
             claim=claim,
         )
-    return host.coordinator.register([host.root], **kwargs)
+    return host.coordinator.register([host.root], on_unadmitted=on_unadmitted, **kwargs)
 
 
 def test_actual_discovery_remains_owned_after_timeout_and_shutdown(
@@ -598,21 +600,33 @@ def test_root_identity_change_during_capacity_wait_refuses_without_read(
         h.coordinator.cancel(reservation)
 
 
+@pytest.mark.parametrize("source_loss", ["bridge", "capacity"])
 def test_late_original_source_loss_never_calls_ticketless_publisher(
-    native_review, monkeypatch
+    native_review, monkeypatch, source_loss
 ):
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+
     h = native_review
     reservation = register(h)
     assert reservation.await_baseline(4)
     wait_for(lambda: reservation.baseline_completion.value != "pending")
     published = []
+    entries = []
+    monkeypatch.setattr(
+        h.tracker, "finish_turn", lambda *args, **kwargs: entries.append(True) or []
+    )
     monkeypatch.setattr(h.coordinator, "_publish", published.append)
     with monkeypatch.context() as changed:
-        changed.setattr(h.runtime, "_agent_bridge", object())
+        changed.setattr(
+            h.runtime,
+            "_agent_bridge" if source_loss == "bridge" else "_execution_capacity",
+            object() if source_loss == "bridge" else RuntimeCapacity(),
+        )
         h.coordinator.finalize(reservation, run_id="", kind="turn")
         wait_for(lambda: reservation.completion.value != "pending")
     assert reservation.completion.value == "unadmitted"
     assert not published
+    assert not entries
     assert reservation._handle.errors[str(h.root)]
     assert h.runtime.execution_capacity.snapshot().executions == ()
 
@@ -783,3 +797,384 @@ def test_real_native_bridge_keeps_ordinary_capture_and_dispatch_behavior(native_
         repo.file_bytes(rows[0]["end_sha"], "agent-output.txt") == b"from native turn\n"
     )
     wait_for(lambda: not h.runtime.execution_capacity.snapshot().executions)
+
+
+def test_pending_discovery_source_loss_is_unadmitted(native_review, monkeypatch):
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    h = native_review
+    assistant = h.store.append_message(
+        h.session.id, role=ConsoleMessageRole.ASSISTANT, content="original"
+    )
+    notice = h.store.capture_change_review_failure_notice(
+        h.session.id,
+        assistant.id,
+        "⚠ change review skipped workspace: native snapshot unavailable",
+    )
+    capacity = h.runtime.execution_capacity
+    capacity._read_settings = False
+    capacity.set_tool_limits(1, 0)
+    busy = capacity.begin_execution(origin=WorkOrigin.MANUAL, conversation_id="busy")
+    occupied = busy.reserve_tool()
+    entries = []
+    monkeypatch.setattr(h.tracker, "discover_baseline", entries.append)
+    reservation = register(h, on_unadmitted=notice)
+    try:
+        wait_for(
+            lambda: h.coordinator._states[reservation.id].pending_reason == "capacity"
+        )
+        h.runtime._agent_bridge = object()
+        occupied.finish()
+        wait_for(lambda: reservation.baseline_completion.value != "pending")
+        assert not entries
+        assert reservation.baseline_completion.value == "unadmitted"
+        assert reservation.completion.value == "unadmitted"
+        assert (
+            reservation.admission_error == "native change-review admission unavailable"
+        )
+        assert reservation.await_baseline(0)
+        wait_for(
+            lambda: any(
+                "change review skipped" in m.content
+                for m in h.store.messages_for_session(h.session.id)
+            )
+        )
+        reservation.notify_unadmitted()
+        h.coordinator.finalize(reservation, run_id="no-admission", kind="turn")
+        assert (
+            len(
+                [
+                    m
+                    for m in h.store.messages_for_session(h.session.id)
+                    if "change review skipped" in m.content
+                ]
+            )
+            == 1
+        )
+    finally:
+        h.runtime._agent_bridge = h.bridge
+        occupied.finish()
+        busy.finish_root()
+        h.coordinator.cancel(reservation)
+
+
+def test_late_native_refusal_reaches_original_visible_marker(
+    native_review, monkeypatch
+):
+    from Tests.Chat.test_change_turn_tracking import (
+        _calc_fence,
+        _run,
+        _SideEffectGateway,
+    )
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    h = native_review
+    h.bridge._gateway = _SideEffectGateway([[_calc_fence()], ["done."]])
+    h.store.append_message(h.session.id, role=ConsoleMessageRole.USER, content="hi")
+    assistant = h.store.append_message(
+        h.session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
+    original = h.coordinator.finalize
+    captured = []
+
+    def lose_source(reservation, **kwargs):
+        captured.append(reservation)
+        h.runtime._agent_bridge = object()
+        return original(reservation, **kwargs)
+
+    monkeypatch.setattr(h.coordinator, "finalize", lose_source)
+    try:
+        run_id, outcome = _run(h.bridge, h.session, assistant.id, h.root)
+        assert outcome.final_text.strip() == "done."
+        wait_for(lambda: captured[0].completion.value != "pending")
+        assert captured[0].completion.value == "unadmitted"
+        assert not h.bridge._db.change_snapshots_for_run(run_id)
+        wait_for(
+            lambda: any(
+                "change review skipped" in m.content
+                for m in h.store.messages_for_session(h.session.id)
+            )
+        )
+        markers = [
+            m
+            for m in h.store.messages_for_session(h.session.id)
+            if "change review skipped" in m.content
+            or "change tracking failed" in m.content
+        ]
+        assert len(markers) == 1, (
+            "late native refusal must disclose once to its original target"
+        )
+        original(captured[0], run_id=run_id, kind="turn")
+        assert h.coordinator.wait_idle(2)
+        assert (
+            len(
+                [
+                    m
+                    for m in h.store.messages_for_session(h.session.id)
+                    if m.id == markers[0].id
+                ]
+            )
+            == 1
+        )
+    finally:
+        h.runtime._agent_bridge = h.bridge
+
+
+def test_native_bridge_construction_keeps_capacity_settings_lazy(tmp_path, monkeypatch):
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+
+    calls = []
+    original = RuntimeCapacity.from_settings
+
+    def observed():
+        calls.append(threading.get_ident())
+        return original()
+
+    monkeypatch.setattr(RuntimeCapacity, "from_settings", observed)
+    chat = CharactersRAGDB(tmp_path / "chat.db", "lazy-snapshot")
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=chat, app_config={}))
+    try:
+        store = runtime.ensure_chat_store()
+        runtime.ensure_agent_bridge(
+            store_factory=lambda: store, provider_gateway_factory=lambda: object()
+        )
+        assert not calls, (
+            "constructing the issuer must not initialize capacity settings"
+        )
+        assert runtime._execution_capacity is None
+        assert runtime.change_review_coordinator._subscriptions == ()
+    finally:
+        assert runtime.change_review_coordinator.shutdown(5)
+        asyncio.run(runtime.dispose())
+        chat.close_connection()
+
+
+@pytest.mark.parametrize("phase", ["baseline", "end", "survivor"])
+def test_refusal_notice_stays_on_original_target_once(
+    native_review, monkeypatch, phase
+):
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    h = native_review
+    assistant = h.store.append_message(
+        h.session.id, role=ConsoleMessageRole.ASSISTANT, content="original"
+    )
+    notice = h.store.capture_change_review_failure_notice(
+        h.session.id,
+        assistant.id,
+        "⚠ change review skipped workspace: native snapshot unavailable",
+    )
+    source = h.coordinator._native.capture(
+        h.bridge,
+        session_id=h.session.id,
+        conversation_id="conversation",
+        origin=WorkOrigin.MANUAL,
+        roots=(h.root,),
+    )
+    original_store = h.bridge._store
+    replacement = ConsoleChatStore()
+    replacement_session = replacement.ensure_session()
+    bodies, publications, trajectory = [], [], []
+    original_b = h.tracker.populate_prepared_baseline
+    original_e = h.tracker.finish_turn
+    original_publish = h.coordinator._publish
+    monkeypatch.setattr(
+        h.tracker,
+        "populate_prepared_baseline",
+        lambda *args: (bodies.append("baseline"), original_b(*args))[1],
+    )
+    monkeypatch.setattr(
+        h.tracker,
+        "finish_turn",
+        lambda *args, **kwargs: (bodies.append("end"), original_e(*args, **kwargs))[1],
+    )
+    monkeypatch.setattr(
+        h.coordinator,
+        "_publish",
+        lambda item: (publications.append(item), original_publish(item))[1],
+    )
+    if phase == "baseline":
+        consume = h.coordinator._consume_operation_result
+
+        def lose_after_discover(result):
+            consume(result)
+            if result.kind == "discover":
+                h.bridge._store = replacement
+
+        monkeypatch.setattr(
+            h.coordinator, "_consume_operation_result", lose_after_discover
+        )
+    reservation = h.coordinator.register(
+        [h.root], native_source=source, survivor_key=assistant.id, on_unadmitted=notice
+    )
+    try:
+        if phase != "baseline":
+            assert reservation.await_baseline(4)
+            wait_for(lambda: reservation.baseline_completion.value != "pending")
+            if phase == "survivor":
+                (h.root / "a.txt").write_text("first end\n")
+                run_id = h.bridge._db.create_run(
+                    conversation_id="capture", agent_kind="primary"
+                )
+                h.coordinator.finalize(
+                    reservation, run_id=run_id, kind="turn", has_live_survivors=True
+                )
+                wait_for(
+                    lambda: h.coordinator._states[reservation.id].phase == "survivor"
+                )
+                wait_for(lambda: reservation._completion.ticket.retired.is_set())
+            h.bridge._store = replacement
+        # Navigate away and append a successor: the notice still belongs to its original assistant.
+        later = h.store.append_message(
+            h.session.id, role=ConsoleMessageRole.ASSISTANT, content="successor"
+        )
+        elsewhere = h.store.create_session(ephemeral=True)
+        monkeypatch.setattr(
+            h.store,
+            "_record_trajectory_tool_marker",
+            lambda *args: trajectory.append(args),
+        )
+        before_publications = len(publications)
+        if phase == "end":
+            h.coordinator.finalize(reservation, run_id="no-admission", kind="turn")
+        elif phase == "survivor":
+            h.coordinator.settle_survivors(assistant.id)
+        wait_for(lambda: reservation.completion.value == "unadmitted")
+        wait_for(
+            lambda: any(
+                "change review skipped" in m.content
+                for m in h.store.messages_for_session(h.session.id)
+            )
+        )
+        reservation.notify_unadmitted()
+        h.coordinator.finalize(reservation, run_id="duplicate", kind="turn")
+        h.coordinator.settle_survivors(assistant.id)
+        messages = h.store.messages_for_session(h.session.id)
+        markers = [m for m in messages if "change review skipped" in m.content]
+        assert len(markers) == 1
+        assert (
+            messages.index(markers[0])
+            == next(i for i, m in enumerate(messages) if m.id == assistant.id) + 1
+        )
+        assert messages.index(markers[0]) < next(
+            i for i, m in enumerate(messages) if m.id == later.id
+        )
+        assert not h.store.messages_for_session(elsewhere.id)
+        assert not replacement.messages_for_session(replacement_session.id)
+        assert not trajectory
+        assert len(publications) == before_publications
+        assert bodies == (
+            []
+            if phase == "baseline"
+            else ["baseline", "end"]
+            if phase == "survivor"
+            else ["baseline"]
+        )
+        assert reservation.baseline_completion.value == (
+            "unadmitted" if phase == "baseline" else "observed"
+        )
+    finally:
+        h.bridge._store = original_store
+        h.coordinator.cancel(reservation)
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_cold_capacity_first_use_keeps_publisher_lifetime(
+    tmp_path, monkeypatch, cancel
+):
+    from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
+
+    entered, release, closed = threading.Event(), threading.Event(), threading.Event()
+    loaded, threads, bodies = [], [], []
+    original = RuntimeCapacity.from_settings
+
+    def held_load():
+        threads.append(threading.get_ident())
+        entered.set()
+        assert release.wait(5)
+        capacity = original()
+        loaded.append(capacity)
+        return capacity
+
+    monkeypatch.setattr(RuntimeCapacity, "from_settings", held_load)
+    chat = CharactersRAGDB(tmp_path / "chat.db", "cold-snapshot")
+    runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=chat, app_config={}))
+    store = runtime.ensure_chat_store()
+    session = store.create_session(ephemeral=True)
+    bridge = runtime.ensure_agent_bridge(
+        store_factory=lambda: store, provider_gateway_factory=lambda: object()
+    )
+    coordinator = runtime.change_review_coordinator
+    tracker = coordinator._tracker
+    tracker.service = ShadowRepoService(tmp_path / "shadow")
+    root = tmp_path / "root"
+    root.mkdir()
+    host = SimpleNamespace(**locals())
+    original_close = coordinator._close_publisher
+    monkeypatch.setattr(
+        coordinator, "_close_publisher", lambda: (closed.set(), original_close())
+    )
+    discover = tracker.discover_baseline
+
+    def observed(handle):
+        bodies.append(current_execution_owner())
+        assert coordinator._subscriptions
+        return discover(handle)
+
+    monkeypatch.setattr(tracker, "discover_baseline", observed)
+    try:
+        assert not entered.is_set() and runtime._execution_capacity is None
+        reservation = register(host)
+        assert entered.wait(3)
+        assert threads == [coordinator._publisher.ident]
+        if cancel:
+            assert coordinator.cancel(reservation)
+            assert not coordinator.shutdown(0)
+            assert not closed.is_set()
+        release.set()
+        if cancel:
+            assert coordinator.shutdown(5)
+            assert not bodies
+        else:
+            assert reservation.await_baseline(4)
+            assert bodies[0].capacity is loaded[0]
+            assert (
+                coordinator._native.capacity
+                is runtime.execution_capacity
+                is bridge.runtime_capacity
+                is loaded[0]
+            )
+            coordinator.cancel(reservation)
+            assert coordinator.shutdown(5)
+        assert closed.is_set()
+        assert not loaded[0]._tool_observers
+        assert not runtime.worktree_activity._observers
+        assert not loaded[0].snapshot().executions
+    finally:
+        release.set()
+        assert coordinator.shutdown(5)
+        asyncio.run(runtime.dispose())
+        chat.close_connection()
+
+
+def test_view_detach_and_session_navigation_preserve_original_capture(native_review):
+    h = native_review
+    source = h.coordinator._native.capture(
+        h.bridge,
+        session_id=h.session.id,
+        conversation_id="conversation",
+        origin=WorkOrigin.MANUAL,
+        roots=(h.root,),
+    )
+    elsewhere = h.store.create_session(ephemeral=True)
+    h.store.switch_session(elsewhere.id)
+    assert h.runtime.detach_view()
+    reservation = h.coordinator.register([h.root], native_source=source)
+    try:
+        assert reservation.await_baseline(4)
+        wait_for(lambda: reservation.baseline_completion.value != "pending")
+        assert reservation.baseline_completion.value == "observed"
+        assert not reservation.admission_error
+    finally:
+        h.coordinator.cancel(reservation)

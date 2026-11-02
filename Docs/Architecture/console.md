@@ -289,6 +289,14 @@ cannot fall back to standalone legacy capture. This qualification covers the
 coordinated Console path; the separately owned consent initializer and D2's
 ordinary/phase admission integration are not implemented by this slice.
 
+Issuer construction is metadata-only. Its first pending admission resolves the
+same lazy runtime capacity under captured activation on the existing publisher,
+then subscribes before reserving; publisher close removes those subscriptions.
+Never-admitted discover/B/E/survivor jobs retain UNADMITTED and send one transient
+display-only failure to the original store/session/assistant. The notice follows
+that assistant's path across navigation, performs no trajectory or snapshot DB
+write, and cannot substitute for D2's required durable window disclosure.
+
 `ConsoleAgentBridge.run_reply` keeps its ordinary execution/generation guards and
 consumes `_prepare_native_reply`, the shared native preparation/finalizer frame.
 The frame yields `_PreparedNativeReply` before its once-only `run_primary` call.

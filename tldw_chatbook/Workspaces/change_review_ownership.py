@@ -29,9 +29,25 @@ class _NativeSnapshotIssuer:
 
     def __init__(self, runtime):
         self.runtime = runtime
-        self.capacity = runtime.execution_capacity
-        self.activity = runtime.worktree_activity
         self.coordinator = None
+        self._capacity = None
+        self._activity = None
+
+    @property
+    def capacity(self):
+        if self._capacity is None:
+            self._capacity = self.runtime.execution_capacity
+        elif self.runtime._execution_capacity is not self._capacity:
+            raise ValueError("native change-review capacity changed")
+        return self._capacity
+
+    @property
+    def activity(self):
+        if self._activity is None:
+            self._activity = self.runtime.worktree_activity
+        elif self.runtime._worktree_activity is not self._activity:
+            raise ValueError("native change-review activity changed")
+        return self._activity
 
     def capture(
         self,
@@ -145,7 +161,14 @@ class _SnapshotSource:
 
     def admit(self):
         self.check_source()
+        # Cold control-plane settings retain their original admission on this
+        # existing publisher callback, never during inert bridge construction.
+        with execution(sources=self.sources):
+            return self._admit_owned()
+
+    def _admit_owned(self):
         capacity, activity = self.issuer.capacity, self.issuer.activity
+        self.issuer.coordinator._subscribe_native(capacity, activity)
         if self.owner is not None:
             if (
                 self.owner.capacity is not capacity

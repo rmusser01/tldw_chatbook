@@ -12146,6 +12146,43 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
         node = self._nodes_by_session.get(session_id, {}).get(native_message_id)
         return node.persisted_message_id if node is not None else None
 
+    def capture_change_review_failure_notice(
+        self, session_id: str, assistant_message_id: str, text: str
+    ) -> Callable[[], None]:
+        """Capture one original transient display target without persistence."""
+        session = self._session_or_raise(session_id)
+        anchor = self._nodes_by_session.get(session_id, {}).get(assistant_message_id)
+        if anchor is None or anchor.role is not ConsoleMessageRole.ASSISTANT:
+            raise ValueError("original assistant target required")
+
+        def notice() -> None:
+            if self._sessions.get(session_id) is not session:
+                return
+            with self._fork_source_transition(session_id):
+                if (
+                    self._sessions.get(session_id) is not session
+                    or self._nodes_by_session.get(session_id, {}).get(
+                        assistant_message_id
+                    )
+                    is not anchor
+                ):
+                    return
+                marker = ConsoleChatMessage(
+                    id=str(uuid4()),
+                    role=ConsoleMessageRole.TOOL,
+                    content=text,
+                    status=self._initial_status(
+                        role=ConsoleMessageRole.TOOL, content=text
+                    ),
+                )
+                self._message_session_index[marker.id] = session_id
+                self._tool_markers_by_session.setdefault(session_id, []).append(
+                    (assistant_message_id, marker)
+                )
+                self._recompute_active_path(session_id)
+
+        return notice
+
     def update_tool_marker(
         self,
         session_id: str,

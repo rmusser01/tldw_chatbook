@@ -94,6 +94,13 @@ coordination does not isolate external OS configuration edits. The standalone
 legacy tracker keeps its existing behavior. Consent's separate root initializer
 still requires native ownership/helper qualification in Task 8D2.
 
+Native issuer construction does not initialize capacity settings; first actual
+admission resolves the same runtime ledger on the retained publisher callback.
+Late no-effect admission refusal is UNADMITTED, including discover/B. It delivers
+a once-only transient marker to the original store/session/assistant without a
+trajectory or snapshot publication fallback. This ordinary advisory display is
+not durable workflow-window failure disclosure; that remains a D2 obligation.
+
 Change Review remains observation, not authorization. Existing project-context
 preparation, permission review, invocation-time permission resolution,
 refusals, stamps, audit, and kill-switch ownership remain unchanged.

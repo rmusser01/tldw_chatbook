@@ -7871,6 +7871,14 @@ class ConsoleAgentBridge:
                     change_roots,
                     survivor_key=assistant_message_id,
                     native_source=native_source,
+                    on_unadmitted=self._store.capture_change_review_failure_notice(
+                        session_id,
+                        assistant_message_id,
+                        format_change_review_skipped_marker(
+                            "workspace",
+                            "native snapshot unavailable; this turn is not tracked",
+                        ),
+                    ),
                 )
             except Exception:  # noqa: BLE001 - native mismatch cannot enter legacy
                 self._append_marker(
@@ -8712,23 +8720,26 @@ class ConsoleAgentBridge:
                             ),
                         )
                         if finalization is ChangeReviewFinalizeResult.OVERLOAD_VISIBLE:
-                            error = (
-                                change_reservation.admission_error
-                                or "change-review finalization queue unavailable"
-                            )
-                            for index, root in enumerate(
-                                change_reservation.roots,
-                                start=1,
-                            ):
-                                self._append_marker(
-                                    session_id,
-                                    format_change_tracking_failure_marker(
-                                        alias_by_root.get(
-                                            str(root), f"workspace {index}"
-                                        ),
-                                        error,
-                                    ),
+                            if self._native_change_review_expected:
+                                change_reservation.notify_unadmitted()
+                            else:
+                                error = (
+                                    change_reservation.admission_error
+                                    or "change-review finalization queue unavailable"
                                 )
+                                for index, root in enumerate(
+                                    change_reservation.roots,
+                                    start=1,
+                                ):
+                                    self._append_marker(
+                                        session_id,
+                                        format_change_tracking_failure_marker(
+                                            alias_by_root.get(
+                                                str(root), f"workspace {index}"
+                                            ),
+                                            error,
+                                        ),
+                                    )
                     else:
                         self._change_finalization_coordinator.cancel(change_reservation)
                 except Exception:  # noqa: BLE001 -- never mask the run outcome
