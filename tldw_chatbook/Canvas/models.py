@@ -63,6 +63,12 @@ class CanvasScope:
     selected_canvas_id: str | None
     selected_revision_id: str | None
     run_id: str
+    # Data-only legacy scopes may omit this; native authority refuses unknown state.
+    ephemeral: bool | None = field(default=None, kw_only=True)
+
+    def __post_init__(self) -> None:
+        if self.ephemeral is not None and type(self.ephemeral) is not bool:
+            raise TypeError("Canvas ephemeral state must be a bool or None")
 
 
 @dataclass(frozen=True, slots=True)

@@ -11,9 +11,14 @@ from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
 
 @pytest.mark.parametrize(
-    "invalid_owner", (None, "session", "conversation", "branch", "closed")
+    "invalid_owner",
+    (None, "session", "conversation", "branch", "classification", "closed"),
 )
+@pytest.mark.bootstrap_profile
 def test_hidden_run_scope_preserves_exact_owner_and_browser_guard(invalid_owner):
+    from tldw_chatbook.config import get_canvas_execution_enabled
+
+    assert get_canvas_execution_enabled() is True
     runtime = ConsoleRuntime(SimpleNamespace(chachanotes_db=None))
     store = runtime.ensure_chat_store()
     session = store.create_session(ephemeral=True)
@@ -25,6 +30,7 @@ def test_hidden_run_scope_preserves_exact_owner_and_browser_guard(invalid_owner)
         selected_canvas_id=None,
         selected_revision_id=None,
         run_id="owned-run",
+        ephemeral=session.ephemeral,
     )
 
     def visible_scope(session_id):
@@ -47,6 +53,8 @@ def test_hidden_run_scope_preserves_exact_owner_and_browser_guard(invalid_owner)
             scope = replace(scope, session_id=other.id)
         elif invalid_owner == "conversation":
             scope = replace(scope, conversation_id=other.id)
+        elif invalid_owner == "classification":
+            scope = replace(scope, ephemeral=False)
         elif invalid_owner == "branch":
             scope = replace(scope, active_message_ids=("not-this-branch",))
         elif invalid_owner == "closed":

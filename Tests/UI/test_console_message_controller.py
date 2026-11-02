@@ -374,7 +374,11 @@ def test_canvas_auto_open_is_suppressed_only_by_same_session_browser():
     assert len(workers) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
+    from tldw_chatbook.config import get_canvas_execution_enabled
+
+    assert get_canvas_execution_enabled() is True
     app = _build_test_app()
     screen = ChatScreen(app)
     store = screen._ensure_console_chat_store()
@@ -393,6 +397,7 @@ def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
         scope=SimpleNamespace(
             session_id=first.id,
             conversation_id=first.id,
+            ephemeral=first.ephemeral,
         ),
         revisions=(SimpleNamespace(origin=SimpleNamespace(message_id=left.id)),),
     )
@@ -410,7 +415,11 @@ def test_canvas_publication_guard_rejects_stale_session_and_sibling_branch():
     assert screen._console_canvas_publication_is_current(publication) is False
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_composer_sink_validates_exact_session_and_branch_target():
+    from tldw_chatbook.config import get_canvas_execution_enabled
+
+    assert get_canvas_execution_enabled() is True
     app = _build_test_app()
     screen = ChatScreen(app)
     store = screen._ensure_console_chat_store()
@@ -429,6 +438,7 @@ def test_canvas_composer_sink_validates_exact_session_and_branch_target():
         browser_session_id="browser-exact",
         session_id=session.id,
         conversation_id=session.id,
+        ephemeral=session.ephemeral,
         active_message_ids=(root.id, left.id),
         canvas_id="canvas-exact",
         revision_id="revision-exact",
@@ -456,7 +466,11 @@ def test_canvas_composer_sink_validates_exact_session_and_branch_target():
     assert store.session_draft(session.id) == "exact draft"
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_submit_preparation_only_replaces_the_unchanged_unsent_draft():
+    from tldw_chatbook.config import get_canvas_execution_enabled
+
+    assert get_canvas_execution_enabled() is True
     app = _build_test_app()
     screen = ChatScreen(app)
     store = screen._ensure_console_chat_store()
@@ -475,6 +489,7 @@ def test_canvas_submit_preparation_only_replaces_the_unchanged_unsent_draft():
         browser_session_id="browser-confirm",
         session_id=session.id,
         conversation_id=session.id,
+        ephemeral=session.ephemeral,
         active_message_ids=(root.id, assistant.id),
         canvas_id="canvas-confirm",
         revision_id="revision-confirm",

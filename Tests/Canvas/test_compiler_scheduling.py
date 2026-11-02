@@ -47,7 +47,9 @@ def test_existing_block_replay_does_not_recompile_historical_source(monkeypatch)
 
 
 def setup_authority(snapshot=None):
-    scope = CanvasScope("session", "session", ("message",), None, None, "run")
+    scope = CanvasScope(
+        "session", "session", ("message",), None, None, "run", ephemeral=True
+    )
     controller = ConsoleCanvasController(profile_snapshot=snapshot)
     controller.activate_session("session")
     live = {"scope": scope, "enabled": True}
@@ -81,7 +83,8 @@ class DelayedCompiler:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "invalidate", [None, "branch", "disable", "dispose", "reincarnate"]
+    "invalidate",
+    [None, "branch", "classification", "disable", "dispose", "reincarnate"],
 )
 async def test_native_preview_yields_during_compilation(monkeypatch, invalidate):
     authority, controller, live = setup_authority()
@@ -108,6 +111,8 @@ async def test_native_preview_yields_during_compilation(monkeypatch, invalidate)
         assert not task.done(), "compilation blocked the event loop"
         if invalidate == "branch":
             live["scope"] = replace(live["scope"], active_message_ids=("sibling",))
+        elif invalidate == "classification":
+            live["scope"] = replace(live["scope"], ephemeral=False)
         elif invalidate == "disable":
             live["enabled"] = False
         elif invalidate == "dispose":
@@ -209,7 +214,16 @@ async def test_served_preview_yields_during_compilation(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "invalidate",
-    ["branch", "disable", "dispose", "reincarnate", "cancel", "view", "rebind"],
+    [
+        "branch",
+        "classification",
+        "disable",
+        "dispose",
+        "reincarnate",
+        "cancel",
+        "view",
+        "rebind",
+    ],
 )
 async def test_import_preparation_cannot_mutate_after_invalidation(
     monkeypatch, invalidate
@@ -232,6 +246,8 @@ async def test_import_preparation_cannot_mutate_after_invalidation(
         assert not task.done()
         if invalidate == "branch":
             live["scope"] = replace(live["scope"], active_message_ids=("sibling",))
+        elif invalidate == "classification":
+            live["scope"] = replace(live["scope"], ephemeral=False)
         elif invalidate == "disable":
             live["enabled"] = False
         elif invalidate == "dispose":
