@@ -7137,11 +7137,12 @@ class ChatScreen(BaseAppScreen):
         self._pending_conversation_settings_return_target = None
         self._conversation_settings_return_restore_in_progress = False
         self._pending_console_launch_auto_open_inspector = False
-        # PR-4/task-1 + TASK-33620.7: the LAST send's source count is a
-        # per-chat ConsoleRuntime receipt, kept until that chat admits its
-        # next turn (or new staging / an un-stage). It drives Inspect's Run
-        # card ("sent with the last message"); the reply carries "Sources
-        # (N) · sent with this turn"; the strip shows only the NEXT send.
+        # PR-4/task-1 + TASK-33620.7: the last accepted capture's source
+        # count (or prompted estimate) is a per-chat ConsoleRuntime receipt,
+        # kept until that chat admits its next turn or replaces its staging.
+        # Inspect says "attached to the last message"; the reply carries
+        # "Sources (N) · attached to this turn"; the strip is for NEXT send.
+        # This receipt is independent of provider contact.
         # Deliberately NOT a timer: a timed clear races the surfaces' own
         # recompose.
         # TASK-259: dedupe guard for the scheduled inspector-rail card swap
@@ -9412,11 +9413,11 @@ class ChatScreen(BaseAppScreen):
         launch: ConsoleLiveWorkLaunch,
         result: Any,
     ) -> int:
-        """Return how many sources this send actually put in front of the model.
+        """Return the accepted capture count or its prompted estimate.
 
-        The reply's "Sources (N)" line and Inspect's sent-sources receipt
-        claim what reached the provider, so they must never report the
-        staged total: the capture prompts only available, local references.
+        The reply's "Sources (N)" line and Inspect's attached-source receipt
+        describe acceptance independently of provider contact. The captured
+        entry count can differ from the total staged references.
 
         Preference order:
 
@@ -9432,7 +9433,8 @@ class ChatScreen(BaseAppScreen):
             result: The capture's ``LocalRagContextResult``.
 
         Returns:
-            The number of evidence entries carried into the prompt.
+            The captured entry count or existing pre-authority estimate,
+            never proof of exact wire content or provider contact.
         """
         return console_sent_source_count(launch, result)
 

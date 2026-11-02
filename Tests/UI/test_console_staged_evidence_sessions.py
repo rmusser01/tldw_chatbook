@@ -791,3 +791,144 @@ def test_accepted_source_run_receipt_uses_attached_vocabulary() -> None:
     assert ConsoleRetrievalController._console_rag_source_status(None, None, 2) == (
         "attached to the last message · 2 sources"
     )
+
+
+@pytest.mark.asyncio
+async def test_original_stock_handler_accepts_b_without_consuming_a_staging(
+    capture, record_property
+) -> None:
+    """Real mounted source checks and acceptance; natural button is separate."""
+    import asyncio
+    import hashlib
+
+    from Tests.UI.test_console_hook_review_send_freeze import _until
+    from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
+    from tldw_chatbook.UI.Screens.chat_screen import _CONSOLE_RECEIVED_SCREEN_SELECTORS
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+    from tldw_chatbook.Widgets.Console.console_transcript import _citation_notice
+
+    class HeldGateway(CapturingGateway):
+        def __init__(self):
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def stream_chat(self, resolution, messages, **kwargs):
+            self.sent_messages.append(list(messages))
+            self.entered.set()
+            await self.release.wait()
+            yield "accepted"
+
+    gateway = HeldGateway()
+    host = ConsoleHarness(_console_app(gateway))
+    async with host.run_test(size=(200, 56)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _select_llamacpp_console(console)
+        assert stock_native_methods(console, _CONSOLE_RECEIVED_SCREEN_SELECTORS)
+        store = console._ensure_console_chat_store()
+        runtime = console._console_runtime()
+        first = store.active_session_id
+        launch = _launch(2)
+        console._retrieval._stage_console_library_rag_launch(launch)
+        first_state = runtime.snapshot_console_staged_evidence(first)
+        assert first_state[0] is launch and first_state[1] > 0
+
+        await pilot.press("ctrl+t")
+        await _wait_for_new_chat(store, pilot, first)
+        second = store.active_session_id
+        await _select_llamacpp_console(console)
+        assert await _until(
+            lambda: console._console_visible_draft_session_id == second
+            and console._console_attach_reconciled
+            and not console._console_attach_reconcile_running
+            and console._hooks._permissions().snapshot().ready,
+            15,
+        )
+        assert runtime.snapshot_console_staged_evidence(second) == (None, 0, None)
+        assert runtime.snapshot_console_staged_evidence(first) == first_state
+        strip = console.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
+        assert await _until(lambda: not strip.display, 15)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("unrelated")
+        await _sync_console_control_bar_now(console)
+        send = console.query_one("#console-send-message", Button)
+        assert not send.disabled
+        worker = console.run_worker(
+            console.handle_console_send_message(Button.Pressed(send)),
+            group="pr3331-original-handler",
+            exit_on_error=False,
+        )
+        turn_task = None
+        try:
+            reached = await _until(gateway.entered.is_set, 15)
+            record_property("pr3331_route", "original-stock-handler-worker")
+            record_property("pr3331_gateway_entered", reached)
+            if not reached:
+                recoveries = runtime.recoveries_for_session(second)
+                record_property("pr3331_recovery_count", len(recoveries))
+                record_property(
+                    "pr3331_recovery_reason_sha256",
+                    ";".join(
+                        hashlib.sha256(row.reason.encode()).hexdigest()
+                        for row in recoveries
+                    ),
+                )
+                preparation = store.preparation_for_session(second)
+                record_property(
+                    "pr3331_preparation_state", str(getattr(preparation, "state", None))
+                )
+                record_property(
+                    "pr3331_preparation_pause_kind",
+                    str(getattr(preparation, "pause_kind", None)),
+                )
+                record_property("pr3331_handler_state", worker.state.name)
+            assert reached, "Original stock handler did not reach the held gateway"
+            records = [
+                row
+                for row in runtime._turn_custody.values()
+                if row.session_id == second
+            ]
+            assert len(records) == 1
+            record = records[0]
+            turn_task = record.task
+            assert turn_task is not None and not turn_task.done()
+            assert record.store is store
+            assert record.request is not None and record.request.session_id == second
+            assert record.request.staged_evidence_launch is None
+            if record.received_intent is not None:
+                assert record.received_intent.staged_evidence_launch is None
+            assert record.inputs.staged_evidence_revision is None
+            # Issued only by the real acceptance owner, never set by this test.
+            assert record.inputs.durable_accepted is True
+            record_property("pr3331_durable_accepted", record.inputs.durable_accepted)
+            record_property(
+                "pr3331_received_intent", record.received_intent is not None
+            )
+            assert len(gateway.sent_messages) == 1
+            assert EVIDENCE not in _last_request_text(gateway)
+            assert capture.await_count == 0
+            replies = [
+                m
+                for m in store.messages_for_session(second)
+                if m.role is ConsoleMessageRole.ASSISTANT
+            ]
+            assert len(replies) == 1
+            assert replies[0].evidence_source_count is None
+            assert "Sources (" not in _citation_notice(replies[0])
+            assert runtime.snapshot_console_staged_evidence(first) == first_state
+        finally:
+            gateway.release.set()
+            await worker.wait()
+            if turn_task is not None:
+                await asyncio.shield(turn_task)
+        assert await _until(lambda: not runtime.has_custodied_turns(second), 15)
+        assert runtime.snapshot_console_staged_evidence(first) == first_state
+        assert (
+            console._ensure_console_chat_controller()._ordinary_native_commit_retirements(
+                second
+            )
+            == ()
+        )
+        assert len(gateway.sent_messages) == 1
+        record_property("pr3331_joined_cleanup", True)

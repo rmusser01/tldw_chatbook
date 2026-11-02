@@ -13,3 +13,7 @@ Reason: corrections within existing runtime/session, captured Library authority 
 5. Run affected session/strip, actual gateway contact, lifecycle/refusal/cancellation, dispatch/voice/custody, canonical citation/recorded link and boot census cases selected by changed boundary. Demonstrate separate copy/pop/lazy-adoption negative controls. No full sweep/live provider/app launch.
 6. Update architecture/user docs and task notes with qualified current evidence. Review diagnostics before inventory regeneration; compare Ruff against exact base and check edited formatting. Preserve floors and open follow-ups33620.7.1/.2/.3.
 7. Commit clean candidate; publish content-free receipts/source hashes and immutable full diff/snapshot for parent-arranged independent review. Parent owns remote/approval/Done/release decisions.
+
+## Grouped final review wave
+
+Address I1 with one mounted A/B original-stock-handler send, actual runtime acceptance and held gateway entry, preserving A launch/revision and proving B frozen launch=None/no count/no A payload plus joined native cleanup. Retain the independently unresolved natural-button case. Correct M1 comments/docstring only, with normalized AST equality. No broad preservation repeat. `backlog/decisions/097-boot-budget-ratchets.md` records the coordinator's user-authorized numeric residency exception:1034/1031 is WAIVED, not PASS; MAX1031 and snapshots stay unchanged; attribution is unproven. Existing ADR094/079/230 still govern the repairs; no new ADR.
