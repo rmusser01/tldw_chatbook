@@ -587,6 +587,15 @@ class TestHybridFtsOnlyIndication:
         ):
             return ([{"id": 1, "title": "Doc", "content": "keyword content"}], 1)
 
+        @staticmethod
+        def fetch_content_prefixes_for_media_batch(media_ids, prefix_chars=500):
+            # Mirrors Client_Media_DB_v2 (TASK-407, commit b1c98303a2):
+            # the broad search_media_db row carries no content key, so the
+            # FTS leg fetches bounded per-media prefixes through this
+            # method. TASK-38591: the fake predates the method and the
+            # suite crashed on the missing attribute.
+            return {1: "keyword content"}
+
     def test_parallel_step_records_search_error_when_vector_leg_raises(
         self, monkeypatch
     ):

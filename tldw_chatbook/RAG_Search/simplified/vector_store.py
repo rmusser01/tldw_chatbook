@@ -60,6 +60,21 @@ MEMORY_PRESSURE_REDUCTION = 0.2  # Fraction to reduce on memory pressure
 _DOC_ID_DELETE_CHUNK_SIZE = 500
 
 
+class VectorStoreSearchError(RuntimeError):
+    """A vector-store search failed at the underlying backend.
+
+    TASK-38591: ``ChromaVectorStore.search`` used to catch every exception
+    and return ``[]``. An empty list is a legitimate, cacheable "no
+    matches" answer, while a transient backend failure (connection drop,
+    locked store, corrupt index read) is NOT -- ``RAGService.search``
+    cached that swallowed ``[]`` for the full cache TTL (default 3600s),
+    poisoning the query for an hour. The store now raises this typed error
+    instead, and callers that must not hard-fail the app
+    (``RAGService.search``) catch it, log it, and degrade to keyword-only
+    or empty results WITHOUT writing them to the cache.
+    """
+
+
 @dataclass
 class SearchResult:
     """Basic search result for backward compatibility."""
@@ -517,6 +532,12 @@ class ChromaVectorStore:
 
         Returns:
             List of matching ``SearchResult`` objects, most similar first.
+
+        Raises:
+            VectorStoreSearchError: The underlying ChromaDB query failed
+                (TASK-38591). Raised instead of the historical swallow to
+                ``[]``: an empty list means "no matches" and is cacheable
+                by callers, a backend failure is not.
         """
         start_time = time.time()
 
@@ -591,7 +612,13 @@ class ChromaVectorStore:
         except Exception as e:
             log_counter("vector_store_search_error", labels={"error": type(e).__name__})
             logger.opt(exception=True).error(f"Search failed: {e}")
-            return []
+            # TASK-38591: never swallow a store failure into ``[]`` -- an
+            # empty result is cacheable, a failure is not. See
+            # ``VectorStoreSearchError``.
+            raise VectorStoreSearchError(
+                f"ChromaDB query failed for collection "
+                f"{self.collection_name!r}: {e}"
+            ) from e
 
     @store_operation
     @store_query

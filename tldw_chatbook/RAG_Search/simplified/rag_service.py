@@ -65,7 +65,12 @@ from tldw_chatbook.Metrics.metrics_logger import (
     timeit,
 )
 from .embeddings_wrapper import EmbeddingsServiceWrapper
-from .vector_store import create_vector_store, SearchResult, SearchResultWithCitations
+from .vector_store import (
+    VectorStoreSearchError,
+    create_vector_store,
+    SearchResult,
+    SearchResultWithCitations,
+)
 from .citations import Citation, CitationType, merge_citations
 from .config import RAGConfig, DEFAULT_HYBRID_POOL_MULTIPLIER
 from .collection_fingerprint import fingerprinted_collection_name, collection_provenance
@@ -1288,7 +1293,14 @@ class RAGService:
                 entry.
 
         Returns:
-            List of search results (with or without citations)
+            List of search results (with or without citations). A failure
+            of the underlying vector store does NOT raise and does NOT
+            return a cached lie: it is caught
+            (``VectorStoreSearchError``, TASK-38591), logged, and degraded
+            to keyword-only results (``search_type="hybrid"``) or an empty
+            list (``semantic``) WITHOUT writing the degraded result to the
+            cache, so the next search re-attempts the store instead of
+            serving the failure for the cache TTL.
 
         Raises:
             ValueError: If ``metadata_allowlist`` is provided with
@@ -1507,6 +1519,40 @@ class RAGService:
                 )
 
             return results
+
+        except VectorStoreSearchError as e:
+            # TASK-38591: an underlying store failure must degrade instead
+            # of crashing the app, but it must NOT enter the cache. The old
+            # contract swallowed the failure to [] inside the store itself,
+            # and the `put_async` above then served that [] for the full
+            # cache TTL (default 3600s) after ONE transient error.
+            # Returning from this handler skips the cache write by design,
+            # so the next search re-attempts the store.
+            log_counter(
+                "rag_search_store_unavailable", labels={"type": search_type}
+            )
+            logger.warning(
+                f"[{correlation_id}] Vector store search failed; degrading to "
+                f"{'keyword-only' if search_type == 'hybrid' else 'empty'} "
+                f"results (not cached): {e}"
+            )
+            if search_type == "hybrid":
+                try:
+                    return await self._keyword_search(
+                        query,
+                        top_k,
+                        filter_metadata,
+                        include_citations,
+                        keyword_source_types=keyword_source_types,
+                        metadata_allowlist=metadata_allowlist,
+                    )
+                except Exception as keyword_error:
+                    logger.opt(exception=True).error(
+                        f"[{correlation_id}] Keyword fallback after store "
+                        f"error failed too: {keyword_error}"
+                    )
+                    return []
+            return []
 
         except Exception as e:
             log_counter(
