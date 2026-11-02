@@ -336,6 +336,21 @@ class WorktreeActivity:
             ):
                 raise ValueError("live original activity claim custody required")
 
+    def validate_opaque_claim(
+        self, claim: WorktreeActivityClaim, *, owner: ExecutionOwner
+    ) -> None:
+        """Borrow only an original primary owner's already-complete opaque claim."""
+        with self._lock:
+            state = (
+                self._claims.get(claim.id)
+                if type(claim) is WorktreeActivityClaim
+                else None
+            )
+            footprint = state.footprint if state is not None else None
+        if footprint is None or not footprint.opaque:
+            raise ValueError("original opaque snapshot coverage required")
+        self.validate_claim(claim, owner=owner, footprint=footprint)
+
     def _attach_child(
         self, claim_id: str, owner: ExecutionOwner
     ) -> WorktreeActivitySettlement:

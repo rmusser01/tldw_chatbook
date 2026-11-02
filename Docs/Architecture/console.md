@@ -266,6 +266,29 @@ Streaming details, transforms (skills → chat dictionaries → world info), swi
 
 ## Shared native preparation (ADR-285)
 
+App-owned Change Review uses the existing coordinator's fixed filesystem workers
+and publisher with finite native snapshot ownership. Each discover/B/E/survivor
+job admits opaque worktree activity and a native tool operation; inherited Git
+configuration/include/ignore files are outside a bounded root-only footprint.
+Actual worker and original publisher scope return are both required to retire
+the operation. `baseline_completion` and `completion` retain the original typed
+disposition; `await_baseline` timeouts and `wait_idle` alone are not drain or phase
+proof. Both publication failures retire only physical observation, with an
+unresolved disposition. Borrowing requires the original open owner's opaque
+claim and never settles its parent/task claim.
+
+Pending snapshot admission retries on existing activity releases and actual tool
+slot releases/explicit limit increases through the existing publisher channel.
+Editing capacity settings on disk alone is observed at the next ordinary native
+admission; no settings poller was added. Native Git qualification requires >=2.36,
+refuses configured external filters and promisor/partial-clone remotes before
+helper-capable entry, and suppresses hooks,
+signing, fsmonitor, automatic GC/maintenance and external diff/textconv per command.
+Global ignores and old history/restore semantics remain intact. Source mismatch
+cannot fall back to standalone legacy capture. This qualification covers the
+coordinated Console path; the separately owned consent initializer and D2's
+ordinary/phase admission integration are not implemented by this slice.
+
 `ConsoleAgentBridge.run_reply` keeps its ordinary execution/generation guards and
 consumes `_prepare_native_reply`, the shared native preparation/finalizer frame.
 The frame yields `_PreparedNativeReply` before its once-only `run_primary` call.

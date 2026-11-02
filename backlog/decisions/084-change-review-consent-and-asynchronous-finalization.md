@@ -56,9 +56,11 @@ uses a fixed worker set, a bounded pending-operation queue, and FIFO lanes per
 canonical root across conversations. Registration reserves every root or none;
 partial reservations become tombstones that lane workers skip. A lane covers
 the full baseline-to-end window and preserves the existing survivor-child
-boundary before a successor window begins. Filesystem workers receive only
-immutable inputs and return pure values; they never receive a database, Console
-store, widget, or UI callback.
+boundary before a successor window begins. Filesystem workers receive immutable
+snapshot inputs and original host lifetime context, and return values to the
+publisher. Native workers enter fresh original storage/source scopes on their
+own threads; no SQLite connection or entered scope crosses the handoff. Widgets
+and UI callbacks remain outside filesystem workers.
 
 Review publication is a durable join, not an in-memory handshake.
 `AgentRunsDB.agent_runs.assistant_message_id` supplies the assistant anchor and
@@ -73,6 +75,24 @@ closes `AgentRunsDB`. A worker that outlives the bound may finish shadow-repo
 filesystem work, but its result cannot persist or touch UI state.
 
 ### Conservative, bounded pre-dispatch observation gate
+
+Task 8D1 qualifies the app-owned native coordinated path: finite opaque native
+ownership covers inherited Git config/include/ignore reads and actual snapshot
+callbacks through original publication return. A shutdown deadline cannot retire
+an active callback or close its original publisher storage. Never-started jobs
+may cancel conclusively; admitted final publication retains its original owner.
+Both failed publication attempts expose an unresolved disposition, separate from
+physical retirement and any workflow acknowledgement (ADR-285).
+
+Native capture supports Git >=2.36 with per-invocation hooks, signing, fsmonitor,
+GC/maintenance and external diff/textconv suppression. Configured external
+clean/process/smudge filters and promisor/partial-clone remotes make capture visibly
+unavailable before helper-capable entry, including implicit object fetch.
+Configuration discovery stays private; global ignore/privacy rules, existing
+history/restore and user Git configuration remain unchanged. Known native opaque
+coordination does not isolate external OS configuration edits. The standalone
+legacy tracker keeps its existing behavior. Consent's separate root initializer
+still requires native ownership/helper qualification in Task 8D2.
 
 Change Review remains observation, not authorization. Existing project-context
 preparation, permission review, invocation-time permission resolution,

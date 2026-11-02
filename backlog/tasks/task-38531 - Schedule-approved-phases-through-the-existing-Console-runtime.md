@@ -22,7 +22,7 @@ documentation:
 - backlog/decisions/285-native-phased-agent-workflows.md
 assignee:
 - '@codex'
-updated_date: 2026-11-02 00:41
+updated_date: 2026-11-02 01:36
 ---
 
 ## Description
@@ -51,6 +51,7 @@ Deliver implementation slice 8 of the accepted native shared-worktree workflow d
 ADR required: no
 ADR path: backlog/decisions/285-native-phased-agent-workflows.md
 Reason: Direct implementation with source-backed private producer/physical/continuation rulings recorded in task-8-context.md; decomposition reduces uncertain combined refactoring without reducing accepted scope.
+Internal 8D1 before D2: preserve existing coordinated workers and queues; acquire finite complete OPAQUE activity and actual native tool ownership before discover/B/E/survivor callbacks through original publication return; expose unresolved publication separately from physical retirement. Retry only actual capacity/activity release events; verify original roots/source and refuse native coordinator mismatches. Qualify native Git >=2.36, refuse configured clean/process/smudge filters before entry, and pin hooks/signing/fsmonitor/GC/maintenance and diff helpers per invocation. Preserve ignores, consent, historical and standalone legacy semantics. Amend ADR285/084 before production, then real native targeted RED/GREEN, parity, static/preservation and exact-path commit. Capture-enabled workflow tasks remain refused until D2. ADR required: no new ADR; paths: backlog/decisions/285-native-phased-agent-workflows.md and backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md. Reason: approved narrow qualification of existing ownership/capture boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -65,6 +66,8 @@ Targeted producer/Task5/Task6, ordinary bridge/Goal/capture parity, static and p
 Internal slice 8C derives complete host-only freshness scopes from the actual native checkpoint collector, adds them to original task authorization without expanding model scope, and validates after atomic activity/native owner admission before child row creation or allowance commit. Predispatch refusal positively drains and settles the finite claim while retaining unconsumed original reservation custody. The private producer also claims external native shell reads from predecessor review/dependencies before its finite callback; consent stays outside claims. Missing/failed predecessor checkpoints refuse before task custody/child reservation, retaining the existing reason and deferred phase-approval semantics. ADR-285 applies.
 
 Targeted evidence: initial real held-collector RED (2 failures), final focused 13 checks passing, final duplicate-after-drain check passing, and affected Task5/6/7/8B gate 128 passing plus the 2 approved earlier-refusal boundaries subsequently corrected and passing. Static checks introduce no diagnostics; all 106 baseline/WIP file hashes and original staged patch are preserved. Details, commands, exact source/API/successor obligations and independent-review handoff: .superpowers/sdd/2026-11-01-native-phased-agent-workflows-implementation/task-8c-report.md. Capture/outer admission/coordinator/human-review and phase-settlement integration remain pending; parent status and AC remain incomplete.
+Task 8D1 adds finite native ownership to the existing app-owned Change Review queues/workers/publisher: complete opaque admission, event-driven capacity/activity retry, original source/root guards, borrowed original opaque claim support, and physical worker-plus-publication return separate from typed observation/publication/unresolved outcomes. Discover failures retain original roots. Native Git >=2.36 is qualified before each command: configured clean/process/smudge filters and promisor/partial-clone remotes refuse before helper-capable entry; hooks/signing/fsmonitor/gc/maintenance and external diff/textconv are suppressed without changing global ignores, history, restore, attributes, or user config. ADR-285/084 and Console architecture updated. Final native tests: 34 passed; affected existing tests: 69 passed; selected raw ordinary bridge checks: 3 passed/8 config-source profile-blocked (only 2 have exact prior 8B failure evidence); exact eight-node supported bootstrap-profile diagnostic: 8 passed. Zero introduced Ruff diagnostics; original 106 dirty-file hashes and cached c5 patch preserved. Task 8D2 still owns ordinary/phase admission integration, window/durable settlement, and the separate consent root initializer's native ownership/helper qualification; capture-enabled workflow preparation remains refused. Parent remains In Progress with AC unchecked; fresh root review gate required.
+Final D1 self-review added two native overload/degraded no-entry cases using a real held discovery and baseline timeout: both pass, with no further production changes. Final evidence totals 34 native cases plus these 2 focused additions; exact commands, final-byte hashes, raw/qualified profile attribution and preservation audit are retained in task-8d1-report.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

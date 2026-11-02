@@ -124,6 +124,33 @@ Exact evidence freshness and a bounded plan format also needed explicit rules.
 
 ## Consequences and qualification
 
+### Finite native snapshot qualification (Task 8D1)
+
+App-owned coordinated Change Review jobs acquire finite runtime-wide opaque
+activity before discovery, configuration validation and Git work. Inherited Git
+configuration, includes and ignore files extend beyond selected roots. A covering
+original opaque tree claim may be borrowed; bounded claims cannot be upgraded.
+The actual native tool operation survives worker return until the original
+publisher callback returns. Baseline timeout, cancellation and shutdown deadlines
+are not physical drain. Discover/baseline handoff is conclusive observational
+completion; it does not certify child effects or phase completion. If both final
+publication attempts fail, physical observational work can retire with a distinct
+unresolved disposition. Task/phase durable settlement remains separately required.
+
+Native capture requires Git >=2.36 and refuses configured clean/process/smudge
+filters and promisor/partial-clone remotes before helper-capable entry (including
+implicit fetch from object lookup). Each invocation independently disables
+hooks, signing, fsmonitor, automatic GC/maintenance and external diff/textconv.
+Private built-in version/config discovery and the actual command share the same
+finite opaque job. Global ignore rules, historical contents and restore semantics
+remain unchanged; no persistent attribute override or user-config edit is used.
+This is coordination of known native work, not an OS sandbox against external
+processes editing configuration. Standalone legacy tracker behavior is unchanged.
+Capture-capable ordinary tree admission and phase wave/window integration belong
+to Task 8D2; capture-enabled workflow preparation remains refused until then.
+Consent's separate `_initialize_root` / `initialize_shadow_root` snapshot is also
+outside this qualification and requires native ownership/helper qualification in D2.
+
 This is a substantive extension to admission and shared-worktree coordination,
 not merely a plan prompt. Existing captured authority, physical retirement and
 database durability remain load-bearing. Resource bounds may pause useful work;

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -204,6 +205,13 @@ class ShadowRepoService:
                 "change tracking needs git — install git to enable"
             )
         canonical = Path(root).expanduser().resolve()
+        from tldw_chatbook.Workspaces.change_review_ownership import (
+            native_snapshot_source,
+        )
+
+        source = native_snapshot_source()
+        if source is not None:
+            source.validate_root(canonical)
         if not canonical.is_dir():
             # Roots come from the workspace registry, not from agent input,
             # so this is a sanity guard rather than a security boundary --
@@ -278,11 +286,20 @@ class ShadowRepo:
                 str(self.root),
                 *args,
             ]
+            from tldw_chatbook.Workspaces.change_review_ownership import (
+                native_snapshot_source,
+            )
+
+            source = native_snapshot_source()
+            env = self._env()
+            if source is not None:
+                source.validate_root(self.root)
+                cmd = self._native_command(args, env)
             try:
                 proc = subprocess.run(
                     cmd,
                     capture_output=True,
-                    env=self._env(),
+                    env=env,
                     input=input_data,
                     timeout=_GIT_TIMEOUT_SECONDS,
                     text=not binary,
@@ -292,8 +309,16 @@ class ShadowRepo:
                     f"git {args[0]} timed out after {_GIT_TIMEOUT_SECONDS:.0f}s"
                 ) from exc
             except OSError as exc:
+                if source is not None:
+                    raise ChangeTrackingUnavailableError(
+                        "native change-review Git unavailable"
+                    ) from exc
                 raise ChangeTrackingUnavailableError(str(exc)) from exc
             if check and proc.returncode != 0:
+                if source is not None:
+                    raise ChangeTrackingError(
+                        "native change-review Git operation failed"
+                    )
                 stderr = (
                     proc.stderr
                     if isinstance(proc.stderr, str)
@@ -304,6 +329,104 @@ class ShadowRepo:
                     f"{stderr.strip()[:_TRACKING_ERROR_MAX_CHARS]}"
                 )
             return proc
+
+    def _native_command(self, args, env):
+        """Qualify built-in Git before helper-capable entry; never expose config."""
+        allowed = {
+            "init",
+            "config",
+            "rev-parse",
+            "cat-file",
+            "update-index",
+            "ls-files",
+            "ls-tree",
+            "add",
+            "rm",
+            "diff",
+            "commit",
+            "show",
+            "check-ignore",
+        }
+        if not args or args[0] not in allowed:
+            raise ChangeTrackingUnavailableError(
+                "native change-review Git command unsupported"
+            )
+        pins = (
+            "core.hooksPath=" + os.devnull,
+            "commit.gpgsign=false",
+            "tag.gpgsign=false",
+            "log.showsignature=false",
+            "core.fsmonitor=false",
+            "gc.auto=0",
+            "gc.autoDetach=false",
+            "maintenance.auto=false",
+            "maintenance.autoDetach=false",
+        )
+        prefix = [
+            self._git,
+            "--no-pager",
+            "--git-dir",
+            str(self.git_dir),
+            "--work-tree",
+            str(self.root),
+        ]
+        for pin in pins:
+            prefix.extend(("-c", pin))
+        try:
+            version = subprocess.run(
+                [self._git, "--version"],
+                capture_output=True,
+                env=env,
+                timeout=_GIT_TIMEOUT_SECONDS,
+                text=True,
+                check=False,
+            )
+            match = re.match(r"git version (\d+)\.(\d+)", version.stdout)
+            if (
+                version.returncode
+                or match is None
+                or tuple(map(int, match.groups())) < (2, 36)
+            ):
+                raise ChangeTrackingUnavailableError(
+                    "native change review requires Git >=2.36"
+                )
+            config = subprocess.run(
+                [
+                    *prefix,
+                    "config",
+                    "--includes",
+                    "--null",
+                    "--name-only",
+                    "--get-regexp",
+                    r"^(filter\..*\.(clean|process|smudge)|remote\..*\.promisor|extensions\.partialclone)$",
+                ],
+                capture_output=True,
+                env=env,
+                timeout=_GIT_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ChangeTrackingUnavailableError(
+                "native change-review Git qualification unavailable"
+            ) from error
+        if config.returncode == 0:
+            # Names stay private; even cat-file -e may lazily spawn a fetch.
+            if not any(
+                name.startswith(b"filter.") for name in config.stdout.split(b"\0")
+            ):
+                raise ChangeTrackingUnavailableError(
+                    "native change review unavailable: configured partial-clone remotes"
+                )
+            raise ChangeTrackingUnavailableError(
+                "native change review unavailable: configured filters"
+            )
+        if config.returncode != 1:
+            raise ChangeTrackingUnavailableError(
+                "native change-review Git configuration unavailable"
+            )
+        if args[0] in {"diff", "show"}:
+            args = (args[0], "--no-ext-diff", "--no-textconv", *args[1:])
+        return [*prefix, *args]
 
     def _locked(self):
         """Context manager: in-process lock + portable cross-process lockdir."""

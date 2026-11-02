@@ -5302,6 +5302,7 @@ class ConsoleAgentBridge:
         change_tracker: Any | None = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         change_finalization_coordinator: Any | None = None,
+        change_review_native: Any | None = None,
         runtime_capacity: RuntimeCapacity | None = None,
         runtime_capacity_factory: Callable[[], RuntimeCapacity] | None = None,
         message_store: MessageStore | None = None,
@@ -5358,6 +5359,8 @@ class ConsoleAgentBridge:
         self._change_tracker = change_tracker
         self._buddy_sink = buddy_sink
         self._change_finalization_coordinator = change_finalization_coordinator
+        self._change_review_native = change_review_native
+        self._native_change_review_expected = change_review_native is not None
         self._store = store
         if self._store is not None and message_store is not None:
             self._store.register_progress_message_store(message_store)
@@ -7855,7 +7858,29 @@ class ConsoleAgentBridge:
         # `turn_concurrent_subagent` and discloses the overlap rather than
         # implying sole authorship.
         concurrent_subagent = self._live_child_count(conversation_id) > 0
-        if self._change_finalization_coordinator is not None and change_roots:
+        if self._native_change_review_expected and change_roots:
+            try:
+                native_source = self._change_review_native.capture(
+                    self,
+                    session_id=session_id,
+                    conversation_id=conversation_id,
+                    origin=work_origin,
+                    roots=change_roots,
+                )
+                change_reservation = self._change_finalization_coordinator.register(
+                    change_roots,
+                    survivor_key=assistant_message_id,
+                    native_source=native_source,
+                )
+            except Exception:  # noqa: BLE001 - native mismatch cannot enter legacy
+                self._append_marker(
+                    session_id,
+                    format_change_review_skipped_marker(
+                        "workspace",
+                        "native snapshot source unavailable; this turn is not tracked",
+                    ),
+                )
+        elif self._change_finalization_coordinator is not None and change_roots:
             try:
                 change_reservation = self._change_finalization_coordinator.register(
                     change_roots,

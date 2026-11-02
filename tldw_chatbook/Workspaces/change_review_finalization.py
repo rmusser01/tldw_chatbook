@@ -7,7 +7,8 @@ import threading
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass, field
+from contextlib import nullcontext
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Sequence
@@ -72,6 +73,24 @@ class ChangeReviewFinalizeResult(Enum):
         return self is ChangeReviewFinalizeResult.SCHEDULED
 
 
+class ChangeReviewCompletion(Enum):
+    """Original terminal disposition; physical idle never implies publication."""
+
+    PENDING = "pending"
+    OBSERVED = "observed"
+    UNADMITTED = "unadmitted"
+    PUBLISHED = "published"
+    DISCLOSED_FAILURE = "disclosed_failure"
+    CANCELLED = "cancelled"
+    UNRESOLVED = "unresolved"
+
+
+@dataclass
+class _Completion:
+    disposition: ChangeReviewCompletion = ChangeReviewCompletion.PENDING
+    ticket: object = None
+
+
 @dataclass(frozen=True)
 class ChangeReviewPublication:
     """One complete durable-publication request."""
@@ -103,6 +122,34 @@ class ChangeReviewReservation:
         repr=False,
     )
 
+    _completion: _Completion = field(
+        default_factory=_Completion, compare=False, repr=False
+    )
+    _baseline_completion: _Completion = field(
+        default_factory=_Completion, compare=False, repr=False
+    )
+
+    @property
+    def completion(self) -> ChangeReviewCompletion:
+        if self.admission_error:
+            return ChangeReviewCompletion.UNADMITTED
+        if (
+            self._completion.ticket is not None
+            and not self._completion.ticket.retired.is_set()
+        ):
+            return ChangeReviewCompletion.PENDING
+        return self._completion.disposition
+
+    @property
+    def baseline_completion(self) -> ChangeReviewCompletion:
+        """Actual read handoff; the legacy bounded-wait event is not drain proof."""
+        if self.admission_error:
+            return ChangeReviewCompletion.UNADMITTED
+        result = self._baseline_completion
+        if result.ticket is not None and not result.ticket.retired.is_set():
+            return ChangeReviewCompletion.PENDING
+        return result.disposition
+
     def await_baseline(self, timeout: float = 120.0) -> bool:
         return self._handle.await_baseline(timeout)
 
@@ -122,6 +169,9 @@ class ChangeReviewReservation:
 @dataclass
 class _ReservationState:
     public: ChangeReviewReservation
+    native_source: object = None
+    pending_operation: object = None
+    pending_reason: str = "ready"
     phase: str = "waiting"
     operation_inflight: bool = False
     final_requested: bool = False
@@ -168,6 +218,7 @@ class _Operation:
     touched_paths: tuple[str, ...] = ()
     end_shas: dict[str, str] | None = None
     preparations: tuple[BaselineRootPreparation, ...] = ()
+    ticket: object = None
 
 
 @dataclass(frozen=True)
@@ -177,6 +228,8 @@ class _OperationResult:
     records: tuple[TurnChangeRecord, ...] = ()
     error: str = ""
     preparations: tuple[BaselineRootPreparation, ...] = ()
+    ticket: object = None
+    started: bool = True
 
 
 @dataclass(frozen=True)
@@ -185,6 +238,7 @@ class _DirectPublication:
 
 
 _STOP = object()
+_RETRY = object()
 
 
 class ChangeReviewFinalizationCoordinator:
@@ -199,11 +253,16 @@ class ChangeReviewFinalizationCoordinator:
         close_publisher: Callable[[], None] | None = None,
         worker_count: int = 2,
         capacity: int = 32,
+        native_owner=None,
     ) -> None:
         if worker_count < 1:
             raise ValueError("worker_count must be positive")
         if capacity < 1:
             raise ValueError("capacity must be positive")
+        self._native = native_owner
+        self._retry_reasons: set[str] = set()
+        self._release_versions = {"activity": 0, "capacity": 0, "queue": 0}
+        self._subscriptions = ()
         self._tracker = tracker
         self._publish = publish
         self._close_publisher = close_publisher
@@ -230,7 +289,6 @@ class ChangeReviewFinalizationCoordinator:
         self._workers = tuple(
             threading.Thread(
                 target=self._worker_loop,
-                args=(self._tracker, self._operations, self._results),
                 name=f"change-review-fs-{index + 1}",
                 daemon=True,
             )
@@ -242,12 +300,21 @@ class ChangeReviewFinalizationCoordinator:
             daemon=True,
         )
         self._started = False
+        if self._native is not None:
+            self._native.coordinator = self
+            self._subscriptions = (
+                self._native.activity.subscribe(lambda: self._availability("activity")),
+                self._native.capacity.subscribe_tool_availability(
+                    lambda: self._availability("capacity")
+                ),
+            )
 
     def register(
         self,
         roots: Sequence[Path | str],
         *,
         survivor_key: str = "",
+        native_source=None,
     ) -> ChangeReviewReservation | None:
         """Atomically admit one reservation to every canonical-root lane.
 
@@ -268,12 +335,35 @@ class ChangeReviewFinalizationCoordinator:
         canonical = tuple(dict.fromkeys(str(root) for root in roots))
         if not canonical:
             return None
+        handle = (
+            TurnHandle([Path(root) for root in canonical])
+            if self._native is not None
+            else self._tracker.new_turn_handle(canonical)
+        )
+        source_error = ""
+        if self._native is not None:
+            try:
+                if native_source is None or native_source.issuer is not self._native:
+                    raise ValueError("native change-review source unavailable")
+                if (
+                    tuple(str(c.canonical_root) for c in native_source.chains)
+                    != canonical
+                ):
+                    raise ValueError("native change-review roots changed")
+                native_source.check()
+            except Exception:  # noqa: BLE001 - fixed visible refusal, no supplied details
+                source_error = "native change-review source or roots unavailable"
         with self._lock:
             if not self._accepting:
                 return None
             self._start_threads_locked()
             reservation_id = uuid.uuid4().hex
-            handle = self._tracker.new_turn_handle(canonical)
+            if source_error:
+                handle.errors.update(dict.fromkeys(canonical, source_error))
+                handle._baseline_ready.set()
+                return ChangeReviewReservation(
+                    reservation_id, canonical, handle, source_error, False
+                )
             degraded = tuple(root for root in canonical if root in self._degraded_roots)
             if degraded:
                 admission_error = (
@@ -294,7 +384,7 @@ class ChangeReviewFinalizationCoordinator:
                     canonical,
                     handle,
                     admission_error,
-                    self._direct_slots.acquire(blocking=False),
+                    self._native is None and self._direct_slots.acquire(blocking=False),
                 )
             if len(self._states) >= self._capacity:
                 admission_error = (
@@ -309,7 +399,7 @@ class ChangeReviewFinalizationCoordinator:
                     canonical,
                     handle,
                     admission_error,
-                    self._direct_slots.acquire(blocking=False),
+                    self._native is None and self._direct_slots.acquire(blocking=False),
                 )
             public = ChangeReviewReservation(
                 reservation_id,
@@ -318,6 +408,7 @@ class ChangeReviewFinalizationCoordinator:
             )
             state = _ReservationState(
                 public=public,
+                native_source=native_source,
                 survivor_key=survivor_key,
                 active_handle=handle,
                 roots=canonical,
@@ -554,6 +645,20 @@ class ChangeReviewFinalizationCoordinator:
             self._close_publisher_once()
             return True
         drained = self._idle.wait(max(0.0, deadline - time.monotonic()))
+        if self._native is not None:
+            self._publisher_stop_requested.set()
+            try:
+                self._operations.put_nowait(_STOP)
+            except queue.Full:
+                pass
+            for worker in self._workers:
+                worker.join(max(0.0, deadline - time.monotonic()))
+            self._publisher.join(max(0.0, deadline - time.monotonic()))
+            return (
+                drained
+                and all(not w.is_alive() for w in self._workers)
+                and not self._publisher.is_alive()
+            )
         try:
             self._operations.put_nowait(_STOP)
         except queue.Full:
@@ -591,7 +696,11 @@ class ChangeReviewFinalizationCoordinator:
 
     def _schedule_ready_locked(self) -> None:
         for state in tuple(self._states.values()):
-            if state.cancelled or state.operation_inflight:
+            if (
+                state.cancelled
+                or state.operation_inflight
+                or state.pending_operation is not None
+            ):
                 continue
             if state.lane_ordered and not self._heads_all_lanes_locked(state):
                 continue
@@ -626,6 +735,11 @@ class ChangeReviewFinalizationCoordinator:
                 )
             if operation is None:
                 continue
+            if self._native is not None:
+                state.pending_operation = operation
+                state.pending_reason = "ready"
+                self._request_retry_locked("ready")
+                continue
             try:
                 self._operations.put_nowait(operation)
             except queue.Full:
@@ -638,7 +752,82 @@ class ChangeReviewFinalizationCoordinator:
             else:
                 state.phase = "finalizing"
 
+    def _request_retry_locked(self, reason):
+        self._retry_reasons.add(reason)
+        try:
+            self._results.put_nowait(_RETRY)
+        except queue.Full:
+            pass  # The existing publisher work will observe the coalesced flag.
+
+    def _availability(self, reason):
+        with self._lock:
+            self._release_versions[reason] += 1
+            if self._accepting and any(
+                s.pending_reason == reason for s in self._states.values()
+            ):
+                self._request_retry_locked(reason)
+
+    def _admit_pending(self):
+        with self._lock:
+            reasons, self._retry_reasons = self._retry_reasons, set()
+            pending = [
+                (state, state.pending_operation)
+                for state in self._states.values()
+                if state.pending_operation is not None
+                and state.pending_reason in reasons
+            ]
+            versions = dict(self._release_versions)
+            for state, _operation in pending:
+                state.pending_reason = "admitting"
+        for state, operation in pending:
+            ticket, reason, error = None, "", ""
+            try:
+                ticket, reason = state.native_source.admit()
+            except Exception:  # noqa: BLE001 - terminal native admission refusal
+                error = "native change-review admission unavailable"
+            discard = False
+            failure = None
+            with self._lock:
+                if self._states.get(state.public.id) is not state or state.cancelled:
+                    discard = True
+                elif reason:
+                    state.pending_reason = reason
+                    if versions[reason] != self._release_versions[reason]:
+                        self._request_retry_locked(reason)
+                else:
+                    state.pending_operation = None
+                    state.operation_inflight = True
+                    state.phase = {
+                        "discover": "discovering",
+                        "baseline": "baselining",
+                    }.get(operation.kind, "finalizing")
+                    if error:
+                        failure = _OperationResult(
+                            operation.reservation_id, operation.kind, error=error
+                        )
+                    else:
+                        try:
+                            self._operations.put_nowait(
+                                replace(operation, ticket=ticket)
+                            )
+                        except queue.Full:
+                            state.operation_inflight = False
+                            state.pending_operation = operation
+                            state.pending_reason = "queue"
+                            if versions["queue"] != self._release_versions["queue"]:
+                                self._request_retry_locked("queue")
+                            discard = True
+            if discard and ticket:
+                ticket.returned(worker=True, handoff=True)
+            if failure is not None:
+                self._consume_operation_result(failure)
+
     def _complete_locked(self, state: _ReservationState, *, published: bool) -> None:
+        if (
+            state.cancelled
+            and state.public._completion.disposition is ChangeReviewCompletion.PENDING
+        ):
+            state.public._completion.disposition = ChangeReviewCompletion.CANCELLED
         reservation_id = state.public.id
         self._states.pop(reservation_id, None)
         for root in state.roots:
@@ -695,14 +884,18 @@ class ChangeReviewFinalizationCoordinator:
                 degraded.survivor_keys.add(state.survivor_key)
             self._maybe_clear_degraded_locked(root)
 
-    @staticmethod
-    def _worker_loop(
-        tracker: ChangeTurnTracker,
-        operations: queue.Queue[_Operation | object],
-        results: queue.Queue[_OperationResult | _DirectPublication | object],
-    ) -> None:
+    def _worker_loop(self) -> None:
+        tracker, operations, results = self._tracker, self._operations, self._results
         while True:
+            if (
+                self._native is not None
+                and self._publisher_stop_requested.is_set()
+                and operations.empty()
+            ):
+                return
             operation = operations.get()
+            if self._native is not None:
+                self._availability("queue")
             if operation is _STOP:
                 try:
                     operations.put_nowait(_STOP)
@@ -710,55 +903,100 @@ class ChangeReviewFinalizationCoordinator:
                     pass
                 return
             assert isinstance(operation, _Operation)
+            if self._native is not None:
+                with self._lock:
+                    state = self._states.get(operation.reservation_id)
+                    cancelled = state is None or state.cancelled
+                if cancelled:
+                    results.put(
+                        _OperationResult(
+                            operation.reservation_id,
+                            operation.kind,
+                            ticket=operation.ticket,
+                            started=False,
+                        )
+                    )
+                    operation.ticket.returned(worker=True)
+                    continue
             try:
-                if operation.kind == "discover":
-                    discover = getattr(tracker, "discover_baseline", None)
-                    if callable(discover):
-                        preparations = tuple(discover(operation.handle))
+                with (
+                    operation.ticket.source.activate(operation.ticket.owner)
+                    if operation.ticket
+                    else nullcontext()
+                ):
+                    if operation.ticket:
+                        operation.ticket.source.check()
+                    if operation.kind == "discover":
+                        discover = getattr(tracker, "discover_baseline", None)
+                        if callable(discover):
+                            preparations = tuple(discover(operation.handle))
+                            if operation.ticket:
+                                preparations = tuple(
+                                    replace(
+                                        item,
+                                        root=operation.ticket.source.validate_root(
+                                            item.root
+                                        ),
+                                    )
+                                    for item in preparations
+                                )
+                            result = _OperationResult(
+                                operation.reservation_id,
+                                "discover",
+                                preparations=preparations,
+                            )
+                        else:
+                            tracker.populate_baseline(operation.handle)
+                            result = _OperationResult(
+                                operation.reservation_id, "baseline"
+                            )
+                    elif operation.kind == "baseline":
+                        tracker.populate_prepared_baseline(
+                            operation.handle, operation.preparations
+                        )
+                        result = _OperationResult(operation.reservation_id, "baseline")
+                    else:
+                        if operation.kind == "failure":
+                            records = [
+                                TurnChangeRecord(root=root, tracking_error=error)
+                                for root, error in operation.handle.errors.items()
+                            ]
+                        else:
+                            records = tracker.finish_turn(
+                                operation.handle,
+                                touched_paths=operation.touched_paths,
+                                end_shas=operation.end_shas,
+                            )
                         result = _OperationResult(
                             operation.reservation_id,
-                            "discover",
-                            preparations=preparations,
+                            operation.kind,
+                            tuple(records),
                         )
-                    else:
-                        tracker.populate_baseline(operation.handle)
-                        result = _OperationResult(operation.reservation_id, "baseline")
-                elif operation.kind == "baseline":
-                    tracker.populate_prepared_baseline(
-                        operation.handle, operation.preparations
-                    )
-                    result = _OperationResult(operation.reservation_id, "baseline")
-                else:
-                    if operation.kind == "failure":
-                        records = [
-                            TurnChangeRecord(root=root, tracking_error=error)
-                            for root, error in operation.handle.errors.items()
-                        ]
-                    else:
-                        records = tracker.finish_turn(
-                            operation.handle,
-                            touched_paths=operation.touched_paths,
-                            end_shas=operation.end_shas,
-                        )
-                    result = _OperationResult(
-                        operation.reservation_id,
-                        operation.kind,
-                        tuple(records),
-                    )
             except Exception as exc:  # noqa: BLE001 -- result is disclosed upstream
                 result = _OperationResult(
                     operation.reservation_id,
                     operation.kind,
                     error=str(exc)[:400],
                 )
-            results.put(result)
+            result = replace(result, ticket=operation.ticket)
+            try:
+                results.put(result)
+            finally:
+                if operation.ticket:
+                    operation.ticket.returned(worker=True)
 
     def _publisher_loop(self) -> None:
         prefer_direct = True
         try:
             while True:
+                if self._native is not None:
+                    self._admit_pending()
                 if (
                     self._publisher_stop_requested.is_set()
+                    and (
+                        self._native is None
+                        or all(not w.is_alive() for w in self._workers)
+                    )
                     and self._direct_results.empty()
                     and self._results.empty()
                 ):
@@ -798,6 +1036,8 @@ class ChangeReviewFinalizationCoordinator:
                 elif result is None:
                     continue
                 prefer_direct = not prefer_direct
+                if result is _RETRY:
+                    continue
                 if result is _STOP:
                     return
                 if isinstance(result, _DirectPublication):
@@ -805,7 +1045,10 @@ class ChangeReviewFinalizationCoordinator:
                     if not self._publisher_stop_requested.is_set():
                         published = self._publish_with_failure_fallback(
                             result.publication
-                        )
+                        ) in {
+                            ChangeReviewCompletion.PUBLISHED,
+                            ChangeReviewCompletion.DISCLOSED_FAILURE,
+                        }
                     with self._lock:
                         self._direct_pending = max(0, self._direct_pending - 1)
                         self.publication_signal.completed(published=published)
@@ -819,20 +1062,75 @@ class ChangeReviewFinalizationCoordinator:
             self._close_publisher_once()
 
     def _consume_operation_result(self, result: _OperationResult) -> None:
+        ticket = result.ticket
+        if ticket:
+            with self._lock:
+                state = self._states.get(result.reservation_id)
+                if state is not None:
+                    state.public._completion.ticket = ticket
+                    if result.kind in {"discover", "baseline"}:
+                        state.public._baseline_completion.ticket = ticket
+        try:
+            with ticket.source.activate(ticket.owner) if ticket else nullcontext():
+                self._consume_result(result)
+        except Exception:  # Scope admission must deliver a terminal handoff.
+            if self._native is None:
+                raise
+            with self._lock:
+                state = self._states.get(result.reservation_id)
+                if state is not None:
+                    for root in state.roots:
+                        state.public._handle.errors[root] = (
+                            "native change-review handoff unavailable"
+                        )
+                    state.public._handle._baseline_ready.set()
+                    state.public._completion.disposition = (
+                        ChangeReviewCompletion.UNRESOLVED
+                    )
+                    state.public._baseline_completion.disposition = (
+                        ChangeReviewCompletion.UNRESOLVED
+                    )
+                    state.operation_inflight = False
+                    self._complete_locked(state, published=False)
+                    self._schedule_ready_locked()
+        finally:
+            if ticket:
+                ticket.returned(handoff=True)
+
+    def _consume_result(self, result: _OperationResult) -> None:
         """Advance one filesystem result through durable publication."""
         publication: ChangeReviewPublication | None = None
         with self._lock:
             state = self._states.get(result.reservation_id)
             if state is None:
                 return
-            if state.cancelled:
+            if state.cancelled and (
+                self._native is None
+                or not result.started
+                or result.kind in {"discover", "baseline"}
+            ):
+                state.public._completion.disposition = ChangeReviewCompletion.CANCELLED
+                if result.kind in {"discover", "baseline"}:
+                    state.public._baseline_completion.disposition = (
+                        ChangeReviewCompletion.CANCELLED
+                    )
                 state.operation_inflight = False
                 self._complete_locked(state, published=False)
                 self._schedule_ready_locked()
                 return
             if result.kind == "discover":
                 state.operation_inflight = False
-                state.preparations = result.preparations
+                state.preparations = (
+                    result.preparations
+                    or tuple(
+                        BaselineRootPreparation(
+                            root=Path(root), tracking_error=result.error
+                        )
+                        for root in state.roots
+                    )
+                    if result.error
+                    else result.preparations
+                )
                 self._enroll_discovered_roots_locked(state)
                 state.phase = "discovered"
                 self._schedule_ready_locked()
@@ -844,6 +1142,11 @@ class ChangeReviewFinalizationCoordinator:
                     for root in state.roots:
                         state.public._handle.errors.setdefault(root, result.error)
                     state.public._handle._baseline_ready.set()
+                state.public._baseline_completion.disposition = (
+                    ChangeReviewCompletion.DISCLOSED_FAILURE
+                    if state.public._handle.errors
+                    else ChangeReviewCompletion.OBSERVED
+                )
                 self._schedule_ready_locked()
                 return
             if result.kind == "survivor_finalize":
@@ -853,6 +1156,16 @@ class ChangeReviewFinalizationCoordinator:
                 # invalidate an already-complete B/E window.
                 state.survivor_window_opened = False
                 state.survivor_window_closed = True
+            if self._native is not None and result.ticket is None:
+                for root in state.roots:
+                    state.public._handle.errors[root] = (
+                        result.error or "native change-review admission unavailable"
+                    )
+                state.public._completion.disposition = ChangeReviewCompletion.UNADMITTED
+                state.operation_inflight = False
+                self._complete_locked(state, published=False)
+                self._schedule_ready_locked()
+                return
             state.phase = "publishing"
             records = result.records
             if result.error:
@@ -891,10 +1204,17 @@ class ChangeReviewFinalizationCoordinator:
                 records=records,
                 roots=state.roots,
             )
-        published = self._publish_with_failure_fallback(publication)
+        disposition = self._publish_with_failure_fallback(
+            publication, publish=result.ticket.publish if result.ticket else None
+        )
+        published = disposition in {
+            ChangeReviewCompletion.PUBLISHED,
+            ChangeReviewCompletion.DISCLOSED_FAILURE,
+        }
         with self._lock:
             state = self._states.get(result.reservation_id)
             if state is not None:
+                state.public._completion.disposition = disposition
                 state.operation_inflight = False
                 if (
                     published
@@ -912,6 +1232,9 @@ class ChangeReviewFinalizationCoordinator:
                         self.publication_signal.window_published()
                         state.survivor_window_opened = True
                         state.phase = "survivor"
+                        state.public._completion.disposition = (
+                            ChangeReviewCompletion.PENDING
+                        )
                         state.active_handle = follow_on
                         self._schedule_ready_locked()
                         return
@@ -919,12 +1242,17 @@ class ChangeReviewFinalizationCoordinator:
                 self._schedule_ready_locked()
 
     def _publish_with_failure_fallback(
-        self, publication: ChangeReviewPublication
-    ) -> bool:
+        self, publication: ChangeReviewPublication, *, publish=None
+    ) -> ChangeReviewCompletion:
         """Publish atomically, then make one honest terminal-error attempt."""
+        publish = self._publish if publish is None else publish
         try:
-            self._publish(publication)
-            return True
+            publish(publication)
+            return (
+                ChangeReviewCompletion.DISCLOSED_FAILURE
+                if any(record.tracking_error for record in publication.records)
+                else ChangeReviewCompletion.PUBLISHED
+            )
         except Exception as exc:  # noqa: BLE001 -- converted to durable disclosure
             detail = f"{type(exc).__name__}: {exc}"[:320]
             roots = publication.roots or tuple(
@@ -944,10 +1272,10 @@ class ChangeReviewFinalizationCoordinator:
                 roots=roots,
             )
             try:
-                self._publish(failure)
-                return True
+                publish(failure)
+                return ChangeReviewCompletion.DISCLOSED_FAILURE
             except Exception:  # noqa: BLE001 -- exactly one fallback attempt
-                return False
+                return ChangeReviewCompletion.UNRESOLVED
 
     def _close_publisher_once(self) -> None:
         """Close publisher-owned persistence once, after publication stops."""
@@ -955,6 +1283,8 @@ class ChangeReviewFinalizationCoordinator:
             if self._publisher_closed:
                 return
             self._publisher_closed = True
+        for unsubscribe in self._subscriptions:
+            unsubscribe()
         if self._close_publisher is not None:
             try:
                 self._close_publisher()
@@ -964,9 +1294,7 @@ class ChangeReviewFinalizationCoordinator:
     def _enroll_discovered_roots_locked(self, state: _ReservationState) -> None:
         """Insert discovered roots without overtaking an open change window."""
         reservation_id = state.public.id
-        discovered = tuple(
-            dict.fromkeys(str(item.root.resolve()) for item in state.preparations)
-        )
+        discovered = tuple(dict.fromkeys(str(item.root) for item in state.preparations))
         new_roots = tuple(root for root in discovered if root not in state.roots)
         for root in new_roots:
             lane = self._lanes.setdefault(root, deque())

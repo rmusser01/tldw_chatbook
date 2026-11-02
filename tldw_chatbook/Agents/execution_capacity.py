@@ -73,6 +73,7 @@ class RuntimeCapacity:
         reserved_manual_children: int = 2,
     ) -> None:
         self._lock = Lock()
+        self._tool_observers: set[Callable[[], None]] = set()
         self._read_settings = False
         self.set_tool_limits(max_tool_workers, reserved_manual_tool_workers)
         self.set_child_limits(max_child_executions, reserved_manual_children)
@@ -93,8 +94,36 @@ class RuntimeCapacity:
         total = total if total > 0 else 8
         reserve = max(0, min(_integer(reserved_manual, 2), total))
         with self._lock:
+            previous = getattr(self, "max_tool_workers", total)
+            previous_auto = previous - getattr(
+                self, "reserved_manual_tool_workers", reserve
+            )
             self.max_tool_workers = total
             self.reserved_manual_tool_workers = reserve
+        if total > previous or total - reserve > previous_auto:
+            self._notify_tool_available()
+
+    def subscribe_tool_availability(
+        self, callback: Callable[[], None]
+    ) -> Callable[[], None]:
+        """Observe actual tool releases/limit increases, outside the capacity lock."""
+        with self._lock:
+            self._tool_observers.add(callback)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                self._tool_observers.discard(callback)
+
+        return unsubscribe
+
+    def _notify_tool_available(self) -> None:
+        with self._lock:
+            observers = tuple(self._tool_observers)
+        for callback in observers:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - observers cannot prevent retirement
+                logger.warning("Tool availability observer failed")
 
     def _refresh_limits(self) -> None:
         if self._read_settings:
@@ -345,6 +374,9 @@ class OwnedOperation:
 
     def finish(self) -> None:
         with self.owner.capacity._lock:
+            released = self.kind == "tool" and self in self.owner._operations
             self.owner._operations.discard(self)
             callbacks, outcome = self.owner._prune_if_finished()
         self.owner._invoke_callbacks(callbacks, outcome)
+        if released:
+            self.owner.capacity._notify_tool_available()

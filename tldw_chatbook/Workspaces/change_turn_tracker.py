@@ -225,6 +225,13 @@ class ChangeTurnTracker:
             root = queue.pop(0)
             key = str(root)
             try:
+                from tldw_chatbook.Workspaces.change_review_ownership import (
+                    native_snapshot_source,
+                )
+
+                source = native_snapshot_source()
+                if source is not None:
+                    source.validate_root(root)
                 scan = scan_root(root)
                 if scan.over_budget:
                     preparations.append(

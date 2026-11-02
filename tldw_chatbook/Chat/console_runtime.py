@@ -5013,10 +5013,16 @@ class ConsoleRuntime:
 
         change_tracker = ChangeTurnTracker()
         change_coordinator = None
+        change_native = None
         if change_tracker.available:
             from tldw_chatbook.Workspaces.change_review_finalization import (
                 ChangeReviewFinalizationCoordinator,
             )
+            from tldw_chatbook.Workspaces.change_review_ownership import (
+                _NativeSnapshotIssuer,
+            )
+
+            change_native = _NativeSnapshotIssuer(self)
 
             def _publish_change_review(item: Any) -> None:
                 runs_db.record_change_snapshots_batch(
@@ -5029,6 +5035,7 @@ class ConsoleRuntime:
                 tracker=change_tracker,
                 publish=_publish_change_review,
                 close_publisher=runs_db.close,
+                native_owner=change_native,
             )
             self._change_review_coordinator = change_coordinator
         self._agent_bridge = ConsoleAgentBridge(
@@ -5043,6 +5050,7 @@ class ConsoleRuntime:
             change_tracker=change_tracker if change_tracker.available else None,
             buddy_sink=self.persona_buddy_sink,
             change_finalization_coordinator=change_coordinator,
+            change_review_native=change_native,
             # run-hooks (Task 5): hand the bridge this runtime's engine
             # accessor so per-turn fire sites (PostToolUse today; PreToolUse
             # and the settle events in later tasks) resolve the app-owned
