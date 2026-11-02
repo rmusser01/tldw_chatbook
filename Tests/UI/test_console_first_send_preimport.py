@@ -14,16 +14,21 @@ idle, on its daemon thread.
 
 from __future__ import annotations
 
+import asyncio
 import builtins
+import contextlib
 import importlib.util
 import json
 import os
 import subprocess
 import sys
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -102,6 +107,22 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Tools.remote_session_registry",
     "Tools.remote_session_worker",
     "UI.Console_Modules.citation_counts",
+)
+
+#: TASK-33620.15.19, live on origin/dev 7536ac3b87 (2026-10-30, Anthropic
+#: haiku, 160x45, a note in Library, the conversation's Auto set to Automatic,
+#: RAG profile BM25 Only, first send 60 s after launch with the warm-up done):
+#: the only modules the UI loop loaded between Enter and the provider call
+#: were these two, both inside the send's own run-start callback (5-30 ms wall
+#: across five launches), where Library preparation begins. Everything else
+#: the retrieval path reaches is resident at UI-ready, and the Library
+#: service's runtime build runs on a worker thread. They cost 0.5-3.6 ms wall
+#: per first Automatic send, and they stay lazy, out of ``FIRST_SEND_MODULES``:
+#: warming them would raise ADR-097's first-send warm-up row, and the owner
+#: declined that on 2026-10-31 ("Don't raise it").
+LIVE_LIBRARY_FIRST_SEND_IMPORTS = (
+    "Chat.console_library_preparation",
+    "Chat.console_library_search",
 )
 
 _PASS_SCRIPT = """
@@ -714,7 +735,10 @@ def test_the_send_guard_counts_a_module_resident_at_ui_ready_as_warm(pass_outcom
     }
     assert _not_warmed(flake, warm, _covered_by_the_warm_up()) == {}
     # Still a guard: the send's own lazy modules are not warm at UI-ready.
-    record = {f"tldw_chatbook.{name}": "live" for name in LIVE_FIRST_SEND_IMPORTS}
+    record = {
+        f"tldw_chatbook.{name}": "live"
+        for name in LIVE_FIRST_SEND_IMPORTS + LIVE_LIBRARY_FIRST_SEND_IMPORTS
+    }
     assert _not_warmed(record, warm, set()) == record
 
 
@@ -727,6 +751,8 @@ SEND_FRAMES = frozenset(
         "_start_send",
         "_send_console_message_from_visible_action",
         "_run_custodied_turn",
+        "run_received_intent",
+        "_run_received_intent_bound",
     }
 )
 
@@ -740,29 +766,15 @@ def _in_send() -> bool:
     return False
 
 
-@pytest.mark.asyncio
-async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome):
-    """Every import a send runs inside a function is warm at UI-ready or listed.
+@contextlib.contextmanager
+def _recording_send_imports() -> Iterator[dict[str, str]]:
+    """Record every function-local import statement the send's frames run.
 
-    The mounted harness's send (llama.cpp, a held gateway, no agent tools)
-    covers admission, hooks and the durable commit; the live record covers
-    the agent's tool providers. Function-local import statements under the
-    send's own frames are recorded whether or not the module is already
-    loaded, so the check does not depend on what earlier tests imported.
-    Which UI-loop work lands inside those frames depends on timing (the
-    cost chip's rebuild sometimes does), so "warm" is everything resident at
-    UI-ready, not only the snapshot's possibly stale contents.
+    Yields the record (module name -> the importing function's qualname),
+    filled while the block runs. Import statements are recorded whether or
+    not the module is already loaded, so the record does not depend on what
+    earlier tests imported.
     """
-    from Tests.UI.test_console_send_acknowledgement import (
-        build,
-        eager_tasks,
-        press,
-        ready_console,
-        until,
-    )
-
-    ready = _warm_at_ui_ready(pass_outcome)
-    covered = _covered_by_the_warm_up()
     seen: dict[str, str] = {}
     real = builtins.__import__
     main = threading.main_thread()
@@ -788,12 +800,110 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome)
                     seen.setdefault(f"{full}.{item}", caller.co_qualname)
         return module
 
+    builtins.__import__ = recording
+    try:
+        yield seen
+    finally:
+        builtins.__import__ = real
+
+
+@contextlib.contextmanager
+def _recording_cold_send_loads() -> Iterator[dict[str, str]]:
+    """Observe successful cold loads on the UI thread under send frames."""
+    seen: dict[str, str] = {}
+    real = importlib._bootstrap._find_and_load
+    main = threading.main_thread()
+
+    def recording(name, import_):
+        cold = (
+            threading.current_thread() is main
+            and name not in sys.modules
+            and _in_send()
+        )
+        if cold:
+            frame = sys._getframe(1)
+            stack = []
+            while frame is not None:
+                stack.append(
+                    f"{frame.f_globals.get('__name__')}:{frame.f_code.co_qualname}"
+                )
+                frame = frame.f_back
+        module = real(name, import_)
+        if cold:
+            seen.setdefault(name, " -> ".join(stack))
+        return module
+
+    importlib._bootstrap._find_and_load = recording
+    try:
+        yield seen
+    finally:
+        importlib._bootstrap._find_and_load = real
+
+
+def test_cold_send_load_recorder_observes_module_scope_external_dependencies(
+    tmp_path, monkeypatch
+):
+    root = "pr3339_recorder_root"
+    package = "pr3339_recorder_external"
+    (tmp_path / f"{root}.py").write_text(
+        f"from {package} import child\n", encoding="utf-8"
+    )
+    (tmp_path / package).mkdir()
+    (tmp_path / package / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / package / "child.py").write_text("VALUE = 1\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    names = {root, package, f"{package}.child"}
+    assert names.isdisjoint(sys.modules)
+
+    def _start_send(name=root):
+        return importlib.import_module(name)
+
+    real_loader = importlib._bootstrap._find_and_load
+    with _recording_cold_send_loads() as seen:
+        _start_send()
+    assert names <= seen.keys(), seen
+    assert importlib._bootstrap._find_and_load is real_loader
+
+    (tmp_path / "pr3339_recorder_failure.py").write_text(
+        "raise ValueError('loader failure')\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="loader failure"):
+        with _recording_cold_send_loads() as failed:
+            _start_send("pr3339_recorder_failure")
+    assert "pr3339_recorder_failure" not in failed
+    assert importlib._bootstrap._find_and_load is real_loader
+
+
+@pytest.mark.asyncio
+async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome):
+    """Every import a send runs inside a function is warm at UI-ready or listed.
+
+    The mounted harness's send (llama.cpp, a held gateway, no agent tools)
+    covers admission, hooks and the durable commit; the live record covers
+    the agent's tool providers. Function-local import statements under the
+    send's own frames are recorded whether or not the module is already
+    loaded, so the check does not depend on what earlier tests imported.
+    Which UI-loop work lands inside those frames depends on timing (the
+    cost chip's rebuild sometimes does), so "warm" is everything resident at
+    UI-ready, not only the snapshot's possibly stale contents.
+    """
+    from Tests.UI.test_console_send_acknowledgement import (
+        build,
+        eager_tasks,
+        press,
+        ready_console,
+        until,
+    )
+
+    ready = _warm_at_ui_ready(pass_outcome)
+    covered = _covered_by_the_warm_up()
+
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
             await ready_console(host, pilot, gateway)
-            builtins.__import__ = recording
-            try:
+            with _recording_send_imports() as seen:
 
                 def _start_send():
                     from tldw_chatbook.Chat import console_voice_input
@@ -809,9 +919,156 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome)
                 await until(gateway.validation_started.is_set)
                 gateway.validation_release.set()
                 await until(lambda: gateway.stream_calls == 1)
-            finally:
-                builtins.__import__ = real
 
     lazy = _not_warmed(seen, ready, covered)
     assert not lazy, f"imported on the UI loop by the send, not warmed: {lazy}"
     assert "tldw_chatbook.Agents.hooks_v2.lifecycle" in seen, "the send never ran hooks"
+
+
+_EVIDENCE = "The Fresnel lens lets a lighthouse beam reach ships far away."
+
+
+class _EvidenceLibrary:
+    """A started Library whose search finds one note, as the live BM25 run did."""
+
+    def __init__(self, note_id: str) -> None:
+        self.note_id = note_id
+        self.prewarms = 0
+        self.searches = 0
+
+    async def prewarm(self) -> bool:
+        self.prewarms += 1
+        return True
+
+    async def search(self, query, source_types, mode, **kwargs):
+        self.searches += 1
+        return {
+            "runtime_backend": "local",
+            "results": [
+                {
+                    "source_id": self.note_id,
+                    "chunk_id": "chunk-1",
+                    "title": "Lighthouse keeping notes",
+                    "snippet": _EVIDENCE,
+                    "score": 0.9,
+                    "source_type": "notes",
+                }
+            ],
+        }
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_automatic_library_send_loads_only_the_two_library_modules_lazily(
+    pass_outcome,
+    request,
+    monkeypatch,
+    tmp_path,
+):
+    """A private provider-direct Automatic send cold-loads only the Library pair.
+
+    Real preimports run first; a file-backed note passes actual source authority
+    and evidence capture before its text reaches the provider request. The old
+    statement guard remains independent of the all-namespace cold-load guard.
+    Historical timings and the owner decision are documented in the task.
+    """
+    from Tests.UI.test_console_send_acknowledgement import (
+        build,
+        eager_tasks,
+        press,
+        ready_console,
+        until,
+    )
+    from tldw_chatbook.Chat.console_library_policy import (
+        ConsoleAssistantLibraryAccess,
+        ConsoleAutoRetrieve,
+        ConsoleLibraryPolicyCandidate,
+    )
+
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    private_root = Path(os.environ["TLDW_TEST_CONFIG_ROOT"]).resolve(strict=True)
+    assert config_module.get_cli_config_path().resolve().is_relative_to(private_root)
+    assert config_module.save_setting_to_cli_config("console", "agent_runtime", False)
+    ready = _warm_at_ui_ready(pass_outcome)
+    covered = _covered_by_the_warm_up()
+    host, gateway, _timeline = build()
+    app = host.app_instance
+    app.app_config.setdefault("console", {})["agent_runtime"] = False
+    db = CharactersRAGDB(tmp_path / "notes.sqlite", client_id="first-send-imports")
+    request.addfinalizer(db.close_connection)
+    app.chachanotes_db = db
+    app._wire_chat_conversation_services()
+    note_id = db.add_note(title="Lighthouse keeping notes", content=_EVIDENCE)
+    library = _EvidenceLibrary(note_id)
+    app.library_rag_search_service = library
+    requests: list[object] = []
+    held_stream = gateway.stream_chat
+
+    async def recorded_stream(resolution, messages, **kwargs):
+        requests.append(messages)
+        async for chunk in held_stream(resolution, messages, **kwargs):
+            yield chunk
+
+    gateway.stream_chat = recorded_stream
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            store = console._ensure_console_chat_controller().store
+            store.stage_session_library_policy(
+                store.active_session_id,
+                ConsoleLibraryPolicyCandidate(
+                    auto_retrieve=ConsoleAutoRetrieve.AUTOMATIC,
+                    assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                ),
+            )
+            from tldw_chatbook.Chat import console_first_send_modules as warm
+            from tldw_chatbook.MCP import server
+
+            completed = []
+            prime = server.prime_local_manifest_source
+
+            def record_prime():
+                result = prime()
+                completed.append(True)
+                return result
+
+            monkeypatch.setattr(server, "prime_local_manifest_source", record_prime)
+            monkeypatch.setattr(
+                host.app_instance, "_pause_between_preimports", lambda gap: None
+            )
+            await asyncio.to_thread(host.app_instance._preimport_heavy_screens)
+            assert completed == [
+                True
+            ], "first-send preimport did not finish manifest prime"
+            assert (
+                warm.FIRST_SEND_MODULES[-1] in sys.modules
+            ), "last first-send module absent"
+            pair = {f"tldw_chatbook.{name}" for name in LIVE_LIBRARY_FIRST_SEND_IMPORTS}
+            assert pair.isdisjoint(
+                sys.modules
+            ), f"Library modules already resident: {pair & sys.modules.keys()}"
+            assert {
+                "pr3339_cold_dependency_probe",
+                "pr3339_cold_dependency_probe.child",
+            }.isdisjoint(sys.modules)
+            with _recording_send_imports() as seen, _recording_cold_send_loads() as cold:
+                press(host, "enter", "\r")
+                await until(gateway.validation_started.is_set)
+                gateway.validation_release.set()
+                await until(lambda: gateway.stream_calls == 1)
+
+    assert set(cold) == pair, f"unexpected cold UI-thread send loads: {cold}"
+    # Non-vacuity: the send searched the Library, found the note and carried it.
+    assert (library.prewarms, library.searches) == (1, 1)
+    assert len(requests) == 1 and _EVIDENCE in str(requests[0]), requests
+    for name in LIVE_LIBRARY_FIRST_SEND_IMPORTS:
+        assert f"tldw_chatbook.{name}" in seen, f"the send never imported {name}"
+    lazy = _not_warmed(seen, ready, covered)
+    assert set(lazy) == {
+        f"tldw_chatbook.{name}" for name in LIVE_LIBRARY_FIRST_SEND_IMPORTS
+    }, (
+        "an Automatic send's UI-loop imports are no longer exactly the two "
+        f"Library modules left lazy on 2026-10-31: {lazy}"
+    )
