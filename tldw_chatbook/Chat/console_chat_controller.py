@@ -8588,7 +8588,9 @@ class ConsoleChatController:
 
         return await _controller_settle_cancelled_native_commit(self, owner, continuation)
 
-    def _abandon_preparation(self, preparation_id: str) -> None:
+    def _abandon_preparation(
+        self, preparation_id: str, *, restore_draft: bool = True
+    ) -> None:
         """Cancel and remove one exact preaccept preparation without a wedge."""
 
         if self._ordinary_native_commit_owner(preparation_id) is not None:
@@ -8600,6 +8602,7 @@ class ConsoleChatController:
             preparation.session_id,
             preparation.preparation_id,
             expected_state=preparation.state,
+            restore_draft=restore_draft,
         )
         if cancelled is not None:
             self._drop_preparation(

@@ -78,12 +78,21 @@ def _prepare_sync(plan, budget):
                 budget.json(frontier.payload)
                 if json.loads(frontier.payload) != payload:
                     raise ValueError("mobile_native_sync_generated_payload_changed")
-            if frontier.current_disposition == "replace_native_create_with_shared_frontier":
+            if (
+                frontier.current_disposition
+                == "replace_native_create_with_shared_frontier"
+            ):
                 budget.json(frontier.payload)
                 shared = json.loads(frontier.payload)
                 expected = dict(payload)
-                expected.update(version=frontier.version, last_modified=frontier.timestamp)
-                if frontier.entity != "conversations" or not frontier.version < values["version"] or shared != expected:
+                expected.update(
+                    version=frontier.version, last_modified=frontier.timestamp
+                )
+                if (
+                    frontier.entity != "conversations"
+                    or not frontier.version < values["version"]
+                    or shared != expected
+                ):
                     raise ValueError("mobile_native_sync_archive_frontier_changed")
         elif frontier.entity != "world_book_entries" or frontier.operation != "delete":
             raise ValueError("mobile_native_sync_hard_delete_invalid")

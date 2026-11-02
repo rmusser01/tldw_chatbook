@@ -17,10 +17,10 @@ admit_startup()
 import asyncio
 import hashlib
 import html
-import re
-import secrets
 import json
 import os
+import re
+import secrets
 import signal
 import ssl
 import sys
@@ -1740,7 +1740,9 @@ class ChatbookWebServerMixin:
             f"{session.session_id}:{page_ids[0]}" if page_ids else session.session_id
         )
 
-    def bind_served_browser(self, browser_session_id: str, child_id: str, *, attachment=None) -> None:
+    def bind_served_browser(
+        self, browser_session_id: str, child_id: str, *, attachment=None
+    ) -> None:
         """Bind one authenticated terminal scope to exactly one AppService child."""
 
         if not isinstance(browser_session_id, str) or not browser_session_id:
@@ -1761,13 +1763,19 @@ class ChatbookWebServerMixin:
         ):
             raise ServedCanvasUnavailable("child_session_already_bound")
         self._served_browser_children[browser_session_id] = child_id
-        self._served_browser_attachments[browser_session_id] = attachment if attachment is not None else object()
+        self._served_browser_attachments[browser_session_id] = (
+            attachment if attachment is not None else object()
+        )
 
-    def unbind_served_browser(self, browser_session_id: str, child_id: str, *, attachment=None) -> None:
+    def unbind_served_browser(
+        self, browser_session_id: str, child_id: str, *, attachment=None
+    ) -> None:
         """Remove a binding only when its exact child incarnation still owns it."""
 
-        if (self._served_browser_children.get(browser_session_id) == child_id
-            and (attachment is None or self._served_browser_attachments.get(browser_session_id) is attachment)):
+        if self._served_browser_children.get(browser_session_id) == child_id and (
+            attachment is None
+            or self._served_browser_attachments.get(browser_session_id) is attachment
+        ):
             self._served_browser_children.pop(browser_session_id, None)
             self._served_browser_attachments.pop(browser_session_id, None)
             self._served_canvas_launches.pop(browser_session_id, None)
@@ -1844,7 +1852,8 @@ class ChatbookWebServerMixin:
         # Do not recreate an unreachable shell for a departed page.
         if (
             self._served_browser_children.get(browser_session_id) != child_id
-            or self._served_browser_attachments.get(browser_session_id) is not attachment
+            or self._served_browser_attachments.get(browser_session_id)
+            is not attachment
             or self._canvas_control_broker is not broker
             or self._served_canvas_gateway is not gateway
             or not self._canvas_enabled()
@@ -1886,7 +1895,8 @@ class ChatbookWebServerMixin:
         async with self._served_canvas_launch_lock:
             if (
                 self._served_browser_children.get(browser_session_id) != child_id
-                or self._served_browser_attachments.get(browser_session_id) is not attachment
+                or self._served_browser_attachments.get(browser_session_id)
+                is not attachment
                 or self._canvas_control_broker is not broker
                 or self._served_canvas_gateway is not gateway
                 or not self._canvas_enabled()
@@ -1897,7 +1907,8 @@ class ChatbookWebServerMixin:
                 launch = await gateway.open_shell(scope)
                 if (
                     self._served_browser_children.get(browser_session_id) != child_id
-                    or self._served_browser_attachments.get(browser_session_id) is not attachment
+                    or self._served_browser_attachments.get(browser_session_id)
+                    is not attachment
                     or self._canvas_control_broker is not broker
                     or self._served_canvas_gateway is not gateway
                     or not self._canvas_enabled()
@@ -2048,7 +2059,11 @@ class ChatbookWebServerMixin:
                     old.browser_session_id, host.service.app_service_id, attachment=old
                 ),
             )
-            if session.revoked or websocket.closed or host.current_attachment is not attachment:
+            if (
+                session.revoked
+                or websocket.closed
+                or host.current_attachment is not attachment
+            ):
                 await attachment.detach()
                 return websocket
             self.bind_served_browser(
@@ -2067,7 +2082,9 @@ class ChatbookWebServerMixin:
             unregister_channel()
             if attachment is not None:
                 self.unbind_served_browser(
-                    browser_session_id, host.service.app_service_id, attachment=attachment
+                    browser_session_id,
+                    host.service.app_service_id,
+                    attachment=attachment,
                 )
                 await attachment.detach()
             await websocket.close()

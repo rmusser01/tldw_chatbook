@@ -3072,7 +3072,9 @@ DELETE FROM keywords
                         )
                     else:
                         conn = connect_private_sqlite(
-                            "db.chachanotes.primary", self.db_path_str, **connect_options
+                            "db.chachanotes.primary",
+                            self.db_path_str,
+                            **connect_options,
                         )
                     opened_here = True
                     if not isinstance(conn, _QuiescentSQLiteConnection):
@@ -22612,7 +22614,10 @@ def reject_incompatible_preview(db_path: str | Path) -> None:
     """Refuse unmerged preview metadata before any schema-ready writer access."""
     import time
 
-    from .mobile_preview_lineage import _existing_preview_target, _reject_preview_connection
+    from .mobile_preview_lineage import (
+        _existing_preview_target,
+        _reject_preview_connection,
+    )
     from .private_sqlite import connect_private_sqlite
 
     target = _existing_preview_target(db_path)
@@ -22621,10 +22626,16 @@ def reject_incompatible_preview(db_path: str | Path) -> None:
     selected, identity = target
     deadline = time.monotonic() + 5.0
     connection = connect_private_sqlite(
-        'db.chachanotes.read', selected, read_only=True, must_exist=True, immutable=False,
-        expected_identity=identity, operation_deadline=deadline, timeout=5.0,
+        "db.chachanotes.read",
+        selected,
+        read_only=True,
+        must_exist=True,
+        immutable=False,
+        expected_identity=identity,
+        operation_deadline=deadline,
+        timeout=5.0,
     )
     try:
-        _reject_preview_connection(connection, 'chat', deadline)
+        _reject_preview_connection(connection, "chat", deadline)
     finally:
         connection.close()

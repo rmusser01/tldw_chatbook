@@ -2221,7 +2221,9 @@ class ServiceWiringMixin(
 
             selected_workspace = get_workspaces_db_path()
             preflight_selected_console_stores(
-                chat_path=getattr(getattr(self, "chachanotes_db", None), "db_path", None),
+                chat_path=getattr(
+                    getattr(self, "chachanotes_db", None), "db_path", None
+                ),
                 workspace_path=selected_workspace,
             )
             self.local_workspace_db = WorkspaceDB(

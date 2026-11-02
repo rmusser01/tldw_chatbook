@@ -250,7 +250,9 @@ def _open_preview_read(path):
     )
 
 
-def _inspect_store(path, adapter, *, external_references=True, _read_budget=None, _legacy_source=False):
+def _inspect_store(
+    path, adapter, *, external_references=True, _read_budget=None, _legacy_source=False
+):
     """Inspect only an exact installed catalog, retaining IDs and counts only."""
     from .mobile_preview_budget import pragma_cost, scalar_cost, table_cost
     from .sqlite_validation import _check_details, _restrict_connection
@@ -277,7 +279,11 @@ def _inspect_store(path, adapter, *, external_references=True, _read_budget=None
             # histories before any full-row fingerprint can materialize a blob.
             from .mobile_captured_sqlite import _SOURCE_HISTORY_PROBES
 
-            family = {"db.chachanotes.primary": "chat", "db.workspaces": "workspaces", "db.agent_runs": "runs"}[adapter.owner_id]
+            family = {
+                "db.chachanotes.primary": "chat",
+                "db.workspaces": "workspaces",
+                "db.agent_runs": "runs",
+            }[adapter.owner_id]
             tables_present = {name for kind, name, _, _ in catalog if kind == "table"}
             for probe_family, table, statement, reason in _SOURCE_HISTORY_PROBES:
                 if probe_family != family or table not in tables_present:
@@ -641,7 +647,12 @@ def _preview(
                 continue
             try:
                 version, schema, rows, keys, edges, indexes, refs, content_hash = (
-                    _inspect_store(path, adapters[owner], _read_budget=_read_budget, _legacy_source=True)
+                    _inspect_store(
+                        path,
+                        adapters[owner],
+                        _read_budget=_read_budget,
+                        _legacy_source=True,
+                    )
                 )
                 schemas.append((leaf, version, schema))
                 reserve(

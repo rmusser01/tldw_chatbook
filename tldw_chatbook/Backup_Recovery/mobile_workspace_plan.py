@@ -174,11 +174,27 @@ def _plan_workspaces(reads, *, _identities=None):
     ):
         raise ValueError("mobile_workspace_identity_binding_changed")
     source = {
-        table: _rows(reads, "legacy", "workspaces", table, _read_budget=reads.read_budget if table == "workspace_binding_authority" else None)
+        table: _rows(
+            reads,
+            "legacy",
+            "workspaces",
+            table,
+            _read_budget=reads.read_budget
+            if table == "workspace_binding_authority"
+            else None,
+        )
         for table in _TABLES
     }
     canonical = {
-        table: _rows(reads, "canonical", "workspaces", table, _read_budget=reads.read_budget if table == "workspace_binding_authority" else None)
+        table: _rows(
+            reads,
+            "canonical",
+            "workspaces",
+            table,
+            _read_budget=reads.read_budget
+            if table == "workspace_binding_authority"
+            else None,
+        )
         for table in _TABLES
     }
     output, blockers, names, holds, proofs = [], [], [], [], []
@@ -246,7 +262,13 @@ def _plan_workspaces(reads, *, _identities=None):
         if identity == _DEFAULT and identity in existing:
             # Desktop timestamps and active selection remain authoritative; every other
             # stored source field has to mean exactly the same reserved Default.
-            semantic = set(row) - {"active", "created_at", "updated_at", "archived_at", "archive_revision"}
+            semantic = set(row) - {
+                "active",
+                "created_at",
+                "updated_at",
+                "archived_at",
+                "archive_revision",
+            }
             if any(row[key] != existing[identity][key] for key in semantic):
                 block(
                     "workspace_records", identity, identity, "default_content_conflict"
@@ -315,7 +337,9 @@ def _plan_workspaces(reads, *, _identities=None):
         row = dict(original)
         identity = row["binding_id"]
         if type(row["revision"]) is not int or not 1 <= row["revision"] <= 2**63 - 1:
-            block("workspace_binding_authority", identity, None, "binding_witness_invalid")
+            block(
+                "workspace_binding_authority", identity, None, "binding_witness_invalid"
+            )
             continue
         row["binding_id"] = identities.mapped("binding", identity)
         if row["binding_id"] not in holds:

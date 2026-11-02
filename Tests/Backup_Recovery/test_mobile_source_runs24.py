@@ -112,10 +112,13 @@ def test_actual_source_version_capture_identity_and_integrated_plan(
             p == "canonical" and f == "runs" and t == "console_command_receipts"
             for p, f, t, _ in catalog
         )
-        assert any(
-            p == "legacy" and f == "runs" and t == "console_command_receipts"
-            for p, f, t, _ in catalog
-        ) is False
+        assert (
+            any(
+                p == "legacy" and f == "runs" and t == "console_command_receipts"
+                for p, f, t, _ in catalog
+            )
+            is False
+        )
         manifest = plan.manifest
         assert {(r.purpose, r.family, r.table): r.columns for r in manifest.tables} == {
             (p, f, t): c for p, f, t, c in catalog
@@ -128,9 +131,10 @@ def test_actual_source_version_capture_identity_and_integrated_plan(
             reads.page("legacy", "runs", "console_command_receipts")
         assert plan.pending_handlers == ("A-runs", "owner-write", "public-cutover")
         assert any(d.table == "agent_runs" for d in plan.pending_duties)
-        assert any(
-            d.table == "console_command_receipts" for d in plan.pending_duties
-        ) is False
+        assert (
+            any(d.table == "console_command_receipts" for d in plan.pending_duties)
+            is False
+        )
         with pytest.raises(ValueError, match="pending"):
             plan.require_complete()
         connections = tuple(value[0] for value in reads._connections.values())
@@ -180,7 +184,9 @@ def test_native_catalog_rejects_wrong_version_receipt_presence(
     original = _source_layout(monkeypatch, version, malformed=malformed)
     with prepared(tmp_path, monkeypatch) as values:
         _, _, _, _, preview, inventory, _ = values
-        expected = "unsupported_schema" if version == 24 else "unsupported_schema_version"
+        expected = (
+            "unsupported_schema" if version == 24 else "unsupported_schema_version"
+        )
         assert expected in preview.issues
         assert not inventory.complete
         owner = next(a for a in recovery_adapters() if a.owner_id == "db.agent_runs")
@@ -208,9 +214,16 @@ def test_native_observed_version_refuses_mismatched_archive_declaration(
         scopes.append(scope)
         # Fault only the declared version derived from authenticated metadata.
         # The installed native schedule/check still opens the unchanged bytes.
-        changed = document.model_copy(update={
-            "owners": tuple(row.model_copy(update={"schema_version": declared}) if row.owner_id == "db.agent_runs" else row for row in document.owners),
-        })
+        changed = document.model_copy(
+            update={
+                "owners": tuple(
+                    row.model_copy(update={"schema_version": declared})
+                    if row.owner_id == "db.agent_runs"
+                    else row
+                    for row in document.owners
+                ),
+            }
+        )
         scope._source_archive = (partition, changed, sealed)
         try:
             return members(scope)

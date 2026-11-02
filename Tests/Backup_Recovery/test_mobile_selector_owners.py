@@ -34,9 +34,18 @@ def _seed_no_history(source, *, artifact_root=None):
         workspace.close()
         runs.close()
         execution.close()
-    from Tests.Backup_Recovery.mobile_consolidation_fixture import _reconstruct_legacy_stores
-    from tldw_chatbook.Backup_Recovery.mobile_consolidation import CanonicalConsoleStores
-    _reconstruct_legacy_stores(CanonicalConsoleStores(source / "chat.db", source / "workspaces.db", source / "runs.db"))
+    from Tests.Backup_Recovery.mobile_consolidation_fixture import (
+        _reconstruct_legacy_stores,
+    )
+    from tldw_chatbook.Backup_Recovery.mobile_consolidation import (
+        CanonicalConsoleStores,
+    )
+
+    _reconstruct_legacy_stores(
+        CanonicalConsoleStores(
+            source / "chat.db", source / "workspaces.db", source / "runs.db"
+        )
+    )
 
 
 @contextmanager

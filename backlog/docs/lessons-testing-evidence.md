@@ -117,6 +117,51 @@ A separate trap in the same test: the held provider read gave up waiting for the
 
 **What to do.** Search for the bare name (`grep -rn "_name\b"`), untruncated, before you move behaviour out of a method or claim you have listed its callers: a method handed to `call_after_refresh`, `set_timer`, `run_worker` or a `lambda` has no `()` at the call site. Better still, keep the behaviour inside the method (here, the method now asks the panel's `refresh_inspector_actions` hook itself), so a caller cannot skip it.
 
+## Review handoff needs an authorized structured read path (TASK-39147, 2026-11-07)
+
+A 60-request Console review sealed all three children, but the coordinator could
+not finish: its primary recipe instructed verifier-only calls, and its legal
+report API omitted accepted verdicts that the native UI already displayed. Haiku
+also denied its own submitted decisions after checkpoint projection removed the
+acknowledged rounds. Test guide examples against the receiving role's actual
+schema and test the primary's public readback, not only native UI expansion.
+Checkpoint summaries must distinguish the actor's accepted decisions from host
+capacity gaps. Those host failures explain missing context and illegal guidance;
+they do not prove why a model chose a particular false narrative. Evidence:
+`Docs/superpowers/qa/2026-11-07-review-completion-recovery/README.md`.
+
+## A decorated synthetic event can outlive the state its test meant to exercise
+
+**Incident (PR #3473, 2026-11-08).** The partial-Console resize test removed a
+widget, injected an 80-column event at a real width of 160, checked unchanged
+state, and recomposed. A busy-config control showed the decorator queued that
+event without entering the missing-widget guard. The first assertions passed
+vacuously; replay after recomposition reproduced the hosted visible-left-rail
+failure. Calling the synchronous body for that synthetic guard phase fixed the
+control and all five cases; the later real resize still used the decorator.
+Moving band consumption before the guard still failed the original assertion.
+
+**What to do.** When testing an immediate guard through a deferring decorator,
+prove the body ran while the guarded state existed. Test that synchronous
+boundary directly when appropriate, then retain separate native event coverage.
+An unchanged state after the decorated call can mean the call has not run yet.
+
+## A direct owned capture requires ready sources, even after the Console mounts
+
+**Incident (PR #3473, 2026-11-08).** UI31's temporary-capture voice cancellation
+test called the warm-only configuration capture before custody admission and
+failed `console_capture_source_not_ready`. The isolated case passed. Keeping the
+real App trust service but clearing its local-facade publication reproduced the
+same guard; awaiting the real initializer and reading the original lazy property
+made that control and all eleven file cases pass without changing Cancel checks.
+The hosted log did not identify the exact unready source. Switching to the public
+capture fallback passed Cancel but violated this fixture's native worker drain,
+so that candidate was discarded.
+
+**What to do.** Establish the actual readiness preconditions of a low-level
+fixture call through its original owners. Mount completion alone is not service
+readiness; keep teardown assertions when selecting a different capture route.
+
 ## A census's "gone" row can be a live producer the scanner stopped seeing (TASK-39053, 2026-11-06)
 
 **Incident.** The backup owner inventory reported 194 gone producer rows, and the task that filed it read them as removed or moved code. But 24 of them were live `os.replace` / `os.unlink` calls. Their modules had switched to `from tldw_chatbook.Utils.platform_files import os`, and the census only bound `os` from `import os`. Other reviewed rows looked gone for the same kind of reason:
@@ -25156,50 +25201,18 @@ retained predecessor outcome and an independently confirmed current target, and
 prove both old-outcome visibility and current control/decision behavior. Receipt
 delivery negatives must await the specific response and client processing.
 
-## Review handoff needs an authorized structured read path (TASK-40127, 2026-11-07)
+## Same owner does not mean the same selected preservation scope
 
-A 60-request Console review sealed all three children, but the coordinator could
-not finish: its primary recipe instructed verifier-only calls, and its legal
-report API omitted accepted verdicts that the native UI already displayed. Haiku
-also denied its own submitted decisions after checkpoint projection removed the
-acknowledged rounds. Test guide examples against the receiving role's actual
-schema and test the primary's public readback, not only native UI expansion.
-Checkpoint summaries must distinguish the actor's accepted decisions from host
-capacity gaps. Those host failures explain missing context and illegal guidance;
-they do not prove why a model chose a particular false narrative. Evidence:
-`Docs/superpowers/qa/2026-11-07-review-completion-recovery/README.md`.
-
-## A decorated synthetic event can outlive the state its test meant to exercise
-
-**Incident (PR #3473, 2026-11-08).** The partial-Console resize test removed a
-widget, injected an 80-column event at a real width of 160, checked unchanged
-state, and recomposed. A busy-config control showed the decorator queued that
-event without entering the missing-widget guard. The first assertions passed
-vacuously; replay after recomposition reproduced the hosted visible-left-rail
-failure. Calling the synchronous body for that synthetic guard phase fixed the
-control and all five cases; the later real resize still used the decorator.
-Moving band consumption before the guard still failed the original assertion.
-
-**What to do.** When testing an immediate guard through a deferring decorator,
-prove the body ran while the guarded state existed. Test that synchronous
-boundary directly when appropriate, then retain separate native event coverage.
-An unchanged state after the decorated call can mean the call has not run yet.
-
-## A direct owned capture requires ready sources, even after the Console mounts
-
-**Incident (PR #3473, 2026-11-08).** UI31's temporary-capture voice cancellation
-test called the warm-only configuration capture before custody admission and
-failed `console_capture_source_not_ready`. The isolated case passed. Keeping the
-real App trust service but clearing its local-facade publication reproduced the
-same guard; awaiting the real initializer and reading the original lazy property
-made that control and all eleven file cases pass without changing Cancel checks.
-The hosted log did not identify the exact unready source. Switching to the public
-capture fallback passed Cancel but violated this fixture's native worker drain,
-so that candidate was discarded.
-
-**What to do.** Establish the actual readiness preconditions of a low-level
-fixture call through its original owners. Mount completion alone is not service
-readiness; keep teardown assertions when selecting a different capture route.
+**TASK-36766 PR3345 integration, epochs90–97, 2026-11-01.** Installed rollback
+validation rejected a legitimate imported history tree after physical publication.
+The actual native plan contained six `agents.history` directories but selected
+only the default empty `tool_sandbox` in `safety_scope`; the other five remained
+preserved under ordinary native policy. A direct helper fixture containing only
+the selected root missed this distinction. Filter fixed-disposition routing by
+the actual reviewed scope, then retain every strict check on selected members.
+Include unrelated nonempty same-owner siblings in controls. The fresh unobserved
+original rollback94 and actual edited-row/SafetyCopy97 passed after this correction;
+all failed epochs remain retained.
 
 ### 2026-10-15 — Unique receipt directories preserve prerequisite evidence (TASK-34564)
 

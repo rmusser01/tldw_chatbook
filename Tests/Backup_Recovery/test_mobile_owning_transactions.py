@@ -10,8 +10,16 @@ from Tests.Backup_Recovery.test_mobile_native_operation import captured_operatio
 
 
 def _small_native_seed(
-    stores, *, legacy, artifact_root=None, source_case=None, note_root=None,
-    native_seed=None, legacy_chat_version=81, legacy_workspace_version=8, legacy_runs_version=25,
+    stores,
+    *,
+    legacy,
+    artifact_root=None,
+    source_case=None,
+    note_root=None,
+    native_seed=None,
+    legacy_chat_version=81,
+    legacy_workspace_version=8,
+    legacy_runs_version=25,
 ):
     from tldw_chatbook.Chat.console_execution_owner import ConsoleExecutionOwner
     from tldw_chatbook.Chat.console_trace_models import (
@@ -274,7 +282,8 @@ def _small_native_seed(
                 AgentDefinition(
                     name="imported-definition" if legacy else "current-definition",
                     instructions="Retained instructions",
-                    provider="openai", model="fixture-primary",
+                    provider="openai",
+                    model="fixture-primary",
                     params=(("temperature", 0.25),),
                     fallback_models=(("anthropic", "fixture-fallback"),),
                 )
@@ -667,7 +676,9 @@ def _small_native_seed(
             trace.import_post_dispatch_trace(chat, request)
             result["blocked_identity"] = request.calls[0].call_id
         if legacy and source_case == "history_consumers":
-            from tldw_chatbook.Chat.console_trace_native_reader import ConsoleTraceNativeReader
+            from tldw_chatbook.Chat.console_trace_native_reader import (
+                ConsoleTraceNativeReader,
+            )
 
             result["trace_original"] = ConsoleTraceNativeReader(chat).read_calls(turn)
             assert (
@@ -684,9 +695,13 @@ def _small_native_seed(
         chat.close_connection()
         lease.close()
         if legacy:
-            from Tests.Backup_Recovery.mobile_consolidation_fixture import _reconstruct_legacy_stores
+            from Tests.Backup_Recovery.mobile_consolidation_fixture import (
+                _reconstruct_legacy_stores,
+            )
+
             _reconstruct_legacy_stores(
-                stores, legacy_chat_version=legacy_chat_version,
+                stores,
+                legacy_chat_version=legacy_chat_version,
                 legacy_workspace_version=legacy_workspace_version,
                 legacy_runs_version=legacy_runs_version,
             )
@@ -1937,11 +1952,22 @@ def test_actual_goal_note_definition_owners_preserve_history_and_current_guards(
             ]
             definition = owner.get_agent_definition(imported_definition)
             assert definition["enabled"] == 1
-            from tldw_chatbook.Agents.agent_models import definition_from_row, validate_agent_definition
+            from tldw_chatbook.Agents.agent_models import (
+                definition_from_row,
+                validate_agent_definition,
+            )
+
             model = definition_from_row(definition)
             assert validate_agent_definition(model) == []
-            assert (model.provider, model.model, model.params, model.fallback_models) == (
-                "openai", "fixture-primary", (("temperature", 0.25),),
+            assert (
+                model.provider,
+                model.model,
+                model.params,
+                model.fallback_models,
+            ) == (
+                "openai",
+                "fixture-primary",
+                (("temperature", 0.25),),
                 (("anthropic", "fixture-fallback"),),
             )
             enabled = {

@@ -218,7 +218,8 @@ _SQLITE_OWNER_POLICIES = {
         "BaseDB is the shared file and memory connection owner for subclasses.",
     ),
     "db.workspaces.preflight": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/Workspace_DB", _READ_ONLY_URI,
+        "tldw_chatbook/DB/Workspace_DB",
+        _READ_ONLY_URI,
         "Fixed incompatible-preview metadata rejection before native schema initialization.",
         preserve_read_only_source_mode=True,
     ),
@@ -1543,7 +1544,9 @@ def _with_storage_admission(function):
         factory = kwargs.get("factory", sqlite3.Connection)
         try:
             lease = _acquire_mobile_storage(
-                Path(database), owner_id=owner_id, factory=factory,
+                Path(database),
+                owner_id=owner_id,
+                factory=factory,
                 read_only=kwargs.get("read_only", False),
                 must_exist=kwargs.get("must_exist", False),
                 immutable=kwargs.get("immutable", False),
@@ -1966,7 +1969,8 @@ def _connect_registered_sqlite(
                 writable=not read_only,
                 create_if_missing=not read_only and not must_exist,
                 preserve_source_mode=(
-                    read_only and policy.preserve_read_only_source_mode
+                    read_only
+                    and policy.preserve_read_only_source_mode
                     and not require_private_mode
                 ),
                 require_private_mode=require_private_mode,

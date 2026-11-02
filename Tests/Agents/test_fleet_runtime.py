@@ -89,12 +89,6 @@ from tldw_chatbook.DB.agent_worktrees import AgentWorktreeRepository
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
-from Tests.Agents.conftest import (
-    join_fleet_children,
-    pin_agent_settings,
-    pin_max_live_subagents,
-    pin_turn_scoped_children,
-)
 
 pytestmark = pytest.mark.bootstrap_profile
 

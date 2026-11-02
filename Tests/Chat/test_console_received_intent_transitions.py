@@ -811,6 +811,71 @@ async def test_command_queue_preserves_desktop_riders_through_native_drain(
     assert runtime.snapshot_console_staged_evidence()[0] is staged
 
 
+@pytest.mark.parametrize("retirement", ("remove", "clear", "session", "shutdown"))
+async def test_phone_queued_proof_lifetime_follows_native_request_owner(
+    received_workspace, tmp_path, retirement
+):
+    import gc
+    import weakref
+
+    case = received_workspace
+    gateway = _configure_command_case(case, tmp_path)
+    commands, target, revisions = _command_owner(case)
+    runtime, controller, session = case.runtime, case.controller, case.session
+    first = await commands.send(
+        target, "phone active", "proof-active", expected_revisions=revisions
+    )
+    record = runtime._turn_custody[first]
+    first_task = record.task
+    recovery = runtime.ensure_archive_recovery()
+    try:
+        await _wait_for_seam(record, gateway.started[0])
+        second = await commands.send(
+            target, "phone waiting", "proof-waiting", expected_revisions=revisions
+        )
+        queued_record = runtime._turn_custody[second]
+        assert (await _outcome(queued_record)).applied
+        registry = controller.prompt_queue_registry
+        prompt = registry._states[session.id].waiting[0]
+        proof = prompt.custody_request.configuration.recovery_user_origin
+        proof_id, proof_ref, entry_id = id(proof), weakref.ref(proof), prompt.entry_id
+        assert recovery._proofs[proof_id] is proof
+        assert proof_id not in recovery._accepted_proofs
+        del proof, prompt
+        if retirement == "remove":
+            assert registry.remove(
+                session.id,
+                entry_id=entry_id,
+                expected_revision=registry.snapshot(session.id).revision,
+            ).applied
+        elif retirement == "clear":
+            assert registry.clear_waiting(
+                session.id,
+                expected_revision=registry.snapshot(session.id).revision,
+            ).applied
+        elif retirement == "session":
+            assert (
+                await runtime.close_session(
+                    session.id,
+                    expected_revision=controller.lifecycle_impact(
+                        session_id=session.id
+                    ).revision,
+                )
+                is not None
+            )
+        else:
+            await runtime.dispose()
+        gc.collect()
+        assert proof_ref() is None
+        assert proof_id not in recovery._proofs
+        assert proof_id not in recovery._accepted_proofs
+        assert gateway.user_turns == ["phone active"]
+    finally:
+        for event in gateway.release:
+            event.set()
+        await asyncio.gather(first_task, return_exceptions=True)
+
+
 async def test_command_settings_change_after_capture_refuses_native_promotion(
     received_workspace, monkeypatch, tmp_path
 ):
