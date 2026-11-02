@@ -649,6 +649,20 @@ def check_dependency(module_name: str, feature_name: Optional[str] = None) -> bo
             f"⚠️ {module_name} dependency not found. Feature '{feature_name}' will be disabled. Reason: {e}"
         )
         return False
+    except Exception as e:
+        # TASK-38597: an installed-but-broken optional (OSError from a
+        # failed native dlopen, a protobuf mismatch, ...) used to escape
+        # here and crash the eager boot path
+        # (``initialize_dependency_checks`` at module scope). A broken
+        # install must degrade exactly like a missing one -- feature
+        # disabled, boot continues -- only the log wording differs, so
+        # missing vs broken stays distinguishable.
+        DEPENDENCIES_AVAILABLE[feature_name] = False
+        logger.warning(
+            f"⚠️ {module_name} dependency is installed but failed to import. "
+            f"Feature '{feature_name}' will be disabled. Reason: {type(e).__name__}: {e}"
+        )
+        return False
 
 
 def _check_dependency_installed(
