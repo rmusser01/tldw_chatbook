@@ -204,14 +204,30 @@ def parse_token(token: str) -> Tuple[str, Optional[Tuple[int, int]]]:
 
 
 def _looks_binary(data: bytes) -> bool:
+    """Decide whether a referenced file is binary and must not be injected.
+
+    TASK-38599: a strict UTF-8 decode is tried first — any file that
+    decodes is text regardless of how non-ASCII its first 8 KB look, so
+    CJK/Cyrillic notes are no longer refused by the printable-ASCII ratio.
+    The whole payload is decoded (it is already capped at
+    ``MAX_REFERENCE_BYTES``) so a multibyte character straddling the 8 KB
+    sample boundary cannot fake a decode failure. Only when the decode
+    fails does the original printable-ASCII heuristic apply. Null bytes
+    stay an immediate refusal either way: they decode as valid UTF-8 but
+    never appear in text worth injecting.
+    """
     if b"\x00" in data[:8192]:
         return True
     sample = data[:8192]
     if not sample:
         return False
-    text_bytes = bytes(range(0x20, 0x7F)) + b"\n\r\t\f\b"
-    nontext = sum(1 for b in sample if b not in text_bytes)
-    return nontext / len(sample) > 0.30
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        text_bytes = bytes(range(0x20, 0x7F)) + b"\n\r\t\f\b"
+        nontext = sum(1 for b in sample if b not in text_bytes)
+        return nontext / len(sample) > 0.30
+    return False
 
 
 def _expand_path(path: "Path", line_range, max_bytes: int):
