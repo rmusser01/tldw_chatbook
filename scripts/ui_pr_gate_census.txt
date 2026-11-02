@@ -1946,3 +1946,9 @@ Tests/UI/test_tag_filter_picker.py
 
 # TASK-36571 / PR3335: batched projection restyles and computed-style guards.
 Tests/UI/test_console_projection_restyles.py
+# TASK-36610 (2026-10-30): a Console send's start ends at its own provider
+# request, not another session's, and a queued prompt's dispatch, an agent
+# wake, a goal iteration and an agent's chat start open one at acceptance
+# (plus the quiet-gap file's three send-start cases, moved here). Eleven cases,
+# about 26 s locally at load 6; appended at the tail, so no slot moves.
+Tests/UI/test_console_send_start_window.py
