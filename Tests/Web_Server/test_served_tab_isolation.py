@@ -223,6 +223,239 @@ async def _eventually(predicate):
             await asyncio.sleep(0.01)
 
 
+async def test_pending_child_start_keeps_responding_socket_alive(tmp_path, monkeypatch):
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_start = _EchoChild.start
+    facts = {"received_pings": 0, "sent_pongs": 0, "frame_kinds": []}
+
+    async def pending_start(child, width, height):
+        entered.set()
+        await release.wait()
+        await original_start(child, width, height)
+        facts["native_start_completed"] = True
+
+    monkeypatch.setattr(_EchoChild, "start", pending_start)
+    async with _stack(tmp_path, canvas=False) as (_server, client):
+        headers, protocols, _ = _login(_server)
+        websocket = None
+
+        async def connect_and_receive_ready():
+            nonlocal websocket
+            websocket = await client.ws_connect(
+                "/ws?terminal_id=" + "a" * 32 + "&width=100&height=40",
+                headers=headers,
+                protocols=protocols,
+                autoping=False,
+            )
+            frames = []
+            while len(frames) < 3:
+                message = await websocket.receive()
+                if message.type == WSMsgType.PING:
+                    facts["received_pings"] += 1
+                    await websocket.pong(message.data)
+                    facts["sent_pongs"] += 1
+                    continue
+                if message.type == WSMsgType.PONG:
+                    continue
+                if message.type != WSMsgType.TEXT:
+                    error = websocket.exception()
+                    facts.update(
+                        close_type=message.type.name,
+                        close_code=websocket.close_code,
+                        exception_type=None if error is None else type(error).__name__,
+                        startup_still_pending=not release.is_set(),
+                    )
+                    raise AssertionError(facts)
+                frame = message.json()
+                facts["frame_kinds"].append(frame[0])
+                frames.append(frame)
+            return frames
+
+        receiver = asyncio.create_task(connect_and_receive_ready())
+        try:
+            async with asyncio.timeout(45):
+                await entered.wait()
+                # Original heartbeat15 + Pong7.5 + native timer ceiling slack.
+                # A healthy client answers real Pings during the awaited start.
+                await asyncio.sleep(25)
+                release.set()
+                begin, ready, started = await receiver
+                assert begin[0] == "console_attachment_begin"
+                assert ready == ["console_attachment_ready", begin[1]]
+                assert started[0] == "started"
+                assert len(_EchoChild.instances) == 1
+                assert facts["native_start_completed"] is True
+                await _echo(websocket, "ready-after-slow-start")
+                assert not _EchoChild.instances[0].stop_entered.is_set()
+        finally:
+            release.set()
+            receiver.cancel()
+            await asyncio.gather(receiver, return_exceptions=True)
+            if websocket is not None:
+                await websocket.close()
+            facts["child_count"] = len(_EchoChild.instances)
+            (tmp_path / "startup-socket-facts.json").write_text(
+                json.dumps(facts, indent=2)
+            )
+
+
+@pytest.mark.parametrize(
+    "bad_header,value",
+    [("Sec-WebSocket-Key", "invalid"), ("Sec-WebSocket-Version", "12")],
+)
+async def test_malformed_upgrade_refuses_before_child_start(
+    tmp_path, bad_header, value
+):
+    async with _stack(tmp_path, canvas=False) as (server, client):
+        headers, protocols, _ = _login(server)
+        upgrade = {
+            **headers,
+            "Upgrade": "websocket",
+            "Connection": "Upgrade",
+            "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+            "Sec-WebSocket-Version": "13",
+            "Sec-WebSocket-Protocol": ", ".join(protocols),
+            bad_header: value,
+        }
+        response = await client.get("/ws", headers=upgrade)
+        assert response.status == 400
+        assert await response.text() == "Invalid websocket upgrade"
+        assert _EchoChild.instances == []
+        assert not server._served_console_hosts._starts
+        assert not server._served_browser_children
+
+
+async def test_failed_child_start_returns_unavailable_before_upgrade(
+    tmp_path, monkeypatch
+):
+    starts = []
+    startup_error = RuntimeError("test startup failure")
+
+    async def failed_start(child, width, height):
+        starts.append(child)
+        raise startup_error
+
+    monkeypatch.setattr(_EchoChild, "start", failed_start)
+    with pytest.raises(RuntimeError) as retirement_error:
+        async with _stack(tmp_path, canvas=False) as (server, client):
+            headers, protocols, _ = _login(server)
+            with pytest.raises(WSServerHandshakeError) as error:
+                await client.ws_connect("/ws", headers=headers, protocols=protocols)
+            assert error.value.status == 503
+            assert len(starts) == 1
+            assert starts == _EchoChild.instances
+            assert not server._served_browser_children
+            assert not server._web_auth._revocation_callbacks
+            start = next(iter(server._served_console_hosts._starts.values()))
+            assert start.done()
+            assert type(start.exception()) is RuntimeError
+            assert str(start.exception()) == "test startup failure"
+    assert retirement_error.value is startup_error
+
+
+@pytest.mark.parametrize("refusal", ["revoked", "expired", "shutdown"])
+async def test_pending_start_revalidates_auth_and_host_before_upgrade(
+    tmp_path, monkeypatch, refusal
+):
+    entered, release = asyncio.Event(), asyncio.Event()
+    original_start = _EchoChild.start
+
+    async def pending_start(child, width, height):
+        entered.set()
+        await release.wait()
+        await original_start(child, width, height)
+
+    monkeypatch.setattr(_EchoChild, "start", pending_start)
+    async with _stack(tmp_path, canvas=False) as (server, client):
+        headers, protocols, _ = _login(server)
+        session = server._web_auth.sessions_snapshot()[0]
+        hosts = server._served_console_hosts
+        connection = asyncio.create_task(
+            client.ws_connect("/ws", headers=headers, protocols=protocols)
+        )
+        shutdown = None
+        try:
+            async with asyncio.timeout(5):
+                await entered.wait()
+                assert not connection.done()
+                assert not server._served_browser_children
+                if refusal == "revoked":
+                    cookie = SimpleCookie(headers["Cookie"])[SESSION_COOKIE_NAME].value
+                    server._web_auth.revoke(cookie)
+                elif refusal == "expired":
+                    session.absolute_expires_at = server._web_auth._clock() - 1
+                else:
+                    shutdown = asyncio.create_task(hosts.aclose())
+                    await _eventually(lambda: hosts._closed)
+                release.set()
+                with pytest.raises(WSServerHandshakeError) as error:
+                    await connection
+                assert error.value.status == (503 if refusal == "shutdown" else 401)
+                assert len(_EchoChild.instances) == 1
+                assert not server._served_browser_children
+                host = next(iter(hosts._starts.values())).result()
+                assert host.current_attachment is None
+                assert not server._web_auth._revocation_callbacks
+                if shutdown is not None:
+                    await shutdown
+                    assert host._closed
+                    assert _EchoChild.instances[0].stop_entered.is_set()
+                else:
+                    assert session.revoked
+                    assert not _EchoChild.instances[0].stop_entered.is_set()
+                    assert hosts.get_existing(next(iter(hosts._starts))) is host
+        finally:
+            release.set()
+            connection.cancel()
+            await asyncio.gather(connection, return_exceptions=True)
+            if shutdown is not None:
+                await shutdown
+
+
+async def test_cancelled_start_observer_reconnects_to_same_retained_child(
+    tmp_path, monkeypatch
+):
+    entered, release, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_start = _EchoChild.start
+
+    async def pending_start(child, width, height):
+        entered.set()
+        await release.wait()
+        await original_start(child, width, height)
+        completed.set()
+
+    monkeypatch.setattr(_EchoChild, "start", pending_start)
+    async with _stack(tmp_path, canvas=False) as (server, client):
+        headers, protocols, _ = _login(server)
+        connection = asyncio.create_task(
+            client.ws_connect("/ws", headers=headers, protocols=protocols)
+        )
+        try:
+            async with asyncio.timeout(5):
+                await entered.wait()
+                child = _EchoChild.instances[0]
+                connection.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await connection
+                release.set()
+                await completed.wait()
+                websocket, child_id = await _connect(
+                    client, headers, protocols, "b" * 32
+                )
+                try:
+                    assert child_id == child.app_service_id
+                    assert len(_EchoChild.instances) == 1
+                    await _echo(websocket, "same-child-after-cancelled-observer")
+                    assert not child.stop_entered.is_set()
+                finally:
+                    await websocket.close()
+                await _eventually(lambda: not server._served_browser_children)
+        finally:
+            release.set()
+            connection.cancel()
+            await asyncio.gather(connection, return_exceptions=True)
+
+
 @pytest.mark.parametrize("canvas", [True, False])
 async def test_two_tabs_replace_one_terminal_and_logout_keeps_child(tmp_path, canvas):
     async with _stack(tmp_path, canvas=canvas) as (server, client):
