@@ -49,8 +49,12 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
     )
     events = []
     hold = [object()]
+    # This routing-only compaction hold has no received-input claim.
     held = SimpleNamespace(
-        preparation_id="p", executed_draft="held draft", session_id="held"
+        preparation_id="p",
+        executed_draft="held draft",
+        session_id="held",
+        input_draft_revision=None,
     )
 
     def preparation():
@@ -61,8 +65,14 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
         events.append("hold")
         return hold[0]
 
+    def session_input_snapshot(session_id):
+        assert session_id == "held"
+        return SimpleNamespace(draft_revision=0)
+
     store = SimpleNamespace(
-        active_session_id="held", preparation_by_id=lambda _id: held
+        active_session_id="held",
+        preparation_by_id=lambda _id: held,
+        session_input_snapshot=session_input_snapshot,
     )
     controller = SimpleNamespace(
         trace_call_recovery_preparation=preparation,
@@ -90,16 +100,28 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
     screen._session._console_visible_draft_session_id = "held"
     result = object()
 
-    async def dispatch(actual_controller, actual_action, preparation_id, **kwargs):
+    async def dispatch(
+        actual_controller,
+        actual_action,
+        preparation_id,
+        *,
+        on_started,
+        on_finished,
+        restore_draft,
+        on_result,
+    ):
         events.append("dispatch")
         assert actual_controller is controller
         assert (actual_action, preparation_id) == (action, "p")
-        assert kwargs == {"on_started": started, "on_finished": finished}
+        assert on_started is started and on_finished is finished
+        assert restore_draft is True
+        assert callable(on_result)
         if cleared:
             hold[0] = None
         # The conversation the composer shows when the action ends.
         store.active_session_id = shown
         screen._session._console_visible_draft_session_id = shown
+        on_result(result)
         return result
 
     monkeypatch.setattr(chat_screen, "dispatch_trace_call_recovery_action", dispatch)
@@ -112,9 +134,10 @@ async def test_region_recovery_callbacks_read_live_screen_and_preserve_order(
     )
     state = object()
 
-    def project(actual_preparation, *, context_hold):
+    def project(actual_preparation, *, context_hold, provider_contact):
         assert actual_preparation is held
         assert context_hold is hold[0]
+        assert provider_contact is None
         return state
 
     monkeypatch.setattr(chat_screen, "trace_call_recovery_state", project)

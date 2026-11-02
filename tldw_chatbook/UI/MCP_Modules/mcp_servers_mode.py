@@ -1367,7 +1367,7 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if not saved:
             app.notify(f"Failed to save {key}.", severity="error", markup=False)
             return
-        config = getattr(app, "app_config", None)
+        config = app.app_config
         if isinstance(config, dict):
             current = config.get(section)
             if not isinstance(current, dict):

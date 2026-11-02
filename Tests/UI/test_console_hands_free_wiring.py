@@ -428,6 +428,7 @@ async def test_countdown_chip_painted_and_two_stage_send_drives_real_flow(
         )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_countdown_cancel_restores_the_chip(monkeypatch):
     """Task-5 final review I1 (PROBE A): cancelling an armed countdown

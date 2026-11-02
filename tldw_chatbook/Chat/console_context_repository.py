@@ -1362,6 +1362,7 @@ async def read_context_presentation_inputs(
     if owner is None:
         raise KeyError(session_id)
     repository = controller._context_repository
+    runtime = getattr(controller, "_hooks_v2_runtime", None)
     persistence = getattr(store, "persistence", None)
     repository_db = getattr(repository, "db", None)
     persistence_db = getattr(persistence, "db", None)
@@ -1377,12 +1378,27 @@ async def read_context_presentation_inputs(
     )
 
     def current():
-        if (not callbacks_current() or controller._disposed or controller.store is not store
+        if (
+            not callbacks_current()
+            or controller._disposed
+            or controller.store is not store
+            or getattr(controller, "_hooks_v2_runtime", None) is not runtime
+            or (
+                runtime is not None
+                and (
+                    runtime._disposed
+                    or runtime._chat_controller is not controller
+                    or runtime._chat_store is not store
+                    or session_id in runtime._admission_fenced_sessions
+                )
+            )
+            or session_id in controller._session_close_generations
             or controller._context_repository is not repository
             or getattr(store, "persistence", None) is not persistence
             or getattr(repository, "db", None) is not repository_db
             or getattr(persistence, "db", None) is not persistence_db
-            or not any(item is owner for item in store.sessions())):
+            or not any(item is owner for item in store.sessions())
+        ):
             raise RuntimeError("Console context display owner changed.")
 
     databases = tuple(dict.fromkeys(
@@ -1413,8 +1429,12 @@ async def read_context_presentation_inputs(
                     stack.enter_context(_core_operation(database))
                 return read()
         return await run_preparation_read(
-            native, creator=controller, session_id=session_id,
-            reads=controller._preparation_reads, require_current=current,
+            native,
+            creator=controller,
+            session_id=session_id,
+            reads=controller._preparation_reads,
+            observers=() if runtime is None else (runtime._preparation_reads,),
+            require_current=current,
         )
 
     def probe():

@@ -23,6 +23,7 @@ import pytest
 from textual.widgets import Button
 
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
+from Tests.UI.test_console_send_acknowledgement import until
 from Tests.UI.test_console_native_chat_flow import (
     DUMMY_OPENAI_API_KEY,
     _build_console_send_test_app,
@@ -180,6 +181,13 @@ async def test_the_workbench_send_action_agrees_with_the_composer_send(monkeypat
             assert store.add_pending_attachment(session_id, _attachment(name, fields))
             console._sync_console_control_bar()
             await pilot.pause()
+            await until(
+                lambda: not console._console_sync_in_progress
+                and not getattr(
+                    console, "_console_control_bar_replay_whole_sync", False
+                )
+                and not getattr(console, "_console_control_bar_sync_scheduled", False)
+            )
             assert (workbench_send.disabled, send.disabled) == (
                 not sendable,
                 not sendable,
@@ -198,6 +206,11 @@ async def test_the_workbench_send_action_agrees_with_the_composer_send(monkeypat
         assert store.add_pending_attachment(session_id, image)
         console._sync_console_control_bar()
         await pilot.pause()
+        await until(
+            lambda: not console._console_sync_in_progress
+            and not getattr(console, "_console_control_bar_replay_whole_sync", False)
+            and not getattr(console, "_console_control_bar_sync_scheduled", False)
+        )
         assert (workbench_send.disabled, send.disabled) == (True, True)
 
 

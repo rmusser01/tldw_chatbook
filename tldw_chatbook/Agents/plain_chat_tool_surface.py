@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Collection, Mapping, Sequence
-from typing import Any
+from typing import Any, Callable
 
 #: THE light surface: the tools plain Console chat offers before the user
 #: turns anything on. The narrowest set that satisfies the ruling's examples
@@ -216,21 +216,15 @@ def user_mcp_tool_names(mcp_provider: Any | None) -> frozenset[str]:
     return frozenset(names)
 
 
-def tool_kill_switch_engaged(app: Any) -> bool:
-    """Whether the MCP hub's tool kill switch is on, read now.
+def tool_kill_switch_engaged(service_reader: Callable[[], Any]) -> bool:
+    """Read the current MCP switch; failed reads fail closed.
 
-    With it on, the controller composes no local tools provider (nor MCP or
-    shell), so ``ask_user`` and ``web_deep_search`` are not sent. An app
-    without the MCP service has nothing to honor (the Console's own
-    kill-switch reader returns ``None`` then); a read that raises counts as
-    on, because the controller then composes no local tools either.
+    An absent service or switch getter retains the no-service contract: off.
     """
-    service = getattr(app, "unified_mcp_service", None)
-    getter = getattr(service, "get_kill_switch", None)
-    if not callable(getter):
-        return False
     try:
-        return bool(getter())
+        service = service_reader()
+        getter = getattr(service, "get_kill_switch", None)
+        return bool(getter()) if callable(getter) else False
     except Exception:  # noqa: BLE001 -- the compose path fails closed too
         return True
 

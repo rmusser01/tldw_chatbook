@@ -391,6 +391,9 @@ class _PassApp:
         self.events: list[tuple[str, object]] = []
         self._stop_after = stop_after
 
+    def is_shutting_down(self) -> bool:
+        return self._shutting_down
+
     def call_from_thread(self, callback, *args):
         self.events.append(("callback", (callback, args)))
 
@@ -454,13 +457,17 @@ def test_completion_callback_resolves_current_attachment_on_ui_loop(monkeypatch,
     old, current = object(), object()
     runtime = SimpleNamespace(view=old)
     app = SimpleNamespace(console_runtime=runtime, _shutting_down=False)
+    from tldw_chatbook.app import TldwCli
+
+    app.is_shutting_down = lambda: app._shutting_down
+    app.request_console_idle_heap_refreeze = lambda: TldwCli.request_console_idle_heap_refreeze(app)
     queued = (warm._request_idle_heap_refreeze, (app,))
     runtime.view = current if state == "replaced" else None
     if state == "shutdown":
         runtime.view = current
         app._shutting_down = True
     elif state == "no-runtime":
-        del app.console_runtime
+        app.console_runtime = None
     requests = []
     monkeypatch.setattr(
         transcript, "request_console_heap_refreeze", lambda *args: requests.append(args)

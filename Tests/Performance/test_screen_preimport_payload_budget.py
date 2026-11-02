@@ -161,7 +161,7 @@ MAX_SINGLE_ROUTE_ADDED_LOC = 135_111
 #: warm-up list), modules exactly, no slack. RATCHET (ADR-097): never rises.
 #: No LOC row: a LOC pin with no slack would fail every edit that adds a line
 #: to one of these Console modules; the per-entry LOC is printed instead.
-MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 94
+MAX_FIRST_SEND_WARMUP_ADDED_MODULES = 116  # PR #3342: owner-approved ADR-097 exception, 2026-11-02.
 
 _CENSUS_SCRIPT = """
 import json

@@ -1005,9 +1005,14 @@ class SkillServiceWiringMixin:
     @property
     def plugin_operations(self) -> Any:
         """Retain one lazy presentation state over the existing plugin owner."""
-        from tldw_chatbook.UI.Plugins_Modules.operations import app_operations
+        owner = getattr(self, "_plugin_operations", None)
+        if owner is None:
+            from tldw_chatbook.UI.Plugins_Modules.operations import PluginOperations
 
-        return app_operations(self, self._build_plugin_service())
+            owner = self._plugin_operations = PluginOperations(
+                self._build_plugin_service()
+            )
+        return owner
 
     @property
     def plugin_source_service(self) -> Any:
@@ -1118,3 +1123,43 @@ class SkillServiceWiringMixin:
                 if self._local_skill_trust_service is None:
                     self._local_skill_trust_service = service
             return self._local_skill_trust_service
+
+
+def _discover_project_skills_for_startup(
+    self: Any, *, app_globals: dict[str, Any]
+) -> None:
+    """Worker body: every line here must be exception-safe.
+
+    This runs on a worker thread with ``exit_on_error=False`` set above,
+    but that alone still leaves an unhandled exception logged as a
+    worker error and the offer silently dropped with a stack trace in
+    the logs -- an entirely optional startup nicety earns a clean,
+    quiet no-op instead. ``get_cli_setting``/``get_user_data_dir`` (I/O,
+    config parsing), ``startup_discovery_for`` (filesystem walk), and
+    ``call_from_thread`` (can raise if the app is already shutting down
+    mid-walk) are all covered by the one try/except below.
+    """
+    try:
+        from tldw_chatbook.Skills_Interop.project_skills_prompt import (
+            startup_discovery_for,
+        )
+
+        try:
+            cwd = app_globals["Path"].cwd().resolve()
+        except OSError:
+            return  # launch directory deleted out from under the process
+        discovery = startup_discovery_for(
+            cwd,
+            enabled=bool(
+                app_globals["get_cli_setting"](
+                    "skills", "project_skills_prompt_enabled", True
+                )
+            ),
+            ledger_dir=app_globals["get_user_data_dir"](),
+        )
+        if discovery is None:
+            return
+        self.call_from_thread(self._push_project_skills_import_modal, discovery)
+    except Exception:
+        logger = app_globals["logger"]
+        logger.opt(exception=True).debug("project-skills startup discovery failed")

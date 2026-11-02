@@ -1118,6 +1118,24 @@ async def test_controller_awaits_async_service_calls_without_a_thread_hop():
 
 
 @pytest.mark.asyncio
+async def test_writing_close_reads_the_replaced_parent_asyncio_binding(monkeypatch):
+    from tldw_chatbook import app_lifecycle
+
+    observed = []
+    service = SimpleNamespace(close=lambda: observed.append("closed"))
+    owner = SimpleNamespace(local_writing_service=service)
+
+    async def to_thread(callback):
+        assert callback is service.close
+        observed.append("offload")
+        return callback()
+
+    monkeypatch.setattr(app_lifecycle, "asyncio", SimpleNamespace(to_thread=to_thread))
+    await app_lifecycle.LifecycleMixin._close_local_writing_service(owner)
+    assert observed == ["offload", "closed"]
+
+
+@pytest.mark.asyncio
 async def test_app_unmount_closes_the_local_writing_service_by_peeking_the_slot():
     """Shutdown releases held connections without constructing a service."""
     import inspect
@@ -1128,7 +1146,11 @@ async def test_app_unmount_closes_the_local_writing_service_by_peeking_the_slot(
     unmount = inspect.getsource(TldwCli.on_unmount)
     assert "await self._close_local_writing_service()" in unmount, unmount
 
-    closer = inspect.getsource(TldwCli._close_local_writing_service)
+    from tldw_chatbook.app_shutdown_services import close_local_writing_service
+
+    delegate = inspect.getsource(TldwCli._close_local_writing_service)
+    assert "await close_local_writing_service(self)" in delegate, delegate
+    closer = inspect.getsource(close_local_writing_service)
     assert 'getattr(self, "local_writing_service", None)' in closer, closer
 
     app = object.__new__(TldwCli)

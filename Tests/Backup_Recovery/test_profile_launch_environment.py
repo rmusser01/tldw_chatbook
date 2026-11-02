@@ -2,10 +2,12 @@
 
 import ntpath
 import os
+from pathlib import Path
 
 import pytest
 
 from tldw_chatbook.Backup_Recovery.isolated_restore import _launch_environment
+from tldw_chatbook.Backup_Recovery.native_files import pinned_directory
 
 
 @pytest.mark.parametrize(
@@ -39,7 +41,7 @@ def test_fresh_profile_keeps_native_snapshot_temp_parent(
 ):
     import tempfile
 
-    private_temp = tmp_path / "private-temp"
+    private_temp = tmp_path / "selected-temp"
     private_temp.mkdir(mode=0o700)
     for name in ("TEMP", "TMP", "TMPDIR"):
         monkeypatch.delenv(name, raising=False)
@@ -54,3 +56,11 @@ def test_fresh_profile_keeps_native_snapshot_temp_parent(
         assert tempfile.gettempdir() == str(private_temp)
     assert "OPENAI_API_KEY" not in environment
     assert "TLDW_MEDIA_DB_PATH" not in environment
+
+
+@pytest.mark.parametrize("selector", ["APPDATA", "LOCALAPPDATA"])
+def test_private_recovery_fixture_isolates_native_appdata(tmp_path, selector):
+    selected = Path(os.environ[selector])
+    assert selected.is_relative_to(tmp_path)
+    with pinned_directory(selected):
+        assert selector not in _launch_environment()

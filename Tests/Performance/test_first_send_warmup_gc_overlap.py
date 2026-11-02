@@ -48,6 +48,8 @@ assert (policy._HEAP_REFREEZER._baseline is not None) == (measured == 'measured'
 
 class Host(NavigationMixin):
     _shutting_down = False
+    is_shutting_down = TldwCli.is_shutting_down
+    request_console_idle_heap_refreeze = TldwCli.request_console_idle_heap_refreeze
     _screen_navigation_in_progress = TldwCli._screen_navigation_in_progress
     _screen_preimport_pacing = lambda self: (0.0, 0.0)
 

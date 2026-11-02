@@ -480,19 +480,6 @@ class ConsoleReadinessConfigProjection:
         reader = self.read_current
         tokenizer_request = self._tokenizer_request
         tokenizer_prepared = False
-        store = getattr(self.screen, "_console_chat_store", None)
-        settings_reader = getattr(store, "session_settings", None)
-        settings = (
-            settings_reader(key[5])
-            if callable(settings_reader) and key[5] is not None
-            else None
-        )
-        self._read_request = (
-            asyncio.get_running_loop(),
-            threading.current_thread(),
-            key,
-            settings,
-        )
         from ...Chat.console_preparation_reads import run_preparation_read
         from ...Chat.console_runtime import ConsoleRuntime
 
@@ -505,6 +492,19 @@ class ConsoleReadinessConfigProjection:
                 runtime, "_disposed", False
             ):
                 return
+            store = getattr(self.screen, "_console_chat_store", None)
+            settings_reader = getattr(store, "session_settings", None)
+            settings = (
+                settings_reader(key[5])
+                if callable(settings_reader) and key[5] is not None
+                else None
+            )
+            self._read_request = (
+                asyncio.get_running_loop(),
+                threading.current_thread(),
+                key,
+                settings,
+            )
             result = await run_preparation_read(
                 reader,
                 creator=self,

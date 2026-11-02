@@ -59,7 +59,11 @@ async def test_runtime_preparation_does_not_block_or_publish_after_unmount(outco
     loop_thread = threading.get_ident()
     observed = []
     runtime = InertLastingSyncRuntime(status="not_configured")
-    owner = SimpleNamespace(ensure_notes_sync_runtime_started=Mock())
+    owner = SimpleNamespace(
+        ensure_notes_sync_runtime_started=Mock(),
+        _notes_sync_runtime_owner=None,
+        _notes_sync_runtime_build_failure=None,
+    )
 
     def read():
         observed.append(threading.get_ident())
@@ -71,6 +75,11 @@ async def test_runtime_preparation_does_not_block_or_publish_after_unmount(outco
         return runtime
 
     owner._read_notes_sync_runtime_owner_safe = read
+    owner.read_notes_sync_runtime_owner = read
+    owner.peek_notes_sync_runtime = lambda: (
+        owner._notes_sync_runtime_owner,
+        owner._notes_sync_runtime_build_failure is not None,
+    )
     screen = PreparationScreen(owner)
     app = App()
     try:
@@ -123,7 +132,10 @@ async def test_notes_visit_attention_does_not_build_owner_on_ui_loop():
             self._notes_sync_runtime_owner = InertLastingSyncRuntime()
             return self._notes_sync_runtime_owner
 
-        def _read_notes_sync_runtime_owner_safe(self):
+        def peek_notes_sync_runtime(self):
+            return self._notes_sync_runtime_owner, False
+
+        def read_notes_sync_runtime_owner(self):
             return self.notes_sync_runtime_owner
 
     host = SimpleNamespace(
@@ -142,7 +154,8 @@ async def test_failed_runtime_preparation_keeps_known_attention():
     owner = SimpleNamespace(
         _notes_sync_runtime_owner=None,
         _notes_sync_runtime_build_failure=ValueError("synthetic failure"),
-        _read_notes_sync_runtime_owner_safe=lambda: None,
+        read_notes_sync_runtime_owner=lambda: None,
+        peek_notes_sync_runtime=lambda: (None, True),
     )
     notes_state = SimpleNamespace(tree_attention_folder_ids=frozenset({"held-folder"}))
     host = SimpleNamespace(

@@ -1066,8 +1066,7 @@ class _CaptureApp:
         }
         self.media_db = _ExistingMediaDB(*media_ids)
         self.notifications = []
-        if repository is not None:
-            self.citation_trace_repository = repository
+        self.citation_trace_repository = repository
 
     def query_one(self, selector):
         return self._widgets[selector]

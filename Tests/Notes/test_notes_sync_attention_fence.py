@@ -66,7 +66,11 @@ class _Host:
     """What the attention helpers read of the Notes controller or screen."""
 
     def __init__(self, owner, *, view: str = "list") -> None:
-        self.app_instance = SimpleNamespace(notes_sync_runtime_owner=owner)
+        self.app_instance = SimpleNamespace(
+            notes_sync_runtime_owner=owner,
+            peek_notes_sync_runtime=lambda: (owner, False),
+            read_notes_sync_runtime_owner=lambda: owner,
+        )
         self._notes_state = LibraryNotesState()
         self._selected_note_id: str | None = None
         self._library_note_location: tuple[str, str, bool] = ("", "", False)

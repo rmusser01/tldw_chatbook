@@ -1471,7 +1471,7 @@ def test_unmount_closes_owned_tts_resources_from_outer_finally() -> None:
         < delegated[0].lineno
     )
     method = _function_node(
-        REPO_ROOT / "tldw_chatbook/Utils/app_shutdown.py", "_drain_app_unmount_services"
+        REPO_ROOT / "tldw_chatbook/app_shutdown_services.py", "_drain_app_unmount_services"
     )
     close_calls = _self_method_calls(method, "_close_owned_tts_resources")
 

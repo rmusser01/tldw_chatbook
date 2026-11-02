@@ -1057,6 +1057,13 @@ SmartContentTree Tree > .selected-node {
        like the busy line above the nav bar (TASK-34100.6: the content column). */
     padding: $ds-space-0 $ds-space-2;
 }
+/* The pinned strip shares the step edge plus its content-wrapper inset. */
+#setup-step-error-pinned.setup-step-error-inset {
+    padding: $ds-space-0 $ds-space-2 $ds-space-0 $ds-size-4;
+}
+#setup-step-error-pinned.setup-step-error-wide-inset {
+    padding: $ds-space-0 $ds-space-2 $ds-space-0 $ds-size-6;
+}
 /* TASK-21140 (UAT G-3): calm informational lines that previously borrowed
    the error class and rendered reassurance as a failure. */
 .setup-step-note { color: $text-muted; margin-top: $ds-space-1; }
@@ -1241,7 +1248,7 @@ SmartContentTree Tree > .selected-node {
     color: $ds-focus-fg;
 }
 
-#setup-provider-choice { max-height: 40vh; }
+#setup-provider-choice { max-height: $ds-setup-provider-choice-max-height; }
 .setup-provider-filter { width: $ds-width-fill; }
 .setup-provider-count { width: auto; margin-left: $ds-space-2; }
 .setup-no-server { height: auto; }
@@ -1471,7 +1478,7 @@ FirstRunSetupWizard SetupWizardContainer .wizard-progress {
 /* TASK-34100.6 pass 2: at 80x24 the env option wraps (KeySourceRadioButton
  * measures it), never cutting '(found; not stored)' short. */
 #setup-provider-key-source SetupRadioButton { text-wrap: wrap; }
-.setup-key-hint Static { width: $ds-width-fill; }
+#setup-provider-key-hint-text { width: $ds-width-fill; }
 
 /* TASK-1505: with the key-hints line docked at the screen's bottom, the
  * wizard container must yield that row — height:100% (the shared framework

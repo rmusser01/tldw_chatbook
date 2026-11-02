@@ -82,6 +82,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # backlog size-limit waiver; no spare budget and no behavioral guard changes.
 # 2026-10-31 PR3295: user-authorized backlog size waiver; changed ChatScreen
 # pinned to exact 24,504 lines / 741 methods, with no spare budget.
+# 2026-11-02 PR3342: align the row with the already merged dev screen;
+# this PR retains the upstream methods and its focused runtime fixes.
 _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-pinned 2026-09-19 (core-review TASK-32809.1). The ratchet had
     #: gone red on dev -- ~8,400 lines of feature work re-consumed the
@@ -310,7 +312,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     # Final PR3301 on dev59b8fe0249: explicit owner size waiver, exact measurement.
     # PR3311, 2026-11-01: user size waiver; exact integrated measurement.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24605, 741),
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 24652, 744),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.

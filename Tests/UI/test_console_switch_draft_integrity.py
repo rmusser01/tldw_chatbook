@@ -151,3 +151,95 @@ async def test_raw_refusal_during_switch_settle_preserves_both_session_drafts():
         classified = classify_console_raw_draft(restored)
         assert classified.kind == "raw"
         assert classified.text == "pwd"
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("old_state", "suffix"),
+    [
+        ("closed", ""),
+        ("closed", " B-only suffix"),
+        ("revised", " B-only suffix"),
+        ("live", " B-only suffix"),
+    ],
+    ids=["closed", "closed-suffix", "live-revised", "live-undo"],
+)
+async def test_old_draft_snapshot_after_switch_keeps_exact_session_owners(
+    old_state, suffix
+):
+    from Tests.UI.test_console_approval_compact_layout import (
+        _wait_for_reconciled_console,
+    )
+
+    app = _build_test_app()
+    app.chat_api_provider_value = "llama_cpp"
+    app.chat_api_model_value = "test-model"
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_reconciled_console(console, pilot)
+        store = console._ensure_console_chat_store()
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        old = store.ensure_session(title="Old visible chat")
+        composer.load_draft("")
+        if old_state == "live":
+            # Ordinary character edits coalesce as one user typing run. Two
+            # multi-character inserts create separate undo entries instead.
+            for character in "old draft":
+                composer.insert_text(character)
+            assert len(composer.export_undo_history()[0]) == 1
+        else:
+            composer.insert_text("old draft")
+        console._session._sync_console_session_draft()
+        assert console._session._console_visible_draft_revision is not None
+        assert old.id not in console._session._console_undo_histories
+        other = store.create_session(title="Unrelated owner", activate=False)
+        store.set_session_draft(other.id, "unrelated draft")
+        other_revision = store.session_input_snapshot(other.id).draft_revision
+        target = store.create_session(title="Existing target", activate=False)
+        store.set_session_draft(target.id, "target draft")
+        console._session._capture_console_draft_switch_snapshot()
+        if old_state == "closed":
+            # Public domain close changes the store before its view projection.
+            # This test exercises draft binding; close confirmation has its own
+            # real tab-strip controls and is not replaced here.
+            store.close_session(old.id)
+        elif old_state == "revised":
+            store.set_session_draft(old.id, "newer resident draft")
+        store.switch_session(target.id)
+        if suffix:
+            if old_state == "live":
+                for character in suffix:
+                    composer.insert_text(character)
+                assert len(composer.export_undo_history()[0]) == 1
+            else:
+                composer.insert_text(suffix)
+        assert composer.draft_text() == "old draft" + suffix
+        console._session._sync_console_session_draft()
+        assert store.active_session_id == target.id
+        assert console._session._console_visible_draft_session_id == target.id
+        assert composer.draft_text() == "target draft" + suffix
+        assert store.session_draft(target.id) == "target draft" + suffix
+        assert store.session_draft(other.id) == "unrelated draft"
+        assert store.session_input_snapshot(other.id).draft_revision == other_revision
+        assert console._session._console_draft_switch_snapshot is None
+        if old_state == "closed":
+            assert {row.id for row in store.sessions()} == {target.id, other.id}
+            assert old.id not in console._session._console_undo_histories
+            with pytest.raises(KeyError):
+                store.session_input_snapshot(old.id)
+        elif old_state == "revised":
+            assert store.session_draft(old.id) == "newer resident draft"
+            assert old.id not in console._session._console_undo_histories
+        else:
+            assert store.session_draft(old.id) == "old draft"
+            console._session._capture_console_draft_switch_snapshot()
+            store.switch_session(old.id)
+            console._session._sync_console_session_draft()
+            assert composer.draft_text() == "old draft"
+            console._console_composer_undo()
+            assert composer.draft_text() == ""
+            assert store.session_draft(old.id) == ""
+            assert store.session_draft(target.id) == "target draft" + suffix

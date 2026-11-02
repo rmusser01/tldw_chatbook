@@ -122,6 +122,10 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # The initial controller publication and post-reconciliation mount/resume
         # discovery retain their existing named groups and conditional starts.
         ("_sync_native_console_chat_ui", "console-sync"),
+        # TASK-35593/35614: the finite managed attach owner prepares the first
+        # FULL view before runtime answerability without blocking its message
+        # pump; view_workers retains its exact native-read retirement.
+        ("_reconcile_console_after_attach", "console-attach-reconciliation"),
         ("_refresh_console_skill_candidates", "console-skill-discovery"),
         # The Character view owns its initial/resume context refresh.
         ("refresh_if_scope_changed", "console-character-context-refresh"),

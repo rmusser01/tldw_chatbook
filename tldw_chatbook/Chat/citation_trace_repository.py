@@ -2605,62 +2605,9 @@ class CitationTraceRepository:
         self,
         request: CitationArtifactOwnerRequest,
     ) -> _ActiveTraceProof | None:
-        if not isinstance(request, CitationArtifactOwnerRequest):
-            return None
-        issued = self._issued_artifact_owner_requests.get(id(request))
-        if issued is None or issued[0]() is not request:
-            return None
-        try:
-            digest = _artifact_owner_request_digest(request)
-        except (AttributeError, TypeError, ValueError):
-            return None
-        if not hmac.compare_digest(issued[1], digest):
-            return None
-        proof = issued[2]
-        codec = self._fingerprint_codec
-        if codec is None or self.identity_context != proof.identity_context:
-            return None
-        message = (
-            self.db.get_connection()
-            .execute(
-                """
-            SELECT message.version, message.content, owner.state,
-                   owner.body_fingerprint, trace.visibility_state
-            FROM messages AS message
-            JOIN rag_message_trace_owners AS owner
-              ON owner.message_id = message.id
-             AND owner.message_revision = message.version
-            JOIN rag_citation_traces AS trace
-              ON trace.profile_id = owner.profile_id
-             AND trace.trace_id = owner.trace_id
-            WHERE message.id = ? AND message.deleted = 0
-              AND owner.profile_id = ? AND owner.trace_id = ?
-            """,
-                (
-                    proof.message_id,
-                    proof.identity_context.profile_id,
-                    proof.trace_id,
-                ),
-            )
-            .fetchone()
-        )
-        if (
-            message is None
-            or message["version"] != proof.message_revision
-            or message["state"] != "active"
-            or message["visibility_state"] != "active"
-        ):
-            return None
-        current = codec.fingerprint(
-            CitationFingerprintDomain.MESSAGE_BODY,
-            message["content"],
-        )
-        if not (
-            hmac.compare_digest(message["body_fingerprint"], proof.body_fingerprint)
-            and hmac.compare_digest(current, proof.body_fingerprint)
-        ):
-            return None
-        return proof
+        from .citation_artifact_ownership import verify_artifact_owner_request
+
+        return verify_artifact_owner_request(self, request)
 
     @staticmethod
     def _artifact_owner_binding(

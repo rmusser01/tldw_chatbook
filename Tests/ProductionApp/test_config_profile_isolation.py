@@ -42,7 +42,8 @@ def _write_sparse_config(path: Path, *, data_dir: Path, marker: str) -> bytes:
     ).lstrip()
     path.write_text(serialized, encoding="utf-8")
     path.chmod(0o600)
-    return serialized.encode("utf-8")
+    # Preserve native line endings in the exact no-rewrite baseline.
+    return path.read_bytes()
 
 
 def _result_payload(stdout: str) -> dict[str, bool]:
@@ -61,8 +62,8 @@ def _result_payload(stdout: str) -> dict[str, bool]:
 # per-test redirect that import raises RecoveryRequired when nothing collected
 # has imported the app (a lone run). The app under test runs in a child whose
 # env is built below: every profile root under tmp_path, and from this
-# process only PATH and the locale and terminal keys. The kept profile never
-# reaches it.
+# process only PATH, the Windows OS root, and locale/terminal keys. The kept
+# profile never reaches it.
 @pytest.mark.bootstrap_profile
 def test_real_app_quit_persists_only_the_effective_config(tmp_path: Path) -> None:
     home = tmp_path / "home"
@@ -102,6 +103,9 @@ def test_real_app_quit_persists_only_the_effective_config(tmp_path: Path) -> Non
         for key in ("PATH", "LANG", "LC_ALL", "TERM", "COLORTERM")
         if key in os.environ
     }
+    if os.name == "nt" and "SYSTEMROOT" in os.environ:
+        # Windows socket initialization needs the OS root, not user state.
+        env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
     env.update(
         {
             "HOME": str(home),
@@ -112,6 +116,8 @@ def test_real_app_quit_persists_only_the_effective_config(tmp_path: Path) -> Non
             "TMPDIR": str(temp_dir),
             "TLDW_CONFIG_PATH": str(effective_config),
             "TLDW_TEST_MODE": "1",
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
             "PYTHONPATH": str(REPO_ROOT),
         }
     )
@@ -168,6 +174,7 @@ print({RESULT_PREFIX!r} + json.dumps(state, sort_keys=True))
         cwd=REPO_ROOT,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         check=False,
         timeout=120,

@@ -136,6 +136,10 @@ from this ADR's table: `MAX_TLDW_MODULE_COUNT` 660,
 
 | 2026-11-01 | `_ui_ready` census, PR #3331 backlog clearance only | `MAX_TLDW_MODULES_AT_UI_READY` | 1031 → 1031 (unchanged; measured 1034, numeric result WAIVED) | Current integration at d9d130c57e completed both headless boots and required-members checks; observed residency exceeds the retained limit by 3. Attribution to this PR is unproven; the old diagnostic snapshot delta is not a current-base delta. No snapshot rewrite, residency-budget increase, source/authority relaxation, or new performance qualification. | User authorization, verbatim: "Ignore size limits" for this backlog clearance; coordinator ruling 2026-11-01 explicitly applies it only to this numeric residency failure. This row records a scoped owner exception, not a passing check or future permanent increase. Content-free receipt: `.superpowers/sdd/2026-11-01-pr3331-backlog-integration/green-main-receipt.json`. |
 
+| date | guard | constant | old → new | measurement and scope | owner sign-off |
+|---|---|---|---|---|---|
+| 2026-11-02 | first-send warm-up, PR #3342 | `MAX_FIRST_SEND_WARMUP_ADDED_MODULES` | 94 → 116 | Rebased on dev `88af9f9379`, pre-restoration candidate measured 116 modules / 81,908 LOC; the restored-refactor candidate passes the same 116-module limit; the newly cold agent-bridge entry accounts for 17 modules. Budget-only refusal-type, avatar, Canvas and compaction import changes are removed. No heavy dependency was added; route/LOC, timing, CSS, source/authority and retirement checks remain enforced. | Owner answered "Approve measured 116 baseline (Recommended)" to the explicit 94 → 116 ADR-097 exception request on 2026-11-02. The approval covers this module-count baseline only. |
+
 ## Standing breach at adoption (not an exception — a debt) — REPAID
 
 **Repaid 2026-08-28 by TASK-23112: 666 → 646 own modules, ratchet still 660,

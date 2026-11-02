@@ -12,6 +12,35 @@ from Tests.private_profile import private_profile_test
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.timeout(300)]
 
 
+@pytest.mark.parametrize("messages,pending", [([], False), ((), True)])
+@private_profile_test
+def test_empty_transcript_image_projection_starts_no_work_and_keeps_owner(
+    request, messages, pending
+):
+    """No message identities means no image projection work; issued owners stay held."""
+    from tldw_chatbook.UI.Console_Modules.image import ConsoleImageController
+
+    def unexpected_image_setup():
+        raise AssertionError("an empty transcript requested image state or native work")
+
+    # Exercise the actual projection entry; its empty branch must borrow no
+    # callback or state. Existing mounted tests below own the real native drain.
+    controller = object.__new__(ConsoleImageController)
+    controller._ensure_console_image_view_fn = unexpected_image_setup
+    controller._recovered_image_tasks = {object()} if pending else set()
+    controller._recovered_image_rows = {"prior": ("ready", "prior-key", "graphics")}
+    controller._recovered_image_lookup = ("prior-selection",)
+    controller._recovered_image_paused = False
+    before = vars(controller).copy()
+    tasks_before = controller._recovered_image_tasks.copy()
+    rows_before = controller._recovered_image_rows.copy()
+
+    assert controller._build_console_image_specs(messages) == {}
+    assert vars(controller) == before
+    assert controller._recovered_image_tasks == tasks_before
+    assert controller._recovered_image_rows == rows_before
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("detached", [False, True], ids=["current", "detached"])
 @private_profile_test
