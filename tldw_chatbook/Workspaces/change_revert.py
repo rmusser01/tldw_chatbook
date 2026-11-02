@@ -175,8 +175,14 @@ def revert_paths(
         One :class:`RevertOutcome` per requested path, in order.
 
     Raises:
-        RevertRefusedError: A run is active — finish or stop it first.
+        RevertRefusedError: A run is active, or the original native call does not
+            authorize this exact unconsumed selection.
     """
+    from .change_revert_ownership import native_undo_call
+
+    native = native_undo_call()
+    if native is not None:
+        native.require_revert(service, db, row, paths)
     if run_active():
         raise RevertRefusedError(
             "a run is active on this workspace — finish or stop the run first"
@@ -187,13 +193,6 @@ def revert_paths(
     end = str(row["end_sha"])
     changed = {c.path: c for c in repo.changed_files(baseline, end)}
 
-    from .change_revert_ownership import native_undo_call
-
-    native = native_undo_call()
-    if native is not None and (
-        native.source.service is not service or native.source.db is not db
-    ):
-        raise RevertRefusedError("original Undo engine source changed")
     outcomes: list[RevertOutcome] = []
     reverted: list[str] = []
     attempted = False

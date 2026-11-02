@@ -90,6 +90,111 @@ async def test_app_provider_cannot_revert_without_original_confirmation(undo_hos
         await asyncio.to_thread(h.provider.revert, h.row, ["edit.txt"])
 
 
+async def test_review_engine_rejects_preconfirmation_mutation(undo_host, monkeypatch):
+    from tldw_chatbook.Workspaces.change_revert import revert_paths
+    from tldw_chatbook.Workspaces.change_revert_ownership import native_undo_call
+
+    h = undo_host
+    original = h.provider.preflight_revert
+    original_repo = h.tracker.service.repo_for_root
+    observations, repos = [], []
+
+    def repo(root):
+        repos.append(root)
+        return original_repo(root)
+
+    def preflight(row, paths):
+        call = native_undo_call()
+        assert call is not None and not call.applying
+        before = len(repos)
+        try:
+            result = revert_paths(
+                h.tracker.service, h.db, row, paths, run_active=lambda: False
+            )
+        except RevertRefusedError:
+            observations.append(("refused", len(repos) - before))
+        else:
+            observations.append(
+                ([outcome.ok for outcome in result], len(repos) - before)
+            )
+        return original(row, paths)
+
+    monkeypatch.setattr(h.tracker.service, "repo_for_root", repo)
+    monkeypatch.setattr(h.provider, "preflight_revert", preflight)
+    async with h.app.run_test(size=(120, 40)) as pilot:
+        screen = await _wait_for(
+            pilot,
+            lambda: (
+                h.app.screen if isinstance(h.app.screen, ChangeReviewScreen) else None
+            ),
+            "original Review",
+        )
+        await _wait_for(pilot, lambda: screen._leaves, "original selection")
+        screen.select_file("edit.txt")
+        screen.action_revert_file()
+        await _wait_for(
+            pilot, lambda: observations, "actual preconfirmation engine call"
+        )
+        await screen.workers.wait_for_complete()
+        assert (h.root / "edit.txt").read_text() == "after\n", observations
+        assert observations == [("refused", 0)]
+
+
+@pytest.mark.parametrize("attempt", ["row", "paths", "duplicate"])
+async def test_applying_engine_requires_exact_unconsumed_selection(
+    undo_host, monkeypatch, attempt
+):
+    from tldw_chatbook.Workspaces.change_revert import revert_paths
+    from tldw_chatbook.Workspaces.change_revert_ownership import native_undo_call
+
+    h = undo_host
+    original = h.provider.revert
+    original_repo = h.tracker.service.repo_for_root
+    observations, repos, calls = [], [], []
+
+    def repo(root):
+        repos.append(root)
+        return original_repo(root)
+
+    def apply(row, paths):
+        call = native_undo_call()
+        calls.append(call)
+        assert call.applying and call.source.confirmed
+        result = original(row, paths) if attempt == "duplicate" else None
+        attempted_row = (
+            dict(row, baseline_sha=row["end_sha"]) if attempt == "row" else row
+        )
+        attempted_paths = ["outside-confirmation.txt"] if attempt == "paths" else paths
+        before = len(repos)
+        try:
+            revert_paths(
+                h.tracker.service,
+                h.db,
+                attempted_row,
+                attempted_paths,
+                run_active=lambda: False,
+            )
+        except RevertRefusedError:
+            observations.append(("refused", len(repos) - before))
+        else:
+            observations.append(("accepted", len(repos) - before))
+        return result if attempt == "duplicate" else original(row, paths)
+
+    monkeypatch.setattr(h.tracker.service, "repo_for_root", repo)
+    monkeypatch.setattr(h.provider, "revert", apply)
+    async with h.app.run_test(size=(120, 40)) as pilot:
+        await open_confirmation(h, pilot)
+        assert await pilot.click("#change-revert-yes")
+        await _wait_for(
+            pilot,
+            lambda: calls and calls[0].retired.is_set(),
+            "original apply retirement",
+        )
+        assert observations == [("refused", 0)]
+        assert (h.root / "edit.txt").read_text() == "before\n"
+        assert '"edit.txt"' in h.db.change_snapshots_for_run(h.run)[0]["reverted"]
+
+
 async def test_actual_preflight_has_finite_native_owner_before_modal(
     undo_host, monkeypatch
 ):
@@ -478,15 +583,58 @@ async def test_unknown_required_settlement_retains_original_scopes(
     try:
         from tldw_chatbook.Agents.activation import _guard
         from tldw_chatbook.Backup_Recovery import storage_admission
+        from tldw_chatbook.Workspaces.change_revert import revert_paths
+        from tldw_chatbook.Workspaces.change_revert_ownership import native_undo_call
         from tldw_chatbook.Workspaces.change_tracking import (
             ChangeTrackingError,
             ShadowRepo,
         )
 
         h = undo_host
+        second = h.tmp_path / "zz-second"
+        second.mkdir()
+        (second / "edit.txt").write_text("before\n")
+        _record_turn(
+            h.db,
+            h.tracker,
+            second,
+            h.run,
+            lambda: (second / "edit.txt").write_text("after\n"),
+        )
         observed = {}
         original_snapshot = ShadowRepo.snapshot
         original_update = h.db.update_change_snapshot_reverted
+        original_revert = h.provider.revert
+        original_repo = h.tracker.service.repo_for_root
+        repos = []
+
+        def repo(root):
+            repos.append(root)
+            return original_repo(root)
+
+        def apply(row, paths):
+            result = original_revert(row, paths)
+            call = native_undo_call()
+            assert not call.required_proven
+            next_row, next_paths, _ = next(
+                value for value in call.source.rows if value[0]["id"] != row["id"]
+            )
+            before = len(repos)
+            try:
+                revert_paths(
+                    h.tracker.service,
+                    h.db,
+                    next_row,
+                    next_paths,
+                    run_active=lambda: False,
+                )
+            except RevertRefusedError:
+                observed["next_engine"] = ("refused", len(repos) - before)
+            else:
+                observed["next_engine"] = ("accepted", len(repos) - before)
+            observed["mutated_root"] = row["root"]
+            observed["untouched_root"] = next_row["root"]
+            return result
 
         def snapshot(repo, message, **kwargs):
             result = original_snapshot(repo, message, **kwargs)
@@ -507,8 +655,30 @@ async def test_unknown_required_settlement_retains_original_scopes(
             monkeypatch.setattr(ShadowRepo, "snapshot", snapshot)
         else:
             monkeypatch.setattr(h.db, "update_change_snapshot_reverted", update)
+        monkeypatch.setattr(h.tracker.service, "repo_for_root", repo)
+        monkeypatch.setattr(h.provider, "revert", apply)
         async with h.app.run_test(size=(120, 40)) as pilot:
-            screen = await open_confirmation(h, pilot)
+            screen = await _wait_for(
+                pilot,
+                lambda: (
+                    h.app.screen
+                    if isinstance(h.app.screen, ChangeReviewScreen)
+                    else None
+                ),
+                "original Review",
+            )
+            await _wait_for(
+                pilot, lambda: len(screen._leaves) == 2, "both original rows"
+            )
+            screen.action_undo_all()
+            await _wait_for(
+                pilot,
+                lambda: (
+                    isinstance(h.app.screen, ChangeRevertConfirmModal)
+                    and list(h.app.screen.query("#change-revert-yes"))
+                ),
+                "original all-row confirmation",
+            )
             outcomes = []
             original_report = screen._report_outcomes
             monkeypatch.setattr(
@@ -524,7 +694,13 @@ async def test_unknown_required_settlement_retains_original_scopes(
                 lambda: call.operation._stopping,
                 "required uncertainty retention",
             )
-            assert (h.root / "edit.txt").read_text() == "before\n"
+            assert (
+                Path(observed["mutated_root"]) / "edit.txt"
+            ).read_text() == "before\n"
+            assert (
+                Path(observed["untouched_root"]) / "edit.txt"
+            ).read_text() == "after\n"
+            assert observed["next_engine"] == ("refused", 0)
             assert outcomes[0].ok and not outcomes[0].settled
             assert not call.required_proven and call.host_proven
             assert not call.retired.is_set() and observed["state"].live

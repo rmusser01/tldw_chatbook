@@ -393,9 +393,13 @@ class AgentRunsChangeReviewProvider:
 
         if self._native_undo_expected:
             call = native_undo_call()
-            if call is None or self._undo_native is None:
+            if (
+                call is None
+                or self._undo_native is None
+                or call.source.provider is not self
+                or call.source.issuer is not self._undo_native
+            ):
                 raise RevertRefusedError("original confirmed Undo operation required")
-            call.require_revert(self, row, paths)
         return revert_paths(
             self._service,
             self._db,

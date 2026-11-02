@@ -354,14 +354,17 @@ class _UndoCall:
             s.validate_row(row)
             s.rows.append((copy.deepcopy(row), tuple(paths), copy.deepcopy(result)))
 
-    def require_revert(self, provider, row, paths):
+    def require_revert(self, service, db, row, paths):
+        """Consume one original selection at the shared engine's first entry."""
         s = self.source
         if (
             not self.applying
             or not self.required_proven
             or (row.get("id"), tuple(paths)) in self._reverted
             or not s.confirmed
-            or provider is not s.provider
+            or not s.consumed
+            or service is not s.service
+            or db is not s.db
             or not any(
                 row == original and tuple(paths) == selected
                 for original, selected, _ in s.rows
