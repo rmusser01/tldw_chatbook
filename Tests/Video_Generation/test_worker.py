@@ -174,7 +174,9 @@ def test_run_generation_suppresses_hostile_result_property_traceback_details():
     assert "PRIVATE-RESULT-PROPERTY" not in formatted
 
 
-@pytest.mark.parametrize("remote_cancel", ["cancelled", "refused", "unconfirmed", None])
+@pytest.mark.parametrize(
+    "remote_cancel", ["cancelled", "refused", "deleted", "unconfirmed", None]
+)
 def test_run_generation_passes_a_stop_through_unchanged(remote_cancel):
     """The adapter's typed stop reaches the Console as the same object, so the
     stop row can say what the backend did with the remote task

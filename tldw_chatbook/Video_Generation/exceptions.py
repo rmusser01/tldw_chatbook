@@ -2,14 +2,15 @@
 
 from typing import Literal
 
-RemoteCancelOutcome = Literal["cancelled", "refused", "unconfirmed"]
+RemoteCancelOutcome = Literal["cancelled", "refused", "deleted", "unconfirmed"]
 """What a paid remote backend did with a Stop (TASK-33621.50).
 
 ``cancelled``: the vendor confirmed it cancelled the task, so it is not
-billed. ``refused``: the vendor refused (MiniMax does once a task has started
-rendering), so the task keeps running and may still be billed. ``unconfirmed``:
-the cancel request failed or its answer was not a cancel, so the task may
-still run and be billed.
+billed. ``refused``: the vendor refused cancellation in the current status;
+remote state and billing remain uncertain. ``deleted``: a completed or failed
+task's record was deleted; this implies neither a successful clip nor a certain
+charge. ``unconfirmed``: the cancel request failed or its answer was not
+recognized, so the task may still run and be billed.
 """
 
 

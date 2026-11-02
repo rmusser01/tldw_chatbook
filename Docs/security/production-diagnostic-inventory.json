@@ -4264,8 +4264,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "dc5ab3076d56ad828fb2",
+      "call_count": 4,
+      "diagnostic_digest": "b4a291a570e7408844c1",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py",
       "reason": "remaining Chatbook production diagnostic owner"

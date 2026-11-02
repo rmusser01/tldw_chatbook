@@ -120,25 +120,23 @@ for about 1 s before both toasts timed out. A 10 s failure timeout gave about
 the fast error path at the smallest size, not only the slow one. One capture
 cannot tell you how long text is readable: poll `capture-pane` every 0.25 s and
 count the captures that contain the last sentence of the message.
-## A vendor's documented cancel table is not its behaviour: probe early and late with the exact request (TASK-33621.50, 2026-10-30)
+## A cancel refusal does not prove rendering continues (TASK-33621.50, PR3333, 2026-11-01)
 
-**Incident.** MiniMax's cancel docs list `queued` → cancelled (no charge) and `running` →
-"not allowed". The adapter's docstring repeated that, and a live Stop 40 s into a render had
-logged only `error_type=HTTPStatusError`, so it could not tell "running is refused" from
-"this request is wrong". A pure-httpx probe sent the adapter's byte-exact DELETE three times.
-About 1 s after submit, and right after a poll had already read `running`, it was accepted
-(200, `action: cancelled`, usage stayed empty). At 43 s it was refused (400, code 2013), and
-that task finished and was billed. `queued` never appeared on any poll. The documented
-boundary sits at a point the status field cannot show.
+**Incident.** The 2026-10-30 MiniMax recordings include an early accepted
+DELETE, a 43 s current-status refusal followed by a billed clip, the same
+400/code2013/current-status refusal on an already-cancelled task, and a
+200/action=deleted on a succeeded task. PR3333 originally inferred continued
+rendering from every refusal and treated deletion as unknown running state.
+The independent review caught both unsupported claims; recorded-response
+replay through real fetch_json reproduces them without another paid request.
 
-**What to do.** Before writing copy about what a remote cancel does, probe it twice with the
-adapter's exact request: once right after submit and once well into the work. Record the
-status code, the body and the task's final usage, then commit the bodies as test fixtures.
-Log the HTTP status and the vendor's error code, not only the exception class. Do not
-classify on the code alone: review caught that 2013 is MiniMax's generic "invalid params"
-code (the recorded body starts "invalid params, …", and a DELETE on an already-cancelled
-task gave the same 400/2013), so "refused because rendering started" now also requires the
-message's "current status" wording, and any other 400 reads as unconfirmed.
+**What to do.** Distinguish prospective late-render billing risk from what a
+response proves. A current-status refusal leaves state/billing uncertain;
+action=deleted proves terminal record deletion without proving success or a
+charge. Carry both through typed outcomes and user rows, and log fixed labels
+and closed codes rather than vendor messages. Consult the primary status/action
+table at https://platform.minimax.io/docs/api-reference/video-generation-v2-delete.
+Replay qualifies parsing and request/control flow, not live billing or latency.
 
 ## A contrast capture taken under an open modal measures the dimmed backdrop (TASK-33626.1, 2026-10-29)
 

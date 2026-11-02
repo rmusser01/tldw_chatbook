@@ -15,9 +15,10 @@ Endpoints (verified against platform.minimax.io docs, 2026-08-07):
   Measured live 2026-10-30 (TASK-33621.50): a task that has not started
   rendering is cancelled -- 200 ``{"action": "cancelled"}``, and it is not
   billed -- even when a poll already reads ``running`` (accepted 0-1 s after
-  submit); once rendering starts the API refuses -- 400
-  ``bad_request_error`` code 2013 (refused 43 s in) -- and the task runs to
-  completion and is billed. A terminal task's record is deleted (200
+  submit). The recorded 43 s refusal was followed by completion and billing,
+  but the same 400/current-status/code 2013 response occurs for an already
+  cancelled task: refusal alone proves no rendering or running state.
+  A terminal task's record is deleted (200
   ``{"action": "deleted"}``). Stop reports which of these happened.
 
 Status vocabulary is parsed case-insensitively because the v1/v2 docs
@@ -395,8 +396,9 @@ class MiniMaxVideoAdapter:
         Returns:
             ``"cancelled"`` when MiniMax confirms the cancel (not billed),
             ``"refused"`` for its "cannot cancel in current status" error
-            (400, code 2013, that wording: the task has started rendering,
-            keeps running, and may still be billed), else ``"unconfirmed"``.
+            (400, code 2013, that wording; state and billing uncertain),
+            ``"deleted"`` for a finished task's deleted record (not necessarily
+            a successful clip or a charge), else ``"unconfirmed"``.
         """
         from loguru import logger
 
@@ -421,8 +423,8 @@ class MiniMaxVideoAdapter:
                 and _CANCEL_REFUSED_TEXT in error_message.lower()
             ):
                 logger.warning(
-                    "MiniMax refused the remote task cancel; the task keeps "
-                    "running and may still be billed (http_status={}, error_code={})",
+                    "MiniMax refused the remote task cancel in its current status; "
+                    "remote state and billing uncertain (http_status={}, error_code={})",
                     http_status,
                     error_code,
                 )
@@ -434,9 +436,10 @@ class MiniMaxVideoAdapter:
             if action == "cancelled":
                 logger.info("MiniMax remote task cancel confirmed")
                 return "cancelled"
-            # "deleted": the task had already finished and MiniMax deleted its
-            # record -- nothing was cancelled, so never report a cancel.
-            reason = "action_deleted" if action == "deleted" else "unexpected_answer"
+            if action == "deleted":
+                logger.info("MiniMax finished task record deleted")
+                return "deleted"
+            reason = "unexpected_answer"
         logger.warning(
             "MiniMax remote task cancel unconfirmed; local stop still honored "
             "(error_type={}, http_status={}, error_code={})",

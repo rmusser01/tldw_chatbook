@@ -36,6 +36,15 @@ Every generation request funnels through `worker.run_generation` (image and vide
 
 Video adds cooperative cancel (threaded only to adapters that support it) and a **result container triple-check**: `request.format == result.container == container_for_mime`, else the result is rejected — a mislabeled container can never reach playback (ADR-044 rev 3).
 
+`VideoGenerationCancelled` passes through the worker unchanged. Generate and
+Regenerate distinguish it from a real failure and report MiniMax's remote
+outcome: cancelled, current-status refusal, terminal record deletion, or
+unconfirmed. Refusal establishes no running/rendering state; deletion implies
+neither success nor a certain charge. Cancellation is still checked at inherited
+poll boundaries: Stop during an in-flight GET/download can finish as a result or
+failure (TASK-33621.45). Preventing terminal DELETE, paid Regenerate consent, and
+pre-submit Stop remain TASK-33621.50.1/.2/.3.
+
 ## Chat integration
 
 - `/generate-image` parses args and style tokens; an optional LLM-composed context prompt (kill-switch + keyword-extractor fallback; refusal is a first-class outcome) precedes `prepare_generation_request`. `run_generation_batch` enforces the identical-image guard (explicit seed only on variant 0; later variants random) and collects per-variant failures without aborting the batch; ComfyUI edits require count == 1.

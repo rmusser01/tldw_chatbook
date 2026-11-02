@@ -322,11 +322,12 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     "tldw_chatbook/Video_Generation/adapter_registry.py": {},
     "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py": {
-        # TASK-33621.50: the one "cancel failed" line became three outcomes.
+        # TASK-33621.50: four fixed-label cancel outcomes.
         # Every field is a closed value: an HTTP status int, MiniMax's numeric
         # error code, and an exception class name or a fixed reason literal.
         "refused the remote task cancel": ("http_status", "error_code"),
         "remote task cancel confirmed": (),
+        "MiniMax finished task record deleted": (),
         "remote task cancel unconfirmed": ("reason", "http_status", "error_code"),
     },
     "tldw_chatbook/Video_Generation/config.py": {},

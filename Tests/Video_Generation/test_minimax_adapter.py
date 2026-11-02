@@ -516,8 +516,7 @@ def test_stop_sends_the_cancel_minimax_accepted_live_and_logs_success(
 def test_stop_after_rendering_starts_reports_minimax_refused_live(
     adapter, replay, log_lines
 ):
-    """AC#1/#3: MiniMax's live 400 (code 2013) is a refusal -- the task keeps
-    running and may be billed -- and the log names the status and code."""
+    """The recorded refusal reports status/code without inferring task state."""
     script = replay(
         poll="query_after_refused_cancel", delete="cancel_refused_while_running_43s"
     )
@@ -527,10 +526,25 @@ def test_stop_after_rendering_starts_reports_minimax_refused_live(
     assert stopped.remote_cancel == "refused"
     assert len(script.deletes()) == 1
     warnings = [text for level, text in log_lines if level == "WARNING"]
-    assert any("http_status=400" in t and "error_code=2013" in t for t in warnings), (
-        log_lines
-    )
+    assert any(
+        "http_status=400" in t and "error_code=2013" in t for t in warnings
+    ), log_lines
     assert all("test-secret-key" not in text for _level, text in log_lines)
+
+
+def test_stop_on_an_already_cancelled_task_does_not_claim_it_keeps_running(
+    adapter, replay, log_lines
+):
+    script = replay(poll="query_after_refused_cancel", delete="delete_on_cancelled")
+
+    stopped = _stopped(adapter, script)
+
+    assert stopped.remote_cancel == "refused"
+    warnings = [text for level, text in log_lines if level == "WARNING"]
+    assert any("current status" in text for text in warnings), warnings
+    assert all(
+        "keeps running" not in text and "rendering" not in text for text in warnings
+    )
 
 
 def test_stop_never_reports_a_cancel_for_a_record_minimax_deleted(
@@ -542,7 +556,11 @@ def test_stop_never_reports_a_cancel_for_a_record_minimax_deleted(
 
     stopped = _stopped(adapter, script)
 
-    assert stopped.remote_cancel == "unconfirmed"
+    assert stopped.remote_cancel == "deleted"
+    assert any(
+        level == "INFO" and text == "MiniMax finished task record deleted"
+        for level, text in log_lines
+    ), log_lines
 
 
 def test_stop_with_an_unreachable_cancel_endpoint_is_unconfirmed(

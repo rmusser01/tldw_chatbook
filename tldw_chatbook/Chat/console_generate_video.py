@@ -230,18 +230,21 @@ def video_stopped_text(
         noun: What was stopped ("Video generation", "Video regeneration").
 
     Returns:
-        A stop row that says plainly when the remote task keeps running and
-        may still be billed, and claims a cancel only when the backend
-        confirmed one.
+        A stop row that distinguishes confirmed cancel, current-status
+        refusal, terminal record deletion and an unconfirmed answer.
     """
     name = _paid_backend_name(backend)
     if stop.remote_cancel == "cancelled":
         return f"{noun} stopped. {name} cancelled the remote task, so it is not billed."
     if stop.remote_cancel == "refused":
         return (
-            f"{noun} stopped here, but {name} had already started rendering and "
-            "refused to cancel. The remote task keeps running and may still be "
-            "billed."
+            f"{noun} stopped here. {name} refused to cancel the task in its "
+            "current status. The remote task may still run and may still be billed."
+        )
+    if stop.remote_cancel == "deleted":
+        return (
+            f"{noun} stopped here. {name} reported that the task had finished "
+            "and deleted its record. The task may have been billed."
         )
     if stop.remote_cancel == "unconfirmed":
         return (

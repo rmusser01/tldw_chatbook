@@ -39,6 +39,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
+from textual.worker import WorkerState
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
@@ -248,6 +249,16 @@ async def _console_sending_video(
     app = _build_test_app(configured_default="chat")
     _configure_native_ready_console(app)
     cleanups: list[bool] = []
+    startup_workers = []
+    start_boot_worker = app._start_boot_worker
+
+    def observe_boot_worker(key):
+        worker = start_boot_worker(key)
+        if key == "chachanotes_fts_backfill" and worker is not None:
+            startup_workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(app, "_start_boot_worker", observe_boot_worker)
 
     async def _record_cleanup() -> None:
         cleanups.append(True)
@@ -263,6 +274,18 @@ async def _console_sending_video(
         ), "the Console composer never mounted"
         await pilot.pause(0.2)
         console = app.screen
+        assert await _until(
+            lambda: console._console_attach_reconciled
+            and not console._console_attach_reconcile_running,
+            15,
+        )
+        # Retain the real startup owner: a short Stop journey can otherwise
+        # retire while its native built-in-content import is still running.
+        assert await _until(
+            lambda: bool(startup_workers) and startup_workers[0].is_finished,
+            30,
+        )
+        assert startup_workers[0].state is WorkerState.SUCCESS
         if configure is None:
             _configure_paid_backend(monkeypatch, console, backend)
         else:

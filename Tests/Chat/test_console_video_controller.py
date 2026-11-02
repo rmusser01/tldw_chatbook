@@ -179,9 +179,7 @@ def _regenerate_controller(rows: list[str]):
         ensure_console_chat_store=lambda: store,
         wait_for_console_screen_result=lambda _screen: None,
         open_video_with_os=lambda _path: None,
-        append_native_console_system_message=lambda text, **_kwargs: rows.append(
-            text
-        ),
+        append_native_console_system_message=lambda text, **_kwargs: rows.append(text),
         default_console_session_settings=lambda: None,
         console_composer_or_none=lambda: None,
         clear_console_composer_draft=lambda: None,
@@ -201,9 +199,13 @@ def _regenerate_controller(rows: list[str]):
         ),
         (
             "refused",
-            "Video regeneration stopped here, but MiniMax had already started "
-            "rendering and refused to cancel. The remote task keeps running and "
-            "may still be billed.",
+            "Video regeneration stopped here. MiniMax refused to cancel the task "
+            "in its current status. The remote task may still run and may still be billed.",
+        ),
+        (
+            "deleted",
+            "Video regeneration stopped here. MiniMax reported that the task had "
+            "finished and deleted its record. The task may have been billed.",
         ),
     ],
 )

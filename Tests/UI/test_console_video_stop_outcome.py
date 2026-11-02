@@ -23,7 +23,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI.test_console_hook_review_send_freeze import _until
 from Tests.UI.test_console_video_send_freeze import (
@@ -35,6 +35,7 @@ from Tests.UI.test_console_video_send_freeze import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Image_Generation import http_client as image_http_client
 from tldw_chatbook.Video_Generation.adapters import minimax_video_adapter as mva
+from tldw_chatbook.Video_Generation import worker
 from tldw_chatbook.Video_Generation.worker import build_request
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -84,6 +85,14 @@ class _RecordedMiniMaxGeneration:
         monkeypatch.setattr(
             image_http_client, "_validate_egress_or_raise", lambda *_a, **_k: None
         )
+        monkeypatch.setattr(
+            worker,
+            "get_registry",
+            lambda: SimpleNamespace(
+                resolve_backend=lambda backend: backend,
+                get_adapter=lambda backend: mva.MiniMaxVideoAdapter(),
+            ),
+        )
 
     def _serve(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -103,9 +112,7 @@ class _RecordedMiniMaxGeneration:
             prompt=kwargs["prompt"],
             duration_seconds=kwargs.get("duration_seconds"),
         )
-        return mva.MiniMaxVideoAdapter().generate(
-            request, cancel_event=kwargs["cancel_event"]
-        )
+        return worker.run_generation(request, cancel_event=kwargs["cancel_event"])
 
     def deletes(self) -> list[httpx.Request]:
         return [r for r in self.requests if r.method == "DELETE"]
@@ -129,7 +136,24 @@ async def _stop_after_first_poll(app, console, backend) -> list[str]:
     stop.press()
     assert await _until(lambda: _video_idle(console), 10), "Stop never settled"
     assert await _until(lambda: len(_system_rows(console)) > before, 5)
-    return _system_rows(console)[before:]
+    rows = _system_rows(console)[before:]
+
+    def painted() -> str:
+        strips = app.screen._compositor.render_strips()
+        bodies = []
+        for body in console.query(".console-transcript-message-body").results(Static):
+            region = body.region
+            if region.width and region.height:
+                bodies.extend(
+                    strip.crop(region.x, region.right).text
+                    for strip in strips[max(0, region.y) : region.bottom]
+                )
+        return " ".join(" ".join(bodies).split())
+
+    assert await _until(
+        lambda: all(" ".join(row.split()) in painted() for row in rows), 5
+    ), "the stored Stop row never painted"
+    return rows
 
 
 async def test_stop_while_minimax_can_still_cancel_reads_as_a_free_stop(monkeypatch):
@@ -158,10 +182,7 @@ async def test_stop_while_minimax_can_still_cancel_reads_as_a_free_stop(monkeypa
 async def test_stop_after_minimax_starts_rendering_says_it_may_still_be_billed(
     monkeypatch,
 ):
-    """AC#3 (.50) + AC#1 (.45): MiniMax refused the cancel live 43 s into a
-    render (400, code 2013) and billed the clip, so the row says plainly the
-    task keeps running and may still be billed -- never that it was
-    cancelled, and never that the generation failed."""
+    """A current-status refusal leaves running state and billing uncertain."""
     backend = _RecordedMiniMaxGeneration(
         monkeypatch,
         poll="query_after_refused_cancel",
@@ -177,9 +198,30 @@ async def test_stop_after_minimax_starts_rendering_says_it_may_still_be_billed(
     assert len(backend.deletes()) == 1
     [row] = rows
     assert "stopped" in row, row
-    assert "keeps running" in row and "may still be billed" in row, row
+    assert "current status" in row and "may still run" in row, row
+    assert "may still be billed" in row, row
+    assert "keeps running" not in row and "rendering" not in row, row
     assert "cancelled the remote task" not in row, row
     assert "failed" not in row.lower(), row
+
+
+async def test_stop_after_minimax_finished_reports_deleted_record(monkeypatch):
+    """A terminal DELETE reports lost record without claiming a clip or charge."""
+    backend = _RecordedMiniMaxGeneration(
+        monkeypatch, poll="query_after_refused_cancel", delete="delete_on_succeeded"
+    )
+    async with _console_sending_video(monkeypatch, "enter", backend) as (
+        app,
+        console,
+        _cleanups,
+    ):
+        rows = await _stop_after_first_poll(app, console, backend)
+
+    assert len(backend.deletes()) == 1
+    assert rows == [
+        "Video generation stopped here. MiniMax reported that the task had "
+        "finished and deleted its record. The task may have been billed."
+    ]
 
 
 async def test_the_cost_confirm_and_progress_row_say_stop_may_not_prevent_billing(
@@ -207,9 +249,9 @@ async def test_the_cost_confirm_and_progress_row_say_stop_may_not_prevent_billin
         stop.press()
         assert await _until(lambda: _video_idle(console), 10)
 
-    assert "Stop" in confirm_copy and "may still be billed" in confirm_copy, (
-        confirm_copy
-    )
+    assert (
+        "Stop" in confirm_copy and "may still be billed" in confirm_copy
+    ), confirm_copy
     [row] = progress
     assert "may still be billed" in row, row
 

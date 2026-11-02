@@ -24,27 +24,33 @@ writing them into your chat database.
   `anime`. Your own styles live in config.toml under
   `[video_generation.styles.<id>]`.
 - One generation runs per session at a time; the composer's **Stop**
-  button stops it, and the row it leaves says what happened. A stop is
-  never reported as a failure.
+  button requests a local stop. A cooperative cancellation produces a stopped
+  row. Stop during an in-flight poll or download can still finish as a result
+  or failure at the existing polling boundaries (TASK-33621.45).
 - **Stopping a MiniMax generation.** Stop also asks MiniMax to cancel the
-  remote task. Until MiniMax starts rendering, the task is cancelled and
-  not billed ("MiniMax cancelled the remote task, so it is not billed").
-  Once rendering has started, MiniMax refuses: the task runs to the end
-  on MiniMax's side and may still be billed, although the video is not
-  shown here ("…refused to cancel. The remote task keeps running and may
-  still be billed"). If MiniMax cannot be reached, or answers with
-  anything other than a confirmed cancel or that refusal, the row says
-  MiniMax did not confirm the cancel, so the task may keep running and
-  may still be billed. The Console
-  cannot see when rendering starts (MiniMax reports both stages as
-  running), so treat a confirmed MiniMax generation as one you may pay
-  for.
-- **Paid backends ask first.** When `[video_generation]
-  confirm_cost_estimate` is on (default), cloud backends show the
-  billing shape (per generated second), say that Stop cannot undo a
-  render that has started, and wait for confirmation. The
-  "Generating video…" row repeats that. **Escape** (or **Cancel**)
-  starts nothing and keeps your draft.
+  remote task. The row reports one of four answers:
+  - **Cancelled:** MiniMax confirmed cancellation; the task is not billed.
+  - **Refused:** MiniMax refused cancellation in the task's current status.
+    The remote task may still run and may still be billed. This refusal also
+    occurs for an already-cancelled task, so it does not prove rendering
+    started or continues.
+  - **Deleted:** MiniMax reported that the task had finished and deleted its
+    record. The task may have been billed. This does not mean a clip succeeded
+    or is available here.
+  - **Unconfirmed:** MiniMax did not confirm cancellation; the task may keep
+    running and may still be billed.
+  A late Stop may not prevent billing. The Console cannot see when rendering
+  starts: MiniMax reports both early cancellable work and later rendering as
+  running. Stop can still delete a task that finished between polls; preventing
+  that deletion and recovering a finished clip remain TASK-33621.50.1.
+- **Paid `/generate-video` asks first.** When `[video_generation]
+  confirm_cost_estimate` is on (default), cloud backends show the billing
+  shape and the warning that Stop may not prevent billing, then wait for
+  confirmation. The "Generating video…" row repeats the warning. **Escape**
+  (or **Cancel**) starts nothing and keeps your draft. Paid **Regenerate**
+  still lacks this confirmation and progress warning (TASK-33621.50.2).
+  Stop before submission can still create a remote task and then request
+  cancellation (TASK-33621.50.3).
 - The Console stays responsive while a video generates, whether you sent
   with **Enter** or the **Send** button: **Stop**, **F1** help, **Ctrl+Q**
   and other commands (`/stop`, `/help`, …) keep working. Sending the same

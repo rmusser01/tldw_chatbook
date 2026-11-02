@@ -86,9 +86,14 @@ def test_estimate_video_cost_text_shapes():
         (
             "refused",
             "minimax",
-            "Video generation stopped here, but MiniMax had already started "
-            "rendering and refused to cancel. The remote task keeps running and "
-            "may still be billed.",
+            "Video generation stopped here. MiniMax refused to cancel the task "
+            "in its current status. The remote task may still run and may still be billed.",
+        ),
+        (
+            "deleted",
+            "minimax",
+            "Video generation stopped here. MiniMax reported that the task had "
+            "finished and deleted its record. The task may have been billed.",
         ),
         (
             "unconfirmed",
@@ -100,9 +105,7 @@ def test_estimate_video_cost_text_shapes():
         (None, "comfyui", "Video generation stopped."),
     ],
 )
-def test_video_stopped_text_says_what_the_backend_did(
-    remote_cancel, backend, expected
-):
+def test_video_stopped_text_says_what_the_backend_did(remote_cancel, backend, expected):
     from tldw_chatbook.Chat.console_generate_video import video_stopped_text
     from tldw_chatbook.Video_Generation.exceptions import VideoGenerationCancelled
 
@@ -122,7 +125,7 @@ def test_video_stopped_text_names_a_regeneration():
 
     text = video_stopped_text(stop, backend="minimax", noun="Video regeneration")
 
-    assert text.startswith("Video regeneration stopped here, but MiniMax")
+    assert text.startswith("Video regeneration stopped here. MiniMax")
 
 
 def test_video_generating_text_carries_the_stop_caveat_only_when_paid():
