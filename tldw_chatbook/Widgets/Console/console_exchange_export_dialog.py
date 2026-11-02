@@ -76,7 +76,7 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
         min-height: 3;
         align-horizontal: right;
     }
-    #exchange-export-actions Button { min-width: 10; margin-left: 1; }
+    #exchange-export-actions Button.exchange-export-action { min-width: 10; margin-left: 1; }
     #exchange-export-status.-error { color: $error; }
     """
 
@@ -156,8 +156,17 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
                 yield path
             yield Static("Ready", id="exchange-export-status", markup=False)
             with Horizontal(id="exchange-export-actions"):
-                yield Button("Cancel", id="exchange-export-cancel")
-                yield Button("Export", id="exchange-export-submit", variant="primary")
+                yield Button(
+                    "Cancel",
+                    id="exchange-export-cancel",
+                    classes="exchange-export-action",
+                )
+                yield Button(
+                    "Export",
+                    id="exchange-export-submit",
+                    variant="primary",
+                    classes="exchange-export-action",
+                )
 
     def on_mount(self) -> None:
         self.query_one("#exchange-export-submit", Button).focus()

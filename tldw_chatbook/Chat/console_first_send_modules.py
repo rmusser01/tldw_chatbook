@@ -159,7 +159,6 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Canvas.gateway",
     "tldw_chatbook.Canvas.native_authority",
     "tldw_chatbook.Tools.remote_session_registry",
-    "tldw_chatbook.Tools.remote_session_worker",
     "tldw_chatbook.UI.Console_Modules.citation_counts",
     # Reached by the send too; a live app has usually imported them already
     # (the sync tick, the scheduler, the composer's dictation-state sync), so

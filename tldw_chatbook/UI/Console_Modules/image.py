@@ -294,6 +294,11 @@ class ConsoleImageController:
             for message in messages
         )
         selection = (root, profile, identities)
+        if not identities:
+            # No message can own a recovered asset. Leave any previously
+            # issued reader with its existing retirement owner; an empty
+            # projection neither reads the catalog nor cancels that work.
+            return {}, set()
         if not self._recovered_image_tasks and not self._recovered_image_paused:
             worker = self._screen.run_worker(
                 self._load_recovered_images(selection, cache),

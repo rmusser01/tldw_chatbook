@@ -299,9 +299,6 @@ from ...Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialogRequest,
 )
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
-from ...Widgets.Library.prompt_delete_confirmation_modal import (
-    PromptDeleteDecision,
-)
 from ...Library.library_rag_answer_service import (
     LibraryRagAnswer,
     generate_library_rag_answer,
@@ -474,9 +471,6 @@ from ...Library.meeting_speaker_rename import (
     _meeting_speaker_legend_rows,
     can_rename_meeting_speakers,
 )
-from ...Widgets.Library.library_note_folder_dialog import (
-    LibraryNoteFolderNameDialog,
-)
 from ...Widgets.Library.library_emergency_return import LibraryEmergencyReturn
 from ...Widgets.glyph_fallback import ascii_glyph_mode
 from ...Widgets.Library.library_notes_canvas import (
@@ -568,6 +562,7 @@ if TYPE_CHECKING:
     from ...Widgets.Library.library_file_notes_workspace import (
         LibraryFileNotesWorkspace,
     )
+    from ...Widgets.Library.prompt_delete_confirmation_modal import PromptDeleteDecision
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from ..Library_Modules.library_inspection_admission import PreparedLibraryInspection
     from ..Library_Modules.library_unavailable_navigation import (
@@ -31743,6 +31738,10 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Press event from the new-folder action button.
         """
+        from ...Widgets.Library.library_note_folder_dialog import (
+            LibraryNoteFolderNameDialog,
+        )
+
         event.stop()
         selected = self._selected_library_notes_tree_row()
         if selected is not None and selected.kind == "folder" and selected.protected:
@@ -31770,6 +31769,10 @@ class LibraryScreen(BaseAppScreen):
     @on(Button.Pressed, "#library-notes-folder-rename")
     def handle_library_notes_folder_rename(self, event: Button.Pressed) -> None:
         """Rename the selected manual folder with optimistic locking."""
+        from ...Widgets.Library.library_note_folder_dialog import (
+            LibraryNoteFolderNameDialog,
+        )
+
         event.stop()
         selected = self._selected_library_notes_tree_row()
         if (

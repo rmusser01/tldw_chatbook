@@ -5868,7 +5868,11 @@ class ConsoleSessionController:
             True when the action was refused.
         """
         if self._conversation_activation_depth > 0:
-            monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
+            app_owner = self.app_instance
+            try:
+                monitor = app_owner.ui_responsiveness_monitor
+            except AttributeError:
+                monitor = None
             if monitor is not None:
                 monitor.record_diagnostic(
                     "console",

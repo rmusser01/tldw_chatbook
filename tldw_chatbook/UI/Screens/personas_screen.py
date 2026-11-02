@@ -4014,9 +4014,11 @@ class PersonasScreen(BaseAppScreen):
         query = fence.query.strip()
         needle = query.lower()
         if kind == "character" and fence.runtime_source == "server":
-            service = getattr(
-                self.app_instance, "character_persona_scope_service", None
-            )
+            app_owner = self.app_instance
+            try:
+                service = app_owner.character_persona_scope_service
+            except AttributeError:
+                service = None
             response = await service.search_characters(
                 query, mode="server", limit=_SERVER_CHARACTER_SEARCH_MAX_RESULTS
             )

@@ -76,7 +76,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # owners pinned to exact measured sizes, with no spare budget.
 _BUDGETS: dict[str, int] = {
     # TASK-32695: existing owners receive pure moves; retain their measured ceilings.
-    "tldw_chatbook/Utils/app_shutdown.py": 776,
+    "tldw_chatbook/Utils/app_shutdown.py": 554,
+    "tldw_chatbook/app_shutdown.py": 225,
     # 2026-10-31: re-measured after rebasing onto dev 4d6764b132 (owner rule: exact, or dev's row + this branch's growth where dev exceeds it): 2873 -> 2899.
     # PR3301, 2026-10-31: user size waiver; exact integrated measurement.
     # TASK-38640, 2026-11-02: owner size waiver of 2026-10-31; re-pinned at

@@ -2104,7 +2104,7 @@ GlobalFullCaptureConfirmation #global-full-title { text-style: bold; text-align:
 GlobalFullCaptureConfirmation #global-full-body { height: 1fr; scrollbar-gutter: stable; }
 GlobalFullCaptureConfirmation #global-full-message, GlobalFullCaptureConfirmation #global-full-ack { height: auto; margin-top: 1; }
 GlobalFullCaptureConfirmation #global-full-actions { height: 3; min-height: 3; align-horizontal: right; }
-GlobalFullCaptureConfirmation #global-full-actions Button { min-width: 14; margin-left: 1; }
+GlobalFullCaptureConfirmation #global-full-actions Button.global-full-action { min-width: 14; margin-left: 1; }
 
 /* ===== WIDGET: ConsoleTracePrivacyDialog (Widgets/Console/console_capture_policy_dialog.py) ===== */
 
@@ -2119,7 +2119,7 @@ ConsoleTracePrivacyDialog #trace-privacy-help, ConsoleTracePrivacyDialog #trace-
 }
 ConsoleTracePrivacyDialog #trace-privacy-body { height: 1fr; scrollbar-gutter: stable; }
 ConsoleTracePrivacyDialog #trace-privacy-actions { height: 3; min-height: 3; align-horizontal: right; }
-ConsoleTracePrivacyDialog #trace-privacy-actions Button { min-width: 10; margin-left: 1; }
+ConsoleTracePrivacyDialog #trace-privacy-actions Button.trace-privacy-action { min-width: 10; margin-left: 1; }
 ConsoleTracePrivacyDialog #trace-privacy-status.-error { color: $error; }
 
 /* ===== WIDGET: ConsoleCodeReviewModal (Widgets/Console/console_code_review_modal.py) ===== */

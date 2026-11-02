@@ -24,7 +24,11 @@ def undo_workspace_archive(screen: SettingsScreen, event: Button.Pressed) -> Non
 
     event.stop()
     receipt = getattr(screen, "_settings_workspace_archive_receipt", None)
-    registry = getattr(screen.app_instance, "workspace_registry_service", None)
+    app_owner = screen.app_instance
+    try:
+        registry = app_owner.workspace_registry_service
+    except AttributeError:
+        registry = None
     if receipt is None or registry is None:
         return
     request = object()
@@ -60,9 +64,11 @@ def undo_workspace_archive(screen: SettingsScreen, event: Button.Pressed) -> Non
                 )
             return
         operation = asyncio.create_task(_complete_undo())
-        operations = getattr(
-            screen.app_instance, "_workspace_lifecycle_operations", None
-        )
+        app_owner = screen.app_instance
+        try:
+            operations = app_owner._workspace_lifecycle_operations
+        except AttributeError:
+            operations = None
         if operations is None:
             operations = screen.app_instance._workspace_lifecycle_operations = set()
         operations.add(operation)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
@@ -10,29 +9,15 @@ from .prompt_artifact_models import (
     ArtifactType,
     BlockArtifactDefinition,
     DecodedPromptArtifact,
-    LiteralMixinDefinition,
     PromptBlock,
     PromptLane,
+    _compatibility_text,
+    _decoded,
+    _is_schema_version,
+    decode_literal_mixin_v3,
+    deserialize_definition,
 )
 from .prompt_block_compiler import compile_block_artifact
-
-
-def _is_schema_version(value: Any, expected: int) -> bool:
-    """Require JSON integer schema versions without Python bool/float coercion."""
-    return type(value) is int and value == expected
-
-
-def deserialize_definition(value: Any) -> Mapping[str, Any] | None:
-    """Return a JSON-object definition, never guessing at non-object input."""
-    if isinstance(value, Mapping):
-        return dict(value)
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = json.loads(value)
-    except (TypeError, ValueError):
-        return None
-    return dict(parsed) if isinstance(parsed, Mapping) else None
 
 
 def _artifact_type(record: Mapping[str, Any]) -> ArtifactType:
@@ -40,29 +25,6 @@ def _artifact_type(record: Mapping[str, Any]) -> ArtifactType:
     if raw_artifact_type not in {"prompt", "recipe", "mixin"}:
         raise ValueError(f"Unsupported artifact_type: {raw_artifact_type!r}")
     return cast(ArtifactType, raw_artifact_type)
-
-
-def _compatibility_text(record: Mapping[str, Any]) -> tuple[str, str]:
-    return str(record.get("system_prompt") or ""), str(record.get("user_prompt") or "")
-
-
-def _decoded(
-    *,
-    state: Literal["foreign_v1", "unsupported", "malformed", "mismatched"],
-    record: Mapping[str, Any],
-    artifact_type: ArtifactType,
-    raw: Mapping[str, Any] | None,
-) -> DecodedPromptArtifact:
-    system, user = _compatibility_text(record)
-    return DecodedPromptArtifact(
-        state=state,
-        artifact_type=artifact_type,
-        definition=None,
-        raw_definition=raw,
-        compiled_system=system,
-        compiled_user=user,
-        compatibility_stale=False,
-    )
 
 
 def foreign_definition(
@@ -166,53 +128,6 @@ def decode_console_v2(
         compiled_user=compiled_user,
         compatibility_stale=(stored_system, stored_user)
         != (compiled_system, compiled_user),
-    )
-
-
-def decode_literal_mixin_v3(
-    record: Mapping[str, Any], *, raw: Mapping[str, Any] | None
-) -> DecodedPromptArtifact:
-    """Decode the closed literal mix-in shape without interpreting its body."""
-    artifact_type: ArtifactType = "mixin"
-    if record.get("prompt_format") != "structured":
-        return _decoded(
-            state="mismatched", record=record, artifact_type=artifact_type, raw=raw
-        )
-    if not _is_schema_version(record.get("prompt_schema_version"), 3):
-        return _decoded(
-            state="unsupported", record=record, artifact_type=artifact_type, raw=raw
-        )
-    if raw is None:
-        return _decoded(
-            state="malformed", record=record, artifact_type=artifact_type, raw=raw
-        )
-    if (
-        type(raw.get("kind")) is not str
-        or raw.get("kind") != "text_mixin"
-        or not _is_schema_version(raw.get("schema_version"), 3)
-    ):
-        return _decoded(
-            state="mismatched", record=record, artifact_type=artifact_type, raw=raw
-        )
-    try:
-        if set(raw) != {"kind", "schema_version", "body", "placement"}:
-            raise ValueError("Invalid mix-in fields.")
-        definition = LiteralMixinDefinition(
-            body=raw["body"], placement=raw["placement"]
-        )
-    except (KeyError, TypeError, ValueError):
-        return _decoded(
-            state="malformed", record=record, artifact_type=artifact_type, raw=raw
-        )
-    system, user = _compatibility_text(record)
-    return DecodedPromptArtifact(
-        state="supported_v3",
-        artifact_type=artifact_type,
-        definition=definition,
-        raw_definition=raw,
-        compiled_system="",
-        compiled_user=definition.body,
-        compatibility_stale=(system, user) != ("", definition.body),
     )
 
 

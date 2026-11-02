@@ -112,6 +112,14 @@ class ReceivedPreparationSource:
     prompt_sources: tuple = field(default=(), repr=False)
 
 
+def _prompt_scope_service(app):
+    """Read the optional source at the caller's exact capture/fence position."""
+    try:
+        return app.prompt_scope_service
+    except AttributeError:
+        return None
+
+
 def received_preparation_source(runtime, *, configuration_preparation=None):
     from tldw_chatbook import config
 
@@ -125,7 +133,7 @@ def received_preparation_source(runtime, *, configuration_preparation=None):
         config.current_config_identity(),
         runtime._hook_permissions,
         configuration_preparation,
-        getattr(runtime._app, "prompt_scope_service", None),
+        _prompt_scope_service(runtime._app),
     )
 
 
@@ -142,7 +150,7 @@ def require_received_source(runtime, record, source, *, inputs=True):
             raise RecoveryRequired("console_snapshot_owner_changed")
     if (
         runtime._app is not source.app
-        or getattr(source.app, "prompt_scope_service", None) is not source.prompt_scope
+        or _prompt_scope_service(source.app) is not source.prompt_scope
         or getattr(source.app, "app_config", None) is not source.app_config
         or runtime._chat_store is not source.store
         or runtime._chat_controller is not source.controller

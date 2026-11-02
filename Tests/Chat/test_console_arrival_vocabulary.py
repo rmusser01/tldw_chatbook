@@ -47,6 +47,10 @@ def test_library_chip_says_the_agents_access_is_off_not_blocked() -> None:
 def _context(request_tokens, ceiling):
     return SimpleNamespace(
         request_tokens=request_tokens,
+        next_request_tokens=request_tokens,
+        breakdown_rows=(),
+        forecast_unavailable_reason="",
+        forecast_high_context=False,
         safe_input_ceiling_tokens=ceiling,
         conversation_tokens=None,
         conversation_budget_tokens=None,

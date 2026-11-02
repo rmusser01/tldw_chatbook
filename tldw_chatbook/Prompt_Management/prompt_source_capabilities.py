@@ -8,12 +8,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .prompt_artifact_codec import decode_prompt_artifact, deserialize_definition
-from .prompt_artifact_models import LiteralMixinDefinition
-
-
-LOCAL_COMPILED_LANE_LIMIT = 20_000
-LOCAL_DEFINITION_LIMIT = 256_000
-LOCAL_REQUEST_LIMIT = 512_000
+from .prompt_artifact_models import (
+    LOCAL_COMPILED_LANE_LIMIT,
+    LOCAL_DEFINITION_LIMIT,
+    LOCAL_REQUEST_LIMIT,
+    LiteralMixinDefinition,
+)
 
 
 @dataclass(frozen=True)

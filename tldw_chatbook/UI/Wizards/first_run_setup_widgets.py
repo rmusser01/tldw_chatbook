@@ -406,6 +406,7 @@ class SetupStep(step_guard.WizardErrorGuard, WizardStep):
         wrapper = next(iter(self.children), None)
         indent = wrapper.styles.padding.left if wrapper is not None else 0
         top, right, bottom, left = strip.styles.base.padding
+        # ds-runtime: align the pinned strip with this step's measured wrapper padding.
         strip.styles.padding = (top, right, bottom, left + indent)
         strip.remove_class("hidden")
 

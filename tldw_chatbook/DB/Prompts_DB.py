@@ -2808,7 +2808,10 @@ class PromptsDatabase:
         self, record_uuids: tuple[str, ...]
     ) -> tuple[dict[str, Any], ...]:
         """Read exact active mix-ins and versions under one SQLite snapshot."""
-        from ..Prompt_Management.prompt_artifact_codec import decode_prompt_artifact
+        from ..Prompt_Management.prompt_artifact_models import (
+            decode_literal_mixin_v3,
+            deserialize_definition,
+        )
 
         if not isinstance(record_uuids, tuple) or any(
             not isinstance(value, str) or not value for value in record_uuids
@@ -2832,7 +2835,11 @@ class PromptsDatabase:
                 ).fetchall()
                 for row in rows:
                     record = dict(row)
-                    decoded = decode_prompt_artifact(record)
+                    if record["artifact_type"] != "mixin":
+                        raise ValueError("Requested mix-in is unsupported.")
+                    decoded = decode_literal_mixin_v3(
+                        record, raw=deserialize_definition(record["prompt_definition"])
+                    )
                     if (
                         decoded.state != "supported_v3"
                         or decoded.artifact_type != "mixin"

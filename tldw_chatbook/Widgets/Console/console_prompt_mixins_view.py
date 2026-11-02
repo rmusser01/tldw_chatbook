@@ -80,16 +80,33 @@ class ConsolePromptMixinsView(Vertical):
         projection = self.projection
         enabled = sum(row.enabled for row in projection.preferences.entries)
         yield Static(
-            f"Mix-ins · {enabled} enabled", id="console-mixins-count", markup=False
+            f"Mix-ins · {enabled} enabled",
+            id="console-mixins-count",
+            markup=False,
+            classes="console-mixins-copy",
         )
         yield Static(
             "Before / your message / After. Changes apply to future sends.",
             markup=False,
+            classes="console-mixins-copy",
         )
         with Horizontal(classes="console-mixins-actions"):
-            yield Button("Browse Prompts / Recipes", id="console-mixins-browse")
-            yield Button("Preview next send", id="console-mixins-preview")
-        status = Static(projection.status, id="console-mixins-status", markup=False)
+            yield Button(
+                "Browse Prompts / Recipes",
+                id="console-mixins-browse",
+                classes="console-mixins-action",
+            )
+            yield Button(
+                "Preview next send",
+                id="console-mixins-preview",
+                classes="console-mixins-action",
+            )
+        status = Static(
+            projection.status,
+            id="console-mixins-status",
+            markup=False,
+            classes="console-mixins-copy",
+        )
         status.display = bool(projection.status)
         yield status
         retry = Button("Retry saving choices", id="console-mixins-retry")
@@ -97,14 +114,20 @@ class ConsolePromptMixinsView(Vertical):
         yield retry
         with VerticalScroll(id="console-mixins-scroll"):
             for placement in ("before", "after"):
-                yield Static(placement.title(), classes="section-title")
+                yield Static(
+                    placement.title(), classes="section-title console-mixins-copy"
+                )
                 grouped = [
                     (i, row)
                     for i, row in enumerate(projection.preferences.entries)
                     if row.placement == placement
                 ]
                 if not grouped:
-                    yield Static("None selected", classes="status-label", markup=False)
+                    yield Static(
+                        "None selected",
+                        classes="status-label console-mixins-copy",
+                        markup=False,
+                    )
                 for position, (index, row) in enumerate(grouped):
                     with Vertical(classes="console-mixin-row"):
                         suffix = (
@@ -118,26 +141,37 @@ class ConsolePromptMixinsView(Vertical):
                             Text(row.name + suffix),
                             value=row.enabled,
                             id=f"console-mixin-enabled-{index}",
+                            classes="console-mixin-toggle",
                         )
                         with Horizontal(classes="console-mixins-actions"):
                             yield Button(
-                                "Inspect / Edit", id=f"console-mixin-inspect-{index}"
+                                "Inspect / Edit",
+                                id=f"console-mixin-inspect-{index}",
+                                classes="console-mixins-action",
                             )
                             yield Button(
                                 "Move up",
                                 id=f"console-mixin-up-{index}",
                                 disabled=position == 0,
+                                classes="console-mixins-action",
                             )
                             yield Button(
                                 "Move down",
                                 id=f"console-mixin-down-{index}",
                                 disabled=position == len(grouped) - 1,
+                                classes="console-mixins-action",
                             )
-                            yield Button("Remove", id=f"console-mixin-remove-{index}")
-            yield Static("Add from Local Library", classes="section-title")
+                            yield Button(
+                                "Remove",
+                                id=f"console-mixin-remove-{index}",
+                                classes="console-mixins-action",
+                            )
+            yield Static(
+                "Add from Local Library", classes="section-title console-mixins-copy"
+            )
             yield Static(
                 "Server mix-ins cannot be enabled: revision snapshots are unsupported.",
-                classes="status-label",
+                classes="status-label console-mixins-copy",
                 markup=False,
             )
             yield Input(
@@ -155,28 +189,40 @@ class ConsolePromptMixinsView(Vertical):
                     id="console-mixins-library",
                 )
                 yield Button(
-                    "Add", id="console-mixins-add", disabled=not projection.candidates
+                    "Add",
+                    id="console-mixins-add",
+                    disabled=not projection.candidates,
+                    classes="console-mixins-action",
                 )
-                yield Button("Search", id="console-mixins-search")
+                yield Button(
+                    "Search",
+                    id="console-mixins-search",
+                    classes="console-mixins-action",
+                )
             with Horizontal(classes="console-mixins-actions"):
                 yield Button(
                     "Previous",
                     id="console-mixins-previous",
                     disabled=projection.page <= 1,
+                    classes="console-mixins-action",
                 )
                 yield Static(
                     f"Page {projection.page} of {max(1, projection.total_pages)}",
-                    classes="w-fill",
+                    classes="w-fill console-mixins-copy",
                     markup=False,
                 )
                 yield Button(
                     "Next",
                     id="console-mixins-next",
                     disabled=projection.page >= projection.total_pages,
+                    classes="console-mixins-action",
                 )
             yield Vertical(id="console-mixins-editor", classes="h-auto")
             yield Static(
-                "", id="console-mixins-preview-content", classes="h-auto", markup=False
+                "",
+                id="console-mixins-preview-content",
+                classes="h-auto console-mixins-copy",
+                markup=False,
             )
 
     def on_mount(self) -> None:
@@ -300,7 +346,7 @@ class ConsolePromptMixinsView(Vertical):
         editor = PromptMixinEditor(record["name"], definition)
         self.editor_initial = editor.draft
         await area.mount(
-            editor, Button("Save Library changes", id="console-mixins-save")
+            editor, Button("Save Library changes", id="console-mixins-save", classes="console-mixins-action")
         )
         if not is_current():
             return

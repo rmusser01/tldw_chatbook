@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, replace
 from uuid import uuid4
 
-from tldw_chatbook.Chat.console_prompt_mixins import (
+from tldw_chatbook.Chat.console_prompt_mixin_models import (
     MixinAttemptSnapshot,
     MixinAttemptWrite,
     MixinForkState,
@@ -337,7 +337,7 @@ def read_fork_state(
     cursor: sqlite3.Cursor, conversation_id: str, message_ids: Mapping[str, str]
 ) -> MixinForkState:
     """Read a coherent historical prefix using the same caller-owned transaction."""
-    from tldw_chatbook.Chat.console_prompt_mixins import MixinForkAttempt
+    from tldw_chatbook.Chat.console_prompt_mixin_models import MixinForkAttempt
 
     rows = cursor.execute(
         "SELECT attempt_id,user_message_id,assistant_message_id,retry_of_attempt_id FROM console_prompt_mixin_attempts WHERE conversation_id=?",

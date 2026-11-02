@@ -698,7 +698,14 @@ def schedule_emergency_stop_refresh(screen: Any) -> None:
         import asyncio
 
         # ADR-097: the stop's module and its disk read start after first paint.
-        while not getattr(screen.app, "_ui_ready", True):
+        while True:
+            app = screen.app
+            try:
+                ui_ready = app._ui_ready
+            except AttributeError:
+                ui_ready = True
+            if ui_ready:
+                break
             await asyncio.sleep(0.1)
         from . import emergency_stop_hold
 

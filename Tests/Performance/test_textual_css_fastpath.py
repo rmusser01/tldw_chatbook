@@ -395,8 +395,18 @@ async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
                 await pilot.pause(0.05)
         recovery_buttons = list(app.screen.query("#console-trace-actions Button"))
         # TASK-34350 added the context-limit hold's two actions to this card;
-        # TASK-33621.20 its Library pause's "Send once without Library".
-        assert len(recovery_buttons) == 7 and all(
+        # TASK-33621.20 its Library pause's "Send once without Library";
+        # TASK-33621.4 also exposes the existing capture-policy choice.
+        assert {button.id for button in recovery_buttons} == {
+            "console-trace-save-send",
+            "console-trace-retry",
+            "console-trace-compact-send",
+            "console-trace-send-uncompacted",
+            "console-trace-change-policy",
+            "console-trace-send-without",
+            "console-trace-send-without-library",
+            "console-trace-cancel",
+        } and all(
             button.is_mounted for button in recovery_buttons
         ), "CSS census requires fully mounted Console recovery controls"
         rules_map = app.stylesheet.rules_map

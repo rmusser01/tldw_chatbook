@@ -225,7 +225,10 @@ def tool_kill_switch_engaged(app: Any) -> bool:
     kill-switch reader returns ``None`` then); a read that raises counts as
     on, because the controller then composes no local tools either.
     """
-    service = getattr(app, "unified_mcp_service", None)
+    try:
+        service = app.unified_mcp_service
+    except AttributeError:
+        service = None
     getter = getattr(service, "get_kill_switch", None)
     if not callable(getter):
         return False

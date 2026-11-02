@@ -13048,6 +13048,9 @@ class ConsoleChatController:
                     skill_bundle_block=continuation.skill_bundle_block,
                     citation_repair_session=continuation.citation_repair_session,
                     turn_context=(turn_context_override or continuation.turn_context),
+                    # Trace opt-out may change diagnostic admission, not the
+                    # operational receipt owned by this validated native commit.
+                    mixin_attempt_id=commit.checkpoint.attempt_id,
                     preparation_id=None,
                     stream_signals=continuation.stream_signals,
                     before_provider_dispatch=enter_provider_dispatch,
@@ -15585,7 +15588,12 @@ class ConsoleChatController:
             return
         from tldw_chatbook.Agents.plain_chat_tool_surface import offered_builtin_tool_count
 
-        getattr(self.app, "console_selected_tool_counts", {}).pop(session_id, None)
+        app = self.app
+        try:
+            counts = app.console_selected_tool_counts
+        except AttributeError:
+            counts = {}
+        counts.pop(session_id, None)
         self.app.console_tool_count = offered_builtin_tool_count(self._agent_bridge, session_id)
         self.app.console_mcp_tool_count = tool_count
         self.app.console_mcp_not_connected_count = not_connected_count
@@ -15593,7 +15601,11 @@ class ConsoleChatController:
     def _publish_selected_tool_count(self, session_id: str, count: int) -> None:
         """Publish the selected first request on the controller loop."""
         if self.app is not None:
-            counts = getattr(self.app, "console_selected_tool_counts", {})
+            app = self.app
+            try:
+                counts = app.console_selected_tool_counts
+            except AttributeError:
+                counts = {}
             counts[session_id] = count
             self.app.console_selected_tool_counts = counts
 
@@ -21677,14 +21689,24 @@ class ConsoleChatController:
         """Compose the selection owner from this runtime's existing app services."""
         from .console_prompt_mixin_service import ConsolePromptMixinService
 
+        store = self.store
+        app = self.app
+        try:
+            prompt_scope_service = app.prompt_scope_service
+        except AttributeError:
+            prompt_scope_service = None
+        persistence = self.store.persistence
+        app = self.app
+        try:
+            settings_durability_owner = app.console_settings_durability_owner
+        except AttributeError:
+            settings_durability_owner = None
         return ConsolePromptMixinService(
-            store=self.store,
-            prompt_scope_service=getattr(self.app, "prompt_scope_service", None),
-            persistence=self.store.persistence,
+            store=store,
+            prompt_scope_service=prompt_scope_service,
+            persistence=persistence,
             preparation_owner=self,
-            settings_durability_owner=getattr(
-                self.app, "console_settings_durability_owner", None
-            ),
+            settings_durability_owner=settings_durability_owner,
         )
 
     async def capture_turn_configuration_snapshot(
@@ -24841,6 +24863,7 @@ class ConsoleChatController:
         propagate_trace_call_persistence_errors: bool = False,
         trusted_profile_user_message_id: str | None = None,
         mixin_anchor_id: str | None = None,
+        mixin_attempt_id: str | None = None,
         mixin_retry_of_attempt_id: str | None = None,
         mixin_replaces_attempt_id: str | None = None,
         mixin_observation_revision: int | None = None,
@@ -24895,6 +24918,7 @@ class ConsoleChatController:
                     ),
                     trusted_profile_user_message_id=trusted_profile_user_message_id,
                     mixin_anchor_id=mixin_anchor_id,
+                    mixin_attempt_id=mixin_attempt_id,
                     mixin_retry_of_attempt_id=mixin_retry_of_attempt_id,
                     mixin_replaces_attempt_id=mixin_replaces_attempt_id,
                     mixin_observation_revision=mixin_observation_revision,
@@ -24941,6 +24965,7 @@ class ConsoleChatController:
         propagate_trace_call_persistence_errors: bool = False,
         trusted_profile_user_message_id: str | None = None,
         mixin_anchor_id: str | None = None,
+        mixin_attempt_id: str | None = None,
         mixin_retry_of_attempt_id: str | None = None,
         mixin_replaces_attempt_id: str | None = None,
         mixin_observation_revision: int | None = None,
@@ -25008,7 +25033,7 @@ class ConsoleChatController:
             None,
         )
         if current_user is not None:
-            attempt_id = turn_context.library_authority.attempt_id
+            attempt_id = mixin_attempt_id or turn_context.library_authority.attempt_id
             assistant_row = self.store.get_message(assistant_message_id)
             previous = (
                 assistant_row.metadata.mixin_attempt_id
@@ -30174,10 +30199,14 @@ def _stock_console_tool_composition_current(controller):
     from tldw_chatbook.Agents import mcp_tool_provider as providers
     from tldw_chatbook.MCP.console_snapshot import standard_console_catalog_sources
 
-    if (not providers._controller_factory_current(MCPToolProvider)
-        or not standard_console_catalog_sources(
-            getattr(controller.app, "unified_mcp_service", None)
-        )):
+    if not providers._controller_factory_current(MCPToolProvider):
+        return False
+    app = controller.app
+    try:
+        service = app.unified_mcp_service
+    except AttributeError:
+        service = None
+    if not standard_console_catalog_sources(service):
         return False
     for name, original, code, namespace, defaults, keyword_defaults, keyword_items, closure in _CONSOLE_TOOL_COMPOSITION_METHODS:
         # Examine descriptors without running custom getters during qualification.

@@ -5856,7 +5856,10 @@ class ConsoleWorkspaceController:
         from ...Chat.console_preparation_reads import run_preparation_read
 
         app = self.app_instance
-        registry = getattr(app, "workspace_registry_service", None)
+        try:
+            registry = app.workspace_registry_service
+        except AttributeError:
+            registry = None
         database = getattr(registry, "db", None)
         if not (
             type(registry) is LocalWorkspaceRegistryService
@@ -5908,9 +5911,16 @@ class ConsoleWorkspaceController:
 
         def view_current():
             source_current()
+            if self.app_instance is not app:
+                raise _WorkspaceAvailabilityObsolete(
+                    "workspace_reconciliation_view_changed"
+                )
+            try:
+                current_registry = app.workspace_registry_service
+            except AttributeError:
+                current_registry = None
             if (
-                self.app_instance is not app
-                or getattr(app, "workspace_registry_service", None) is not registry
+                current_registry is not registry
                 or self._workspace_availability_runtime() is not runtime
                 or self._screen_lifecycle_token() != lifecycle
                 or not self._screen_running_accessor()

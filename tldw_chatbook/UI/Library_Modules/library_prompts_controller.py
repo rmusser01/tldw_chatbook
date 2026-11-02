@@ -394,11 +394,6 @@ from ...Widgets.Library import (
     LibraryPromptWorkPane,
     LibraryPromptsListCanvas,
 )
-from ...Widgets.Library.prompt_delete_confirmation_modal import (
-    PromptDeleteConfirmationModal,
-    PromptDeleteItem,
-    PromptDeleteRequest,
-)
 from ...Widgets.Prompts.prompt_block_editor import PromptBlockEditor
 from ...Widgets.Prompts.prompt_block_editor_state import (
     PromptBlockEditorState,
@@ -1637,7 +1632,10 @@ class LibraryPromptsController:
         if state.mixin_definition is None or self._selected_prompt_id is None:
             return
         app = self.app_instance
-        target_getter = getattr(app, "console_prompt_target_projection", None)
+        try:
+            target_getter = app.console_prompt_target_projection
+        except AttributeError:
+            target_getter = None
         target = target_getter() if callable(target_getter) else None
         if (
             target is None
@@ -2106,7 +2104,14 @@ class LibraryPromptsController:
         if isinstance(detail, Mapping) and detail.get("artifact_type") == "mixin":
             try:
                 current_identity = service.mixin_source_identity(mode="local")
-                if requested_identity is None or getattr(self.app_instance, "prompt_scope_service", None) is not service or current_identity[0] != requested_identity[0] or any(a is not b for a, b in zip(current_identity[1:], requested_identity[1:])):
+                if requested_identity is None:
+                    raise ValueError("mixin_source_changed")
+                app = self.app_instance
+                try:
+                    current_service = app.prompt_scope_service
+                except AttributeError:
+                    current_service = None
+                if current_service is not service or current_identity[0] != requested_identity[0] or any(a is not b for a, b in zip(current_identity[1:], requested_identity[1:])):
                     raise ValueError("mixin_source_changed")
             except (AttributeError, ValueError):
                 return self._apply_library_prompt_detail_failure(copy="Prompt source changed. Reopen this mix-in.", retryable=True, entry_origin=entry_origin)
@@ -3378,7 +3383,12 @@ class LibraryPromptsController:
         def source_current():
             if mixin_identity is None:
                 return True
-            if getattr(self.app_instance, "prompt_scope_service", None) is not service:
+            app = self.app_instance
+            try:
+                current_service = app.prompt_scope_service
+            except AttributeError:
+                current_service = None
+            if current_service is not service:
                 return False
             try:
                 now = service.mixin_source_identity(mode="local")
@@ -4241,6 +4251,12 @@ class LibraryPromptsController:
         editor_prompt_id: int | None,
     ) -> None:
         """Capture a strict snapshot and expose only an opaque modal token."""
+        from ...Widgets.Library.prompt_delete_confirmation_modal import (
+            PromptDeleteConfirmationModal,
+            PromptDeleteItem,
+            PromptDeleteRequest,
+        )
+
         self._library_prompt_mutation_generation += 1
         fingerprint = str(self._library_prompt_mutation_generation)
         targets = tuple(

@@ -44,6 +44,7 @@ from textual.worker import (
 
 from tldw_chatbook.app_keep_alive import keep_alive_notice, retire_dead_pump
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
+from tldw_chatbook.app_shutdown import _drain_app_unmount_services
 from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.config import (
     get_cli_config_path,
@@ -55,7 +56,6 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
 from tldw_chatbook.Utils.app_shutdown import (
-    _drain_app_unmount_services,
     arm_exit_watchdog,
     unregister_running_app,
 )

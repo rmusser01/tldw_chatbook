@@ -108,7 +108,6 @@ LIVE_FIRST_SEND_IMPORTS = (
     "Canvas.capabilities",
     "Canvas.control_protocol",
     "Tools.remote_session_registry",
-    "Tools.remote_session_worker",
     "UI.Console_Modules.citation_counts",
 )
 

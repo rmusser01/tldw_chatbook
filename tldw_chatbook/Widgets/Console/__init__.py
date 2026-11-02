@@ -47,7 +47,6 @@ from .console_message_more_menu import (
     message_more_menus_on_screen,
 )
 from .console_rail_handle import ConsoleRailHandle
-from .console_prompts_modal import ConsolePromptsModal
 from .console_prompts_state import ConsolePromptsState, PromptBrowseResult
 from .console_project_instructions import (
     ConsoleProjectInstructionContextPanel,
@@ -96,6 +95,10 @@ from .console_workspace_switcher_modal import (
 
 def __getattr__(name: str):
     """Load deferred Console widgets when their public export is first used."""
+    if name == "ConsolePromptsModal":
+        from .console_prompts_modal import ConsolePromptsModal
+
+        return ConsolePromptsModal
     if name in {
         "ConsoleVoicePreview",
         "VoicePreviewProjection",

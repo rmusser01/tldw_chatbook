@@ -513,6 +513,8 @@ def build_first_run_provider_commit(
                 credential_value
                 if credential.source == "environment"
                 else resolved_env_var
+                if source == "environment"
+                else None
             ),
         )
 

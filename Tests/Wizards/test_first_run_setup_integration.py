@@ -1116,3 +1116,47 @@ async def test_a_listed_model_setup_saves_leaves_the_saved_model_list_alone(requ
     on_disk = tomllib.loads(path.read_text(encoding="utf-8"))
     assert on_disk["chat_defaults"]["model"] == "served-y"
     assert on_disk["providers"] == saved
+
+
+@pytest.mark.parametrize("source", ["none", "stored", "environment"])
+@private_profile_test
+def test_provider_commit_carries_environment_selector_only_for_environment_source(
+    request, monkeypatch, source
+):
+    from tldw_chatbook.Chat import provider_setup_persistence
+
+    env_name = "WIZARD_TEST_CREDENTIAL_SELECTOR"
+    monkeypatch.delenv(env_name, raising=False)
+    if source == "environment":
+        monkeypatch.setenv(env_name, "owned-environment-key")
+    settings = {
+        "api_url": "http://127.0.0.1:8080",
+        "api_key": "owned-stored-key" if source == "stored" else "",
+        "api_key_env_var": env_name,
+    }
+    draft = _typed_provider_draft(
+        provider="llama_cpp",
+        endpoint=settings["api_url"],
+        source="environment" if source == "environment" else "none",
+        value=env_name if source == "environment" else "",
+    )
+    captured = []
+    original = provider_setup_persistence.build_provider_setup_mutation
+
+    def observe(validated, *args, **kwargs):
+        captured.append(validated)
+        return original(validated, *args, **kwargs)
+
+    monkeypatch.setattr(
+        provider_setup_persistence, "build_provider_setup_mutation", observe
+    )
+    mutation = wizard_state.build_first_run_provider_commit(
+        draft, "served-model", {"api_settings": {"llama_cpp": settings}}
+    )
+    assert isinstance(mutation, provider_setup_persistence.ProviderSetupMutation)
+    assert len(captured) == 1
+    assert captured[0].credential_source == source
+    assert captured[0].credential_env_var == (
+        env_name if source == "environment" else None
+    )
+    assert captured[0].credential_value is None

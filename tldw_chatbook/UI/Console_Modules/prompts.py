@@ -146,22 +146,6 @@ from ...Widgets.Console.console_composer_bar import (
     ComposerDraftSnapshot,
     ComposerTransactionValidationError,
 )
-from ...Widgets.Console.console_prompt_improve_view import (
-    ConsolePromptImprovementContext,
-)
-from ...Widgets.Console.console_prompt_picker_modal import (
-    MODE_APPLY_SYSTEM as CONSOLE_PROMPT_PICKER_MODE_APPLY_SYSTEM,
-)
-from ...Widgets.Console.console_prompt_picker_modal import (
-    ConsolePromptPickerModal,
-)
-from ...Widgets.Console.console_prompts_modal import (
-    ConsolePromptsApplyOutcome,
-    ConsolePromptsModal,
-    ConsolePromptsResult,
-    ConsoleRecipeApplyGuard,
-    ConsoleSavedPromptApplyGuard,
-)
 from ...Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
@@ -183,6 +167,10 @@ CONSOLE_PROMPT_PAGE_SIZE = 10
 CONSOLE_PROMPT_SEARCH_LIMIT = 25
 
 if TYPE_CHECKING:
+    from ...Widgets.Console.console_prompts_modal import (
+        ConsolePromptsApplyOutcome,
+        ConsolePromptsResult,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
@@ -815,6 +803,10 @@ class _ConsolePromptImprovementFlow:
             ValueError: Naming what drifted -- availability, identity,
                 version, compatibility or content.
         """
+        from ...Widgets.Console.console_prompts_modal import (
+            ConsoleSavedPromptApplyGuard,
+        )
+
         if not isinstance(captured, ConsoleSavedPromptApplyGuard):
             return
         latest = await self._source.detail(captured.source, captured.prompt_source_id)
@@ -845,6 +837,10 @@ class _ConsolePromptImprovementFlow:
         The apply already landed by the time this runs, so a recorder failure
         is a warning about bookkeeping -- never a rollback.
         """
+        from ...Widgets.Console.console_prompts_modal import (
+            ConsoleSavedPromptApplyGuard,
+        )
+
         if (
             not isinstance(captured, ConsoleSavedPromptApplyGuard)
             or not captured.record_usage
@@ -867,6 +863,12 @@ class _ConsolePromptImprovementFlow:
         self, result: ConsolePromptsResult, captured: Any
     ) -> ConsolePromptsApplyOutcome:
         """Apply a reviewed result to the live session, or refuse as stale."""
+        from ...Widgets.Console.console_prompts_modal import (
+            ConsolePromptsApplyOutcome,
+            ConsoleRecipeApplyGuard,
+            ConsoleSavedPromptApplyGuard,
+        )
+
         stale = self._stale_reason()
         if stale:
             return ConsolePromptsApplyOutcome("stale", stale)
@@ -936,6 +938,8 @@ class _ConsolePromptImprovementFlow:
         self, result: ConsolePromptsResult
     ) -> ConsolePromptsApplyOutcome:
         """Re-attempt a System-prompt persist that failed, and only that."""
+        from ...Widgets.Console.console_prompts_modal import ConsolePromptsApplyOutcome
+
         if self._store.active_session_id != self._session_id or not result.apply_system:
             return ConsolePromptsApplyOutcome(
                 "stale", "The active Console session changed."
@@ -1715,6 +1719,11 @@ class ConsolePromptsController:
         this method's scope; see each class's docstring for why they split
         where they do.
         """
+        from ...Widgets.Console.console_prompt_improve_view import (
+            ConsolePromptImprovementContext,
+        )
+        from ...Widgets.Console.console_prompts_modal import ConsolePromptsModal
+
         source = _ConsolePromptSource(
             getattr(self.app_instance, "prompt_scope_service", None)
         )
@@ -1824,6 +1833,19 @@ class ConsolePromptsController:
                 staged_sources=tuple(store.workspace_context.allowed_sources),
             )
 
+        def mixin_source_current() -> bool:
+            if not (
+                store.active_session_id == session_id
+                and self._ensure_console_chat_store() is store
+            ):
+                return False
+            app = self.app_instance
+            try:
+                current_service = app.prompt_scope_service
+            except AttributeError:
+                current_service = None
+            return current_service is source._service
+
         self.push_screen(
             ConsolePromptsModal(
                 capabilities=source.capabilities,
@@ -1853,12 +1875,7 @@ class ConsolePromptsController:
                     service=self._mixin_service(),
                     session_id=session_id,
                     next_send_preview=mixin_preview_payload,
-                    is_current=lambda: (
-                        store.active_session_id == session_id
-                        and self._ensure_console_chat_store() is store
-                        and getattr(self.app_instance, "prompt_scope_service", None)
-                        is source._service
-                    ),
+                    is_current=mixin_source_current,
                 ),
             ),
             callback=self._restore_console_composer_focus,
@@ -2263,6 +2280,9 @@ class ConsolePromptsController:
         target: _ConsolePromptReplaceTarget | None = None,
     ) -> None:
         """Open the prompt picker for `/prompt`, inserting whatever is chosen."""
+        from ...Widgets.Console.console_prompt_picker_modal import (
+            ConsolePromptPickerModal,
+        )
 
         captured_target = target or self._capture_prompt_replace_target()
         if captured_target is None:
@@ -2494,6 +2514,12 @@ class ConsolePromptsController:
         Task 11) -- this caller only needs to apply whatever record the
         picker actually dismisses with.
         """
+        from ...Widgets.Console.console_prompt_picker_modal import (
+            MODE_APPLY_SYSTEM as CONSOLE_PROMPT_PICKER_MODE_APPLY_SYSTEM,
+        )
+        from ...Widgets.Console.console_prompt_picker_modal import (
+            ConsolePromptPickerModal,
+        )
 
         def _apply_picker_choice(record: Optional[Mapping[str, Any]]) -> None:
             self._focus_console_composer_if_needed(force=True)

@@ -112,3 +112,34 @@ def test_future_and_corrupt_preferences_keep_raw_without_repr_leaks():
         decode_mixin_preferences('{"schema_version":1,"schema_version":2}').status
         == "corrupt"
     )
+
+
+def test_public_mixin_values_are_the_shared_models_without_service_imports():
+    import subprocess
+    import sys
+
+    script = """
+import sys
+from tldw_chatbook.Chat import console_prompt_mixin_models as models
+from tldw_chatbook.Chat import console_prompt_mixins as public
+for name in (
+    'MixinSourceRef', 'MixinSelection', 'MixinPreferences', 'MixinSnapshot',
+    'MixinAttemptSnapshot', 'MixinAttemptWrite', 'MixinPreferenceRead',
+    'MixinReplayRead', 'MixinForkAttempt', 'MixinForkState',
+    'MixinPreferenceConflictError', 'MixinSnapshotUnavailableError',
+    'MixinSourceChangedError', 'decode_mixin_preferences', 'encode_mixin_preferences',
+):
+    assert getattr(public, name) is getattr(models, name), name
+for name in (
+    'prompt_source_capabilities', 'prompt_artifact_codec', 'prompt_block_compiler',
+):
+    assert 'tldw_chatbook.Prompt_Management.' + name not in sys.modules, name
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

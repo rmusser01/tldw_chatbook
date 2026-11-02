@@ -400,7 +400,8 @@ Even ideal balance at 27 shards has a lower-bound forecast of 1027.70 seconds un
 
 ## Amendment (2026-10-28, TASK-37266..37268): enroll native publication and export controls
 
-Current UI lane: 32 shards. The current total is 38 eligible test jobs per PR.
+Current UI lane: 32 shards. The current total is 39 eligible test jobs per PR
+(2026-11-02: includes the third admission-sensitive lane).
 The `max-parallel: 17` ceiling, peak 23 application test runners (24 with
 Perf Guard), minimal dependencies, serial execution, 20-minute job cap,
 180-second test timeout and fail-closed required aggregation remain unchanged.

@@ -12,7 +12,6 @@ from unicodedata import category
 from urllib.parse import urlsplit, urlunsplit
 
 from ..provider_registry import ALL_RECORDS, ProviderRecord
-from .provider_setup_facts import ROUTE_SUFFIXES
 
 EndpointForm = Literal[
     "origin",
@@ -81,14 +80,23 @@ _ENGINE_PRESETS = {
     for record in ALL_RECORDS
     if record.engine_driven and record.key != "custom-hosted"
 }
+
+
 #: TASK-34100.6 (review provider-20 / task-33621.32): a preset whose saved base
 #: already carries its API version owns its route suffix, so it resolves like
 #: an engine preset (``<base>/chat/completions``). Z.ai's ``/api/paas/v4``
 #: base previewed and saved ``…/v4/v1/chat/completions`` under the generic rule.
 #: The setup facts' ``ROUTE_SUFFIXES`` is the one owner (review round 1, F11).
-_ROUTE_OWNING_PRESETS = {
-    record.key: record for record in ALL_RECORDS if record.key in ROUTE_SUFFIXES
-}
+@lru_cache(maxsize=1)
+def _route_owning_presets() -> dict[str, ProviderRecord]:
+    """Load setup facts when interpreting an endpoint, keeping imports pure."""
+    from .provider_setup_facts import ROUTE_SUFFIXES
+
+    return {
+        record.key: record for record in ALL_RECORDS if record.key in ROUTE_SUFFIXES
+    }
+
+
 #: Cloudflare Workers AI's OpenAI-compatible base is ``…/accounts/<id>/ai/v1``
 #: (record ``CLOUDFLARE``, which carries no suffix). The account URL alone has
 #: no chat route, and Workers AI has no listing to catch it before the first
@@ -287,7 +295,7 @@ def _resolve_provider_endpoint(
         return _invalid_resolution(provider_key, "Endpoint path is ambiguous.")
 
     netloc = _normalized_netloc(canonical_host, port)
-    preset = _ENGINE_PRESETS.get(provider_key) or _ROUTE_OWNING_PRESETS.get(
+    preset = _ENGINE_PRESETS.get(provider_key) or _route_owning_presets().get(
         provider_key
     )
     if preset is not None:

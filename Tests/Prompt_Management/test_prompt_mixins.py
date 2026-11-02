@@ -436,3 +436,69 @@ async def test_mixin_update_with_none_version_refuses_interleaved_write(
     assert result["version"] == 2
     db.close()
     other.close()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"artifact_type": "prompt"},
+        {"artifact_type": "recipe"},
+        {"prompt_format": "legacy"},
+        {"prompt_schema_version": 4},
+        {"prompt_schema_version": True},
+        {"definition_change": {"schema_version": True}},
+        {"definition_change": {"kind": "block_prompt"}},
+        {"definition_change": {"extra": 1}},
+        {"definition_change": {"body": "  "}},
+        {"definition_change": {"placement": "middle"}},
+        {"prompt_definition": "not JSON"},
+        {"prompt_definition": "[]"},
+    ],
+)
+def test_snapshot_model_decoder_refuses_mislabeled_or_malformed_rows(change):
+    import json
+
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+
+    definition = {
+        "kind": "text_mixin",
+        "schema_version": 3,
+        "body": "literal {untouched}",
+        "placement": "before",
+    }
+    definition.update(change.get("definition_change", {}))
+    record = {
+        "artifact_type": "mixin",
+        "prompt_format": "structured",
+        "prompt_schema_version": 3,
+        "prompt_definition": json.dumps(definition),
+    }
+    record.update(
+        {key: value for key, value in change.items() if key != "definition_change"}
+    )
+    database = PromptsDatabase(":memory:", "literal-model-boundary")
+    uid = "00000000-0000-4000-8000-000000000001"
+    try:
+        with database.transaction() as connection:
+            connection.execute(
+                "INSERT INTO Prompts (name, uuid, last_modified, client_id, artifact_type, "
+                "prompt_format, prompt_schema_version, prompt_definition) "
+                "VALUES ('Literal', ?, 'now', 'fixture', ?, ?, ?, ?)",
+                (
+                    uid,
+                    record["artifact_type"],
+                    record["prompt_format"],
+                    record["prompt_schema_version"],
+                    record["prompt_definition"],
+                ),
+            )
+        with pytest.raises(ValueError, match="Requested mix-in is unsupported"):
+            database.fetch_mixin_snapshot((uid,))
+        stored = (
+            database.get_connection()
+            .execute("SELECT prompt_definition FROM Prompts WHERE uuid=?", (uid,))
+            .fetchone()
+        )
+        assert stored[0] == record["prompt_definition"]
+    finally:
+        database.close()

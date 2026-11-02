@@ -10681,14 +10681,21 @@ class ChatScreen(BaseAppScreen):
             staged_source_count=console_staged_source_count(pending_launch),
             tool_count=self._console_tool_count(),
             tools_estimate=True,
-            selected_tool_count=getattr(self.app_instance, "console_selected_tool_counts", {}).get(
-                getattr(active_session, "id", None)
-            ),
+            selected_tool_count=self._console_selected_tool_count(active_session),
             mcp_tool_count=self._console_mcp_tool_count(),
             approval_count=self._console_pending_approval_count(),
             system_prompt_set=bool(getattr(settings, "system_prompt", None)),
             emergency_stop_held=bool(self._console_emergency_stop_copy),
         )
+
+    def _console_selected_tool_count(self, session: Any) -> int | None:
+        """Read the current session's selected-tool projection from its app owner."""
+        app = self.app_instance
+        try:
+            counts = app.console_selected_tool_counts
+        except AttributeError:
+            counts = {}
+        return counts.get(getattr(session, "id", None))
 
     def _sync_console_cost_chip(self) -> None:
         """Refresh through the current Screen presentation entry."""
@@ -17864,7 +17871,12 @@ class ChatScreen(BaseAppScreen):
                 await self._sync_native_console_transcript()
                 if not poll_is_current():
                     return False
-                if getattr(self.app_instance, "_ui_ready", True):
+                app = self.app_instance
+                try:
+                    ui_ready = app._ui_ready
+                except AttributeError:
+                    ui_ready = True
+                if ui_ready:
                     await self._archive_recovery_view().sync()
                 if not poll_is_current():
                     return False
