@@ -3012,14 +3012,24 @@
       "bytes": 141048
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verification.md": {
-      "sha256": "1a6e239c886e440ace35807f9c4305da6640c661ee08ab3e63f4c044c4cf46dd",
-      "git_blob": "28c5fc42bf0d446ada1aed7eb7c6d6b3948904ee",
-      "bytes": 23704
+      "sha256": "33fed930070c4864f70838c91f3ff0db4e574b44c6fa0953cbc98715f80a306d",
+      "git_blob": "47f44169437e4aab5f1f4b10d0ad7f0dde450329",
+      "bytes": 23883
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py": {
       "sha256": "edda0cb05929fb2af22e4f44277df4af3f465512ee7d4eeeea94f9cbccabbd20",
       "git_blob": "bf05deaf992e4bfec8927d1ecd9e025104758656",
       "bytes": 2372
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/pr-rereview-2.md": {
+      "sha256": "b400e59ccbe20e8c64a34f132364bc439eeaeb2a51c19b221a263882a5a6266b",
+      "git_blob": "86c3ebb117a21b3381d4821d926c1a7b6f9808b7",
+      "bytes": 5673
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/rereview-fixes/final-clone-proof.json": {
+      "sha256": "908ac4fac618cda93b48e7eef36d03b87036b083e891d79a1fdbc6c50f391789",
+      "git_blob": "042386cbef50830c06229e3ea6f9dfa86c40e920",
+      "bytes": 2377
     }
   }
 }

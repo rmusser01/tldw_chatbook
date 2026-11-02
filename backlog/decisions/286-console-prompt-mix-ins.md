@@ -5,7 +5,7 @@ Date: 2026-11-01
 Related Task: [TASK-38534](../tasks/task-38534%20-%20Design-prompt-mix-ins-for-Console-sends.md)
 Spec: [Console prompt mix-ins](../../Docs/superpowers/specs/2026-11-01-prompt-mix-ins-design.md)
 Plan: [Prompt mix-in implementation](../../Docs/superpowers/plans/2026-11-01-prompt-mix-ins-implementation.md)
-Implementation: Complete in slices 1–9 and reviewed final integration corrections (TASK-38544 reopened for current-dev integration). Evidence: Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verification.md
+Implementation: Complete on focused dev branch with schema86/Prompts6; PR3346 independent review and corrections approved, TASK-38544 Done. Evidence: Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verification.md
 Amends: [ADR-040](040-versioned-prompt-artifacts-and-safe-improvement-transactions.md), adding a separately discriminated mix-in artifact; [ADR-057](057-portable-chatbook-prompt-records.md), adding an explicitly versioned portable mix-in record
 Preserves: [ADR-097](097-console-reference-backed-semantic-trace-ledger.md), [ADR-098](098-visible-bounded-console-prompt-queue.md), [ADR-095](095-conversation-owned-console-generation-settings.md), [ADR-210](210-console-region-ownership.md)
 

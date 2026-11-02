@@ -1,7 +1,7 @@
 ---
 id: TASK-38544
 title: Qualify the integrated prompt mix-in lifecycle and document delivery
-status: In Progress
+status: Done
 created_date: 2026-11-01 19:30
 dependencies:
 - TASK-38541
@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/286-console-prompt-mix-ins.md
 assignee:
 - '@codex'
-updated_date: 2026-11-02 05:34
+updated_date: 2026-11-02 05:42
 ---
 
 ## Description
@@ -79,6 +79,7 @@ Focused current-dev port reconstructed on pinned dev 2acbcd42 without unrelated 
 PR3346 fresh review I1/M1 and branch-introduced preflight findings fixed. Checkbox proposals restore authoritative state without editor loss; capture is provisional and usage facts publish at native/queue acceptance, with frozen Retry/drain independent of current choices. Worker-owned ArtifactSelected confirmation, bounded post-await DOM access, literal labels, SQL allowlist, real no-statistics index plans and reviewed diagnostic inventory now pass. Native136 plus corrected transaction-retry node1, UI74, storage44, remaining prior covering35 and Prompt recovery8 pass; five gates pass. FIX_BASE963fe12 lint236/236 zero new, no new duplicate methods or formatter failures. ADR286 timing amended; see Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/review-fix-report.md. Keep In Progress for scoped re-review. No full suite, cloud-cache claim, push or merge.
 I1 acceptance follow-up reconciles row/count truth before dirty-preserving refresh and retains separate rendered values so repeated guarded clicks cannot publish stale checkbox state. Accepted usage now changes only last_used_version; existing Workbench observation/save owns layout CAS and rejects old layout intents. Final23 affected controls plus6 repeated-click/refusal controls pass. Real SQLite same-intent usage flush/reopen and held-save/new-selection CAS converge without stale overwrite. Shallow clone d981abb9aa verifies720 current records with all historical source objects absent. Keep In Progress for scoped review.
 Scoped re-review R1/R2 fixed: current capture witnesses publish accepted placement/order only at matching preference revision and advance layout revision; frozen supplied configurations, original Retry, queued drain and newer user edits cannot roll current layout back. Actual received manual/queue paths publish after acceptance; native successive placement survives durable flush/reopen through production Library policy hydration. ArtifactSelected remains worker-owned but target/editor publication is fenced across mode/source/unmount, preserving newer dirty Instructions. Targeted controls and three affected preflight guards pass; exact failures, setup diagnosis, FIX_BASE1a58 lint/AST/format and manifests retained in rereview-fixes QA. ADR286 amended. Keep In Progress for parent scoped review; no full suite or push.
+PR3346 current-dev integration and fresh review complete. Focused schema86/Prompts6 port excludes unrelated parent work. Independent review I1/M1 and scoped regressions R1/R2 are all closed with no new findings. Checkbox/header remain authoritative across refused/failed/stale/success actions; capture stays provisional, accepted current layout observations use captured-revision authority and advance layout intent revision, frozen replay cannot roll it back; manual-target callbacks are fenced across navigation/source/unmount. Current SQLite reopen/send, received/replay/queue and mounted event-route controls pass. Branch-introduced table/index/worker/markup/diagnostic preflight corrections were reviewed, with real no-stat1 plan pins and no census suppression. Latest strict clone verifies757 current records with absent historical objects explicitly unavailable. Exact overlapping run results and baseline/FD/live limits are in durable QA review reports. ADR286 amended/linked. No full suite or Qodo request; draft publication by controller.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

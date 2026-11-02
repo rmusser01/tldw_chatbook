@@ -63,14 +63,14 @@
       "bytes": 383428
     },
     "Docs/superpowers/plans/2026-11-01-prompt-mix-ins-implementation.md": {
-      "sha256": "05c611b98ed54ba8fbff4f53f087cbc492ffed04f23a89dd8a09fe7069056cc2",
-      "git_blob": "b3efca43c7854b895809a67e96b0241362fb061f",
-      "bytes": 67446
+      "sha256": "3b258fd16eccb00e197bc0c2175cc14f6adc84403cc56cc3654ea3077f8ae00b",
+      "git_blob": "52146cf63c491618d93d6224eabeddcca7a28d70",
+      "bytes": 67371
     },
     "Docs/superpowers/specs/2026-11-01-prompt-mix-ins-design.md": {
-      "sha256": "d36c0d6dff3a7ad9ed0c42c3f87fca7702de57f3cc0e2caa493d122b5cbfad7c",
-      "git_blob": "196b07304f2bed44fba6afcfcdf1e698035251d0",
-      "bytes": 27169
+      "sha256": "e848a075a6def2152b8bc3368164134962017b9dddb34178469cc1ce4ed7af82",
+      "git_blob": "40014dbcc5fcc5693489993b5b92f482cee7a99f",
+      "bytes": 27139
     },
     "Tests/Backup_Recovery/test_core_owners.py": {
       "sha256": "82e5962f8879feae9150b2725b3b5a3518e3e022bb7d4c4e70098e6cd5f3769a",
@@ -293,9 +293,9 @@
       "bytes": 5326
     },
     "backlog/decisions/286-console-prompt-mix-ins.md": {
-      "sha256": "ce3df4307636526dd86affba45b383c125b166642f6e571f1581dd4ac1b90145",
-      "git_blob": "a311b21899873d3e328d65ba32c364c1ca16ce37",
-      "bytes": 17362
+      "sha256": "682b7df5c30c85ae5e5f9e2a2c25005eb430946f3c01a64619f6ae266b08d330",
+      "git_blob": "d2110ca0ffdd96d4b0e000a5fc937dddfda5d4b4",
+      "bytes": 17367
     },
     "backlog/decisions/README.md": {
       "sha256": "13d1e1829e4525a231505c7343588f6251a1ba91c8c1347d40779a562f59c61a",
@@ -363,9 +363,9 @@
       "bytes": 6141
     },
     "backlog/tasks/task-38544 - Qualify-the-integrated-prompt-mix-in-lifecycle-and-document-delivery.md": {
-      "sha256": "2b9625d7507996a088f302b9b5fdd7561edb8d5b29f9730e60543b39167ed606",
-      "git_blob": "a703a41f00e22991be5d087a9f4793706d8e14d8",
-      "bytes": 17767
+      "sha256": "11f6e0a557acfd819787963abcd3684539ba6d8c011cff1c16971bd3dd104d61",
+      "git_blob": "bbec58022ab8275c7cad227da9884682c4d594d8",
+      "bytes": 18809
     },
     "scripts/index_plan_pin_census.tsv": {
       "sha256": "d3ed18bf7bd7246b8e92c7ab95ed159b5151668294f1fb58fd99c99b90be9c16",

@@ -5,7 +5,7 @@ Status: Accepted 2026-11-01; written spec reviewed by the user
 Task: [TASK-38534](../../../backlog/tasks/task-38534%20-%20Design-prompt-mix-ins-for-Console-sends.md)
 ADR: [ADR-286](../../../backlog/decisions/286-console-prompt-mix-ins.md)
 Plan: [Prompt mix-in implementation](../plans/2026-11-01-prompt-mix-ins-implementation.md)
-Implementation: Complete, including reviewed final integration corrections (TASK-38544 reopened for current-dev integration). See the durable QA record for checks and limitations.
+Implementation: Complete on focused dev branch, including all PR3346 review corrections; TASK-38544 Done. See durable QA for results and limitations.
 
 ## 1. Purpose and approved scope
 
