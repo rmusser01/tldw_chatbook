@@ -5486,29 +5486,9 @@ class ConsoleSessionController:
 
     def _consume_visible_agent_handoff(self, store: Any, composer: Any) -> None:
         """Apply an accepted handoff receipt only to its exact visible revision."""
-        captured = self._visible_agent_handoff_draft
-        if captured is None:
-            return
-        session_id, incarnation, revision, snapshot = captured
-        session = next((row for row in store.sessions() if row.id == session_id), None)
-        if session is None or session.incarnation_id != incarnation:
-            self._visible_agent_handoff_draft = None
-            return
-        if session.agent_handoff_state != "consumed":
-            return
-        self._visible_agent_handoff_draft = None
-        live_snapshot = composer.capture_draft_snapshot()
-        if (
-            self._console_visible_draft_session_id == session_id
-            and session.agent_handoff_revision == revision + 1
-            and live_snapshot.generation == snapshot.generation
-            and live_snapshot.edit_serial == snapshot.edit_serial
-            and live_snapshot.segments == snapshot.segments
-        ):
-            # Caret/selection navigation does not author a new draft. Keep
-            # widget generation, authored revision and segment identity fenced.
-            if composer.commit_captured_draft(composer.capture_draft_for_send()):
-                self._console_draft_switch_snapshot = None
+        from .composer_run_controls import consume_visible_agent_handoff
+
+        consume_visible_agent_handoff(self, store, composer)
 
     def initialize_composer_draft(self, composer: Any) -> None:
         """Bind the initial visible draft before the composer accepts edits."""
@@ -5623,8 +5603,11 @@ class ConsoleSessionController:
                 typed_suffix = live_text[len(snap_text) :]
             known_revision = self._console_visible_draft_revision
             if live_text.startswith(snap_text) and known_revision is not None:
-                current = store.session_input_snapshot(visible_session_id)
-                if current.draft_revision != known_revision:
+                try:
+                    current = store.session_input_snapshot(visible_session_id)
+                except KeyError:
+                    current = None  # The old composer owner may already be closed.
+                if current is not None and current.draft_revision != known_revision:
                     save_text = current.draft
                     resident_draft_changed = True
         if visible_session_id is not None:

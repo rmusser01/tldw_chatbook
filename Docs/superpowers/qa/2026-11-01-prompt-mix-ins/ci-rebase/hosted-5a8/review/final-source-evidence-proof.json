@@ -1,0 +1,131 @@
+{
+  "python": "3.9.6 (default, Apr 30 2025, 02:07:17) \n[Clang 17.0.0 (clang-1700.0.13.5)]",
+  "base": "5a8f23eb9dfabeda25d46ed168d8ac675f483217",
+  "ui31": {
+    "normalized_original_body_ast_identical": true,
+    "facade_signature_doc_identical": true,
+    "facade_live_globals_exact": true,
+    "entire_original_test_file_is_unchanged_prefix": true,
+    "screen_only_approved_conditional": true,
+    "overlay_old_method_ast_identical_to_published": true
+  },
+  "ui26_artifact_inventory": {
+    "file_count": 38,
+    "fixture_directories_metadata_only": [],
+    "mismatches": [],
+    "inventory_identity": {
+      "bytes": 12707,
+      "sha256": "158387decfa6819946e60d5b367e3249f56c2fce26cb2fe83f16a04ca691e035",
+      "lines": 246
+    }
+  },
+  "ui26_external_artifacts": {
+    "/private/tmp/mixins-5a8-ui26.log": true
+  },
+  "ui31_artifact_inventory": {
+    "file_count": 34,
+    "fixture_directories_metadata_only": [
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/exact-final-green-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/final-approved-green-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/final-approved-old-red-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/final-bytes-red-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/frozen-green-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/green-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/qualification-old-red-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/red-native-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/red-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/red-valid-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/setup-probe-tmp",
+        "counts_bytes_match": true
+      },
+      {
+        "path": "/private/tmp/mixins-reader-restore-final/wiring-tmp",
+        "counts_bytes_match": true
+      }
+    ],
+    "mismatches": [],
+    "inventory_identity": {
+      "bytes": 8784,
+      "sha256": "61149b1efdbcfaf26ba2f62ac7923b98884367854f344ae46c5e817685bc7116",
+      "lines": 282
+    }
+  },
+  "ui26_frozen_sources": {
+    "tldw_chatbook/UI/Console_Modules/session.py": {
+      "bytes": 304376,
+      "sha256": "859502c11af84d244ecd08fddddba37ef5cb27d19883b818e14942ff8103efa8",
+      "lines": 6973,
+      "matches": true
+    },
+    "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": {
+      "bytes": 59592,
+      "sha256": "cbc38d9ae3a0049b832709c3ac89d7a42a9dc00cbfebbd1cc68800211306f81d",
+      "lines": 1567,
+      "matches": true
+    },
+    "Tests/UI/test_response_rules_end_to_end.py": {
+      "bytes": 10826,
+      "sha256": "88728a989d0b4f04117cd05232a494cc99e853cba351d98970a2ad821bef2860",
+      "lines": 241,
+      "matches": true
+    }
+  },
+  "ui31_frozen_sources": {
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": {
+      "bytes": 244565,
+      "sha256": "3051480add6edf724dc0fd7829dbb2194e2cde9764e587e0cf9cfca4939bf419",
+      "lines": 5246,
+      "matches": true
+    },
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": {
+      "bytes": 67852,
+      "sha256": "cc43d84343e5f40581bede079d19fc5c64140366b2d053663423d0e6e221a341",
+      "lines": 1314,
+      "matches": true
+    },
+    "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py": {
+      "bytes": 26905,
+      "sha256": "d283d15275448b8c03835e704a33bbf8f5098731cc689c97bace12cb7f4c84d0",
+      "lines": 640,
+      "matches": true
+    },
+    "tldw_chatbook/UI/Screens/library_screen.py": {
+      "bytes": 1768259,
+      "sha256": "6d16398620b71765d1aaf49a35dedf3d61e8f275fb3f15c0db67ccaf8ede9eb4",
+      "lines": 38177,
+      "matches": true
+    }
+  },
+  "all_checks_pass": true
+}

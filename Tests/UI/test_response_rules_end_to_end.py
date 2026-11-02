@@ -154,3 +154,88 @@ async def test_learn_repair_reopen_and_exclude_through_console(
         assert len(case.transport.requests) == helper_calls
         assert len(case.requests) == repairs
         assert originals[0].content == original.content
+
+
+@pytest.mark.asyncio
+async def test_close_during_resume_retires_the_old_visible_draft(tmp_path, monkeypatch):
+    from Tests.UI.response_rules_fixtures import seed_answer
+    from tldw_chatbook.UI.Console_Modules import composer_run_controls, workspace
+
+    async with mounted_rules_console(tmp_path, (120, 35)) as case:
+        await wait_for(
+            case,
+            lambda: (
+                case.console._console_attach_sync_complete
+                and case.console._console_attach_reconciled
+                and not case.console._console_attach_reconcile_running
+                and not case.console._console_sync_in_progress
+                and not case.console._console_sync_requested
+                and composer_run_controls.poll_source_is_current(
+                    case.console, case.console._console_completed_full_source
+                )
+            ),
+        )
+        answer = seed_answer(case)
+        old_session_id = case.session_id
+        conversation_id = next(
+            session.persisted_conversation_id
+            for session in case.chats.sessions()
+            if session.id == old_session_id
+        )
+        case.composer.load_draft("authored before closing")
+        case.composer.load_draft("")
+        await case.pilot.pause()
+        entered, release = asyncio.Event(), asyncio.Event()
+        load_tree = workspace.load_console_conversation_tree
+
+        async def held_original_tree(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await load_tree(*args, **kwargs)
+
+        monkeypatch.setattr(
+            workspace, "load_console_conversation_tree", held_original_tree
+        )
+        resume = asyncio.create_task(
+            case.console._workspace._resume_console_workspace_conversation(
+                conversation_id,
+                reuse_existing=False,
+                preserve_persisted_scope=True,
+            )
+        )
+        try:
+            await wait_for(case, entered.is_set)
+            snapshot = case.console._session._console_draft_switch_snapshot
+            assert snapshot is not None and snapshot[0] == old_session_id
+            assert case.console._session._console_visible_draft_revision is not None
+            await case.console._session._close_console_session_tab(old_session_id)
+            assert all(s.id != old_session_id for s in case.chats.sessions())
+        finally:
+            release.set()
+            resumed = await resume
+        assert resumed is True
+        case.session_id = case.chats.active_session_id
+        assert case.session_id != old_session_id
+        assert case.console._console_visible_draft_session_id == case.session_id
+        assert case.composer.draft_text() == ""
+        assert any(
+            message.persisted_message_id == answer.persisted_message_id
+            and message.content == "Missing proof"
+            for message in case.chats.read_only_messages_for_session(case.session_id)
+        )
+        case.composer.load_draft("/rules")
+        await case.pilot.pause()
+        await wait_for(
+            case,
+            lambda: (
+                not case.console.query_one("#console-send-message", Button).disabled
+                and not case.console.query_one(
+                    "#console-send-message", Button
+                ).has_class("-active")
+            ),
+        )
+        assert await case.pilot.click("#console-send-message")
+        await wait_for(case, lambda: isinstance(case.host.screen, ResponseRulesModal))
+        assert case.host.screen.scope == case.rules.scopes(case.session_id)[0]
+        assert case.requests == [] and case.transport.requests == []
+        assert case.host._exception is None

@@ -1,0 +1,45 @@
+{
+  "move_reverse_ast_equal": true,
+  "facade_signature_equal": true,
+  "facade_docstring_equal": true,
+  "all_original_test_helper_ASTs_equal": {
+    "_media_items": true,
+    "_host": true,
+    "_library": true,
+    "_open_media_item": true,
+    "_select_reader_mode": true,
+    "_scroll_reader": true,
+    "_rail": true,
+    "_reader_scroll_y": true,
+    "_loaded_rows": true,
+    "_saved": true,
+    "_session": true,
+    "test_media_item_survives_a_rail_round_trip": true,
+    "test_new_note_with_saved_content_survives_a_rail_round_trip": true,
+    "_record_surface_flags_at_mount": true,
+    "_assert_editor_surfaces_composed": true,
+    "_painted": true,
+    "_assert_editor_surfaces_painted": true,
+    "_assert_no_conflict_rendered": true,
+    "test_n_in_the_reader_creates_a_note_naming_the_document_and_the_reader_keeps_its_place": true
+  },
+  "original_test_source_prefix_unchanged": false,
+  "source": {
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": {
+      "sha256": "3051480add6edf724dc0fd7829dbb2194e2cde9764e587e0cf9cfca4939bf419",
+      "lines": 5246
+    },
+    "tldw_chatbook/UI/Library_Modules/canvas_sync.py": {
+      "sha256": "5ef6003537f92512744d35309aa96573e5790766ffda399acb89b7cc6b664c93",
+      "lines": 1311
+    },
+    "Tests/UI/test_library_rail_switch_keeps_reader_and_note.py": {
+      "sha256": "6c5e7c9b2bba6c8fe38475508520d9bd0e219a40159ed3349f0730367da38fd6",
+      "lines": 589
+    },
+    "tldw_chatbook/UI/Screens/library_screen.py": {
+      "sha256": "4a9d1e181d38389cbb1c34fcbdbc35f844a8a51acd911c70877c24158ea3b8a2",
+      "lines": 38177
+    }
+  }
+}

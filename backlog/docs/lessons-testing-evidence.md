@@ -24331,3 +24331,28 @@ detectors retain unsafe-case checks, and a 132-call AST comparison proves that
 only three logger ownership locations changed, with identical messages,
 arguments, levels and sink topology. A source move must preserve guard coverage
 as well as runtime behavior.
+
+## A green rerun can hide an ownership defect (PR3346)
+
+The first hosted run on `5a8f23eb9d` failed a Reader identity assertion and a
+response-rules reopen. Both passed on a failed-only same-head rerun, but native
+contracts still reproduced real faults: a programmatic Media focus restore
+selected another document, and draft reconciliation read a closed visible chat
+before binding its replacement. Keep the failed observation and qualify the
+rerun separately; a passing retry does not establish a repair.
+
+The Media test initially chased a fleeting row-focus window with delayed queries
+and observers. A smaller explicit system-focus contract, followed by genuine
+Down/Up/Down selection, proved the required distinction. Textual's official
+`run_test(message_hook=...)` observes the actual event without replacing its
+handler; arrival alone is not completion, so the final case also observes the
+same screen pump and subsequent request retirement. Initial resize suppression
+clears through real input, not an elapsed quiet period; ordinary Tab established
+that prerequisite without assigning authority flags. No-event focus attempts
+must not create markers, and failed writes may clear only their own marker.
+
+The final census check also rejected two redundant new node selectors because
+their file was already selected whole. Preserve that existing coverage and add
+only genuinely uncovered nodes; entry counts are not test counts. Final evidence
+and the corrected enrollment are in
+`Docs/superpowers/qa/2026-11-01-prompt-mix-ins/ci-rebase/hosted-5a8/summary.md`.

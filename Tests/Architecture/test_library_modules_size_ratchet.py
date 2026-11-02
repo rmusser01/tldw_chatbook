@@ -460,7 +460,7 @@ _BUDGETS: dict[str, int] = {
     # act on the loaded item in the list view too), the highlight hold also
     # holds while a form is dirty in any view, and the trash confirm's title
     # derives from the same target id as the Delete press. Exact measurement.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5281,
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 5246,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

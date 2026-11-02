@@ -1,0 +1,26 @@
+[
+  {
+    "path": "Tests/Architecture/test_module_size_ratchet.py",
+    "baseline": 1,
+    "current": 1,
+    "new": []
+  },
+  {
+    "path": "Tests/Architecture/test_library_modules_size_ratchet.py",
+    "baseline": 1,
+    "current": 1,
+    "new": []
+  },
+  {
+    "path": "Tests/CI/test_ci_queue_pressure_contract.py",
+    "baseline": 0,
+    "current": 0,
+    "new": []
+  },
+  {
+    "path": "scripts/check_ui_pr_gate_census.py",
+    "baseline": 2,
+    "current": 2,
+    "new": []
+  }
+]

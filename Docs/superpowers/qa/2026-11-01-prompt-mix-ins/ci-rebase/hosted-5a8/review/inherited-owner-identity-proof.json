@@ -1,0 +1,18 @@
+{
+  "_sync_console_session_draft": {
+    "ast_sha256_by_ref": {
+      "dev88af": "0e37ff2d14b3931903349a7beb51e0b1f1b3d4f4972daf0d10865367037a15d2",
+      "b110": "0e37ff2d14b3931903349a7beb51e0b1f1b3d4f4972daf0d10865367037a15d2",
+      "head5a8": "0e37ff2d14b3931903349a7beb51e0b1f1b3d4f4972daf0d10865367037a15d2"
+    },
+    "all_three_identical": true
+  },
+  "_restore_library_media_focus": {
+    "ast_sha256_by_ref": {
+      "dev88af": "37582bde62457fdf454b40819b4f213aa3f3aa0413366c5e680291ba3d3d6de8",
+      "b110": "37582bde62457fdf454b40819b4f213aa3f3aa0413366c5e680291ba3d3d6de8",
+      "head5a8": "37582bde62457fdf454b40819b4f213aa3f3aa0413366c5e680291ba3d3d6de8"
+    },
+    "all_three_identical": true
+  }
+}

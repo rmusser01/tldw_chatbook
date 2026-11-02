@@ -1,0 +1,237 @@
+{
+  "Tests/Architecture/test_module_size_ratchet.py": {
+    "head5a8": {
+      "old_rows": 98,
+      "removed": [],
+      "raised": [],
+      "lowered": [
+        [
+          "tldw_chatbook/UI/Console_Modules/session.py",
+          6990,
+          6973
+        ]
+      ],
+      "added": {
+        "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1567,
+        "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1311
+      }
+    },
+    "dev88af": {
+      "old_rows": 83,
+      "removed": [],
+      "raised": [],
+      "lowered": [
+        [
+          "tldw_chatbook/Utils/app_shutdown.py",
+          776,
+          554
+        ],
+        [
+          "tldw_chatbook/Chat/console_display_state.py",
+          2908,
+          2875
+        ],
+        [
+          "tldw_chatbook/app.py",
+          5704,
+          5687
+        ],
+        [
+          "tldw_chatbook/app_service_wiring.py",
+          3701,
+          3693
+        ],
+        [
+          "tldw_chatbook/app_command_providers.py",
+          1123,
+          1121
+        ],
+        [
+          "tldw_chatbook/Chat/console_chat_controller.py",
+          29323,
+          29173
+        ],
+        [
+          "tldw_chatbook/Chat/console_chat_store.py",
+          22369,
+          22317
+        ],
+        [
+          "tldw_chatbook/UI/Screens/personas_screen.py",
+          16859,
+          16829
+        ],
+        [
+          "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+          855,
+          818
+        ],
+        [
+          "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py",
+          1297,
+          992
+        ],
+        [
+          "tldw_chatbook/Widgets/Console/console_transcript.py",
+          8584,
+          8556
+        ],
+        [
+          "tldw_chatbook/DB/ChaChaNotes_DB.py",
+          25870,
+          25851
+        ],
+        [
+          "tldw_chatbook/Agents/agent_service.py",
+          9715,
+          9714
+        ],
+        [
+          "tldw_chatbook/UI/Console_Modules/workspace.py",
+          8938,
+          8935
+        ],
+        [
+          "tldw_chatbook/Chat/console_provider_gateway.py",
+          8528,
+          8487
+        ],
+        [
+          "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+          7195,
+          7189
+        ],
+        [
+          "tldw_chatbook/UI/Console_Modules/session.py",
+          7005,
+          6973
+        ],
+        [
+          "tldw_chatbook/Chat/console_runtime.py",
+          7091,
+          7069
+        ],
+        [
+          "tldw_chatbook/Chat/console_trace_service.py",
+          6765,
+          6587
+        ],
+        [
+          "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
+          5176,
+          5167
+        ],
+        [
+          "tldw_chatbook/DB/Prompts_DB.py",
+          4760,
+          4670
+        ],
+        [
+          "tldw_chatbook/Chat/citation_trace_repository.py",
+          4719,
+          4717
+        ],
+        [
+          "tldw_chatbook/Chat/chat_persistence_service.py",
+          4272,
+          4239
+        ]
+      ],
+      "added": {
+        "tldw_chatbook/Chat/console_agent_reply.py": 1156,
+        "tldw_chatbook/Chat/console_settings_persistence.py": 788,
+        "tldw_chatbook/Chat/console_memory_banner.py": 207,
+        "tldw_chatbook/Chat/console_trace_maintenance_runtime.py": 193,
+        "tldw_chatbook/DB/prompt_export.py": 241,
+        "tldw_chatbook/UI/Library_Modules/prompt_save_ack.py": 548,
+        "tldw_chatbook/UI/Library_Modules/screen_helpers.py": 401,
+        "tldw_chatbook/UI/Console_Modules/command_handoff.py": 322,
+        "tldw_chatbook/UI/Console_Modules/composer_run_controls.py": 1567,
+        "tldw_chatbook/UI/Library_Modules/canvas_sync.py": 1311,
+        "tldw_chatbook/Notes/notes_sync_startup.py": 34,
+        "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": 109,
+        "tldw_chatbook/Widgets/Console/console_selection_geometry.py": 52,
+        "tldw_chatbook/Widgets/Persona_Widgets/roleplay_item_list.py": 620,
+        "tldw_chatbook/app_config_notifications.py": 56,
+        "tldw_chatbook/app_idle_warmup.py": 25,
+        "tldw_chatbook/app_shutdown.py": 225
+      }
+    }
+  },
+  "Tests/Architecture/test_library_modules_size_ratchet.py": {
+    "head5a8": {
+      "old_rows": 25,
+      "removed": [],
+      "raised": [],
+      "lowered": [
+        [
+          "tldw_chatbook/UI/Library_Modules/library_media_controller.py",
+          5281,
+          5246
+        ]
+      ],
+      "added": {}
+    },
+    "dev88af": {
+      "old_rows": 25,
+      "removed": [],
+      "raised": [],
+      "lowered": [
+        [
+          "tldw_chatbook/UI/Library_Modules/library_media_controller.py",
+          5281,
+          5246
+        ],
+        [
+          "tldw_chatbook/UI/Library_Modules/library_prompts_controller.py",
+          5100,
+          5065
+        ]
+      ],
+      "added": {}
+    }
+  },
+  "Tests/Architecture/test_screen_size_ratchet.py": {
+    "head5a8": {
+      "old_rows": 2,
+      "removed": [],
+      "raised": [],
+      "lowered": [],
+      "added": {}
+    },
+    "dev88af": {
+      "old_rows": 2,
+      "removed": [],
+      "raised": [],
+      "lowered": [
+        [
+          "tldw_chatbook/UI/Screens/chat_screen.py",
+          [
+            "ChatScreen",
+            24605,
+            741
+          ],
+          [
+            "ChatScreen",
+            24590,
+            741
+          ]
+        ],
+        [
+          "tldw_chatbook/UI/Screens/library_screen.py",
+          [
+            "LibraryScreen",
+            38242,
+            1374
+          ],
+          [
+            "LibraryScreen",
+            38177,
+            1373
+          ]
+        ]
+      ],
+      "added": {}
+    }
+  }
+}

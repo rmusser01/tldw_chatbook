@@ -482,3 +482,159 @@ async def test_n_in_the_reader_creates_a_note_naming_the_document_and_the_reader
         )
         assert _loaded_rows(screen) == [MEDIA_ROW.lstrip("#")]
     profile.db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_programmatic_media_row_restore_keeps_reader_until_user_keys(tmp_path):
+    from textual._context import active_message_pump
+    from textual.events import DescendantFocus
+
+    watched_screen = restored_target = None
+    restore_focus_handled = False
+
+    def after_restore_focus():
+        nonlocal restore_focus_handled
+        restore_focus_handled = True
+
+    def observe_focus(message):
+        if (
+            isinstance(message, DescendantFocus)
+            and watched_screen is not None
+            and active_message_pump.get() is watched_screen
+            and message.widget is restored_target
+            and message.widget is watched_screen.focused
+        ):
+            watched_screen.call_later(after_restore_focus)
+
+    host, profile = _host(tmp_path)
+    try:
+        async with host.run_test(size=SIZE, message_hook=observe_focus) as pilot:
+            screen = await _library(host, pilot)
+            body = await _open_media_item(screen, pilot)
+            await pilot.press("tab")  # Real input retires initial resize suppression.
+            screen.set_focus(body.scroller)
+            await pilot.pause()
+
+            def detail_retired():
+                return (
+                    screen._media_controller._library_media_selection_timer is None
+                    and screen._media_state.reader_session.pending_request is None
+                    and not any(
+                        worker.group == "library_media_detail"
+                        and not worker.is_finished
+                        for worker in screen.workers
+                    )
+                )
+
+            await _until(
+                pilot,
+                lambda: (
+                    not screen._library_media_browse_controller.loading
+                    and not screen._library_media_browse_controller.facet_loading
+                    and not screen.query_one(
+                        "#library-media-canvas"
+                    ).has_pending_recompose_callback
+                    and not screen._library_pending_list_entry_focus
+                    and not screen._media_controller._library_media_find_focus_pending
+                    and not screen._library_notes_restoring_focus
+                    and not screen._notes_state.resize_settling
+                    and screen._library_notes_programmatic_focus_target is None
+                    and detail_retired()
+                ),
+                "the original Media entry/publication owners to retire",
+            )
+            session = screen._media_state.reader_session
+            assert screen._media_state.selected_media_id == LOADED_ID
+            assert session.selected_id == session.loaded_id == LOADED_ID
+            restored_target = screen.query_one("#library-media-row-0", Button)
+            assert str(restored_target.media_id) == "local:media:2"
+            watched_screen = screen
+
+            screen.set_focus(None)  # Framework/recompose focus-loss setup.
+            screen._restore_library_media_focus("#library-media-row-0")
+            await _until(
+                pilot, lambda: restore_focus_handled, "the real restore focus event"
+            )
+            await _until(
+                pilot, detail_retired, "any focus-triggered detail work to retire"
+            )
+            assert screen.focused is restored_target
+            assert screen._library_notes_programmatic_focus_target is None
+            assert screen._media_state.selected_media_id == LOADED_ID
+            assert screen._media_state.reader_session.selected_id == LOADED_ID
+            assert screen._media_state.reader_session.loaded_id == LOADED_ID
+
+            # Independent genuine-user phase: Down reaches Reader1's row,
+            # Up must select/load Reader2, then Down must select/load Reader1.
+            for key, expected in (
+                ("down", LOADED_ID),
+                ("up", "local:media:2"),
+                ("down", LOADED_ID),
+            ):
+                await pilot.press(key)
+                await _until(
+                    pilot,
+                    lambda expected=expected: (
+                        str(getattr(screen.focused, "media_id", "")) == expected
+                        and screen._media_state.selected_media_id == expected
+                        and screen._media_state.reader_session.selected_id == expected
+                        and screen._media_state.reader_session.loaded_id == expected
+                        and detail_retired()
+                    ),
+                    "the real row key to focus, select and finish loading its item",
+                )
+            assert host._exception is None
+    finally:
+        profile.db.close_connection()
+
+
+def test_programmatic_media_restore_releases_only_its_failed_focus_marker():
+    from types import SimpleNamespace
+
+    from textual.widget import Widget
+
+    from tldw_chatbook.UI.Library_Modules.library_media_controller import (
+        LibraryMediaController,
+    )
+
+    target = SimpleNamespace(focusable=True, has_class=lambda _: True)
+    later_owner = object()
+
+    class FocusAttempt:
+        _library_pending_list_entry_focus = False
+        _library_media_find_focus_pending = False
+        _library_notes_programmatic_focus_target = None
+
+        def __init__(self, outcome):
+            self.outcome = outcome
+            self.focused = target if outcome == "already-focused" else None
+            self.focus_calls = 0
+
+        def query_one(self, selector, widget_type):
+            assert selector == "#restore-target"
+            assert widget_type is Widget
+            return target
+
+        def set_focus(self, widget, *, scroll_visible):
+            self.focus_calls += 1
+            assert widget is target and scroll_visible is False
+            assert self._library_notes_programmatic_focus_target is target
+            if self.outcome == "later-owner":
+                self._library_notes_programmatic_focus_target = later_owner
+            if self.outcome != "noop":
+                raise RuntimeError("focus refused")
+
+    for outcome in ("already-focused", "noop", "raises", "later-owner"):
+        attempt = FocusAttempt(outcome)
+        if outcome in {"raises", "later-owner"}:
+            with pytest.raises(RuntimeError, match="focus refused"):
+                LibraryMediaController._restore_library_media_focus(
+                    attempt, "#restore-target"
+                )
+        else:
+            LibraryMediaController._restore_library_media_focus(
+                attempt, "#restore-target"
+            )
+        expected = later_owner if outcome == "later-owner" else None
+        assert attempt._library_notes_programmatic_focus_target is expected, outcome
+        assert attempt.focus_calls == int(outcome != "already-focused"), outcome

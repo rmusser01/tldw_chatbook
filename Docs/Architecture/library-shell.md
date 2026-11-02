@@ -45,6 +45,16 @@ initial readers share one outcome.
 
 Media canvas views: list / viewer / trash through one shared builder. Read-it-later is a `MediaReadItLaterState` row in the media DB (Home deep-links via the browse-subview context); reading progress is upserted per item and surfaced through the reading service. Saving a single reading item deliberately restores a trashed duplicate (an explicit user decision); the **bulk** import path stays non-restoring.
 
+`LibraryMediaController._restore_library_media_focus` delegates its captured
+focus restoration to the existing `canvas_sync` owner. The synchronous focus
+write records the exact programmatic target until its native focus event is
+consumed, so rebuilding Items preserves the loaded Reader. Same-target no-ops
+create no marker; failed focus writes clear only their own marker. Genuine
+keyboard focus changes retain the ordinary row-selection and loading path.
+Rail entry also uses its existing `keep_media_reader` decision to omit a
+competing explicit first-row intent when preserving a settled reader or dirty
+form. Fresh entry keeps the original first-row argument.
+
 ## Notes, prompts and skills surfaces
 
 - Notes Markdown/text export captures its payload, validated destination and existing Notes operation token before admitting a screen-owned `library-note-export` worker in `UI/Library_Modules/library_file_export.py`. FileSave and explicit Replace callbacks return after admission; only the synchronous atomic write runs in a thread. Late no-clobber collisions reopen the existing confirmation on-loop; metadata recheck failures use recoverable export feedback. Notes keeps its single-operation admission and region-scoped result handling; a later worker does not cancel an accepted write. Native screen retirement stops UI publication while an already-running atomic write can finish. Mounted private-profile regressions use the real picker/writer with seeded Notes service stand-ins, verify App key dispatch before writer release, literal output bytes/source preservation, failure/retry, collisions and changed result owners. Existing format and newline policy remain with the shared writer.

@@ -746,7 +746,8 @@ MINIMUM_FILES = 1318
 # the measured count, 1,165.
 # PR3334 integration: append tag picker after sniff.
 # PR3346: preserve the reviewed 1,333-entry prefix and append two extraction controls.
-MINIMUM_FILES = 1335
+# PR3346: reader cases use their existing whole-file slot; append closed-owner coverage.
+MINIMUM_FILES = 1336
 
 
 def read_census(path: Path) -> list[str]:

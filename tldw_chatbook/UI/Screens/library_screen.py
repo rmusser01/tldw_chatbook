@@ -23642,7 +23642,7 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._sync_library_media_reader_layout_from_shell)
             self._request_library_media_browse(
                 self._library_media_browse_controller.mutation_refresh_scope,
-                focus_identity="#library-media-row-0",
+                focus_identity=None if keep_media_reader else "#library-media-row-0",
             )
             self._request_library_media_facets()
             # task-28245: entering the media area with an active review set

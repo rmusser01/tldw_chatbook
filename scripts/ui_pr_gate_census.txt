@@ -1964,3 +1964,5 @@ Tests/UI/test_console_readiness_config_projection.py::test_closed_session_before
 # PR3346 pre-merge review: preserve screen derivations and live worker lookup.
 Tests/UI/test_screen_derivation_helpers.py
 Tests/UI/test_library_prompt_browse_controller.py::test_controller_live_reads_replaced_screen_worker
+# PR3346: reader regressions use the existing whole-file slot; append closed-owner coverage.
+Tests/UI/test_response_rules_end_to_end.py::test_close_during_resume_retires_the_old_visible_draft
