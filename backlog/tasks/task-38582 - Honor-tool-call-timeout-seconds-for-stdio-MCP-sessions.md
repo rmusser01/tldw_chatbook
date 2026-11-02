@@ -1,7 +1,7 @@
 ---
 id: TASK-38582
 title: Honor tool_call_timeout_seconds for stdio MCP sessions
-status: In Progress
+status: Done
 created_date: 2026-11-02 14:26
 labels:
 - bug
