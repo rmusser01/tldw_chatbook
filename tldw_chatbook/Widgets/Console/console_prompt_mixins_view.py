@@ -200,9 +200,31 @@ class ConsolePromptMixinsView(Vertical):
             index = int(event.checkbox.id.rsplit("-", 1)[1])
             row = self.projection.preferences.entries[index]
             if event.value != row.enabled:
+                # The control proposes an intent; only accepted preferences change
+                # its displayed state. Reverting must not emit another intent.
+                with event.checkbox.prevent(Checkbox.Changed):
+                    event.checkbox.value = row.enabled
                 self.post_message(
                     self.IntentRequested(self.intent("toggle", row.source))
                 )
+
+    def show_status(self, message: str) -> None:
+        """Update recovery copy only while its mounted target still exists."""
+        statuses = self.query("#console-mixins-status")
+        if statuses:
+            status = statuses.first(Static)
+            status.display = True
+            status.update(message)
+
+    def restore_enabled(self, preferences: MixinPreferences) -> None:
+        """Reconcile controls without replacing a dirty editor or its intent."""
+        enabled = {row.source: row.enabled for row in preferences.entries}
+        for index, row in enumerate(self.projection.preferences.entries):
+            controls = self.query(f"#console-mixin-enabled-{index}")
+            if controls:
+                checkbox = controls.first(Checkbox)
+                with checkbox.prevent(Checkbox.Changed):
+                    checkbox.value = enabled.get(row.source, False)
 
     @on(Button.Pressed)
     def _button(self, event: Button.Pressed) -> None:
@@ -274,5 +296,7 @@ class ConsolePromptMixinsView(Vertical):
         )
         if not is_current():
             return
-        editor.query_one("#mixin-name", Input).focus()
+        names = editor.query("#mixin-name")
+        if names:
+            names.first(Input).focus()
         editor.scroll_visible(animate=False, immediate=True)

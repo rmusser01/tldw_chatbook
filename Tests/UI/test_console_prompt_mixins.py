@@ -859,3 +859,147 @@ async def test_browse_mixin_open_awaited_transition_is_fenced(
         if completion == "stale":
             assert app.modal.state.mode == "browse"
             assert app.modal.query(ConsolePromptsBrowse)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["keep", "save", "discard"])
+async def test_dirty_toggle_restores_truth_without_losing_editor(runtime, transition):
+    from textual.widgets import Checkbox, TextArea
+
+    _, scope, _, origin, _, service = runtime
+    await seed(scope)
+    app = WorkbenchHarness(runtime)
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.pilot = pilot
+        await ready(app)
+        await add(app, "Style")
+        app.screen.query_one("#console-mixin-inspect-0", Button).press()
+        await ready(app)
+        editor = app.screen.query_one("#mixin-body", TextArea)
+        editor.load_text("Unsaved exact {body}")
+        before = service.preferences(origin.id)
+        checkbox = app.screen.query_one("#console-mixin-enabled-0", Checkbox)
+        checkbox.focus()
+        await pilot.press("space")
+        await pilot.pause()
+        assert checkbox.value is before.entries[0].enabled
+        assert service.preferences(origin.id) == before
+        assert editor.text == "Unsaved exact {body}"
+        assert app.screen.query_one("#console-prompts-dirty-guard").display
+        if transition == "discard":
+            app.screen.query_one("#console-prompts-discard", Button).press()
+            await pilot.pause()
+            app.open_workbench()
+        else:
+            app.screen.query_one("#console-prompts-keep-editing", Button).press()
+            await pilot.pause()
+            assert editor.text == "Unsaved exact {body}"
+            if transition == "save":
+                app.screen.query_one("#console-mixins-save", Button).press()
+        await ready(app)
+        assert app.screen.query_one("#console-mixin-enabled-0", Checkbox).value
+        assert service.preferences(origin.id).entries[0].enabled
+        if transition != "save":
+            assert service.preferences(origin.id) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["source", "stale"])
+async def test_failed_toggle_restores_authoritative_state_once(
+    runtime, monkeypatch, failure
+):
+    from dataclasses import replace
+
+    from textual.widgets import Checkbox
+
+    from tldw_chatbook.Chat.console_prompt_mixins import MixinSourceChangedError
+
+    _, scope, _, origin, _, service = runtime
+    await seed(scope)
+    app = WorkbenchHarness(runtime)
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.pilot = pilot
+        await ready(app)
+        await add(app, "Style")
+        before = service.preferences(origin.id)
+        calls = []
+        apply = app.flow.apply
+
+        async def fail(intent):
+            calls.append(intent)
+            if failure == "source":
+                raise MixinSourceChangedError("mixin_source_changed")
+            service.replace_preferences(
+                origin.id,
+                expected_revision=before.revision,
+                value=replace(
+                    before, entries=(replace(before.entries[0], enabled=False),)
+                ),
+            )
+            return await apply(intent)
+
+        monkeypatch.setattr(app.flow, "apply", fail)
+        checkbox = app.screen.query_one("#console-mixin-enabled-0", Checkbox)
+        checkbox.focus()
+        await pilot.press("space")
+        await ready(app)
+        assert len(calls) == 1
+        assert checkbox.value is service.preferences(origin.id).entries[0].enabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope_name", ["conversation", "global"])
+async def test_artifact_event_keeps_confirmation_pump_responsive(runtime, scope_name):
+    from Tests.UI.test_console_capture_policy_dialog import _PolicyHost, _snapshot
+    from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
+    from tldw_chatbook.Widgets.Console.console_capture_policy_dialog import (
+        CaptureScope,
+        ConsoleCapturePolicyDialog,
+    )
+    from tldw_chatbook.Widgets.Console.console_prompts_browse import (
+        ConsolePromptsBrowse,
+    )
+
+    _, source, _, _, _, _ = runtime
+    await seed(source)
+    app = WorkbenchHarness(runtime)
+    async with app.run_test(size=(100, 30)) as pilot:
+        app.pilot = pilot
+        await ready(app)
+        await app.modal.enter_mode("browse")
+        await pilot.pause()
+        original = app.modal._detail
+        host = _PolicyHost(_snapshot())
+        finished = []
+
+        async def detail(backend, identifier):
+            # Exercise the production modal wait through the actual ArtifactSelected
+            # dispatch route, rather than calling open_artifact from a test worker.
+            dialog = ConsoleCapturePolicyDialog(host.bindings())
+            await app.push_screen(dialog)
+            result = await dialog.apply(CaptureScope(scope_name), CaptureDetail.FULL)
+            finished.append(result)
+            dialog.dismiss(None)
+            return await original(backend, identifier)
+
+        app.modal._detail = detail
+        identifier = "Style"
+        app.modal.query_one(ConsolePromptsBrowse).post_message(
+            ConsolePromptsBrowse.ArtifactSelected(identifier)
+        )
+        cancel_id = (
+            "#global-full-cancel" if scope_name == "global" else "#cancel-button"
+        )
+        await _wait_for_condition(
+            pilot,
+            lambda: bool(app.screen.query(cancel_id)),
+            message="Artifact worker did not reach real confirmation",
+        )
+        app.screen.query_one(cancel_id, Button).press()
+        await _wait_for_condition(
+            pilot, lambda: bool(finished), message="Cancel blocked the event pump"
+        )
+        await app.workers.wait_for_complete()
+        assert finished == [None]
+        assert not host.calls
+        assert app.screen is app.modal

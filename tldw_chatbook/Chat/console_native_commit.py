@@ -920,6 +920,10 @@ async def _controller_accept_durable_turn(
             await self._chat_start.confirm_receipt(
                 chat_start_authorization, commit.checkpoint
             )
+        if origin is _source_controller.ConsoleSubmissionOrigin.MANUAL:
+            self.prompt_mixin_service().publish_accepted_usage(
+                session.id, turn_context.prompt_mixins
+            )
         # The durable turn now exists even if later publication needs recovery.
         # Arm once here; replaying postcommit effects must not rearm a settled turn.
         self._arm_run_hooks_stop(session.id)

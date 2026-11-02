@@ -1,5 +1,5 @@
 {
-  "qualification": "Preserved historical evidence plus current-dev integration evidence, including failures and limitations. Current product and live source checks are strict; unavailable old Git history is explicitly unverified. Excludes only the two current manifests.",
+  "qualification": "Preserved historical captures, port integration and current PR3346 review-fix evidence, including failures and limitations. Current product/Git source checks are strict; unavailable historical objects are explicitly unverified. Excludes only the two current manifests.",
   "files": {
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/controller-rulings.md": {
       "sha256": "3bdaa61e242e4d778eab5e751b5f0760d15617c57e27fb02d761cef18c6e43e7",
@@ -1761,6 +1761,266 @@
       "git_blob": "547f4d9dd3dc858efc12790e6b80d30147e37390",
       "bytes": 67218
     },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/acceptance-controls.log": {
+      "sha256": "54cd8e3e2b35d8636dae56cafc8774e0f98322b86ad6217c09a4a78537ecad8f",
+      "git_blob": "201781e175b05cbcca208f7d31b9785fd1916228",
+      "bytes": 1545
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/check_index_plan_pins-result.json": {
+      "sha256": "e9fd2572372259870db0b4031b531a39673b99c5590c48e0f260fafef8fe2376",
+      "git_blob": "fbe50dac29d61a216d56327218763e5d83e32cfc",
+      "bytes": 134
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/check_index_plan_pins.log": {
+      "sha256": "2242c161d726a93a8833cd16e43c1b200677bd7491b7236fe88810838eeef5e6",
+      "git_blob": "94a12d19dd98b8e4ed1f110a13be67d88cebd2eb",
+      "bytes": 126
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/check_markup_interpolation-result.json": {
+      "sha256": "68617d033957ec84047c63fea0519692a0c41a3cd0a48639b280d50bd7d4b1f1",
+      "git_blob": "a3e513b70aaa37eba84b20705b76857221a6eec0",
+      "bytes": 139
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/check_markup_interpolation.log": {
+      "sha256": "51e9cfad1bff68268860fefd29e9e092ec3a30c255f56090bb1f728b1a53d947",
+      "git_blob": "eed19842dc313716056f2cbc6473fcabe556fb68",
+      "bytes": 142
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/check_persistent_diagnostic_inventory-result.json": {
+      "sha256": "131149f19fd772998b1bedb304b5474697e7eafb26b8e7089a91a82c9f481f1e",
+      "git_blob": "4926c6e930758474c77dabe1a49adfd2121c5d26",
+      "bytes": 150
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/check_persistent_diagnostic_inventory.log": {
+      "sha256": "275041fa62164efbe213f58144d319abded6aac6414126d1c7c0befe4507fbba",
+      "git_blob": "d4797cd99636d0aa6c8ac03203ef9b7742783873",
+      "bytes": 120
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/check_schema_table_allowlist-result.json": {
+      "sha256": "a3f8ca3c78f40d55c2fbb42dbc0e69128969cedbbfbcebd12da3b734c18943aa",
+      "git_blob": "4a60c04723cd3c0ebe9cc74dd96b4d95bd140664",
+      "bytes": 141
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/check_schema_table_allowlist.log": {
+      "sha256": "d239cae48defe59e58eba5717d9e468939bad0c6e553a53d73773634b1b41c3d",
+      "git_blob": "224afce98d74c79f91ca7cc576574831f0c4005a",
+      "bytes": 78
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/check_textual_worker_contract-result.json": {
+      "sha256": "59c296ae063fbb84c7da80fe59606810a336bdad41b706f13badcff778a08820",
+      "git_blob": "b64cd7fa055a1d2b3c232dfd3d6e22cdb380964a",
+      "bytes": 142
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/check_textual_worker_contract.log": {
+      "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992",
+      "git_blob": "df2384e358f72b496dc93815bdaf87aa921cb5ea",
+      "bytes": 266
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/commands.json": {
+      "sha256": "86916608cb8c756613162a52af46bfd6c539370ba7a71bf4444a31cf23dc6076",
+      "git_blob": "6a9e2dbc1e16d3a425ec3e527bd2f205fa4d209e",
+      "bytes": 3797
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/covering-map.json": {
+      "sha256": "26ae93693b05b33cac724f62b524e241fd7057382e58aa073d88919a7b026da4",
+      "git_blob": "90f41d2777f0a29ac56818c33d31aa6dcfd98e6d",
+      "bytes": 3117
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/diagnostic-review.md": {
+      "sha256": "641dfbea8615333ab459cc493e84d1d83f4e67d60c1ce14fb5c0c920f6830de2",
+      "git_blob": "19ac0961cb80e70b8c4f38702b3575cc531202cc",
+      "bytes": 1114
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/diagnostic-statements.txt": {
+      "sha256": "8a28142b7ba6eae0ce26428c6423721c871bf0a28943357f848614064f357316",
+      "git_blob": "1f21f523d2e3a3b4081b454dc1323ae4283222bf",
+      "bytes": 2743
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/diagnostic-update.log": {
+      "sha256": "fad5e29ffbcb6819c411fe06355b14673a062bc73c7453859ba154638f1eeddb",
+      "git_blob": "1d8e368795cf5efdf1daa6cf20289d0acab56f29",
+      "bytes": 57
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/event-controls.log": {
+      "sha256": "08877aaa86fd50e135731ad14ccc00b8b08bdbf0c75048cab146bcf852a6e6e0",
+      "git_blob": "f03765ee065186f357ebde0fa2862bf48442335e",
+      "bytes": 1468
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/event-controls2.log": {
+      "sha256": "9018cc9d45cbb0d259b027fd5ed43e22b4b67de2b6dae961c7a622a9118dc812",
+      "git_blob": "27533d0f5b86ca53ac7fed984fcb33d3444213b7",
+      "bytes": 207
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/first-accept.log": {
+      "sha256": "235ad0eb09663409c67ba0eacdc70e70a214b4b7de02dbb22c0b8e898234221c",
+      "git_blob": "343373c888ecba4bdacc4d3c43bd95cce8fdd54c",
+      "bytes": 1574
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/green.log": {
+      "sha256": "ac6f529be14cac75c785e9b00c7b16c82c616a7496aa313735e42937890362d9",
+      "git_blob": "07ea774797ca3884e475773f5c1aae84adfb2853",
+      "bytes": 443
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/lint-final.log": {
+      "sha256": "0eaa3d63a71770b91c9d0e4df778d5ecd248a9d5cab359a516120d0e2d52d22a",
+      "git_blob": "297a5729e4159f58ce6b18d40c5ff833cc08b93f",
+      "bytes": 18
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/lint-initial.log": {
+      "sha256": "265176f8de1393c8d4624975ab3f758186ac8373fa9f86b7773728e282370862",
+      "git_blob": "20a895d109718172f8e346119da517cef24ed336",
+      "bytes": 609
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/native-commit-result.json": {
+      "sha256": "3bc6d14d3300999b8263058782cf95b0fd37fb7f5f51e448660ac9af6cd60142",
+      "git_blob": "a915b859f867663d75bfdaf4af45088c6b3d7990",
+      "bytes": 524
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/native-commit.log": {
+      "sha256": "913a63aee23f5b7b59493aab81f9b1c0923bcf00c82d3ebf05043ebe551fa587",
+      "git_blob": "551ff3fb54143399f881a63fd389abf5d95258d4",
+      "bytes": 207
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/native-result.json": {
+      "sha256": "68b62a52deb663ebe0f57aebfb37a3ca6ca7c3b92d46768645940536442d570e",
+      "git_blob": "280be9c2556e92c07742d0de0ef33ae8ee056e1d",
+      "bytes": 447
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/native.log": {
+      "sha256": "4e3462af7525f0ffe6ee92b5e183e0e0d3c98fa592e6b937905435db68733d9c",
+      "git_blob": "a0fcd8bef2974e3b74ece2cd101667a16c7e39f2",
+      "bytes": 2718
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/plans-admission.log": {
+      "sha256": "c5345aefcecf52aa03623261d524ad90d59239cd02520f98b7350373be4d164e",
+      "git_blob": "c6af4e7af58843d1845c5b3df4a1280c8d8c2a14",
+      "bytes": 928
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/pr-review.md": {
+      "sha256": "f9c3b250d88a99963e0b990f3221a3b47808437119bcdde0547e553cc9b36daa",
+      "git_blob": "05c4e4f905d9e0270fb148fae13e75c9db576102",
+      "bytes": 9175
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/prompt-recovery-result.json": {
+      "sha256": "e18e88e2514dca357bd855ec6b93ede3109cde24c1ce3423020ba673e62fbfe9",
+      "git_blob": "06b9b9e3ede26a5b5b28b4561d57655c8caebdef",
+      "bytes": 370
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/prompt-recovery.log": {
+      "sha256": "1b1a24d21914c0fe7befd7c6662527a3cecd75a0abda4e9f6800c238e6d34ac1",
+      "git_blob": "a5bbbdcbb95fb6c8e998c0bf7143951d10c77a57",
+      "bytes": 223
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/queue-debug.log": {
+      "sha256": "942f8b31c6130ca5663754b37a6281fd51350c6a7c0309b0a1963261c5add708",
+      "git_blob": "4ec4c0426ef71a319caf71a8d3d48dce5da6afe7",
+      "bytes": 1277
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/queue-debug2.log": {
+      "sha256": "6b61e90928c9135fac92860c23b8b5718227dcebd1a76ecbc8aa5df82b608d03",
+      "git_blob": "b80b6182c8b7aad1ad021171104d719bd75a577d",
+      "bytes": 1292
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/queue-final.log": {
+      "sha256": "14a62195565c21ab0c33fbbcea7fbc8d491258631750d14c30590decd38b25f3",
+      "git_blob": "9c3a9802714b4d16782fe65ff8588a987adf4053",
+      "bytes": 207
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/queue-independence.log": {
+      "sha256": "b85f6bc38cdc0e1180380d17ecf51928defbeb900ecb1316e33d6bc6e84e9701",
+      "git_blob": "2d5d629bea53b076da211f897c938ab4e282c2ef",
+      "bytes": 1313
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/queue-owner.log": {
+      "sha256": "40ecebb05127c1daea83b3bff8c73a609c0250de0e1bdfec8cbcb2c7867c23ed",
+      "git_blob": "3d8a554c354d3ebf367e77e8c5c59a69ff8fb27c",
+      "bytes": 446
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/red-native.log.json": {
+      "sha256": "12377613c2a248f767136e4d684c40a59bcd9f4a9a798aa79f3b5a0f7d0ddc5d",
+      "git_blob": "44b55084684fed5528f697b40b2c722fea1aab3f",
+      "bytes": 2764
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/red.log.json": {
+      "sha256": "77d19a0c0425a2a07f99520726b26af4b7337a9dbb34ca4e1a6d150f7ed24cc4",
+      "git_blob": "9a40639d0330330ed9ef3471c6777ced7ceaf138",
+      "bytes": 5085
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/refresh-manifests.py": {
+      "sha256": "6eebc1a3089da96afbfbd09bc4b00caade90126dc7019290c807b35569fdac13",
+      "git_blob": "8d680f018a87c580d2aedd8472218e184f951718",
+      "bytes": 1596
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/remaining-covering-result.json": {
+      "sha256": "b88cbb862338460688b139d51cfaae970158d8e6a5353bd4a3c525e2283757e8",
+      "git_blob": "05d9f9f9c5e0c0b2a3a73bc2f703a31e7ed1fbfa",
+      "bytes": 591
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/remaining-covering.log": {
+      "sha256": "eded74b055e6fd8b882f0efce91ce7cd71ff478e70086d0dc239aa604a2fe07c",
+      "git_blob": "b0c120570261eca3e8e8875565a28fb9ed7bc274",
+      "bytes": 759
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/review-fix-report.md": {
+      "sha256": "25d76cd2bfb99013e36ecdf7a7055538b9418e95b21575f05e17e1904adef2ab",
+      "git_blob": "c84d9793db649abcca25e63c1b7b939728dafdd3",
+      "bytes": 6912
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/run.py": {
+      "sha256": "06a5ebf9942778fb76d0ba4b0fba5137344b96f5c19ae1f225c41bc314f9be8b",
+      "git_blob": "4b934e9fdeb8954124227061b0b28c15581f5799",
+      "bytes": 460
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/static-structure.json": {
+      "sha256": "628978fe7b99e054c62e524012a64a6c3b973f471302b3a2b747ae3fffbfdc95",
+      "git_blob": "0abe484987686dc74eb3f055dd652eba73847b37",
+      "bytes": 2363
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/static-structure.py": {
+      "sha256": "f07a47965e396bbbbc01d28a2773a34d8628af9831569f51408b50967320213b",
+      "git_blob": "72872fa61a8253020d02e9cdb3a02532c92fbd2e",
+      "bytes": 1587
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/static.py": {
+      "sha256": "ba8dbc08a82036357171b56d75bdee6f1202c02211167ea98f1351e20bb9dda3",
+      "git_blob": "b699e8801ebe2119b350e5ab9c97dec0058d0010",
+      "bytes": 1581
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/storage-result.json": {
+      "sha256": "60721a5096ca420ada38c609f61ed1884500fe4826150cece53d058aed8c1562",
+      "git_blob": "f9ed32071b40790b935b333e1f50440f7f1a246e",
+      "bytes": 480
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/storage.log": {
+      "sha256": "ece902060a9266e92901e135279052dfa895e2196e26d9df094d8b06a771f107",
+      "git_blob": "a54c7cccd1ca2e6a766ec41bcb2aaa44f9db7d43",
+      "bytes": 459
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/structure-final.log": {
+      "sha256": "73fa5e37f0cd7783c3018f6f20c807cf2246f8d2e457911b2d9d7b25d7cf957a",
+      "git_blob": "3737cb31f046e5c0c709539b9e231868c8044daf",
+      "bytes": 70
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/target-lint.json": {
+      "sha256": "2ee89fecf1b7e6e8e3447f4d30231896fd09fc87e1f513b3785da83e79af8e8f",
+      "git_blob": "5577df3c212e1f81e51f67d132154224eac11411",
+      "bytes": 1965
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/ui-result.json": {
+      "sha256": "0a036bad5304cdcdbb3668e2887c4d203a861ae25560d8098e814c4e27a519b7",
+      "git_blob": "32c6196844e1b9af669dee89ede4a9a148f5192f",
+      "bytes": 424
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/ui.log": {
+      "sha256": "bd0399d05e4616194a745be95186304fd8f3d0261d8cfe676729731f815a83a8",
+      "git_blob": "ecc254bbb6bd1cd1e2f443d4f7ca756e5395b5cf",
+      "bytes": 2447
+    },
+    "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/review-fixes/worker-guard.log": {
+      "sha256": "a3f2b226537b637a657ff22c94fd8c4ed23d0a2ad078cb6d85c7d616f4bd3992",
+      "git_blob": "df2384e358f72b496dc93815bdaf87aa921cb5ea",
+      "bytes": 266
+    },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/slices/baseline.log": {
       "sha256": "4dbadf0bdd9fa8e5f761627fd0812a660f2f8ef2b68639ee7fefa9b234f6b418",
       "git_blob": "bee356cf740e362c7814e9dbe3d7ea99556b8bf2",
@@ -2567,14 +2827,14 @@
       "bytes": 141048
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verification.md": {
-      "sha256": "0b6fe15b8a2090f47b43053b383a3f97d18135c7a00b1cbd500438bab278587c",
-      "git_blob": "339db053a10f2d7fdd22db367f75673b80028c6b",
-      "bytes": 23554
+      "sha256": "1a6e239c886e440ace35807f9c4305da6640c661ee08ab3e63f4c044c4cf46dd",
+      "git_blob": "28c5fc42bf0d446ada1aed7eb7c6d6b3948904ee",
+      "bytes": 23704
     },
     "Docs/superpowers/qa/2026-11-01-prompt-mix-ins/verify_evidence.py": {
-      "sha256": "b9f4af3c983e87b9553328a4322c7ff081ee94c569cacc5252d741e9e1d5d53a",
-      "git_blob": "433dc8dc5939aee8a9adb975161c4364e0dd13f2",
-      "bytes": 2512
+      "sha256": "edda0cb05929fb2af22e4f44277df4af3f465512ee7d4eeeea94f9cbccabbd20",
+      "git_blob": "bf05deaf992e4bfec8927d1ecd9e025104758656",
+      "bytes": 2372
     }
   }
 }

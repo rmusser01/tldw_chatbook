@@ -372,7 +372,7 @@ class ConsolePromptMixinService:
         return current
 
     async def capture(
-        self, session_id: str, *, expected_revision: int, publish_facts: bool = True
+        self, session_id: str, *, expected_revision: int
     ) -> MixinAttemptSnapshot:
         """Freeze references before awaiting policy-checked coherent source reads."""
         import asyncio
@@ -389,7 +389,6 @@ class ConsolePromptMixinService:
         from .console_prompt_mixins import (
             MixinAttemptSnapshot,
             MixinPreferenceConflictError,
-            MixinPreferenceRead,
             MixinSnapshot,
             MixinSnapshotUnavailableError,
             MixinSourceChangedError,
@@ -399,8 +398,7 @@ class ConsolePromptMixinService:
         current = self._capture_currentness(
             session_id, expected_revision=expected_revision
         )
-        store, scope = self.store, self.prompt_scope_service
-        session = self._session(session_id)
+        scope = self.prompt_scope_service
         preferences = self.preferences(session_id)
         enabled = tuple(row for row in preferences.entries if row.enabled)
         identities = dict.fromkeys(row.source.backend for row in enabled)
@@ -454,20 +452,50 @@ class ConsolePromptMixinService:
         reconciled = reconcile_mixin_placements(
             self.preferences(session_id), tuple(snapshots)
         )
-        if publish_facts:
-            session.prompt_mixin_preferences = MixinPreferenceRead(
-                "supported", reconciled, None
-            )
-            if reconciled != preferences:
-                store.schedule_prompt_mixin_preferences_save(
-                    session_id, owner=self.settings_durability_owner
-                )
         indexed = {item.source: item for item in snapshots}
         return MixinAttemptSnapshot(
             tuple(indexed[row.source] for row in reconciled.entries if row.enabled)
         )
 
-    async def accept_attempt(self, session_id: str, batch: MixinAttemptWrite) -> None:
+    def publish_accepted_usage(
+        self, session_id: str, snapshot: MixinAttemptSnapshot
+    ) -> None:
+        """Publish accepted facts for surviving choices without reading sources.
+
+        Unsupported/retired preferences cannot block accepted custody. Reconcile
+        never re-adds removed choices and does not advance the intent revision.
+        """
+        from .console_prompt_mixins import (
+            MixinPreferenceConflictError,
+            MixinPreferenceRead,
+            reconcile_mixin_placements,
+        )
+
+        try:
+            session = self._session(session_id)
+        except MixinPreferenceConflictError:
+            return
+        preferences = session.prompt_mixin_preferences.preferences
+        if preferences is None:
+            return
+        reconciled = reconcile_mixin_placements(preferences, snapshot.items)
+        if reconciled == preferences:
+            return
+        session.prompt_mixin_preferences = MixinPreferenceRead(
+            "supported", reconciled, None
+        )
+        try:
+            self.store.schedule_prompt_mixin_preferences_save(
+                session_id, owner=self.settings_durability_owner
+            )
+        except Exception:  # noqa: BLE001 - optional facts cannot retract acceptance.
+            # Reuse the existing unsaved-settings recovery instead of failing
+            # an already accepted turn or acquiring another persistence owner.
+            self.store.schedule_prompt_mixin_preferences_save(session_id, owner=None)
+
+    async def accept_attempt(
+        self, session_id: str, batch: MixinAttemptWrite, *, record_usage: bool = False
+    ) -> None:
         """Retain the exact operational record before any provider can be entered."""
         import asyncio
         from functools import partial
@@ -541,6 +569,8 @@ class ConsolePromptMixinService:
         ):
             raise MixinSnapshotUnavailableError("mixin_attempt_owner_changed")
         self.store.publish_prompt_mixin_attempt(session_id, batch)
+        if record_usage:
+            self.publish_accepted_usage(session_id, batch.snapshot)
         if cancelled:
             raise asyncio.CancelledError
 

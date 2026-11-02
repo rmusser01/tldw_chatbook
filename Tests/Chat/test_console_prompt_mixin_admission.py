@@ -166,6 +166,12 @@ async def test_changed_library_version_and_placement_affect_next_capture_only(ca
     assert updated.items[0].record_version == 2
     assert updated.items[0].definition.body == "edited"
     assert tuple(row.source for row in case.service.preferences(case.a.id).entries) == (
+        A,
+        B,
+    )
+    assert case.service.preferences(case.a.id).entries[0].last_used_version is None
+    case.service.publish_accepted_usage(case.a.id, updated)
+    assert tuple(row.source for row in case.service.preferences(case.a.id).entries) == (
         B,
         A,
     )

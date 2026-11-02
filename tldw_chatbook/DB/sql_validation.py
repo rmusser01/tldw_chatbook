@@ -64,6 +64,10 @@ SQL_RESERVED_KEYWORDS = _identifier_core.SQL_RESERVED_KEYWORDS
 # identity function on the defect it exists to catch).
 VALID_TABLES = {
     "chachanotes": {
+        "console_prompt_mixin_preferences",
+        "console_prompt_mixin_revisions",
+        "console_prompt_mixin_attempts",
+        "console_prompt_mixin_attempt_items",
         # TASK-19057 (v44->v45): the two Actor Pack tables. Their absence here
         # is what TASK-20971 was filed for.
         "actor_pack_persona_intents",

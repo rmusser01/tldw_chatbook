@@ -1,6 +1,6 @@
 # Prompt mix-ins: integrated qualification
 
-Current-dev port: TASK-38544 reopened for focused integration and fresh independent review. See [current integration evidence](integration/report.md). Everything below describes the historical mixed-ancestry implementation; its old commit IDs are not ancestors of the focused PR and may be unavailable in a fresh clone. Historical captures are preserved byte-for-byte, never attributed to the port.
+Current PR3346 review fixes: TASK-38544 remains In Progress for scoped re-review. See [review-fix evidence](review-fixes/review-fix-report.md). The [port integration evidence](integration/report.md) and its live captures describe commit `5dac2bb0207285eca67d571565a3ee88113e4a84`, before these fixes. Everything below describes the historical mixed-ancestry implementation; its old commit IDs are not ancestors of the focused PR and may be unavailable in a fresh clone. Historical captures are preserved byte-for-byte, never attributed to the port.
 
 Date: 2026-11-01–02. Task: TASK-38544. Governance: [ADR-286](../../../../backlog/decisions/286-console-prompt-mix-ins.md). Task9 base: `dbc3819f33eb92ff386513ea63da437f07eb91b6`. All nine slices and the final integration corrections are complete. TASK-38544 is **Done** after the [final scoped re-review](slices/final-rereview.md) approved every required correction at implementation commit `d7744a78e9094ad4df08a6466fab6d4eb8f412ce`. No full suite was run.
 

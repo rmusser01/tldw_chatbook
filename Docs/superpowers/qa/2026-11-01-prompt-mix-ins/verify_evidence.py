@@ -25,12 +25,8 @@ for manifest in ("evidence-manifest.json", "product-source-manifest.json"):
         assert stored == data, (spec, "Git bytes differ")
         count += 1
 print(f"Verified {count} current evidence/source records against {revision or 'Git index'}.")
-current_live = json.loads((qa / "integration/live/final-source-sha256.json").read_text())
-assert current_live, "empty current live manifest"
-for path, digest in current_live.items():
-    assert hashlib.sha256((root / path).read_bytes()).hexdigest() == digest, path
-print(f"Verified {len(current_live)} current live source hashes.")
 for manifest, commit in (
+    ("integration/live/final-source-sha256.json", "5dac2bb0207285eca67d571565a3ee88113e4a84"),
     ("live/product-source-sha256.json", "247c9eb19ddbf49e49d55c7c1851f72fed2616a2"),
     ("final-fix/live-preview/product-source-sha256.json", "d7744a78e9094ad4df08a6466fab6d4eb8f412ce"),
 ):
@@ -41,9 +37,9 @@ for manifest, commit in (
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     ).returncode == 0
     if not available:
-        print(f"Historical source verification UNAVAILABLE: {commit} ({len(records)} hashes); old source history is not part of the focused PR.")
+        print(f"Historical source verification UNAVAILABLE: {commit} ({len(records)} hashes); historical commit object is absent (the port commit belongs to focused history; earlier mixed commits do not).")
         continue
     for path, digest in records.items():
         data = subprocess.check_output(["git", "show", f"{commit}:{path}"], cwd=root)
         assert hashlib.sha256(data).hexdigest() == digest, (commit, path)
-    print(f"Verified {len(records)} historical source hashes at {commit}; these are not current port evidence.")
+    print(f"Verified {len(records)} historical source hashes at {commit}; these qualify only that captured revision, not the current review fixes.")

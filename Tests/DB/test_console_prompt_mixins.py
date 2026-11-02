@@ -774,3 +774,58 @@ def test_copy_same_row_retry_chain_publishes_exact_marker_once(make_database, em
             (target,),
         ).fetchone()[0] == (0 if empty else 1)
         assert cursor.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_mixin_indexes_service_real_lookup_and_message_cleanup_without_statistics(
+    make_database,
+):
+    from tldw_chatbook.DB.console_prompt_mixins import _SNAPSHOT_COLUMNS
+
+    db = make_database(":memory:", "mixin-plans")
+    cid, first_ids = saved_turn(db)
+    with db.transaction() as cursor:
+        for number in range(200):
+            batch = attempt(attempt_id=f"plan-{number}")
+            if number:
+                batch = replace(
+                    batch,
+                    retry_of_attempt_id=f"plan-{number - 1}",
+                    replaces_attempt_id=f"plan-{number - 1}",
+                )
+            item = replace(batch.snapshot.items[0], record_version=number + 1)
+            write_attempt(
+                cursor,
+                cid,
+                batch=replace(batch, snapshot=MixinAttemptSnapshot((item,))),
+                native_message_ids=first_ids,
+            )
+        assert (
+            cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
+        digest = cursor.execute(
+            "SELECT digest FROM console_prompt_mixin_revisions LIMIT 1"
+        ).fetchone()[0]
+        lookup = cursor.execute(
+            "EXPLAIN QUERY PLAN SELECT snapshot_id,"
+            + _SNAPSHOT_COLUMNS
+            + " FROM console_prompt_mixin_revisions WHERE conversation_id=? AND digest=?",
+            (cid, digest),
+        ).fetchall()
+        assert any("idx_console_mixin_revision_digest" in row[3] for row in lookup), (
+            lookup
+        )
+        # Real parent cleanup runs SQLite's SET NULL child searches for both
+        # live message anchors; no INDEXED BY or planner statistics are supplied.
+        cleanup = cursor.execute(
+            "EXPLAIN QUERY PLAN DELETE FROM messages WHERE id=?",
+            (first_ids["native-user"],),
+        ).fetchall()
+        for index in (
+            "idx_console_mixin_attempt_user",
+            "idx_console_mixin_attempt_assistant",
+        ):
+            assert any(index in row[3] for row in cleanup), (index, cleanup)
+        assert cursor.execute("PRAGMA foreign_key_check").fetchall() == []

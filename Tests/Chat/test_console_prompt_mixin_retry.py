@@ -14,7 +14,7 @@ from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferences, MixinSele
 pytestmark = pytest.mark.bootstrap_profile
 
 
-def select(harness, monkeypatch, *, enabled=True):
+def select(harness, monkeypatch, *, enabled=True, session_id="session-1"):
     scope = Scope()
     scope.release.set()
     scope.records[A.record_uuid]["prompt_definition"]["body"] = "body A"
@@ -25,7 +25,7 @@ def select(harness, monkeypatch, *, enabled=True):
     )
     monkeypatch.setattr(harness.controller, "prompt_mixin_service", lambda: service)
     service.replace_preferences(
-        "session-1",
+        session_id,
         expected_revision=0,
         value=MixinPreferences(entries=(MixinSelection(A, enabled, "A", "before"),)),
     )
@@ -1485,3 +1485,200 @@ async def test_continue_refuses_source_rebind_during_hook(trace_harness, monkeyp
         release.set()
     result = await asyncio.wait_for(task, 5)
     assert not result.accepted and len(h.entries) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["hook", "provider", "native_commit"])
+async def test_refused_native_send_keeps_usage_facts_until_acceptance(
+    trace_harness, monkeypatch, refusal
+):
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    service, scope = select(h, monkeypatch)
+    before = service.preferences("session-1")
+    scope.records[A.record_uuid].update(version=2)
+    scope.records[A.record_uuid]["prompt_definition"]["placement"] = "after"
+    if refusal == "hook":
+        original = h.controller.hook_admission_reason
+
+        async def refuse():
+            return "Hook admission refused"
+
+        monkeypatch.setattr(h.controller, "hook_admission_reason", refuse)
+    elif refusal == "native_commit":
+        h.db.get_connection().execute(
+            "CREATE TRIGGER review_fail_mixin_commit BEFORE INSERT ON console_dispatch_checkpoints "
+            "BEGIN SELECT RAISE(ABORT, 'injected native transaction failure'); END"
+        )
+    else:
+        original = h.gateway.resolve_for_send
+
+        async def refuse(selection):
+            return replace(
+                await original(selection),
+                ready=False,
+                visible_copy="Provider unavailable",
+            )
+
+        monkeypatch.setattr(h.gateway, "resolve_for_send", refuse)
+    result = await h.controller.submit_draft("input", session_id="session-1")
+    assert not result.accepted and not result.provider_started
+    assert not h.entries
+    assert service.preferences("session-1") == before
+    if refusal == "hook":
+        monkeypatch.setattr(h.controller, "hook_admission_reason", original)
+    elif refusal == "native_commit":
+        h.db.get_connection().execute("DROP TRIGGER review_fail_mixin_commit")
+    else:
+        monkeypatch.setattr(h.gateway, "resolve_for_send", original)
+    accepted = (
+        await h.controller.retry_library_preparation(result.preparation_id)
+        if refusal == "native_commit"
+        else await h.controller.submit_draft("input", session_id="session-1")
+    )
+    assert accepted.accepted and accepted.provider_started
+    facts = service.preferences("session-1")
+    assert facts.revision == before.revision
+    assert facts.entries[0].last_used_version == 2
+    assert facts.entries[0].placement == "after"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supplied", [False, True])
+async def test_queue_usage_publishes_only_after_admission(
+    trace_harness, monkeypatch, supplied
+):
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    service, scope = select(h, monkeypatch)
+    before = service.preferences("session-1")
+    scope.records[A.record_uuid]["version"] = 2
+    registry = h.controller.prompt_queue_registry
+    registry.begin_chain(
+        "session-1",
+        context_epoch=h.store.conversation_context_epoch("session-1"),
+        expected_revision=0,
+    )
+    configuration = None
+    if supplied:
+        snapshot = await service.capture("session-1", expected_revision=before.revision)
+        configuration = replace(
+            h.controller.resolve_turn_configuration_snapshot("session-1"),
+            prompt_mixins=snapshot,
+        )
+    revision = registry.snapshot("session-1").revision
+    refused = await h.controller.queue_prompt(
+        "session-1",
+        text="queued",
+        expected_revision=revision - 1,
+        configuration=configuration,
+    )
+    assert not refused.applied
+    assert service.preferences("session-1") == before
+    accepted = await h.controller.queue_prompt(
+        "session-1",
+        text="queued",
+        expected_revision=revision,
+        configuration=configuration,
+    )
+    assert accepted.applied
+    assert service.preferences("session-1").entries[0].last_used_version == 2
+    assert not h.entries
+
+
+@pytest.mark.asyncio
+async def test_original_retry_ignores_unavailable_current_usage_preferences(
+    trace_harness, monkeypatch
+):
+    from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferenceRead
+
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    _service, scope = select(h, monkeypatch)
+    h.adapter_error = True
+    sent = await h.controller.submit_draft("input", session_id="session-1")
+    assert sent.accepted
+    reply = next(
+        row
+        for row in reversed(h.store.messages_for_session("session-1"))
+        if row.role.value == "assistant"
+    )
+    unavailable = MixinPreferenceRead("unsupported", None, {"schema_version": 99})
+    h.store._sessions["session-1"].prompt_mixin_preferences = unavailable
+    scope.records.clear()
+    h.adapter_error = False
+    await h.controller.retry_message(reply.id)
+    assert len(h.entries) == 2
+    assert h.entries[-1][-1]["content"] == "body A\n\ninput"
+    assert h.store._sessions["session-1"].prompt_mixin_preferences is unavailable
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current_state", ["unsupported", "removed"])
+async def test_frozen_queue_acceptance_and_drain_ignore_missing_current_choices(
+    trace_harness, monkeypatch, current_state
+):
+    from tldw_chatbook.Chat.console_prompt_mixins import MixinPreferenceRead
+    from tldw_chatbook.Chat.console_prompt_queue import PromptQueuePauseReason
+
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    service, scope = select(h, monkeypatch)
+    baseline = await h.controller.submit_draft("baseline", session_id="session-1")
+    assert baseline.provider_started
+    h.entries.clear()
+    snapshot = await service.capture("session-1", expected_revision=1)
+    configuration = replace(
+        h.controller.resolve_turn_configuration_snapshot("session-1"),
+        prompt_mixins=snapshot,
+    )
+    session = h.store._sessions["session-1"]
+    if current_state == "unsupported":
+        choices = MixinPreferenceRead("unsupported", None, {"schema_version": 99})
+    else:
+        choices = MixinPreferenceRead("supported", MixinPreferences(revision=2), None)
+    session.prompt_mixin_preferences = choices
+    scope.records.clear()
+    registry = h.controller.prompt_queue_registry
+    registry.begin_chain(
+        "session-1",
+        context_epoch=h.store.conversation_context_epoch("session-1"),
+        expected_revision=0,
+    )
+    accepted = await h.controller.queue_prompt(
+        "session-1",
+        text="queued",
+        expected_revision=registry.snapshot("session-1").revision,
+        configuration=configuration,
+    )
+    assert accepted.applied
+    assert session.prompt_mixin_preferences is choices
+    registry.pause(
+        "session-1",
+        reason=PromptQueuePauseReason.MANUAL,
+        expected_revision=registry.snapshot("session-1").revision,
+    )
+    resumed = await h.controller.prompt_queue_coordinator.resume_and_drain("session-1")
+    assert len(h.entries) == 1, resumed
+    assert h.entries[-1][-1]["content"] == "body A\n\nqueued"
+    assert session.prompt_mixin_preferences is choices
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ephemeral", [False, True])
+async def test_first_native_acceptance_publishes_usage(
+    trace_harness, monkeypatch, ephemeral
+):
+    h = trace_harness
+    capture_mode(monkeypatch, False)
+    session = h.store.create_session(
+        session_id="first-usage",
+        ephemeral=ephemeral,
+        settings=h.store._sessions["session-1"].settings,
+    )
+    _service, _scope = select(h, monkeypatch, session_id=session.id)
+    accepted = await h.controller.submit_draft("input", session_id=session.id)
+    assert accepted.accepted and len(h.entries) == 1, accepted
+    assert (
+        session.prompt_mixin_preferences.preferences.entries[0].last_used_version == 1
+    )

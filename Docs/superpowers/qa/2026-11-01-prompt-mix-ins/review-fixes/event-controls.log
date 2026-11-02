@@ -1,0 +1,19 @@
+FF..                                                                     [100%]
+=================================== FAILURES ===================================
+_____ test_artifact_event_keeps_confirmation_pump_responsive[conversation] _____
+Tests/UI/test_console_prompt_mixins.py:970: in test_artifact_event_keeps_confirmation_pump_responsive
+    records = await source.list_prompts(mode="local", page=1, page_size=20)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: PromptScopeService.list_prompts() got an unexpected keyword argument 'page_size'
+________ test_artifact_event_keeps_confirmation_pump_responsive[global] ________
+Tests/UI/test_console_prompt_mixins.py:970: in test_artifact_event_keeps_confirmation_pump_responsive
+    records = await source.list_prompts(mode="local", page=1, page_size=20)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: PromptScopeService.list_prompts() got an unexpected keyword argument 'page_size'
+============================= slowest 25 durations =============================
+
+(12 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_prompt_mixins.py::test_artifact_event_keeps_confirmation_pump_responsive[conversation]
+FAILED Tests/UI/test_console_prompt_mixins.py::test_artifact_event_keeps_confirmation_pump_responsive[global]
+2 failed, 2 passed in 4.44s

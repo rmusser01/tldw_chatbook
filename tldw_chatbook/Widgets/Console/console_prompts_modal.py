@@ -451,6 +451,9 @@ class ConsolePromptsModal(
     @on(ConsolePromptMixinsView.IntentRequested)
     def _mixins_intent(self, event) -> None:
         if self._holds_dirty_edit():
+            views = self.query(ConsolePromptMixinsView)
+            if views:
+                self._restore_mixin_enabled(views.first())
             self._show_dirty_guard()
             return
         self.run_worker(
@@ -503,10 +506,22 @@ class ConsolePromptsModal(
         except Exception:  # noqa: BLE001 - show bounded recovery without source text.
             if not self._mixin_ui_current(generation, view):
                 return
-            view.query_one("#console-mixins-status", Static).display = True
-            view.query_one("#console-mixins-status", Static).update(
+            self._restore_mixin_enabled(view)
+            view.show_status(
                 "Mix-in unavailable or choices changed. Close and reopen Prompts to retry."
             )
+
+    def _restore_mixin_enabled(self, view) -> None:
+        session = self._mixin_flow.service.store._sessions.get(
+            view.projection.session_id
+        )
+        if (
+            session is not None
+            and session.incarnation_id == view.projection.incarnation_id
+        ):
+            preferences = session.prompt_mixin_preferences.preferences
+            if preferences is not None:
+                view.restore_enabled(preferences)
 
     @on(ConsolePromptMixinsView.SaveRequested)
     def _mixins_save(self) -> None:
@@ -539,9 +554,7 @@ class ConsolePromptsModal(
             preferences = self._mixin_flow.service.preferences(intent.session_id)
             self._mixin_editor_intent = replace(intent, revision=preferences.revision)
             if editor.read_draft() != submitted:
-                status = view.query_one("#console-mixins-status", Static)
-                status.display = True
-                status.update(
+                view.show_status(
                     "Earlier Library edit saved. Newer changes are kept and unsaved; Save Library changes to keep them."
                 )
                 return
@@ -552,8 +565,7 @@ class ConsolePromptsModal(
                 or self._mixin_editor_snapshot(view)[0] is not editor
             ):
                 return
-            view.query_one("#console-mixins-status", Static).display = True
-            view.query_one("#console-mixins-status", Static).update(
+            view.show_status(
                 "Library changes were not saved. Check Name and Instructions, or reopen after a source/version change. Your edit is kept."
             )
 
@@ -581,14 +593,15 @@ class ConsolePromptsModal(
                 text += "\n\nExact next-send preview\n" + json.dumps(
                     payload.next_send_payload, ensure_ascii=False, indent=2
                 )
-            view.query_one("#console-mixins-preview-content", Static).update(
-                text or "No mix-ins. The original payload is unchanged."
-            )
+            previews = view.query("#console-mixins-preview-content")
+            if previews:
+                previews.first(Static).update(
+                    text or "No mix-ins. The original payload is unchanged."
+                )
         except Exception:  # noqa: BLE001 - preview never publishes selection facts.
             if not self._mixin_ui_current(generation, view):
                 return
-            view.query_one("#console-mixins-status", Static).display = True
-            view.query_one("#console-mixins-status", Static).update(
+            view.show_status(
                 "Next send mix-ins unavailable. Disable or remove unavailable selections, then preview again."
             )
 
@@ -1239,19 +1252,13 @@ class ConsolePromptsModal(
                     mode=source
                 )
             except PromptCapabilityError:
-                view.query_one("#console-mixins-status", Static).display = True
-                view.query_one("#console-mixins-status", Static).update(
-                    "Mix-in source changed. Return to Browse and retry."
-                )
+                view.show_status("Mix-in source changed. Return to Browse and retry.")
                 return
             if source_identity[0] != current_identity[0] or any(
                 old is not new
                 for old, new in zip(source_identity[1:], current_identity[1:])
             ):
-                view.query_one("#console-mixins-status", Static).display = True
-                view.query_one("#console-mixins-status", Static).update(
-                    "Mix-in source changed. Return to Browse and retry."
-                )
+                view.show_status("Mix-in source changed. Return to Browse and retry.")
                 return
             authority = source_identity[0]
             intent = MixinWorkbenchIntent(
@@ -2208,11 +2215,13 @@ class ConsolePromptsModal(
         await self.reload_browse()
 
     @on(ConsolePromptsBrowse.ArtifactSelected)
-    async def _artifact_requested(
-        self, event: ConsolePromptsBrowse.ArtifactSelected
-    ) -> None:
+    def _artifact_requested(self, event: ConsolePromptsBrowse.ArtifactSelected) -> None:
         event.stop()
-        await self.open_artifact(event.identifier)
+        self.run_worker(
+            self.open_artifact(event.identifier),
+            exclusive=True,
+            group="console-prompts-artifact",
+        )
 
     @on(TextArea.Changed, "#console-prompt-draft-content")
     def _draft_content_changed(self, event: TextArea.Changed) -> None:

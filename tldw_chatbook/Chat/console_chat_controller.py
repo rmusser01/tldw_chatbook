@@ -6321,6 +6321,10 @@ class ConsoleChatController:
             expected_revision=expected_revision,
             custody_request=request,
         )
+        if result.applied:
+            self.prompt_mixin_service().publish_accepted_usage(
+                session_id, configuration.prompt_mixins
+            )
         if result.applied and self.response_rules is not None:
             self.response_rules.invalidate(session_id, "user_input")
         return result
@@ -11463,6 +11467,10 @@ class ConsoleChatController:
                     self.store.consume_pending_attachment(
                         session.id, pending.attachment_id
                     )
+            if origin is ConsoleSubmissionOrigin.MANUAL:
+                self.prompt_mixin_service().publish_accepted_usage(
+                    session.id, turn_context.prompt_mixins
+                )
             if custody_acceptance_hook is not None:
                 custody_acceptance_hook()
             if hook_owner is not None and hook_owner[0] is not None:
@@ -20392,7 +20400,6 @@ class ConsoleChatController:
             mixins = await service.capture(
                 session_id,
                 expected_revision=service.preferences(session_id).revision,
-                publish_facts=False,
             )
             # Build the next-send payload as submit_draft would, but do not persist.
             # task-548: annotate native ids so the boundary-summary compaction
@@ -25020,7 +25027,15 @@ class ConsoleChatController:
                     ),
                     attempt_id=attempt_id,
                 )
-                await self.prompt_mixin_service().accept_attempt(owner_id, batch)
+                await self.prompt_mixin_service().accept_attempt(
+                    owner_id,
+                    batch,
+                    record_usage=route in {
+                        ConsoleRequestRoute.REGENERATE,
+                        ConsoleRequestRoute.EDIT,
+                        ConsoleRequestRoute.CONTINUE,
+                    },
+                )
             except MixinSnapshotUnavailableError:
                 return self._block_context_preflight(
                     session_id=owner_id,

@@ -564,13 +564,15 @@ class _CoreAdapter:
             statements.extend(
                 item
                 for item in PROMPTS_V5_SCHEMA
-                if item.startswith(
-                    (
-                        "CREATE INDEX idx_prompts_",
-                        "CREATE UNIQUE INDEX idx_prompts_",
-                        "CREATE TRIGGER prompts_validate_sync_update",
-                    )
+                if (
+                    item.split()[:2] == ["CREATE", "INDEX"]
+                    and item.split()[2].startswith("idx_prompts_")
                 )
+                or (
+                    item.split()[:3] == ["CREATE", "UNIQUE", "INDEX"]
+                    and item.split()[3].startswith("idx_prompts_")
+                )
+                or item.startswith("CREATE TRIGGER prompts_validate_sync_update")
             )
             migrations = ((4, 5, PROMPTS_V4_TO_V5_SQL), (5, 6, tuple(statements)))
         return SchemaPolicy(self.owner_id, versions, schemas, migrations)

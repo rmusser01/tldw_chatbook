@@ -96,9 +96,11 @@ class ConsolePromptsBrowse(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Button(
-            f"Mix-ins · {self._mixin_count} enabled"
-            if self._mixin_count is not None
-            else "Mix-ins",
+            Text(
+                f"Mix-ins · {self._mixin_count} enabled"
+                if self._mixin_count is not None
+                else "Mix-ins"
+            ),
             id="console-prompts-mixins",
         )
         improve = Button(

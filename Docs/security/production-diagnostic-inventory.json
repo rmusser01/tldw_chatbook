@@ -435,8 +435,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 72,
-      "diagnostic_digest": "e1581746a4e7d2328a64",
+      "call_count": 73,
+      "diagnostic_digest": "6b6b4507d678248f2b7e",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_controller.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1108,7 +1108,7 @@
     },
     {
       "call_count": 19,
-      "diagnostic_digest": "d02e86b10dc27dfa385f",
+      "diagnostic_digest": "897851a887002f7f3686",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/keyword_store.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2031,8 +2031,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 93,
-      "diagnostic_digest": "3c444723b540359b7db5",
+      "call_count": 95,
+      "diagnostic_digest": "8bc734228d4ae7ed4084",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Prompt_Management/Prompts_Interop.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -9252,6 +9252,15 @@
           "status": "legacy_unreviewed"
         },
         {
+          "call_digest": "78da1f229d56eaae",
+          "method": "error",
+          "path_expressions": [
+            "file_path_str"
+          ],
+          "scope": "import_prompts_from_files",
+          "status": "legacy_unreviewed"
+        },
+        {
           "call_digest": "aabf24cb80757947",
           "method": "error",
           "path_expressions": [
@@ -9261,15 +9270,6 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "b75ad84a015ccfd6",
-          "method": "error",
-          "path_expressions": [
-            "file_path_str"
-          ],
-          "scope": "import_prompts_from_files",
-          "status": "legacy_unreviewed"
-        },
-        {
           "call_digest": "cf9eaa025cfcec7d",
           "method": "error",
           "path_expressions": [
@@ -9306,7 +9306,7 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "f57306ed2213ce72",
+          "call_digest": "da225089b30866e7",
           "method": "error",
           "path_expressions": [
             "file_path_str"
@@ -9333,7 +9333,7 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "b99a0d44f84d0455",
+          "call_digest": "66877fd61ee961d8",
           "method": "info",
           "path_expressions": [
             "file_path_str"

@@ -1235,7 +1235,7 @@ class _ConsolePromptMixinsFlow:
             self._current(intent)
             return None, payload
         snapshot = await self.service.capture(
-            self.session_id, expected_revision=intent.revision, publish_facts=False
+            self.session_id, expected_revision=intent.revision
         )
         self._current(intent)
         return snapshot, None

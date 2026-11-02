@@ -223,3 +223,7 @@ DB reads. Source fences and parent transaction rollback remain authoritative.
 ## Current-dev integration allocation
 
 The focused publication port targets dev `2acbcd42f3e7b07fd122f5f6dc6b22e7385f10c5`. Its existing ChaChaNotes schemas 82–85 retain their historical meaning; prompt mix-in tables install at schema 86, after 85. Prompts advances from 5 to 6. The former experimental feature schema 82 is not a released predecessor and is not accepted as a historical recovery catalog. Prior captures and hashes remain historical to the reviewed mixed-ancestry commits; current source and qualification manifests describe the port separately. Historical Git objects can be unavailable in fresh clones and are reported unavailable, never treated as verified. Current published source checks remain strict.
+
+### Accepted usage facts (PR3346 review)
+
+Source capture and Preview only build provisional immutable snapshots. Accepted manual input publishes observed name, placement and last-used revision at native acceptance (or ephemeral acceptance); queue input publishes these facts when custody admission succeeds. Current-choice Regenerate, Edit and Continue publish after their operational receipt is accepted. Original Retry and queue drain never refresh current-choice facts. Publication reads no source, skips unavailable preferences, retains intent revision and never re-adds removed selections. Refused hooks, provider resolution and preparation preserve all choice facts.

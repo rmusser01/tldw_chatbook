@@ -55,11 +55,12 @@ async def acknowledge_prompt_save(
     if canvas is not None and current_state is not None:
         current_state = canvas.capture_live_block_state()
         owner._library_prompt_block_state = current_state
-    current_mixin = (
-        owner.query_one(PromptMixinEditor).read_draft()
-        if submitted_mixin_draft is not None
-        else None
-    )
+    current_mixin = None
+    if submitted_mixin_draft is not None:
+        editors = owner.query(PromptMixinEditor)
+        if not editors:
+            return
+        current_mixin = editors.first().read_draft()
     newer_mixin = current_mixin != submitted_mixin_draft
     current_fields = owner._read_library_prompt_editor_fields()
     newer_blocks = (

@@ -1,0 +1,105 @@
+{
+  "native": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_prompt_mixin_retry.py",
+    "Tests/Chat/test_console_prompt_mixin_admission.py",
+    "Tests/Chat/test_console_prompt_mixin_journey.py",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/native-tmp"
+  ],
+  "ui": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_prompt_mixins.py",
+    "Tests/UI/test_library_prompt_mixins.py",
+    "Tests/UI/test_console_capture_policy_dialog.py",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/ui-tmp"
+  ],
+  "storage": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/DB/test_console_prompt_mixins.py",
+    "Tests/Backup_Recovery/test_prompt_mixin_restore.py",
+    "Tests/Backup_Recovery/test_core_owners.py::test_schema_policy_matches_installed_store",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/storage-tmp"
+  ],
+  "remaining-covering": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_prompt_mixin_forks.py",
+    "Tests/Chatbooks/test_chatbook_prompt_round_trip.py::test_prompt_export_failure_is_atomic_bounded_and_private",
+    "Tests/Chat/test_console_chat_fork.py::test_fork_public_record_fields_are_exact",
+    "Tests/UI/test_css_bundle_sync_guard.py",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/remaining-covering-tmp"
+  ],
+  "check_schema_table_allowlist": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_schema_table_allowlist.py"
+  ],
+  "check_index_plan_pins": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_index_plan_pins.py"
+  ],
+  "check_textual_worker_contract": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_textual_worker_contract.py"
+  ],
+  "check_markup_interpolation": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_markup_interpolation.py"
+  ],
+  "check_persistent_diagnostic_inventory": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_persistent_diagnostic_inventory.py"
+  ],
+  "prompt-recovery": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Backup_Recovery/test_sqlite_validation.py",
+    "-k",
+    "prompt",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/prompt-recovery-tmp"
+  ],
+  "native-commit": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_refused_native_send_keeps_usage_facts_until_acceptance[native_commit]",
+    "-q",
+    "--tb=short",
+    "--show-capture=no",
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/prompt-mixins-pr-d18dfic_/review-fixes/native-commit-tmp"
+  ]
+}
