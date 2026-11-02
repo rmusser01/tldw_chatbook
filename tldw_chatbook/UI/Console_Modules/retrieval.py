@@ -441,12 +441,12 @@ class ConsoleRetrievalController:
         pending_launch: ConsoleLiveWorkLaunch | None,
         sent_source_count: int | None = None,
     ) -> str:
-        """Return the Inspector's staged/sent Library source status."""
+        """Return the Inspector's staged/attached Library source status."""
         if pending_launch is None:
             if sent_source_count:
                 count = int(sent_source_count)
                 noun = "source" if count == 1 else "sources"
-                return f"sent with the last message · {count} {noun}"
+                return f"attached to the last message · {count} {noun}"
             return "not staged"
         if source_mentions_rag(pending_launch.source):
             launch_status = str(pending_launch.status or "").strip().lower()

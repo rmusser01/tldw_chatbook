@@ -1116,19 +1116,25 @@ beyond that) with an **Un-stage** button that drops the whole bundle in
 one click. Staged evidence rides only the **next** send. Once a send
 consumes it, the strip disappears, the **Sources** chip reads 0 and
 Inspect's "What happens if I send now?" card reads "Sources: None
-staged". The reply to that message shows a dim **Sources (N) · sent with
-this turn** line with the number of sources that went with it, and
-Inspect's Run card says "sources sent with the last message · N" until
-your next send. A send with nothing staged claims no sources anywhere.
-Un-stage on a strip whose evidence was already sent just hides the strip.
+staged". The reply shows a dim **Sources (N) · attached to this turn**
+line for the accepted capture (or its prompted estimate), and Inspect's Run
+card says "attached to the last message · N sources" until your next send.
+Acceptance may still be followed by a refusal before provider contact; these
+counts do not prove delivery. The existing provider-contact card reports
+confirmed, absent or unknown contact independently. A send with nothing staged claims no sources anywhere.
+Un-stage on an already consumed strip just hides it.
 Retrying a failed reply does not send the evidence again, so the retried
-reply drops its **Sources (N)** line.
+reply drops its **Sources (N)** line. Restoring a chat also clears this
+session-only count; persisted canonical citations remain available through
+their own source records.
 
 Staged evidence belongs to the chat you staged it in. A new tab
 (Ctrl+T), another open chat, or a newly entered workspace chat starts
 with nothing staged and clean Inspect source cards. Switching back to
 the first chat shows its staging again, and a send in another chat never
-uses it. Closing a chat's tab discards whatever is staged in it.
+uses it. Successful tab close discards only that chat's staging immediately,
+including a background tab. A refused or unfinished close retains it. A cold
+Console handoff binds to the first chat activated, even before a view reads it.
 
 Staged evidence also survives leaving Console and coming back: navigating
 to Library (or anywhere else) and returning still shows the same bundle

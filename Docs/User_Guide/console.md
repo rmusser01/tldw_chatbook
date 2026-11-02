@@ -79,7 +79,8 @@ Top to bottom:
 - **Staged-evidence strip** — appears at the top of the control deck,
   directly under the conversation pane and above the status chip strip,
   only while Library RAG evidence is staged in the active chat (a send
-  that consumes it moves the count onto its reply as **Sources (N)**);
+  that accepts it shows **Sources (N) · attached to this turn** on the reply;
+  this accepted count does not establish provider contact);
   lists what's staged with an **Un-stage** button — see
   [Context & RAG](console/context-and-rag.md). The prompt-queue shelf
   occupies the same slot while prompts are queued.

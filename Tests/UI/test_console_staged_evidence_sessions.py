@@ -29,6 +29,8 @@ from textual.widgets import Button, Static
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
     _build_console_send_test_app,
+    _configure_native_ready_console,
+    _sync_console_control_bar_now,
     _select_llamacpp_console,
 )
 from Tests.UI.test_console_staged_evidence_strip import (
@@ -71,7 +73,7 @@ from tldw_chatbook.Widgets.Console.console_staged_evidence_strip import (
 pytestmark = pytest.mark.bootstrap_profile
 
 EVIDENCE = "[S1] MEDIA — Source 1\nBody 1\n\n[S2] MEDIA — Source 2\nBody 2"
-SENT_LINE = "sent with the last message"
+SENT_LINE = "attached to the last message"
 
 
 def _plain(widget: Static) -> str:
@@ -140,13 +142,19 @@ async def _wait_for_replies(screen, pilot, count: int) -> None:
 async def _send(screen, pilot, draft: str, replies: int) -> None:
     from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
 
+    from Tests.UI.test_console_hook_review_send_freeze import _until
+
+    assert await _until(
+        lambda: screen._console_attach_reconciled
+        and not screen._console_attach_reconcile_running
+        and screen._hooks._permissions().snapshot().ready,
+        15,
+    )
     composer = screen.query_one("#console-native-composer", ConsoleComposerBar)
     composer.load_draft(draft)
+    await _sync_console_control_bar_now(screen)
     send = screen.query_one("#console-send-message", Button)
-    for _ in range(80):  # Send stays "Sending..." until the last turn settles
-        await pilot.pause(0.05)
-        if not send.disabled:
-            break
+    assert await _until(lambda: not send.disabled, 15)
     send.press()
     await _wait_for_replies(screen, pilot, replies)
 
@@ -183,7 +191,7 @@ def _assert_staged(screen, count: int) -> None:
 def _assert_nothing_staged(screen, *, sent: int | None) -> None:
     """Strip, chip and every Inspect source card agree nothing is staged.
 
-    ``sent`` is the source count the Run card may report for this chat's
+    ``sent`` is the accepted captured source count the Run card may report for this chat's
     LAST message, or None when that message carried none.
     """
     strip = screen.query_one(STRIP_ID, ConsoleStagedEvidenceStrip)
@@ -280,6 +288,7 @@ def capture(monkeypatch) -> AsyncMock:
 
 def _console_app(gateway):
     app = _build_console_send_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = lambda: gateway
@@ -355,7 +364,7 @@ async def test_a_temporary_chats_send_shows_its_staged_sources_on_its_reply(
         assert capture.await_args_list[0].args[1] is launch
         assert EVIDENCE in _last_request_text(gateway)
         _assert_nothing_staged(console, sent=2)
-        assert _reply_footers(console) == ["Sources (2) · sent with this turn"]
+        assert _reply_footers(console) == ["Sources (2) · attached to this turn"]
 
 
 @pytest.mark.asyncio
@@ -382,14 +391,14 @@ async def test_staged_evidence_follows_one_turn_and_one_chat(capture) -> None:
         assert capture.await_args_list[0].args[1] is launch
         assert EVIDENCE in _last_request_text(gateway)
         _assert_nothing_staged(console, sent=2)
-        assert _reply_footers(console) == ["Sources (2) · sent with this turn"]
+        assert _reply_footers(console) == ["Sources (2) · attached to this turn"]
 
         # A later send with nothing staged claims no evidence anywhere.
         await _send(console, pilot, "follow up", replies=2)
         assert capture.await_count == 1
         assert EVIDENCE not in _last_request_text(gateway)
         _assert_nothing_staged(console, sent=None)
-        assert _reply_footers(console)[0] == "Sources (2) · sent with this turn"
+        assert _reply_footers(console)[0] == "Sources (2) · attached to this turn"
         assert "Sources (" not in _reply_footers(console)[1]
 
         # Evidence staged here stays in this chat ...
@@ -480,10 +489,10 @@ async def test_unstage_on_a_stale_strip_redraws_every_staged_surface(
 
 
 def test_a_retried_reply_drops_the_sources_line_its_retry_did_not_send() -> None:
-    """A failed reply's sources went out with the FAILED attempt only.
+    """The count belongs to the accepted failed attempt only.
 
     Retry rebuilds the request from history without the released evidence,
-    so "Sources (N) · sent with this turn" would describe an answer written
+    so "Sources (N) · attached to this turn" would describe an answer written
     without them.
     """
     store = ConsoleChatStore()
@@ -570,3 +579,215 @@ def test_a_failing_staged_evidence_redraw_never_reaches_the_view_pump() -> None:
     assert len(posted) == 1
 
     posted[0]()  # must not raise
+
+
+def test_cold_staging_binds_first_activation_without_read_or_view() -> None:
+    store = ConsoleChatStore()
+    runtime = ConsoleRuntime(SimpleNamespace(app_config={}))
+    runtime.set_chat_store(store)
+    launch = _launch(2)
+    revision = runtime.stage_console_staged_evidence(launch)
+    first = store.create_session(title="First").id
+    second = store.create_session(title="Second").id
+    # No snapshot/helper/view runs between those synchronous activations.
+    assert runtime.snapshot_console_staged_evidence(second) == (None, 0, None)
+    assert runtime.snapshot_console_staged_evidence(first) == (launch, revision, None)
+    assert None not in runtime._staged_evidence
+
+
+def test_cold_staging_ignores_none_activation_and_preserves_keyed_state() -> None:
+    store = ConsoleChatStore()
+    runtime = ConsoleRuntime(SimpleNamespace(app_config={}))
+    runtime.set_chat_store(store)
+    cold, explicit = _launch(1), _launch(3)
+    cold_revision = runtime.stage_console_staged_evidence(cold)
+    runtime._on_active_session_changed()
+    runtime._on_active_session_changed()
+    assert runtime._staged_evidence[None].launch is cold
+    first = store.create_session(title="First", activate=False).id
+    keyed_revision = runtime.stage_console_staged_evidence(explicit, first)
+    store.switch_session(first)
+    assert runtime.snapshot_console_staged_evidence(first) == (
+        explicit,
+        keyed_revision,
+        None,
+    )
+    assert keyed_revision > cold_revision
+    assert None not in runtime._staged_evidence
+    second = store.create_session(title="Second").id
+    assert runtime.snapshot_console_staged_evidence(second) == (None, 0, None)
+
+
+def _staged_close_runtime():
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    store = ConsoleChatStore()
+    runtime = ConsoleRuntime(SimpleNamespace(app_config={}))
+    runtime.set_chat_store(store)
+    controller = ConsoleChatController(store=store, provider_gateway=SimpleNamespace())
+    runtime.set_chat_controller(controller)
+    return runtime, store, controller
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("position", ["background", "active", "last", "cold"])
+async def test_successful_close_retires_exact_staging_immediately(position) -> None:
+    runtime, store, controller = _staged_close_runtime()
+    launch, other_launch = _launch(2), _launch(3)
+    if position == "cold":
+        runtime.stage_console_staged_evidence(launch)
+    first = store.create_session(title="First", ephemeral=True).id
+    if position != "cold":
+        runtime.stage_console_staged_evidence(launch, first)
+    other = None
+    if position in {"background", "active"}:
+        other = store.create_session(title="Other", ephemeral=True).id
+        runtime.stage_console_staged_evidence(other_launch, other)
+        runtime.set_console_staged_evidence_notice(3, other)
+        other_state = runtime.snapshot_console_staged_evidence(other)
+        if position == "active":
+            store.switch_session(first)
+    revision = controller.lifecycle_impact(session_id=first).revision
+    result = await runtime.close_session(first, expected_revision=revision)
+    # Inspect map before any read/activation could defensively prune it.
+    assert first not in {session.id for session in store.sessions()}
+    assert first not in runtime._staged_evidence
+    assert None not in runtime._staged_evidence
+    if other is not None:
+        assert result.id == other
+        assert runtime.snapshot_console_staged_evidence(other) == other_state
+    else:
+        assert result is None  # normal finalization of the last chat succeeds
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["revision", "voice", "native", "preparation"])
+async def test_unfinished_close_keeps_exact_staging(refusal, monkeypatch) -> None:
+    runtime, store, controller = _staged_close_runtime()
+    first = store.create_session(title="First", ephemeral=True).id
+    launch = _launch(2)
+    revision = runtime.stage_console_staged_evidence(launch)
+    lifecycle = controller.lifecycle_impact(session_id=first).revision
+    if refusal == "revision":
+        controller._advance_lifecycle_revision(first)
+    elif refusal == "voice":
+        from Tests.UI.test_console_session_tab_close import _UndrainedVoiceOwner
+
+        runtime._voice_promotion_owner = _UndrainedVoiceOwner()
+    else:
+
+        async def refuse(*_args, **_kwargs):
+            assert runtime._staged_evidence[first].launch is launch
+            raise RuntimeError("retained owner refuses finalization")
+
+        if refusal == "native":
+            monkeypatch.setattr(runtime, "_drain_ordinary_native_commits", refuse)
+        else:
+            from tldw_chatbook.Chat import console_preparation_reads
+
+            monkeypatch.setattr(
+                console_preparation_reads, "drain_preparation_reads", refuse
+            )
+    if refusal == "voice":
+        assert await runtime.close_session(first, expected_revision=lifecycle) is None
+    else:
+        with pytest.raises(RuntimeError):
+            await runtime.close_session(first, expected_revision=lifecycle)
+    assert first in {session.id for session in store.sessions()}
+    assert runtime.snapshot_console_staged_evidence(first) == (launch, revision, None)
+
+
+@pytest.mark.asyncio
+async def test_close_retires_staging_before_cancellation_redelivery(
+    monkeypatch,
+) -> None:
+    import asyncio
+
+    runtime, store, controller = _staged_close_runtime()
+    first = store.create_session(title="First", ephemeral=True).id
+    runtime.stage_console_staged_evidence(_launch(2))
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = runtime._bounded_wait
+
+    async def held(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(runtime, "_bounded_wait", held)
+    closing = asyncio.create_task(
+        runtime.close_session(
+            first,
+            expected_revision=controller.lifecycle_impact(session_id=first).revision,
+        )
+    )
+    await entered.wait()
+    closing.cancel()
+    assert first in runtime._staged_evidence
+    assert first in {session.id for session in store.sessions()}
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await closing
+    assert first not in runtime._staged_evidence
+    assert first not in {session.id for session in store.sessions()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ephemeral", [False, True], ids=["saved", "temporary"])
+async def test_accepted_sources_are_attached_when_prerequisite_refuses_before_contact(
+    tmp_path, monkeypatch, ephemeral
+) -> None:
+    from Tests.Chat.test_console_staged_evidence_dispatch_pin import (
+        _runtime,
+        _admit,
+        _library_search,
+    )
+    from tldw_chatbook.Widgets.Console.console_transcript import _citation_notice
+    from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+
+    runtime, store, controller, first = _runtime(tmp_path, ephemeral=ephemeral)
+    _library_search(monkeypatch)
+    runtime.stage_console_staged_evidence(SimpleNamespace(evidence=EVIDENCE))
+    releases = []
+    original = runtime.release_console_staged_evidence
+
+    def release(*args, **kwargs):
+        result = original(*args, **kwargs)
+        releases.append(result)
+        return result
+
+    monkeypatch.setattr(runtime, "release_console_staged_evidence", release)
+    refused = AsyncMock(side_effect=RuntimeError("trace maintenance unavailable"))
+    monkeypatch.setattr(controller, "_wait_for_trace_maintenance_dispatch", refused)
+    await runtime.wait_for_turn(_admit(runtime, controller, first, "question"))
+    replies = [
+        m
+        for m in store.messages_for_session(first)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    ]
+    assert len(replies) == 1
+    reply = replies[0]
+    assert reply.evidence_source_count == 1
+    assert refused.await_count == 1
+    assert controller.provider_gateway.calls == 0
+    assert releases == [True]
+    assert runtime.snapshot_console_staged_evidence(first)[::2] == (None, 1)
+    if not ephemeral:
+        row = (
+            store.persistence.db.get_connection()
+            .execute("SELECT state FROM console_dispatch_checkpoints")
+            .fetchone()
+        )
+        assert row is not None and row["state"] == "accepted"
+    assert _citation_notice(reply) == "Sources (1) · attached to this turn"
+    receipt = ConsoleRetrievalController._console_rag_source_status(None, None, 1)
+    assert receipt == "attached to the last message · 1 source"
+    assert "sent" not in _citation_notice(reply) + receipt
+
+
+def test_accepted_source_run_receipt_uses_attached_vocabulary() -> None:
+    from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+
+    assert ConsoleRetrievalController._console_rag_source_status(None, None, 2) == (
+        "attached to the last message · 2 sources"
+    )

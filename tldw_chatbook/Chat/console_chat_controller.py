@@ -22709,7 +22709,7 @@ class ConsoleChatController:
         continuation: _PreparedSendContinuation | None,
         custody_lease: _PreparedEvidenceLease | None,
     ) -> None:
-        """Put the staged sources a send carried on its reply (TASK-33620.7).
+        """Put the accepted captured source count on its reply (TASK-33620.7).
 
         Runs just before the leases release, while the captured launch is
         still attached. Display only: a failure here never costs the send.

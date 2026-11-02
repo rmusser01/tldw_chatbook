@@ -2295,6 +2295,12 @@ class ConsoleRuntime:
 
     def _on_active_session_changed(self) -> None:
         """Re-derive app-owned decisions after the swap; review presentation last."""
+        active = getattr(self._chat_store, "active_session_id", None)
+        if active is not None:
+            cold = self._staged_evidence.pop(None, None)
+            if cold is not None:
+                # First activation owns a cold handoff, before any observer reads.
+                self._staged_evidence.setdefault(active, cold)
         controller = self._chat_controller
         if callable(callback := getattr(controller, "active_session_changed", None)):
             callback()
@@ -2689,9 +2695,6 @@ class ConsoleRuntime:
         key = active if session_id is None else session_id
         states = self._staged_evidence
         state = states.get(key)
-        if state is None and key is not None and key == active and None in states:
-            # Staged before any chat was active (a cold Console's handoff).
-            state = states[key] = states.pop(None)
         if state is None and create:
             state = states[key] = _ConsoleStagedEvidenceState()
         return state
@@ -6269,8 +6272,9 @@ class ConsoleRuntime:
             timeout_seconds: Grace period for bounded publication and turn drains.
 
         Returns:
-            The removed session, or None if claimed voice publication does not
-            drain within its grace period.
+            The neighboring active session after deletion, or None when none
+            remain. Also None if claimed voice publication does not drain;
+            callers must inspect whether the original session still exists.
 
         Raises:
             RuntimeError: Recovery retains a session admission fence, a voice
@@ -6463,6 +6467,7 @@ class ConsoleRuntime:
             except asyncio.CancelledError:
                 cancel_requested = True
         closed = controller.finalize_session_close(ticket)
+        self._staged_evidence.pop(ticket.session_id, None)
         hook_drain_succeeded = hook_engine is None or not hook_engine.cleanup_pending
         if not pending and fleet_drain_succeeded and hook_drain_succeeded:
             # The fence was provisional while this exact session scope

@@ -1497,18 +1497,18 @@ def console_prompted_source_count(launch: ConsoleLiveWorkLaunch | None) -> int:
 
 
 def console_sent_source_count(launch: ConsoleLiveWorkLaunch | None, result: Any) -> int:
-    """Return how many sources a capture of ``launch`` put in the prompt.
+    """Return the accepted capture count, with a prompted estimate fallback.
 
     The capture's repair contract has one ordinal per formatted prompt entry,
-    so it is exact; the formatted pre-authority estimate covers a capture
-    that could not build one.
+    so that count is exact; the formatted pre-authority estimate covers a
+    capture that could not build one. Neither proves provider contact.
 
     Args:
         launch: The staged launch the send captured.
         result: The capture's ``LocalRagContextResult``.
 
     Returns:
-        The number of evidence entries carried into the prompt.
+        The captured entry count or existing pre-authority prompted estimate.
     """
     ordinals = getattr(
         getattr(result, "citation_repair_contract", None), "allowed_ordinals", None

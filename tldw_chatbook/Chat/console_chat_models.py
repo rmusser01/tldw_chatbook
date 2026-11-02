@@ -1253,7 +1253,7 @@ class ConsoleChatMessage:
     exchanges: tuple["ExchangeCapture", ...] = ()
     #: Safe current-session citation UI state. Never persisted or restored.
     citation_presentation: ConsoleCitationPresentation | None = None
-    #: TASK-33620.7: how many staged sources this reply's send carried.
+    #: TASK-33620.7: accepted captured source count attached to this turn.
     #: Session-only like ``citation_presentation``; never persisted.
     evidence_source_count: int | None = None
     #: Structured activity-header facts. Session-only; never persisted,

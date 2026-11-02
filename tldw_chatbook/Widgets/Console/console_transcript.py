@@ -412,7 +412,7 @@ def _message_status_line(message: ConsoleChatMessage) -> str:
 def _citation_notice(message: ConsoleChatMessage) -> str:
     """Return a reply's dim sources and citation lines (TASK-33620.7)."""
     count = getattr(message, "evidence_source_count", None)
-    sources = f"Sources ({count}) · sent with this turn" if count else ""
+    sources = f"Sources ({count}) · attached to this turn" if count else ""
     lines = (sources, _citation_repair_notice(message))
     return "\n".join(line for line in lines if line)
 

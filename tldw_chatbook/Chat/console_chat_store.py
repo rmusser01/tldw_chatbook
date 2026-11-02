@@ -12397,8 +12397,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
     def set_evidence_source_count(
         self, message_id: str, count: int | None
     ) -> ConsoleChatMessage:
-        """Record how many staged sources a reply's send carried (session-only)."""
-        if count is not None and (type(count) is not int or count < 1):
+        """Record a reply's accepted captured source count (session-only)."""
+        if count is not None and (type(count) is not int or count < 1):  # noqa: E721 -- exact int excludes bool/subclasses
             raise ValueError("count must be a positive int or None")
         message = self._message_or_raise(message_id)
         message.evidence_source_count = count

@@ -3620,16 +3620,17 @@ def test_console_rag_source_status_unchanged_with_a_pending_launch():
     ) == ("staged from Library Search/RAG")
 
 
+@pytest.mark.bootstrap_profile
 def test_console_rag_source_status_remembers_the_last_send_when_nothing_is_staged():
     """D1b: the Inspector gains the strip's one-send memory."""
     app = _build_test_app()
     screen = ChatScreen(app)
 
     assert screen._retrieval._console_rag_source_status(None, sent_source_count=5) == (
-        "sent with the last message · 5 sources"
+        "attached to the last message · 5 sources"
     )
     assert screen._retrieval._console_rag_source_status(None, sent_source_count=1) == (
-        "sent with the last message · 1 source"
+        "attached to the last message · 1 source"
     )
 
 
@@ -3648,6 +3649,7 @@ def test_console_rag_source_status_genuinely_empty_reads_not_staged():
     ) == ("not staged")
 
 
+@pytest.mark.bootstrap_profile
 def test_console_inspector_sources_row_remembers_the_last_send():
     """D1b end-to-end: the Inspector's "Retrieval" row (TASK-24610 renamed
     it from "Sources"; and the run recipe
@@ -3661,10 +3663,11 @@ def test_console_inspector_sources_row_remembers_the_last_send():
     inspector_state = screen._build_console_inspector_state(None)
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
-    assert rows_by_label["Retrieval"].value == "sent with the last message · 5 sources"
-    assert "sent with the last message · 5 sources" in rows_by_label["Run recipe"].value
+    assert rows_by_label["Retrieval"].value == "attached to the last message · 5 sources"
+    assert "attached to the last message · 5 sources" in rows_by_label["Run recipe"].value
 
 
+@pytest.mark.bootstrap_profile
 def test_console_strip_never_repeats_the_receipt_the_inspector_keeps():
     """TASK-33620.7: after a send releases its staged launch the strip is
     hidden -- it describes only the NEXT send, and the reply itself says
@@ -3683,7 +3686,7 @@ def test_console_strip_never_repeats_the_receipt_the_inspector_keeps():
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
     assert strip_state.visible is False
-    assert rows_by_label["Retrieval"].value == "sent with the last message · 5 sources"
+    assert rows_by_label["Retrieval"].value == "attached to the last message · 5 sources"
 
 
 def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():

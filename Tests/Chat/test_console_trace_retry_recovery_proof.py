@@ -518,3 +518,146 @@ async def test_only_an_http_error_status_counts_as_a_refusal(
     assert (rejection is not None) is refusal
     if refusal:
         assert rejection.status_code == status
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("outcome", ["answer", "refusal", "empty", "unavailable"])
+async def test_gateway_contact_proof_keeps_accepted_count_attached(
+    tmp_path, make_database, make_gateway, outcome, record_property
+):
+    """Accepted counts stay attached across outcome and missing-proof paths."""
+    import requests
+    from urllib3.response import HTTPResponse
+    from urllib3.util.retry import Retry
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleChatMessage,
+        ConsoleMessageRole,
+    )
+    from tldw_chatbook.Chat.console_trace_call_recovery import (
+        provider_contact_for_pause,
+    )
+    from tldw_chatbook.Widgets.Console.console_transcript import _citation_notice
+    from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
+
+    if outcome == "unavailable":
+        # A completed compatibility stream supplies no outcome-proof owner.
+        from Tests.UI.test_console_native_chat_flow import CapturingGateway
+
+        gateway = CapturingGateway(chunks=())
+        signals = ConsoleProviderStreamSignals()
+        emitted = [
+            item
+            async for item in gateway.stream_chat(
+                None, [{"role": "user", "content": "hello"}], signals=signals
+            )
+        ]
+        assert emitted == []
+        assert (
+            provider_contact_for_pause(
+                gateway, signals, dispatch_started=True
+            ).contacted
+            == "unknown"
+        )
+        message = ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="", evidence_source_count=2
+        )
+        assert _citation_notice(message) == "Sources (2) · attached to this turn"
+        assert ConsoleRetrievalController._console_rag_source_status(None, None, 2) == (
+            "attached to the last message · 2 sources"
+        )
+        assert len(gateway.sent_messages) == 1
+        return
+
+    entries = []
+
+    def adapter(**kwargs):
+        entries.append(kwargs)
+        if outcome == "refusal":
+            response = requests.Response()
+            response.status_code = 402
+            response.raw = HTTPResponse(status=402, retries=Retry(total=0))
+            response.raise_for_status()
+        return iter(()) if outcome == "empty" else "answer"
+
+    database = make_database(tmp_path / "contact.sqlite", "contact")
+    conversation = database.add_conversation({"title": "contact"})
+    _, revision = _saved_message(database, conversation, "hello")
+    policy = FrozenTracePolicy(new_opaque_id(), "credentials-v1", False, None)
+    gateway = make_gateway(
+        chat_api_call_fn=adapter,
+        trace_call_boundary_factory=ConsoleTraceBoundaryFactory(database),
+    )
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        execution_key="openai",
+        model="test-model",
+        ready=True,
+        api_key="fixture-key",
+        base_url="https://api.openai.com/v1",
+        streaming=outcome == "empty",
+    )
+    prepared = gateway.prepare_chat_request(
+        resolution,
+        _semantic_request([{"role": "user", "content": "hello"}], [revision], policy),
+        route=ConsoleRequestRoute.FRESH,
+        capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+    )
+    signals = ConsoleProviderStreamSignals()
+    gateway._bind_trace_preparation(signals, object())
+    assert (
+        provider_contact_for_pause(gateway, signals, dispatch_started=False).contacted
+        == "no"
+    )
+    assert entries == []
+    if outcome == "refusal":
+        with pytest.raises(ChatProviderError):
+            async for _ in gateway.stream_chat(
+                resolution,
+                prepared,
+                signals=signals,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            ):
+                pass
+    else:
+        emitted = [
+            item
+            async for item in gateway.stream_chat(
+                resolution,
+                prepared,
+                signals=signals,
+                route=ConsoleRequestRoute.FRESH,
+                capture_mode=ConsoleTraceCaptureMode.CAPTURE_ON,
+            )
+        ]
+        from tldw_chatbook.Chat.console_provider_gateway import NO_PROVIDER_CONTENT_COPY
+
+        assert emitted == (
+            [NO_PROVIDER_CONTENT_COPY] if outcome == "empty" else ["answer"]
+        )
+    assert len(entries) == 1
+    contact = provider_contact_for_pause(gateway, signals, dispatch_started=True)
+    if outcome != "empty":
+        assert contact.contacted == "yes"
+    if outcome == "empty":
+        # Existing synthetic-copy accounting is not physical-contact proof.
+        scope = gateway._trace_preparation_scope(signals)
+        record_property("pr3331_emitted_copy", NO_PROVIDER_CONTENT_COPY)
+        record_property("pr3331_synthetic_fallback", signals.synthetic_fallback_emitted)
+        record_property("pr3331_recorded_answered", scope.provider_answered)
+        record_property("pr3331_dispatches", scope.provider_dispatches)
+        record_property("pr3331_rejections", scope.provider_rejections)
+        record_property("pr3331_contact_projection", contact.contacted)
+        record_property("pr3331_transport_entries", 0)
+        assert signals.synthetic_fallback_emitted
+    assert (contact.rejection is not None) is (outcome == "refusal")
+    assert gateway._trace_preparation_scope(signals).provider_dispatches == 1
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="", evidence_source_count=2
+    )
+    assert _citation_notice(message) == "Sources (2) · attached to this turn"
+    assert ConsoleRetrievalController._console_rag_source_status(None, None, 2) == (
+        "attached to the last message · 2 sources"
+    )
+    assert len(entries) == 1  # rendering neither replays nor promotes contact

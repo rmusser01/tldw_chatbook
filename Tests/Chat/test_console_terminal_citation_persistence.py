@@ -1314,8 +1314,10 @@ async def test_sealed_reply_settles_its_checkpoint_so_the_next_send_is_accepted(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("close_before_restart", [False, True])
 def test_terminal_selected_answer_citations_survive_restart(
     real_citation_stack_factory,
+    close_before_restart,
 ) -> None:
     stack = real_citation_stack_factory("selected-citations-restart")
     builder, prompt_id = _real_captured_builder(stack.repository)
@@ -1358,6 +1360,28 @@ def test_terminal_selected_answer_citations_survive_restart(
     repeated_start = selected_body.index("[S1]", first_start + 1)
     unknown_start = selected_body.index("[S99]")
 
+    if close_before_restart:
+        import asyncio
+        from types import SimpleNamespace
+        from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+        runtime = ConsoleRuntime(SimpleNamespace(app_config={}))
+        runtime.set_chat_store(stack.store)
+        controller = ConsoleChatController(
+            store=stack.store, provider_gateway=SimpleNamespace()
+        )
+        runtime.set_chat_controller(controller)
+        runtime.stage_console_staged_evidence(object(), session.id)
+        asyncio.run(
+            runtime.close_session(
+                session.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=session.id
+                ).revision,
+            )
+        )
+        assert session.id not in runtime._staged_evidence
+        assert session.id not in {item.id for item in stack.store.sessions()}
     stack.close()
     reopened = CharactersRAGDB(stack.db_path, client_id=stack.client_id)
     try:
