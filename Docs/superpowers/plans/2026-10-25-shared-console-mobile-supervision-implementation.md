@@ -16,7 +16,7 @@
 
 **Baseline:** `8dbf79077b10d5671dabd4f9cbe06ea9c2ee8c15`. This commit contains the approved specification and overflow correction; product implementation has not started. Re-check symbols and schema ceilings after rebasing.
 
-**Status:** User-requested PR3345 dev integration is active. Original source-bound implementation/reviews remain historical; Tasks8 and11 are reopened for integrated storage/runtime and mouse/UAT qualification. The mouse assertion reproduced a mixed size/layout test receipt; a bounded test-only correction is in progress. Physical phone/VPN remains unverified.
+**Status:** Product integration is frozen on native dev62a for independent review and final15-case UAT. Populated rollback and separate changed-row SafetyCopy evidence pass at their recorded source; mobile/native runtime composition is qualified. The mouse test synchronization defect is reproduced and corrected. Absolute size/startup checks remain NON-GREEN draft blockers under R178; no merge readiness or Task8/11 Done claim. Physical phone/VPN remains unverified.
 
 ```text
 ADR required: no
