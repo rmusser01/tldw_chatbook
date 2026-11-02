@@ -23,7 +23,9 @@ and that the targeted restyles leave the styles a full restyle computes.
 
 from __future__ import annotations
 
+import ast
 import inspect
+import textwrap
 from dataclasses import replace
 from pathlib import Path
 from typing import get_args
@@ -151,9 +153,9 @@ async def test_a_header_status_flip_restyles_only_the_header_once(monkeypatch):
                 if node in descendants
             }
         )
-        assert header_restyles == 1, (
-            f"The header was restyled {header_restyles} times for one status flip."
-        )
+        assert (
+            header_restyles == 1
+        ), f"The header was restyled {header_restyles} times for one status flip."
         assert not restyled_children, (
             "A status flip restyled header descendants no status rule styles: "
             f"{restyled_children}"
@@ -290,9 +292,9 @@ async def test_a_stop_availability_flip_restyles_the_stop_button_once(monkeypatc
         assert stop.has_class("console-stop-active")
         assert not stop.classes & {"console-stop-idle", "console-action-disabled"}
         stop_restyles = sum(1 for node in applied if node is stop)
-        assert stop_restyles == 1, (
-            f"Stop was restyled {stop_restyles} times for one availability flip."
-        )
+        assert (
+            stop_restyles == 1
+        ), f"Stop was restyled {stop_restyles} times for one availability flip."
         applied.clear()
 
         composer.sync_action_state(
@@ -333,9 +335,9 @@ async def test_a_send_readiness_flip_restyles_send_once_beside_disabled(monkeypa
         assert send.has_class("-default") and not send.has_class("-primary")
         assert send.classes >= {"console-action-subdued", "console-send-inactive"}
         send_restyles = sum(1 for node in applied if node is send)
-        assert send_restyles <= 2, (
-            f"Send was restyled {send_restyles} times for one readiness flip."
-        )
+        assert (
+            send_restyles <= 2
+        ), f"Send was restyled {send_restyles} times for one readiness flip."
 
 
 @pytest.mark.asyncio
@@ -382,9 +384,9 @@ async def test_a_send_reason_muted_and_size_flip_restyles_the_strip_once(monkeyp
         assert not strip.has_class(idle)
         assert strip.classes >= {"w-auto", "h-1"}
         restyles = sum(1 for node in applied if node is strip)
-        assert restyles == 1, (
-            f"The reason strip was restyled {restyles} times for one muted and size flip."
-        )
+        assert (
+            restyles == 1
+        ), f"The reason strip was restyled {restyles} times for one muted and size flip."
         await pilot.pause()
         assert strip.display and strip.region.height == 1
         applied.clear()
@@ -449,10 +451,14 @@ async def test_a_command_strip_action_flip_restyles_its_button_once_beside_disab
 def test_the_variant_watcher_the_batched_restyle_mirrors_is_textuals():
     """Guard: the composer's batch replays exactly this watcher's two classes.
 
-    A Textual upgrade that changes what ``Button.variant`` does to classes
-    fails here instead of leaving Stop and Send with stale variant classes.
+    A Textual upgrade that adds any watcher behavior fails here rather than
+    silently omitting that behavior from Stop and Send's batched path.
     """
-    source = inspect.getsource(Button.watch_variant)
-    assert 'self.remove_class(f"-{old_variant}")' in source
-    assert 'self.add_class(f"-{variant}")' in source
-    assert source.count("_class(") == 2
+    watcher = ast.parse(textwrap.dedent(inspect.getsource(Button.watch_variant)))
+    expected = ast.parse(
+        'self.remove_class(f"-{old_variant}")\nself.add_class(f"-{variant}")'
+    )
+    actual = ast.Module(body=watcher.body[0].body, type_ignores=[])
+    assert ast.dump(actual, include_attributes=False) == ast.dump(
+        expected, include_attributes=False
+    )

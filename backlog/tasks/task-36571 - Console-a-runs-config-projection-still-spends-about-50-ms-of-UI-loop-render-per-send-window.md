@@ -1,17 +1,16 @@
 ---
 id: TASK-36571
-title: >-
-  Console: a run's config projection still spends about 50 ms of UI-loop render
-  per send window
+title: 'Console: a run''s config projection still spends about 50 ms of UI-loop render
+  per send window'
 status: In Progress
 assignee:
-  - '@claude'
-created_date: '2026-10-24 03:51'
-updated_date: '2026-10-31 06:48'
+- '@claude'
+created_date: 2026-10-24 03:51
+updated_date: 2026-11-02 06:22
 labels:
-  - console
-  - performance
-  - ux-review-2026-09-29
+- console
+- performance
+- ux-review-2026-09-29
 dependencies: []
 priority: medium
 ---
@@ -45,11 +44,13 @@ The layout half of the same work is tracked with TASK-33620.15.7 (PR #3211) and 
 3. Cut the restyles each run-start state flip pays: one restyle per flip for the Workbench status classes (scoped to the class-carrying node; a guard proves no rule keys descendants on them), the composer Stop/Send buttons' variant + state classes, the Agent status line, the CommandStrip button classes and the Send-reason strip.
 4. Tests first: per-component restyle-count pins that fail on dev, plus guards that the targeted restyles leave the styles a full restyle computes.
 5. Live paired rounds against dev at the same load: projection per window (AC#2) and Enter -> provider (AC#3, unprobed, relay-timed, >=30 sends per arm incl. first sends); rebase, gates, preflight, notes.
+ADR required: no
+ADR path: N/A
+Reason: The existing restyle optimization and this test/doc repair preserve ADR-190's display-projection boundaries; no new ownership, authority, storage, dependency or long-lived UX contract.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 A run start's state flips now restyle each widget once. Restyles were the largest single component of the projection's UI-loop time (about 15 ms of thread CPU per send window, about 22 restyles), and they halve. The projection fell from a median of 59.3 to 47.8 ms per send window (paired median -9.0 ms wall, -7.3 ms CPU; fix lower in 25 of 32 windows by wall, 29 of 32 by CPU). AC#2's bound (32.6 ms) is not met, so AC#2 stays open and the task stays In Progress. What remains is spread over derivations that every run tick pays (TASK-36571.1). The projection also grows with the chat (45 to 63 ms of CPU per window on dev between about 30 and about 100 messages), so an absolute bound needs a chat length.
 
 **Measured first (AC#1), dev 7536ac3b87.** P71 kit (kept outside the repository with the session's evidence and raw per-window records, not committed; whether to commit it is TASK-38441): the pf2 probe plus `sys.monitoring` PY_START/PY_RETURN events on the projection's code objects, so no Console method is replaced (several of them are identity-checked). Live, Anthropic claude-haiku-4-5 through the review proxy, 160x45, isolated profiles, `caffeinate` held. A send window runs from custody (`accept_received_intent`) to the provider POST; the projection is `project_console_tick` plus direct `_sync_console_control_bar` calls.
@@ -112,4 +113,9 @@ No detectable difference; AC#3 is ticked on the pooled pairs. The tick depends o
 **Review fixes (2026-10-31).** The independent review found the Send reason strip's muted fold unpinned (reverting it passed every test); the strip pin above closes that. Its follow-ups applied here: the status guard also rejects status rules that set a property the children read from the node (Textual caches a child's rendered style keyed on the child's own pseudo-classes, so a node-only restyle would leave them stale), with the matching caveat in `lessons-textual.md` and the `_sync_status_classes` docstring; Stop's restyle count is four in the composer comment and the test docstrings, as measured; the notes above qualify the inner restyle counter, the one-pair component sizing and the AC#3 pooling. Filed: TASK-38440 (the guard does not see DEFAULT_CSS of widget classes the harness never mounts) and TASK-38441 (owner call on committing the probe kit). Re-gated on the new head against a detached dev 7536ac3b87 checkout, each file one pytest command, compared by test id (the plain command, plus every test marked `bootstrap_profile` for the files that error at setup locally): no red new to the branch. Two cases were red in only one tree's whole-file run and are order-dependent on both: `test_console_send_disabled_state::test_active_run_block_shows_wait_reason` (alone, head 3 of 3 pass, dev 3 of 3 fail) and `test_console_rail_color_grammar::test_rail_grammar_resolves_to_the_active_theme_colors` (alone, head 3 of 13 fail, dev 2 of 13, same message).
 
 **Open: AC#2.** 47.8 ms median against the 32.6 ms bound. The owner can restate the bound at a stated chat length (dev itself drifts from 45.5 to 63.3 ms CPU per window between about 30 and about 100 messages, `lessons-live-verification.md`), or keep it and wait for TASK-36571.1.
-<!-- SECTION:NOTES:END -->
+PR3335 integration, 2026-11-01: ADR required: no
+ADR path: N/A
+Reason: The existing restyle optimization and this test/doc repair preserve ADR-190's display-projection boundaries; no new ownership, authority, storage, dependency or long-lived UX contract.
+The complete Button.watch_variant body is pinned structurally with ASTs, ignoring source locations, so an additional non-class effect cannot silently pass the batching guard. Current attachment blocking, raw CLI authority presentation and draft revisions survive the rebase. All timing, raw-record and neighbor-run statements above describe the source-era experiment, not this integrated head. The historical AC3 tick depends on pooled samples; unprobed first-send results remain qualified as above. Local functional checks do not certify the 32.6 ms target or any new latency improvement. AC2 stays unchecked and this task remains In Progress; TASK-36571.1/38440/38441 remain open. The source-era 7077 ratchet and 1164 census figures are historical; integration retains dev's numeric cap and census prefix/floor under the explicit numeric-size waiver.
+Local integration qualification (2026-11-01, base42eab3c3c7770d2003688dfe2fa576b328ba2d90): 44 distinct focused behavioral cases passed (27 projection/Workbench, 17 affected composer owners); no live provider or new performance measurement. Four assertion wraps in the new test file were subsequently formatted with exact AST equivalence, without repeating unchanged behavior. Canonical census passed1327 entries with dev's exact ordered1326 prefix and unchanged1319 floor. Composer7373 ->7403 lines: unchanged7195 cap,208 over (178 inherited,30 introduced), explicitly WAIVED rather than PASS. Inherited agent/composer lint and format debt remains; changed tests and Workbench are lint/format clean. Complete evidence and final immutable head are maintained in the integration plan workspace for independent review.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
