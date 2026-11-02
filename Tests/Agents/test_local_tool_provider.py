@@ -54,6 +54,7 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
 
+# Default specs read the real config source admitted during collection.
 pytestmark = pytest.mark.bootstrap_profile
 
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
@@ -4460,6 +4461,7 @@ def test_cleanup_unproven_observer_failure_preserves_original_refusal(tmp_path, 
 
     assert not result.ok
     assert result.error == LOCAL_WORKER_FAILED_REFUSAL
+    assert result.dispatch_state == "uncertain"
     assert "private/path leaked" not in captured.err
 
 

@@ -25013,3 +25013,9 @@ deliberately restored host context. Also, Textual's is_mounted remained true aft
 screen pop: original screen-stack membership supplied the conclusive stale-host
 discard check. Raw diagnostic and fixture-error receipts remain separate from
 the corrected mounted-path evidence.
+
+## SSH custody evidence must reach the actual model operation
+
+**TASK-38531 prerequisite S, 2026-11-02.** An initial local SSH peer hold was reached by startup project guidance before the model/tool dispatch. Its failure did not prove early retirement of a model operation. The premature draft was preserved and permanently withdrawn; only after the real model disclosed `fs_read`, selected the actual RemoteRoot and produced the original tool operation did the corrected BASE regression fail. The fresh implementation then kept that same operation through actual stderr/group return. Assert the producer and operation before interpreting a held transport as model evidence; a correct physical peer alone does not identify its caller.
+
+The affected selection later passed 424 cases and failed 196 existing local-provider cases at `raw_source_selection_changed`. A standalone failing node reproduced this without native tests. Read-only snapshots showed collection-bound private config remained registered while the fixture redirected `TLDW_CONFIG_PATH` before the test. The supported file-level `bootstrap_profile` marker exposed the real assertions: 282 passed and four stale catalog/uncertainty expectations failed. Three lists omitted the existing `fs_mkdir`; one expected not-run copy for an already uncertain cleanup result. Only those four expectations changed, then four exact nodes passed. Keep the three receipts separate; read-only BASE source comparison is not an executed baseline, and no participant reset or product change was needed.

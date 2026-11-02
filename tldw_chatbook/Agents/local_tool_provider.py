@@ -827,6 +827,7 @@ class LocalToolProvider:
         ):
             raise ValueError("admitted root aliases must be unique")
         self._path_specs_by_alias: dict[str, dict[str, LocalToolSpec]] = {}
+        self._native_ssh_specs: dict[str, dict[str, LocalToolSpec]] = {}
 
         selected_executor = workspace_executor or WorkspaceToolExecutor(workspace_root)
         if specs is not None:
@@ -904,6 +905,10 @@ class LocalToolProvider:
                     for spec in authority_specs
                     if spec.name in _PATH_AUTHORITY_LOCAL_NAMES
                 }
+                if _default_specs is _NATIVE_DEFAULT_SPECS:
+                    self._native_ssh_specs[alias] = dict(
+                        self._path_specs_by_alias[alias]
+                    )
                 usable_roots[alias] = authority
                 if representative_specs is None:
                     representative_specs = authority_specs
@@ -2487,6 +2492,9 @@ class LocalToolProvider:
             selected_spec = authority_specs[name]
         else:
             selected_spec = spec
+        from tldw_chatbook.Chat.console_ssh_custody import bind_model_ssh
+
+        bind_model_ssh(self, authority, selected_spec)
         promotion_invocation = self._invoke_promotion(
             name,
             args,
@@ -2602,6 +2610,9 @@ class LocalToolProvider:
                             dispatch_started=False,
                             provider_terminal=LocalProviderTerminal.NOT_STARTED,
                         )
+                from tldw_chatbook.Chat.console_ssh_custody import bind_model_ssh
+
+                bind_model_ssh(self, authority, handler_spec)
                 dispatch_started = True
                 # Phase 3b (Task 16): the CAS/ledger sites below dispatch
                 # on the authority's root TYPE. A local root keeps the
@@ -5928,3 +5939,24 @@ def _character_specs(character_service: CharacterToolService) -> list[LocalToolS
             approval_arguments=character_service.approval_summary,
         ),
     ]
+
+
+# Construction-time stock sources for sticky native SSH attachment.
+_NATIVE_DEFAULT_SPECS = _default_specs
+_NATIVE_SSH_PROVIDER_METHODS = {
+    name: getattr(LocalToolProvider, name)
+    for name in (
+        "invoke",
+        "invoke_detailed",
+        "_invoke_detailed",
+        "_select_admitted_root",
+        "_invoke_promotion",
+        "_prepare_repository_promotion",
+        "_apply_repository_promotion",
+        "_authority_is_valid",
+        "_stale_targets_for",
+        "_remote_stale_targets",
+        "_remote_now_stamp",
+        "_fs_write_guard_injection",
+    )
+}

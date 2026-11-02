@@ -2795,3 +2795,9 @@ def __getattr__(name: str):
 
         return getattr(fleet_message_tools, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+_NATIVE_SSH_CATALOG_METHODS = {
+    name: getattr(ToolCatalogRegistry, name)
+    for name in ("invoke_by_name", "resolve_owner_for_name")
+}

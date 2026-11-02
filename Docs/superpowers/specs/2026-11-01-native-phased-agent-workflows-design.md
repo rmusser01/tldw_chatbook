@@ -551,3 +551,29 @@ still retains custody. Stock run-log qualification covers the concrete segment
 path, append/write, manifest and close callbacks before their receiving calls;
 a same-root writer with changed callbacks is not stock. Detailed logs remain
 supplementary, including the existing disabled-log and standalone paths.
+
+
+### Native SSH request custody (Task8D2 prerequisite S)
+
+An actual AgentService model fs_* call retains its original native tool operation
+through the selected stock provider/RemoteRoot/adapter/executor, every ping/request,
+original cache/result host return and operation.finish return. Exact original
+request identity, validated remote terminal cleanup and local request/IO retirement
+are separate required facts. The same original worker/storage stays retained on
+unknown cleanup; timeout, local SSH death and result text are not proof.
+
+Finite native ssh -G and ssh -O checks reuse ProcessTreeController on the original
+worker, preserving argv/configuration/timeout semantics. The existing ControlMaster
+manager and session registry own healthy shared infrastructure: a private acceptance
+observation binds original invocation/source and actual launcher/IO return to real
+publication or verified exact adoption. Registration, path existence or zero exit
+alone does not establish acceptance. Unlearned/ambiguous setup and unpublished
+session starts require real cleanup or retain native uncertainty. Healthy shared
+connections need not exit for a request to finish. No new owner, protocol, poller,
+permission, binary restriction or master-lifetime service is introduced.
+
+This qualifies existing operation/source retirement, not early ordinary worktree
+coverage. Ordinary covering claims, separately scheduled recovery probes, remote
+guidance and complete child/late integration remain mandatory. Task7 currently
+accepts local roots only and is not SSH positive evidence. Native platform limits
+remain; uncertainty may retain worker/storage/capacity and disposal indefinitely.

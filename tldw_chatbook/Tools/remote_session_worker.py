@@ -236,6 +236,8 @@ class RemoteSessionWorker:
                 start_new_session=True,
             )
         )
+        self._native_spawn = self._spawn if spawn is None else None
+        self._native_ready = self._native_acceptance = None
         self._proc: subprocess.Popen[bytes] | None = None
         self._stderr = _TailCapture(_STDERR_CAP)
         self._stderr_thread: threading.Thread | None = None
@@ -377,6 +379,9 @@ class RemoteSessionWorker:
             target=self._reader, name="ssh-session-reader", daemon=True
         )
         self._reader_thread.start()
+        from tldw_chatbook.Chat.console_ssh_custody import record_session_ready
+
+        record_session_ready(self, expected_bundle_stamp(artifact))
         logger.debug(
             "ssh session worker started; bundle cache {}", "hit" if cache_hit else "miss"
         )
@@ -647,6 +652,14 @@ class RemoteSessionWorker:
                 any byte of the REQUEST was written (TASK-33401/33421); a
                 request that was written is never reported this way.
         """
+        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+
+        native = current_ssh_call()
+        request = native.request if native is not None else None
+        if request is not None:
+            native.check()
+            if request.wire is not request_bytes:
+                raise RuntimeError("original SSH session request changed")
         if len(request_bytes) > MAX_REQUEST_BYTES:
             return RemoteCallResult(False, _OVERSIZED_REQUEST_FRAME, None)
         with self._lock:
@@ -665,10 +678,18 @@ class RemoteSessionWorker:
         sent_at = time.monotonic()
         killed = False
         not_sent = False
+        sending_request = True
+        write_returned = False
         try:
             try:
+                if request is not None:
+                    request.issued = True
                 self._write(encode_frame(REQUEST, request_id, request_bytes), sent_at + budget + grace)
+                write_returned = True
+                sending_request = False
             except _StdinClosed:
+                if request is not None:
+                    request.issued = False
                 if self._retired:
                     # close() retired this healthy session after the request
                     # registered but before any REQUEST byte was written
@@ -687,16 +708,30 @@ class RemoteSessionWorker:
                     break
                 pending.done.wait(min(remaining, 0.5))
         except _NotSent:
-            # The lock stayed busy (another caller's slow upload): our
-            # REQUEST or CANCEL never reached the wire, the stream is intact,
-            # and the session stays up. Popping
-            # the pending entry below makes any late frames "abandoned".
             not_sent = True
+            if request is not None:
+                if sending_request:
+                    request.issued = False  # Exact writer reports no REQUEST bytes.
+                else:
+                    # A lost CANCEL says nothing about the issued request. Keep
+                    # its original observation and worker until STATUS or death.
+                    pending.done.wait()
         except _WriteStalled:
             self._die(natural=False)
         except (OSError, ValueError):  # broken pipe / stdin closed by close()
             self._die(natural=True)
         finally:
+            if request is not None:
+                if (
+                    request.issued
+                    and pending.status is None
+                    and not self._alive
+                    and self._reader_thread is not None
+                ):
+                    # Death wakes callers before the original reader necessarily
+                    # drains its final frames. Keep the pending entry for that IO.
+                    self._reader_thread.join()
+                request.local_returned = write_returned and pending.status is not None
             with self._lock:
                 self._pending.pop(request_id, None)
                 if not self._pending:
@@ -880,3 +915,27 @@ class RemoteSessionWorker:
                 stream.close()
             except OSError:
                 pass
+
+
+_NATIVE_SESSION_METHODS = {
+    name: getattr(RemoteSessionWorker, name)
+    for name in (
+        "start",
+        "_handshake",
+        "_handshake_write",
+        "_read_handshake_line",
+        "_fail_start",
+        "_stalled_after_answer",
+        "_write",
+        "_reader",
+        "_drain_stderr",
+        "_die",
+        "call",
+        "_result",
+        "_dead_session_result",
+        "close",
+        "_abandon_start",
+        "_kill",
+        "_kill_and_reap",
+    )
+}

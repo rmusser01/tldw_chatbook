@@ -29216,3 +29216,6 @@ def _stock_console_tool_composition_current(controller):
 _CONSOLE_TOOL_COMPOSITION_CHECKER = (_stock_console_tool_composition_current, _stock_console_tool_composition_current.__code__, globals())
 
 _CONSOLE_CONTEXT_PRESENTATION_READERS = tuple((name, function, function.__code__) for name in ("context_control_presentation_inputs", "_held_send_echo_id") for function in (getattr(ConsoleChatController, name),))
+_NATIVE_SSH_ADAPTER_METHODS = {
+    name: getattr(_RemoteExecutorDispatchAdapter, name) for name in ("execute", "ping")
+}

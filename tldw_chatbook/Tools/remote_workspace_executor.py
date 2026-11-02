@@ -1299,6 +1299,19 @@ class RemoteWorkspaceToolExecutor:
         (shared across bindings on one host); the transport never
         retries — recovery is the status cache and the probe's job.
         """
+        from tldw_chatbook.Chat.console_ssh_custody import current_ssh_call
+
+        native = current_ssh_call()
+        if native is not None:
+            with native.exchange(self, request_bytes) as request:
+                result = self._ssh_transport_call(request_bytes, budget=budget)
+                native.response(request, result)
+                return result
+        return self._ssh_transport_call(request_bytes, budget=budget)
+
+    def _ssh_transport_call(
+        self, request_bytes: bytes, *, budget: float
+    ) -> RemoteCallResult:
         cfg = self._ssh
         assert cfg is not None
         if cfg.session_key:
@@ -1561,3 +1574,25 @@ __all__ = [
     "run_session_loopback",
     "split_fs_read_result",
 ]
+
+_NATIVE_SSH_METHODS = {
+    name: getattr(RemoteWorkspaceToolExecutor, name)
+    for name in (
+        "execute",
+        "ping",
+        "_execute_ssh",
+        "_ssh_ping",
+        "_verify_destination",
+        "_ssh_call",
+        "_ssh_transport_call",
+        "_ssh_session_call",
+        "_map_ssh_result",
+        "_parse_terminal",
+        "_build_request",
+    )
+}
+
+_NATIVE_SSH_FUNCTIONS = {
+    name: globals()[name]
+    for name in ("_encode_request", "_parse_worker_output", "_bundle_payload")
+}
