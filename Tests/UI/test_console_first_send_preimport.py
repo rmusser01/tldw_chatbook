@@ -72,7 +72,6 @@ LIVE_FIRST_SEND_IMPORTS = (
     # Added after that record (TASK-35582): begin_generation_attempt's lazy
     # continuation-binding import, deferred off first paint.
     "Chat.console_continuation_binding",
-    "Chat.console_pre_provider_stop",  # current durable-postcommit owner
     "Chat.console_trace_row_sources",
     "Chat.response_rules.generation",
     "Chat.response_rules.builder",
@@ -278,7 +277,7 @@ class Recorder:
 
 
 warm.importlib = Recorder()
-warm.preimport_first_send_modules(app)
+warm.preimport_first_send_modules(app, app._finish_first_send_warmup)
 print("STEPS_JSON:" + json.dumps(steps))
 """
 
@@ -393,6 +392,9 @@ class _PassApp:
         self.events: list[tuple[str, object]] = []
         self._stop_after = stop_after
 
+    def _finish_first_send_warmup(self):
+        pass
+
     def call_from_thread(self, callback, *args):
         self.events.append(("callback", (callback, args)))
 
@@ -435,12 +437,12 @@ def test_real_import_completion_queues_one_ui_request_without_boot_freezes(
 
     monkeypatch.setattr(server, "prime_local_manifest_source", prime)
     try:
-        warm.preimport_first_send_modules(app)
+        warm.preimport_first_send_modules(app, app._finish_first_send_warmup)
         assert sys.modules["_real_first_send_step"].IMPORTED
         assert "_missing_optional_step" not in sys.modules
         assert freezes == []
         assert [event for event in app.events if event[0] == "callback"] == [
-            ("callback", (warm._request_idle_heap_refreeze, (app,)))
+            ("callback", (app._finish_first_send_warmup, ()))
         ]
     finally:
         sys.modules.pop("_real_first_send_step", None)
@@ -450,13 +452,13 @@ def test_real_import_completion_queues_one_ui_request_without_boot_freezes(
 def test_completion_callback_resolves_current_attachment_on_ui_loop(monkeypatch, state):
     """Queued callbacks never retain the worker's former view."""
     from types import SimpleNamespace
-    from tldw_chatbook.Chat import console_first_send_modules as warm
+    from tldw_chatbook.app import TldwCli
     from tldw_chatbook.UI.Console_Modules import transcript
 
     old, current = object(), object()
     runtime = SimpleNamespace(view=old)
     app = SimpleNamespace(console_runtime=runtime, _shutting_down=False)
-    queued = (warm._request_idle_heap_refreeze, (app,))
+    queued = (TldwCli._finish_first_send_warmup, (app,))
     runtime.view = current if state == "replaced" else None
     if state == "shutdown":
         runtime.view = current
@@ -487,7 +489,8 @@ def test_the_warm_up_stops_on_quit_and_swallows_a_failed_import(monkeypatch):
     monkeypatch.setattr(warm.importlib, "import_module", fake_import)
     monkeypatch.setattr(warm, "freeze_long_lived_heap", frozen.append, raising=False)
     monkeypatch.setattr(warm, "seconds_since_user_input", lambda: float("inf"))
-    warm.preimport_first_send_modules(_PassApp(stop_after=3))
+    app = _PassApp(stop_after=3)
+    warm.preimport_first_send_modules(app, app._finish_first_send_warmup)
 
     # Every import waits behind a pause (the park); quit lands in the third.
     assert imported == list(warm.FIRST_SEND_MODULES[:2])
@@ -531,7 +534,7 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
         raising=False,
     )
 
-    warm.preimport_first_send_modules(app)
+    warm.preimport_first_send_modules(app, app._finish_first_send_warmup)
 
     # Each import "took" 0.1 s on the fake clock: gap 0.1 x 2.0 = 0.2 s,
     # before every later import and before the manifest parse.
@@ -539,7 +542,7 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
     assert app.events[:2] == [("pause", 0.0), ("import", warm.FIRST_SEND_MODULES[0])]
     assert app.events[-2:] == [
         ("prime", None),
-        ("callback", (warm._request_idle_heap_refreeze, (app,))),
+        ("callback", (app._finish_first_send_warmup, ())),
     ]
 
 
@@ -587,7 +590,7 @@ def test_the_warm_up_waits_out_recent_input_then_parks_again(monkeypatch):
         warm, "freeze_long_lived_heap", lambda reason: None, raising=False
     )
 
-    warm.preimport_first_send_modules(app)
+    warm.preimport_first_send_modules(app, app._finish_first_send_warmup)
 
     quiet = warm.INPUT_QUIET_SECONDS
     assert app.events[:6] == [
@@ -633,7 +636,7 @@ def test_quit_stops_the_warm_up_while_it_waits_out_input(monkeypatch):
     monkeypatch.setattr(warm.importlib, "import_module", imported.append)
     monkeypatch.setattr(warm, "freeze_long_lived_heap", frozen.append, raising=False)
 
-    warm.preimport_first_send_modules(app)
+    warm.preimport_first_send_modules(app, app._finish_first_send_warmup)
 
     quiet = round(warm.INPUT_QUIET_SECONDS, 3)
     assert app.events == [

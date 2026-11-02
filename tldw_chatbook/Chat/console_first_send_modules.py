@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import importlib
 import time
+from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
@@ -66,6 +67,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.UI.Console_Modules.sent_draft",
     "tldw_chatbook.Chat.console_received_intent",
     "tldw_chatbook.Chat.console_configuration_preparation",
+    "tldw_chatbook.Chat.console_settings_persistence",
     "tldw_chatbook.Chat.console_preparation_reads",
     "tldw_chatbook.Chat.console_configuration_capture",
     "tldw_chatbook.UI.Console_Modules.turn_admission",
@@ -76,10 +78,8 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.console_automatic_submission",
     "tldw_chatbook.Chat.console_plugin_context",
     "tldw_chatbook.Chat.console_hook_preparation",
-    "tldw_chatbook.Chat.console_plugin_context",
     "tldw_chatbook.Agents.hook_permissions",
     "tldw_chatbook.Agents.run_hooks",
-    "tldw_chatbook.Agents.hook_permissions",
     "tldw_chatbook.Agents.automatic_work_runtime",
     "tldw_chatbook.Chat.console_references",
     "tldw_chatbook.Agents.hooks_v2.lifecycle",
@@ -101,7 +101,6 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.DB.console_prompt_mixins",
     "tldw_chatbook.Chat.console_pre_provider_stop",
     "tldw_chatbook.Chat.console_continuation_binding",
-    "tldw_chatbook.Chat.console_pre_provider_stop",
     "tldw_chatbook.Chat.console_trace_row_sources",
     "tldw_chatbook.Chat.response_rules.generation",
     "tldw_chatbook.Chat.response_rules.builder",
@@ -116,7 +115,6 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.response_rules.resolution",
     "tldw_chatbook.Chat.response_rules.chat_state",
     "tldw_chatbook.UI.Console_Modules.response_rules",
-    "tldw_chatbook.app_served",
     "textual_serve",
     "tldw_chatbook.Web_Server.served_relay_publisher",
     "tldw_chatbook.Guardian.settings",
@@ -133,7 +131,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Agents.fs_read_ledger",
     "tldw_chatbook.Chat.conversation_archive_actions",
     "tldw_chatbook.Agents.canvas_tool_provider",
-    "tldw_chatbook.Chat.console_agent_bridge",
+    "tldw_chatbook.Chat.console_agent_reply",
     "tldw_chatbook.Chat.citation_key_first_use",
     "tldw_chatbook.Canvas.guide",
     "tldw_chatbook.Chat.console_stream_persistence",
@@ -181,7 +179,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
 INPUT_QUIET_SECONDS = 0.15
 
 
-def preimport_first_send_modules(app: Any) -> None:
+def preimport_first_send_modules(app: Any, on_complete: Callable[[], None]) -> None:
     """Import ``FIRST_SEND_MODULES`` in order, then parse the MCP manifest source.
 
     Runs on the pre-import daemon thread after the screen routes, and never
@@ -202,9 +200,10 @@ def preimport_first_send_modules(app: Any) -> None:
         app: The running ``TldwCli``. Its ``_shutting_down`` stops the
             warm-up; ``_screen_preimport_pacing()`` and
             ``_pause_between_preimports()`` pace it.
+        on_complete: App-owned completion request, dispatched on the UI loop.
     """
     try:
-        _warm_first_send(app)
+        _warm_first_send(app, on_complete)
     except Exception as exc:  # noqa: BLE001 -- a speculative warm-up
         logger.debug("First-send warm-up stopped (error_type={})", type(exc).__name__)
 
@@ -212,7 +211,13 @@ def preimport_first_send_modules(app: Any) -> None:
 def _pause(app: Any, gap: float) -> None:
     """The pass's gap and park, then wait out recent input and park again."""
     app._pause_between_preimports(gap)
-    while not getattr(app, "_shutting_down", False):
+    while True:
+        try:
+            shutting_down = app._shutting_down
+        except AttributeError:
+            shutting_down = False
+        if shutting_down:
+            return
         quiet = seconds_since_user_input()
         if quiet >= INPUT_QUIET_SECONDS:
             return
@@ -220,12 +225,16 @@ def _pause(app: Any, gap: float) -> None:
         app._pause_between_preimports(0.0)
 
 
-def _warm_first_send(app: Any) -> None:
+def _warm_first_send(app: Any, on_complete: Callable[[], None]) -> None:
     ratio, cap = app._screen_preimport_pacing()
     previous = 0.0
     for name in FIRST_SEND_MODULES:
         _pause(app, min(previous * ratio, cap))
-        if getattr(app, "_shutting_down", False):
+        try:
+            shutting_down = app._shutting_down
+        except AttributeError:
+            shutting_down = False
+        if shutting_down:
             return
         started = time.monotonic()
         try:
@@ -248,19 +257,4 @@ def _warm_first_send(app: Any) -> None:
         logger.debug(
             "First-send manifest warm-up failed (error_type={})", type(exc).__name__
         )
-    app.call_from_thread(_request_idle_heap_refreeze, app)
-
-
-def _request_idle_heap_refreeze(app: Any) -> None:
-    """Request existing runtime maintenance for the current UI-loop attachment."""
-    if getattr(app, "_shutting_down", False):
-        return
-    runtime = getattr(app, "console_runtime", None)
-    view = runtime.view if runtime is not None else None
-    if view is None:
-        return
-    from tldw_chatbook.UI.Console_Modules.transcript import (
-        request_console_heap_refreeze,
-    )
-
-    request_console_heap_refreeze(view, "first_send_preimport")
+    app.call_from_thread(on_complete)

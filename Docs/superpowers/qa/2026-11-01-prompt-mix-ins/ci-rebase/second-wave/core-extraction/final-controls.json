@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_chat_controller.py::test_run_agent_reply_threads_library_provider_from_factory",
+    "Tests/Chat/test_console_chat_controller.py::test_run_agent_reply_threads_exact_admitted_trace_request_to_bridge",
+    "Tests/Chat/test_console_chat_controller.py::test_run_agent_reply_closes_the_runs_remote_sessions_at_run_end",
+    "Tests/Chat/test_console_prompt_mixin_admission.py::test_native_preferences_save_and_reopen_are_chat_local",
+    "Tests/Chat/test_console_prompt_mixin_admission.py::test_app_settings_owner_drains_coalesced_selection_saves",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_used_revision_flush_reopen_and_racing_selection_cas",
+    "Tests/Chat/test_console_prompt_mixin_retry.py::test_cancelled_preference_waiter_keeps_real_database_drain_owned",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_store.py]",
+    "Tests/Chat/test_console_chat_fork_persistence.py::test_fork_input_helper_reads_original_module_binding_after_first_use",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "--timeout=300",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-core-extract-i4xaa7gn/final-controls-tmp",
+    "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-core-extract-i4xaa7gn/final-controls.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/prompt-mix-ins/tldw_chatbook",
+  "exit_code": 0,
+  "elapsed": 8.0925835
+}

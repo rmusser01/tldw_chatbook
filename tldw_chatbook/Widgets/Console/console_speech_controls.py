@@ -1,4 +1,4 @@
-"""Console speech switches displayed beside the Workbench status."""
+"""Console speech switches and composer voice-status presentation."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from textual.widgets import Static, Switch
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from textual.app import RenderResult
+
+    from .console_composer_bar import ConsoleComposerBar
 
 #: TASK-32015: the two voice switches sit side by side with no other
 #: affordance explaining them, so each tooltip carries the three facts a
@@ -297,3 +299,282 @@ class ConsoleSpeechControls(Horizontal):
         with self.prevent(Switch.Changed):
             event.switch.value = self.auto_speak_enabled
         self.post_message(ConsoleAutoSpeakChanged(event.value))
+
+
+def composer_voice_chip_width_cap(self: ConsoleComposerBar) -> int:
+    """Return the max cells the voice chip may take (0 = hide it).
+
+    TASK-24620: mirrors `_send_reason_width_cap` (TASK-24415). The chip
+    sized itself against the composer's FULL width with only
+    `VOICE_CHIP_MIN_WIDTH` reserved, so a long state message took up to
+    53 cells and the ``1fr`` draft (``min_width: 0``) starved beside it
+    -- the same starvation class the reason strip had. The budget is
+    whatever the live row can spare after the fixed furniture and the
+    draft floor; below a legible remainder the chip hides rather than
+    blind the composer (the Dictate button's own label still says
+    "Dictating", so the mic-live state survives).
+
+    Returns:
+        0 when the row cannot spare a legible chip (hide it), else a
+        cap of at most ``VOICE_CHIP_MAX_WIDTH`` cells.
+    """
+    from . import console_composer_bar as _owner
+
+    try:
+        row = self.query_one("#console-composer-expanded", _owner.Horizontal)
+    except _owner.NoMatches:
+        return self.VOICE_CHIP_MAX_WIDTH
+    row_width = int(row.content_region.width)
+    if row_width <= 0:
+        # Not laid out yet; the next resize re-derives the cap.
+        return self.VOICE_CHIP_MAX_WIDTH
+    reserved = (
+        self.LEFT_CLUSTER_WIDTH
+        + self._actions_row_width()
+        + self.ADVISORY_MARGIN_ALLOWANCE
+    )
+    budget = row_width - reserved - self.DRAFT_MIN_RENDER_WIDTH
+    if budget < self.VOICE_CHIP_MIN_LEGIBLE_WIDTH:
+        return 0
+    return min(self.VOICE_CHIP_MAX_WIDTH, budget)
+
+
+def set_composer_voice_status(
+    self: ConsoleComposerBar,
+    state: str,
+    *,
+    partial: str = "",
+    elapsed_seconds: int = 0,
+    message: str = "",
+    segment_transcribing: bool = False,
+) -> None:
+    """Render the dictation state into the inline voice chip.
+
+    Every write goes through `textual.content.Content`, never a bare string:
+    a `Static` parses strings as Textual markup, and `rich.markup.escape`
+    (which used to guard this) only escapes tags opening with `[a-z#/@]`.
+    Whisper's own tokens are uppercase, so `[BLANK_AUDIO]` and `[Music]`
+    survived escaping untouched and were then *stripped at paint time* --
+    the chip showed "● 0:03    hi" for "● 0:03  [BLANK_AUDIO] [Music] hi".
+    `Content` carries plain text with no markup semantics at all, so it
+    fixes the swallowing and the opposite failure (`[/tmp/x]` raising
+    `MarkupError`) in one move. Nothing in this chip is ever markup: the
+    text is either our own constants or recognizer output.
+
+    Args:
+        state: One of the `STATE_*` constants from `console_voice_input`.
+        partial: In-flight recognizer text. Truncated from the left so the
+            newest words stay visible, and dropped entirely on narrow
+            terminals so the 1fr draft never collapses.
+        elapsed_seconds: Recording duration, rendered as m:ss.
+        message: Status or failure text for non-listening states.
+        segment_transcribing: True while a per-segment transcription is
+            in flight (see `set_voice_segment_transcribing`). Only
+            meaningful for `state == "listening"`; takes precedence over
+            `partial` there when both happen to be set -- which is a real
+            case, not a hypothetical one: an inline command's ack (`¶`,
+            e.g.) is left sitting in `_voice_partial` by
+            `set_voice_partial`, and an inline command does NOT end the
+            capture, so the very next segment's `done=False` can set this
+            flag while that ack text is still stored. The chip correctly
+            shows the transcribing indication over the stale ack in that
+            case; it just means the two are not mutually exclusive the
+            way an earlier version of this docstring claimed.
+    """
+    from . import console_composer_bar as _owner
+
+    _owner._load_console_voice_states()  # TASK-22504
+    try:
+        chip = self.query_one("#console-voice-status", _owner.Static)
+    except _owner.NoMatches:
+        return
+    # TASK-24620: cache the inputs so `on_resize` can re-derive the
+    # chip against the new row width (a shrink must retract the chip,
+    # not the draft).
+    self._voice_status_last = (
+        state,
+        partial,
+        elapsed_seconds,
+        message,
+        segment_transcribing,
+    )
+
+    if state in ("idle", "unavailable"):
+        # PR-2230 review f2: clear the chip-width cache BEFORE the
+        # presentation sync -- `_sync_full_width_voice_presentation`
+        # re-derives the disabled-reason strip, which subtracts the
+        # cache; clearing it after left the strip capped as though the
+        # chip were still displayed.
+        self._voice_chip_last_width = 0
+        self._sync_full_width_voice_presentation(False)
+        chip.styles.display = "none"
+        _owner._swap_size_class(chip, "w-", "w-0")
+        chip.styles.min_width = 0
+        _owner._clear_static_content(chip)
+        return
+
+    # TASK-24620 / PR-2230 review f3: PREPARING selects its sizing
+    # BEFORE the ordinary cap -- it is action feedback for a Dictate
+    # press, and its full-width presentation exempts it at every width,
+    # not only where the budget hits zero (the 80-column busy-parakeet
+    # tests require the WHOLE copy, and intermediate budgets used to
+    # truncate it while the presentation collapsed space the chip could
+    # have used). The non-listening branch below still shrinks the
+    # final width to the message's own length, so short preparing copy
+    # does not balloon.
+    if state == _owner.STATE_PREPARING:
+        total_width = self.size.width or self.VOICE_CHIP_MAX_WIDTH * 2
+        width = min(
+            self.VOICE_CHIP_MAX_WIDTH,
+            max(0, total_width - self.VOICE_CHIP_MIN_WIDTH),
+        )
+    else:
+        # The chip's width is a live-row budget like the send-disabled
+        # reason strip's (see `_voice_chip_width_cap`) -- the draft
+        # floor wins, and below a legible remainder the chip hides
+        # rather than starve it.
+        width = self._voice_chip_width_cap()
+    if width == 0:
+        self._voice_chip_last_width = 0
+        self._sync_full_width_voice_presentation(False)
+        chip.styles.display = "none"
+        _owner._swap_size_class(chip, "w-", "w-0")
+        chip.styles.min_width = 0
+        _owner._clear_static_content(chip)
+        return
+
+    if state == "listening":
+        head = f"{_owner.resolve_glyph(_owner.GLYPH_VOICE_RECORDING)} {elapsed_seconds // 60}:{elapsed_seconds % 60:02d}"
+        room = width - len(head) - 3
+        if segment_transcribing and room > 8:
+            # A right-truncating `[-room:]` slice (as used for `partial`
+            # just below, correctly -- the newest recognizer words are
+            # what matters there) is wrong for a fixed constant: it keeps
+            # the TAIL of the label, so at composer widths that land
+            # `room` in 9..14 the chip painted "scribing…" -- the label's
+            # own trailing ellipsis surviving while its meaningful prefix
+            # was cut, reading as garbage rather than a truncated status
+            # word (review finding L3). Keep the START instead, and
+            # replace the cut-off end with an explicit ellipsis of our
+            # own when the label doesn't fit whole -- the label's own
+            # trailing "…" only ever survives when nothing was cut.
+            label = _owner.resolve_glyph_text(self.VOICE_CHIP_TRANSCRIBING_LABEL)
+            if len(label) <= room:
+                tail = label
+            else:
+                tail = f"{label[: max(room - 1, 0)]}…"
+            body = f"{head}  {tail}"
+        elif partial and room > 8:
+            tail = partial[-room:]
+            body = f"{head}  {tail}"
+        else:
+            # Below the floor the counter alone still proves the mic is live.
+            body = head
+            width = min(width, len(head) + 2)
+    else:
+        body = message or state
+        width = min(width, len(body) + 2)
+
+    # The busy preparation row hides optional chrome. Reserve the actual
+    # stable action width plus the chip's three surrounding layout cells.
+    full_width_preparing = (
+        state == _owner.STATE_PREPARING
+        and _owner.cell_len(body) + 2 >= self.VOICE_CHIP_MAX_WIDTH
+    )
+    if full_width_preparing:
+        width = min(
+            width,
+            max(
+                1,
+                total_width - self._actions_row_width(attachment_visible=False) - 3,
+            ),
+        )
+        chip.tooltip = body
+        if (
+            _owner.cell_len(body) + 1 > width
+            and body == "Local transcription busy — dictation will run next."
+        ):
+            compact = "Local transcription busy — queued."
+            body = compact if _owner.cell_len(compact) + 1 <= width else "Queued"
+    else:
+        chip.tooltip = None
+    chip.styles.display = "block"
+    self._voice_chip_last_width = max(width, 1)
+    chip.remove_class(*(name for name in chip.classes if name.startswith("w-")))
+    # ds-runtime: Voice status text is fitted into measured remaining composer columns.
+    chip.set_styles(width=self._voice_chip_last_width)
+    chip.styles.min_width = 0
+    chip.remove_class(*(name for name in chip.classes if name.startswith("h-")))
+    chip.set_styles(height=None)
+    chip.add_class("h-1")
+    chip.styles.min_height = 1
+    self._sync_full_width_voice_presentation(full_width_preparing)
+    if full_width_preparing:
+        chip.add_class("p-left-1")
+    else:
+        chip.remove_class("p-left-1")
+    chip.set_styles(margin=None)
+    chip.set_class(state == "error", "console-voice-status-error")
+    chip.update(_owner.Content(body))
+    # TASK-24620: the chip just moved; re-derive the reason strip so it
+    # yields whatever the chip now holds (chip has priority).
+    self._sync_send_disabled_reason(
+        self._send_disabled_reason, muted=not self._send_blocked
+    )
+
+
+def sync_full_width_composer_voice_presentation(
+    self: ConsoleComposerBar, active: bool
+) -> None:
+    """Make room for the persistent executor-wait copy without data loss."""
+    from . import console_composer_bar as _owner
+
+    self._voice_full_width_preparing = active
+    try:
+        controls = (
+            self.query_one("#console-composer-collapse", _owner.Button),
+            self.query_one("#console-composer-menu", _owner.Button),
+            self.query_one("#console-command-visible-text", _owner.Static),
+        )
+        attachment_indicator = self.query_one(
+            "#console-attachment-indicator", _owner.Static
+        )
+        clear_attachment = self.query_one("#console-clear-attachment", _owner.Button)
+        actions = self.query_one("#console-composer-actions", _owner.Horizontal)
+    except _owner.NoMatches:
+        return
+
+    for control in controls:
+        control.styles.display = "none" if active else "block"
+    attachment_visible = not active and self._pending_attachment_label is not None
+    attachment_indicator.styles.display = "block" if attachment_visible else "none"
+    clear_attachment.styles.display = "block" if attachment_visible else "none"
+    self._set_actions_row_width(
+        actions,
+        self._actions_row_width(attachment_visible=attachment_visible),
+    )
+    self._sync_collapsed_presentation()
+    self._sync_send_disabled_reason(
+        self._send_disabled_reason,
+        muted=not self._send_blocked,
+    )
+
+
+# Capture only the bodies reached by the cold idle projection, at definition.
+# Width budgeting belongs to non-idle status and does not authorize that skip.
+_IDLE_COMPOSER_PRESENTATION_CALLBACKS = tuple(
+    (
+        function.__name__,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__globals__,
+        function.__closure__,
+    )
+    for function in (
+        set_composer_voice_status,
+        sync_full_width_composer_voice_presentation,
+    )
+)

@@ -1,6 +1,6 @@
 # PR3346 rebase and CI repairs
 
-The feature and reviewed fixes are rebased onto dev `3412c2b6a3c362cb710cdffdc8293a617e1bdd55` (including Roleplay PR3334 and projection-performance PR3335). The first rebase onto `62a169f906` replayed all seven feature patches unchanged. The second rebase onto42e preserves their product changes and all tested CI repair source bytes; only append-only lessons required manual conflict resolution. [Patch comparison](latest-range-diff.txt), [17 unchanged tested files and modal overlap](rebase-product-identity.json). Current manifests validate current bytes; historical capture hashes/commit IDs remain historical after the rewrites.
+The current feature and fixes are rebased onto dev `88af9f937908b46e8c5f9f7fddd9e8748c917d46`. The first published CI wave was based on `3412c2b6a3c362cb710cdffdc8293a617e1bdd55` (including Roleplay PR3334 and projection-performance PR3335). See [the second CI wave and size extraction](second-wave/report.md) for subsequent source fixes and phase-qualified checks. The first rebase onto `62a169f906` replayed all seven feature patches unchanged. The second rebase onto42e preserves their product changes and all tested CI repair source bytes; only append-only lessons required manual conflict resolution. [Patch comparison](latest-range-diff.txt), [17 unchanged tested files and modal overlap](rebase-product-identity.json). Current manifests validate current bytes; historical capture hashes/commit IDs remain historical after the rewrites.
 
 | Confirmed cause | Repair and targeted evidence |
 | --- | --- |

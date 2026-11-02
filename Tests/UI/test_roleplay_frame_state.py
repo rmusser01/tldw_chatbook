@@ -32,6 +32,8 @@ MODES = ("characters", "personas", "dictionaries", "lore")
 #: offender here; this pin can (ADR-161's hard floor; B0's convention).
 B1_PRODUCTION_MODULES = (
     "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py",
+    "tldw_chatbook/UI/Persona_Modules/roleplay_list_window_state.py",
+    "tldw_chatbook/Widgets/Persona_Widgets/roleplay_item_list.py",
     "tldw_chatbook/UI/Persona_Modules/personas_preview_controller.py",
     "tldw_chatbook/UI/Persona_Modules/roleplay_draft_guard.py",
     "tldw_chatbook/UI/Screens/personas_screen.py",
@@ -81,9 +83,12 @@ def test_unsaved_predicate_is_the_aggregate_including_inflight_saves(overrides):
     assert fs.roleplay_has_unsaved_work(snapshot) is bool(overrides)
 
 
-def test_the_module_imports_no_textual():
+@pytest.mark.parametrize(
+    "module_path", [MODULE, MODULE.with_name("roleplay_list_window_state.py")]
+)
+def test_the_module_imports_no_textual(module_path):
     """Pure (spec 5.11): no ``textual`` import anywhere in the module."""
-    tree = ast.parse(MODULE.read_text(encoding="utf-8"))
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
     imported = {
         node.module.split(".")[0]
         for node in ast.walk(tree)

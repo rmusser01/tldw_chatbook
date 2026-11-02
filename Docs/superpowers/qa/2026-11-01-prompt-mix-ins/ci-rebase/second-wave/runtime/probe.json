@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_self_hosted_retry_accounting.py::test_fallback_trace_recovery_keeps_accepted_owner[False-capture_off]",
+    "-q",
+    "-p",
+    "no:cacheprovider",
+    "-p",
+    "save_probe",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-ci3346-wave2-runtime-7dha0tpm/probe-tmp"
+  ],
+  "exit_code": 1
+}

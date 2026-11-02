@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -154,3 +155,22 @@ class WorkbenchHelpPanel(SafeModalDismissMixin, ModalScreen[None]):
         if event.button.id == "workbench-help-close":
             event.stop()
             await self.request_safe_cancel(source="button")
+
+
+def binding_shortcuts(bindings: Any, *, display_key, binding_type) -> tuple[tuple[str, str], ...]:
+    """Flatten BINDINGS entries into (key, description) pairs for help display.
+
+    Accepts both Binding objects and the legacy tuple form so any screen's
+    BINDINGS can be rendered as truthful shortcut help. Keys render as
+    display glyphs (TASK-32887): the Evals help leaked the raw binding
+    identifiers ``left_square_bracket``/``right_square_bracket`` as copy.
+    """
+    pairs: list[tuple[str, str]] = []
+    for entry in bindings or ():
+        if isinstance(entry, binding_type):
+            pairs.append((display_key(entry.key), entry.description))
+        elif isinstance(entry, (tuple, list)) and entry:
+            key = display_key(str(entry[0]))
+            description = str(entry[2]) if len(entry) > 2 else ""
+            pairs.append((key, description))
+    return tuple(pairs)

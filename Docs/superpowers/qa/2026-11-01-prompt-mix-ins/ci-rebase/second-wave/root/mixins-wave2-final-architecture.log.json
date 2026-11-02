@@ -1,0 +1,4 @@
+{
+  "sha256": "610a21def9010a41c6b9b5f0268a1d67baef96a0830bd1bf90ae6fd7bb474a4d",
+  "raw_text": "..........................................                               [100%]\n=============================== warnings summary ===============================\n<unknown>:31\n  <unknown>:31: SyntaxWarning: invalid escape sequence '\\ '\n\n<unknown>:32\n  <unknown>:32: SyntaxWarning: invalid escape sequence '\\ '\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n============================= slowest 25 durations =============================\n5.90s call     Tests/Architecture/test_layer_direction.py::test_no_new_upward_import\n\n(24 durations < 1s hidden.)\n42 passed, 2 warnings in 15.25s\n"
+}

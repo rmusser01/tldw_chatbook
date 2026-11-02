@@ -1290,3 +1290,26 @@ def _workspace_sync_label(active_workspace: WorkspaceRecord) -> str:
 
 def _plural(label: str, count: int) -> str:
     return label if count == 1 else f"{label}s"
+
+
+def normalized_console_workspace_id(
+    workspace_id: str | None, *, global_workspace_id: str
+) -> str:
+    """Fold the "no explicit workspace" sentinels onto one identity.
+
+    A Console session's default ``workspace_id`` (unset, or the explicit
+    ``CONSOLE_GLOBAL_WORKSPACE_ID`` sentinel) and the registry's built-in
+    Default workspace row (``DEFAULT_WORKSPACE_ID`` -- the resting state
+    ``ensure_default_workspace`` establishes at boot and switch seams, and
+    the id the read-only context resolution floors a missing active
+    workspace to, TASK-21118) are THE SAME state on two layers (task-15120
+    owner ruling, see ``_set_active_workspace_for_console_session``), not
+    two different workspaces that happen to share a session. Any comparison between a
+    session's ``workspace_id`` and a registry workspace id must normalize
+    through this before comparing, or an aligned "global"/Default session
+    reads as diverged purely because of which layer's spelling it carries.
+    """
+    normalized = str(workspace_id or "").strip()
+    if not normalized or normalized == global_workspace_id:
+        return DEFAULT_WORKSPACE_ID
+    return normalized

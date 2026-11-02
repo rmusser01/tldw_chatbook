@@ -1,0 +1,932 @@
+{
+  "listed": [
+    "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
+    "tldw_chatbook.UI.Console_Modules.sent_draft",
+    "tldw_chatbook.Chat.console_received_intent",
+    "tldw_chatbook.Chat.console_configuration_preparation",
+    "tldw_chatbook.Chat.console_preparation_reads",
+    "tldw_chatbook.Chat.console_configuration_capture",
+    "tldw_chatbook.UI.Console_Modules.turn_admission",
+    "tldw_chatbook.MCP.console_snapshot",
+    "tldw_chatbook.Chat.console_received_dispatch",
+    "tldw_chatbook.Chat.console_send_start",
+    "tldw_chatbook.Chat.console_received_turn",
+    "tldw_chatbook.Chat.console_send_diagnostics",
+    "tldw_chatbook.Chat.console_automatic_submission",
+    "tldw_chatbook.Chat.console_plugin_context",
+    "tldw_chatbook.Chat.console_hook_preparation",
+    "tldw_chatbook.Agents.run_hooks",
+    "tldw_chatbook.Agents.hook_permissions",
+    "tldw_chatbook.Agents.automatic_work_runtime",
+    "tldw_chatbook.Chat.console_references",
+    "tldw_chatbook.Agents.hooks_v2.lifecycle",
+    "tldw_chatbook.Agents.hooks_v2.matching",
+    "tldw_chatbook.Agents.hooks_v2.models",
+    "tldw_chatbook.Agents.hooks_v2.validation",
+    "tldw_chatbook.Agents.hooks_v2.checkpoints",
+    "tldw_chatbook.Agents.hooks_v2.engine",
+    "tldw_chatbook.Agents.hooks_v2.budgets",
+    "tldw_chatbook.Agents.hooks_v2.command_executor",
+    "tldw_chatbook.Agents.hooks_v2.ownership",
+    "tldw_chatbook.Agents.hooks_v2.context",
+    "tldw_chatbook.Chat.console_legacy_flat_roots",
+    "tldw_chatbook.Chat.console_context_window",
+    "tldw_chatbook.Chat.console_visual_transcript",
+    "tldw_chatbook.Chat.console_predispatch_block",
+    "tldw_chatbook.Chat.console_native_commit",
+    "tldw_chatbook.Chat.console_continuation_binding",
+    "tldw_chatbook.Chat.console_pre_provider_stop",
+    "tldw_chatbook.Chat.console_trace_row_sources",
+    "tldw_chatbook.Chat.response_rules.generation",
+    "tldw_chatbook.Chat.response_rules.builder",
+    "tldw_chatbook.Chat.response_rules.evaluator",
+    "tldw_chatbook.Chat.response_rules.models",
+    "tldw_chatbook.Chat.response_rules.repository",
+    "tldw_chatbook.Chat.response_rules.resources",
+    "tldw_chatbook.Chat.response_rules.runtime",
+    "tldw_chatbook.Chat.response_rules.corrections",
+    "tldw_chatbook.Chat.response_rules.evidence",
+    "tldw_chatbook.Chat.response_rules.store",
+    "tldw_chatbook.Chat.response_rules.resolution",
+    "tldw_chatbook.Chat.response_rules.chat_state",
+    "tldw_chatbook.UI.Console_Modules.response_rules",
+    "tldw_chatbook.app_served",
+    "textual_serve",
+    "tldw_chatbook.Web_Server.served_relay_publisher",
+    "tldw_chatbook.Guardian.settings",
+    "tldw_chatbook.Agents.local_tool_provider",
+    "tldw_chatbook.Chat.console_run_start_tools",
+    "tldw_chatbook.MCP.console_tool_preparation",
+    "tldw_chatbook.Character_Chat.world_info_resolver",
+    "tldw_chatbook.Agents.persona_policy",
+    "tldw_chatbook.Tools.character_tool_service",
+    "tldw_chatbook.Tools.git_tool_impls",
+    "tldw_chatbook.Tools.web_tool_impls",
+    "tldw_chatbook.Web_Scraping.deep_search_citations",
+    "tldw_chatbook.Agents.ask_user_questions",
+    "tldw_chatbook.Agents.fs_read_ledger",
+    "tldw_chatbook.Chat.conversation_archive_actions",
+    "tldw_chatbook.Agents.canvas_tool_provider",
+    "tldw_chatbook.Chat.console_agent_bridge",
+    "tldw_chatbook.Chat.citation_key_first_use",
+    "tldw_chatbook.Canvas.guide",
+    "tldw_chatbook.Chat.console_stream_persistence",
+    "tldw_chatbook.Chat.provider_rate_limits",
+    "webencodings",
+    "html5lib",
+    "tinycss2",
+    "multidict",
+    "propcache",
+    "yarl",
+    "frozenlist",
+    "aiosignal",
+    "aiohappyeyeballs",
+    "aiohttp",
+    "tldw_chatbook.Canvas.capabilities",
+    "tldw_chatbook.Canvas.control_protocol",
+    "tldw_chatbook.Canvas.compiler",
+    "tldw_chatbook.Canvas.gateway",
+    "tldw_chatbook.Canvas.native_authority",
+    "tldw_chatbook.Tools.remote_session_registry",
+    "tldw_chatbook.Tools.remote_session_worker",
+    "tldw_chatbook.UI.Console_Modules.citation_counts",
+    "tldw_chatbook.UI.Console_Modules.config_sync",
+    "tldw_chatbook.emergency_stop",
+    "tldw_chatbook.UI.Console_Modules.emergency_stop_hold",
+    "tldw_chatbook.Chat.console_voice_input"
+  ],
+  "warmup_added_modules": 116,
+  "warmup_added_loc": 81908,
+  "heavy_added": [],
+  "entries": [
+    {
+      "entry": "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
+      "added_modules": 2,
+      "added_loc": 1163,
+      "modules": [
+        "tldw_chatbook.UI.Console_Modules.send_acknowledgement",
+        "tldw_chatbook.UI.Console_Modules.sent_draft"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.UI.Console_Modules.sent_draft",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_received_intent",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_configuration_preparation",
+      "added_modules": 1,
+      "added_loc": 1538,
+      "modules": [
+        "tldw_chatbook.Chat.console_configuration_preparation"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_preparation_reads",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_configuration_capture",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.UI.Console_Modules.turn_admission",
+      "added_modules": 1,
+      "added_loc": 386,
+      "modules": [
+        "tldw_chatbook.UI.Console_Modules.turn_admission"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.MCP.console_snapshot",
+      "added_modules": 1,
+      "added_loc": 910,
+      "modules": [
+        "tldw_chatbook.MCP.console_snapshot"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_received_dispatch",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_send_start",
+      "added_modules": 1,
+      "added_loc": 151,
+      "modules": [
+        "tldw_chatbook.Chat.console_send_start"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_received_turn",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_send_diagnostics",
+      "added_modules": 1,
+      "added_loc": 235,
+      "modules": [
+        "tldw_chatbook.Chat.console_send_diagnostics"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_automatic_submission",
+      "added_modules": 1,
+      "added_loc": 684,
+      "modules": [
+        "tldw_chatbook.Chat.console_automatic_submission"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_plugin_context",
+      "added_modules": 1,
+      "added_loc": 437,
+      "modules": [
+        "tldw_chatbook.Chat.console_plugin_context"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_hook_preparation",
+      "added_modules": 1,
+      "added_loc": 438,
+      "modules": [
+        "tldw_chatbook.Chat.console_hook_preparation"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.run_hooks",
+      "added_modules": 1,
+      "added_loc": 1334,
+      "modules": [
+        "tldw_chatbook.Agents.run_hooks"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hook_permissions",
+      "added_modules": 1,
+      "added_loc": 1379,
+      "modules": [
+        "tldw_chatbook.Agents.hook_permissions"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.automatic_work_runtime",
+      "added_modules": 2,
+      "added_loc": 371,
+      "modules": [
+        "tldw_chatbook.Agents.automatic_work_budget",
+        "tldw_chatbook.Agents.automatic_work_runtime"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_references",
+      "added_modules": 1,
+      "added_loc": 403,
+      "modules": [
+        "tldw_chatbook.Chat.console_references"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hooks_v2.lifecycle",
+      "added_modules": 11,
+      "added_loc": 3799,
+      "modules": [
+        "tldw_chatbook.Agents.hooks_v2",
+        "tldw_chatbook.Agents.hooks_v2.budgets",
+        "tldw_chatbook.Agents.hooks_v2.checkpoints",
+        "tldw_chatbook.Agents.hooks_v2.command_executor",
+        "tldw_chatbook.Agents.hooks_v2.context",
+        "tldw_chatbook.Agents.hooks_v2.engine",
+        "tldw_chatbook.Agents.hooks_v2.lifecycle",
+        "tldw_chatbook.Agents.hooks_v2.matching",
+        "tldw_chatbook.Agents.hooks_v2.models",
+        "tldw_chatbook.Agents.hooks_v2.ownership",
+        "tldw_chatbook.Agents.hooks_v2.validation"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hooks_v2.matching",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hooks_v2.models",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hooks_v2.validation",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hooks_v2.checkpoints",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hooks_v2.engine",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hooks_v2.budgets",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hooks_v2.command_executor",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hooks_v2.ownership",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.hooks_v2.context",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_legacy_flat_roots",
+      "added_modules": 1,
+      "added_loc": 424,
+      "modules": [
+        "tldw_chatbook.Chat.console_legacy_flat_roots"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_context_window",
+      "added_modules": 1,
+      "added_loc": 381,
+      "modules": [
+        "tldw_chatbook.Chat.console_context_window"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_visual_transcript",
+      "added_modules": 1,
+      "added_loc": 669,
+      "modules": [
+        "tldw_chatbook.Chat.console_visual_transcript"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_predispatch_block",
+      "added_modules": 1,
+      "added_loc": 185,
+      "modules": [
+        "tldw_chatbook.Chat.console_predispatch_block"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_native_commit",
+      "added_modules": 1,
+      "added_loc": 1450,
+      "modules": [
+        "tldw_chatbook.Chat.console_native_commit"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_continuation_binding",
+      "added_modules": 1,
+      "added_loc": 341,
+      "modules": [
+        "tldw_chatbook.Chat.console_continuation_binding"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_pre_provider_stop",
+      "added_modules": 1,
+      "added_loc": 523,
+      "modules": [
+        "tldw_chatbook.Chat.console_pre_provider_stop"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_trace_row_sources",
+      "added_modules": 1,
+      "added_loc": 129,
+      "modules": [
+        "tldw_chatbook.Chat.console_trace_row_sources"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.generation",
+      "added_modules": 2,
+      "added_loc": 54,
+      "modules": [
+        "tldw_chatbook.Chat.response_rules",
+        "tldw_chatbook.Chat.response_rules.generation"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.builder",
+      "added_modules": 5,
+      "added_loc": 1895,
+      "modules": [
+        "tldw_chatbook.Chat.response_rules.builder",
+        "tldw_chatbook.Chat.response_rules.evaluator",
+        "tldw_chatbook.Chat.response_rules.models",
+        "tldw_chatbook.Chat.response_rules.repository",
+        "tldw_chatbook.Chat.response_rules.resources"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.evaluator",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.models",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.repository",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.resources",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.runtime",
+      "added_modules": 5,
+      "added_loc": 1956,
+      "modules": [
+        "tldw_chatbook.Chat.response_rules.corrections",
+        "tldw_chatbook.Chat.response_rules.evidence",
+        "tldw_chatbook.Chat.response_rules.resolution",
+        "tldw_chatbook.Chat.response_rules.runtime",
+        "tldw_chatbook.Chat.response_rules.store"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.corrections",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.evidence",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.store",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.resolution",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.response_rules.chat_state",
+      "added_modules": 1,
+      "added_loc": 188,
+      "modules": [
+        "tldw_chatbook.Chat.response_rules.chat_state"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.UI.Console_Modules.response_rules",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.app_served",
+      "added_modules": 1,
+      "added_loc": 125,
+      "modules": [
+        "tldw_chatbook.app_served"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "textual_serve",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Web_Server.served_relay_publisher",
+      "added_modules": 2,
+      "added_loc": 370,
+      "modules": [
+        "tldw_chatbook.Web_Server",
+        "tldw_chatbook.Web_Server.served_relay_publisher"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Guardian.settings",
+      "added_modules": 2,
+      "added_loc": 66,
+      "modules": [
+        "tldw_chatbook.Guardian",
+        "tldw_chatbook.Guardian.settings"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.local_tool_provider",
+      "added_modules": 8,
+      "added_loc": 11056,
+      "modules": [
+        "tldw_chatbook.Agents.local_tool_provider",
+        "tldw_chatbook.Tools.local_tool_impls",
+        "tldw_chatbook.Tools.patch_tool_impls",
+        "tldw_chatbook.Tools.worker_watchdog",
+        "tldw_chatbook.Tools.workspace_root_pin",
+        "tldw_chatbook.Tools.workspace_tool_executor",
+        "tldw_chatbook.Tools.workspace_tool_protocol",
+        "tldw_chatbook.Tools.workspace_wire_decode"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_run_start_tools",
+      "added_modules": 1,
+      "added_loc": 420,
+      "modules": [
+        "tldw_chatbook.Chat.console_run_start_tools"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.MCP.console_tool_preparation",
+      "added_modules": 1,
+      "added_loc": 573,
+      "modules": [
+        "tldw_chatbook.MCP.console_tool_preparation"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Character_Chat.world_info_resolver",
+      "added_modules": 1,
+      "added_loc": 359,
+      "modules": [
+        "tldw_chatbook.Character_Chat.world_info_resolver"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.persona_policy",
+      "added_modules": 1,
+      "added_loc": 162,
+      "modules": [
+        "tldw_chatbook.Agents.persona_policy"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Tools.character_tool_service",
+      "added_modules": 2,
+      "added_loc": 769,
+      "modules": [
+        "tldw_chatbook.Character_Chat.character_avatar",
+        "tldw_chatbook.Tools.character_tool_service"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Tools.git_tool_impls",
+      "added_modules": 1,
+      "added_loc": 1419,
+      "modules": [
+        "tldw_chatbook.Tools.git_tool_impls"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Tools.web_tool_impls",
+      "added_modules": 3,
+      "added_loc": 3132,
+      "modules": [
+        "tldw_chatbook.Tools.web_tool_impls",
+        "tldw_chatbook.Web_Scraping",
+        "tldw_chatbook.Web_Scraping.deep_search_citations"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Web_Scraping.deep_search_citations",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.ask_user_questions",
+      "added_modules": 1,
+      "added_loc": 432,
+      "modules": [
+        "tldw_chatbook.Agents.ask_user_questions"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.fs_read_ledger",
+      "added_modules": 1,
+      "added_loc": 139,
+      "modules": [
+        "tldw_chatbook.Agents.fs_read_ledger"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.conversation_archive_actions",
+      "added_modules": 1,
+      "added_loc": 313,
+      "modules": [
+        "tldw_chatbook.Chat.conversation_archive_actions"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Agents.canvas_tool_provider",
+      "added_modules": 2,
+      "added_loc": 1356,
+      "modules": [
+        "tldw_chatbook.Agents.canvas_tool_provider",
+        "tldw_chatbook.Canvas.guide"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_agent_bridge",
+      "added_modules": 17,
+      "added_loc": 16243,
+      "modules": [
+        "tldw_chatbook.Agents.agent_stream",
+        "tldw_chatbook.Chat.console_agent_bridge",
+        "tldw_chatbook.Internal_Prompts",
+        "tldw_chatbook.Internal_Prompts.agents_prompts",
+        "tldw_chatbook.Internal_Prompts.catalog",
+        "tldw_chatbook.Internal_Prompts.character_prompts",
+        "tldw_chatbook.Internal_Prompts.console_prompts",
+        "tldw_chatbook.Internal_Prompts.document_generation_prompts",
+        "tldw_chatbook.Internal_Prompts.prompt_improvement_prompts",
+        "tldw_chatbook.Internal_Prompts.rag_reranker_prompts",
+        "tldw_chatbook.Internal_Prompts.resolver",
+        "tldw_chatbook.Internal_Prompts.summarization_prompts",
+        "tldw_chatbook.Internal_Prompts.websearch_prompts",
+        "tldw_chatbook.Workspaces.change_bounds",
+        "tldw_chatbook.Workspaces.change_review_finalization",
+        "tldw_chatbook.Workspaces.change_tracking",
+        "tldw_chatbook.Workspaces.change_turn_tracker"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.citation_key_first_use",
+      "added_modules": 1,
+      "added_loc": 253,
+      "modules": [
+        "tldw_chatbook.Chat.citation_key_first_use"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Canvas.guide",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_stream_persistence",
+      "added_modules": 1,
+      "added_loc": 122,
+      "modules": [
+        "tldw_chatbook.Chat.console_stream_persistence"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.provider_rate_limits",
+      "added_modules": 1,
+      "added_loc": 212,
+      "modules": [
+        "tldw_chatbook.Chat.provider_rate_limits"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "webencodings",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "html5lib",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tinycss2",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "multidict",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "propcache",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "yarl",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "frozenlist",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "aiosignal",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "aiohappyeyeballs",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "aiohttp",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Canvas.capabilities",
+      "added_modules": 1,
+      "added_loc": 297,
+      "modules": [
+        "tldw_chatbook.Canvas.capabilities"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Canvas.control_protocol",
+      "added_modules": 1,
+      "added_loc": 1106,
+      "modules": [
+        "tldw_chatbook.Canvas.control_protocol"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Canvas.compiler",
+      "added_modules": 3,
+      "added_loc": 2477,
+      "modules": [
+        "tldw_chatbook.Canvas.compiler",
+        "tldw_chatbook.Canvas.profiles",
+        "tldw_chatbook.Canvas.runtime_assets"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Canvas.gateway",
+      "added_modules": 1,
+      "added_loc": 3104,
+      "modules": [
+        "tldw_chatbook.Canvas.gateway"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Canvas.native_authority",
+      "added_modules": 2,
+      "added_loc": 1403,
+      "modules": [
+        "tldw_chatbook.Canvas.compilation",
+        "tldw_chatbook.Canvas.native_authority"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Tools.remote_session_registry",
+      "added_modules": 8,
+      "added_loc": 11308,
+      "modules": [
+        "tldw_chatbook.Tools.build_remote_worker_bundle",
+        "tldw_chatbook.Tools.remote_binding_locator",
+        "tldw_chatbook.Tools.remote_session_frames",
+        "tldw_chatbook.Tools.remote_session_registry",
+        "tldw_chatbook.Tools.remote_session_worker",
+        "tldw_chatbook.Tools.remote_worker_bundle",
+        "tldw_chatbook.Tools.remote_workspace_executor",
+        "tldw_chatbook.Tools.remote_workspace_transport"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Tools.remote_session_worker",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.UI.Console_Modules.citation_counts",
+      "added_modules": 1,
+      "added_loc": 65,
+      "modules": [
+        "tldw_chatbook.UI.Console_Modules.citation_counts"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.UI.Console_Modules.config_sync",
+      "added_modules": 0,
+      "added_loc": 0,
+      "modules": [],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.emergency_stop",
+      "added_modules": 1,
+      "added_loc": 103,
+      "modules": [
+        "tldw_chatbook.emergency_stop"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.UI.Console_Modules.emergency_stop_hold",
+      "added_modules": 1,
+      "added_loc": 303,
+      "modules": [
+        "tldw_chatbook.UI.Console_Modules.emergency_stop_hold"
+      ],
+      "heavy": []
+    },
+    {
+      "entry": "tldw_chatbook.Chat.console_voice_input",
+      "added_modules": 2,
+      "added_loc": 2798,
+      "modules": [
+        "tldw_chatbook.Chat.console_voice_input",
+        "tldw_chatbook.Utils.local_stt_providers"
+      ],
+      "heavy": []
+    }
+  ]
+}

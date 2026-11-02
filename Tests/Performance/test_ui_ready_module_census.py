@@ -353,6 +353,8 @@ EXPECTED_AT_READY = (
     # The native Console mounts its bridge before ready. Its import closure
     # must not be speculatively paid again in the first-send warm-up inventory.
     "tldw_chatbook.Chat.console_agent_bridge",
+    # Served app wiring is also mounted before ready, not a lazy send cost.
+    "tldw_chatbook.app_served",
     "tldw_chatbook.app",
 )
 

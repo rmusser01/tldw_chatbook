@@ -10,9 +10,11 @@ from __future__ import annotations
 import base64
 import json
 import re
+import sys
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
@@ -22,6 +24,22 @@ from tldw_chatbook.Tools import character_tool_service as cts
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 )
+
+
+@private_profile_test
+@pytest.mark.bootstrap_profile
+def test_avatar_resolution_stays_cold_until_tool_use(request):
+    module_name = "tldw_chatbook.Character_Chat.character_avatar"
+    assert module_name not in sys.modules
+    cts.CharacterToolService(
+        service_loader=lambda: None,
+        runtime_source_loader=lambda: "local",
+        read_guard=cts.CharacterReadGuard(),
+    )
+    assert module_name not in sys.modules
+    summary = cts.save_approval_summary({"avatar": {"source": "generate"}})
+    assert module_name in sys.modules
+    assert "paid backends may cost money" in summary["avatar"]
 
 
 @pytest.fixture()

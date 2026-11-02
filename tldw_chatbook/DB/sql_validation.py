@@ -832,3 +832,68 @@ def escape_identifier(identifier: str) -> str:
         str: The escaped identifier
     """
     return _escape_identifier(identifier)
+
+
+def split_migration_statements(script: str, *, error_type: type[Exception]) -> list[str]:
+    """Split a migration script into complete statements.
+
+    Uses ``sqlite3.complete_statement`` over accumulated lines -- the same
+    splitter the new-style migration steps already use for their on-disk
+    ``.sql`` files -- so trigger bodies containing ``;`` stay intact.
+
+    Args:
+        script: The full migration script text.
+        error_type: The caller's schema exception class for incomplete SQL.
+
+    Returns:
+        The statements in source order, each keeping its original text
+        (leading comments included).
+
+    Raises:
+        Exception: The supplied error type if the script ends with an incomplete statement.
+    """
+
+    import sqlite3
+    statements: list[str] = []
+    pending = ""
+    for line in script.splitlines(keepends=True):
+        pending += line
+        if sqlite3.complete_statement(pending):
+            statements.append(pending)
+            pending = ""
+    if pending.strip():
+        raise error_type("Migration script contains an incomplete SQL statement")
+    return statements
+
+
+def strip_leading_sql_noise(statement: str) -> str:
+    """Return ``statement`` without its leading whitespace and comments.
+
+    The migration scripts attach a header comment to the statement that
+    follows it, so the raw chunk cannot be pattern-matched directly. Only the
+    HEAD is trimmed; the statement handed to SQLite is always the original
+    text, so ``sqlite_master.sql`` is unaffected.
+
+    Args:
+        statement: One complete statement, possibly comment-prefixed.
+
+    Returns:
+        The statement text starting at its first SQL token, or ``""`` when the
+        chunk carries no SQL at all.
+    """
+    text = statement
+    while True:
+        text = text.lstrip()
+        if text.startswith("--"):
+            newline = text.find("\n")
+            if newline == -1:
+                return ""
+            text = text[newline + 1 :]
+            continue
+        if text.startswith("/*"):
+            end = text.find("*/")
+            if end == -1:
+                return ""
+            text = text[end + 2 :]
+            continue
+        return text

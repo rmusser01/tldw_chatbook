@@ -390,8 +390,6 @@ tldw_chatbook/Widgets/settings_theme_picker	ThemePicker._report_revert	notify_in
 tldw_chatbook/Widgets/settings_web_search_panel	WebSearchSettingsPanel._fields	button_label_interp	1
 tldw_chatbook/Widgets/voice_blend_dialog	VoiceBlendDialog.save_blend	notify_interp	1
 tldw_chatbook/app	TldwCli._maybe_offer_first_run_wizard	notify_interp	1
-tldw_chatbook/app	TldwCli._maybe_warn_config_load_failure	notify_interp	1
-tldw_chatbook/app	TldwCli._maybe_warn_config_schema_conflict	notify_interp	1
 tldw_chatbook/app	TldwCli._maybe_warn_second_instance	notify_interp	1
 tldw_chatbook/app	TldwCli.action_run_setup_wizard	notify_interp	1
 tldw_chatbook/app_command_providers	CharacterProvider.handle_character_action	notify_interp	1

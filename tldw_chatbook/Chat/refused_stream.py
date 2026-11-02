@@ -14,12 +14,13 @@ they share the one classification below:
   run by the hosted engine) names the Streaming setting in its failure copy,
   beside the model advice.
 
-Classification only: nothing here reaches the wire or the provider's text.
+Classification and recovery copy only: nothing here reaches the wire.
 Imported lazily by the gateway (ADR-097 boot ratchet).
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from tldw_chatbook.Chat.Chat_Deps import (
@@ -105,3 +106,138 @@ def retries_refused_stream(resolution: Any) -> bool:
         )
         if key
     )
+
+
+def _tool_definition_rejection_copy(
+    _owner: Any,
+    provider_message: str,
+    tools: Sequence[Mapping[str, Any]] | None,
+) -> str | None:
+    """Return recovery copy when a provider 400 blames a sent tool definition.
+
+    TASK-33621.1: OpenAI and Anthropic validate every tool schema before the
+    model runs, so a rejected tool definition fails the request on EVERY
+    model -- the model-picker advice below cannot help and must not be shown.
+    Only a tool name the request actually sent is ever echoed; the provider's
+    own text never reaches the copy.
+
+    The advice follows the tool's source, which its sent name tells apart:
+    every MCP-bridged tool is named ``mcp__<server>__<tool>``
+    (``MCP.tool_naming.llm_tool_name``), and every other tool is Chatbook's
+    own -- its rejection is a Chatbook bug to report, and not every such
+    tool has a switch to promise.
+
+    Args:
+        provider_message: The adapter exception's text (untrusted).
+        tools: The OpenAI-shape tool definitions this request sent.
+
+    Returns:
+        Copy naming the rejected tool, generic tool-definition copy when the
+        message blames a tool that cannot be named, or None otherwise.
+    """
+    if not tools:
+        return None
+    from tldw_chatbook.Agents.native_tools import (
+        blames_tool_definition,
+        rejected_tool_name,
+    )
+
+    name = rejected_tool_name(provider_message, tools)
+    if name is None:
+        if not blames_tool_definition(provider_message):
+            return None
+        # Blamed only through a marker in the provider's text: say what is
+        # likely, not what is certain.
+        return (
+            "The provider rejected one of the tool definitions sent with this "
+            "request before the model ran, so choosing another model is "
+            "unlikely to help. A tool from an MCP server is the likeliest "
+            "cause: turn MCP servers off on the MCP screen, then send again."
+        )
+    rejected = (
+        f"The provider rejected the tool definition for {_owner.escape_markup(name)} "
+        "before the model ran, so choosing another model will not help."
+    )
+    if name.startswith("mcp__"):
+        return (
+            f"{rejected} Turn off the MCP server that provides it on the MCP "
+            "screen, then send again."
+        )
+    return (
+        f"{rejected} It is one of Chatbook's own tools, so please report it. "
+        "If its tool group has a switch on the MCP screen, turning that off "
+        "lets you send meanwhile."
+    )
+
+
+def _provider_error_copy_with_model_recovery(
+    _owner: Any,
+    copy: str,
+    *,
+    model: str | None,
+    status_code: int | None,
+    provider_message: str = "",
+    tools: Sequence[Mapping[str, Any]] | None = None,
+    refused_stream: bool = False,
+    model_unavailable: bool = False,
+) -> str:
+    """Add safe recovery to provider bad-request copy.
+
+    A rejected tool definition gets tool copy (see
+    ``_tool_definition_rejection_copy``). A 404, or an explicit
+    ``model_not_found`` (``model_unavailable``) on any status, names the model
+    and says what to check: Fireworks, SambaNova, Nous and GMI answer an
+    unknown model, or one the key cannot use, that way (no-key probes
+    2026-09-30, TASK-33640). Any other 400 gets no model advice: it was never
+    evidence about the model (TASK-33621.11 AC#3).
+    """
+    if refused_stream and not _owner._tool_definition_rejection_copy(
+        provider_message, tools
+    ):
+        from tldw_chatbook.Chat.refused_stream import REFUSED_STREAM_ADVICE
+
+        copy = _owner._provider_error_copy_with_model_recovery(
+            copy,
+            model=model,
+            status_code=status_code,
+            provider_message=provider_message,
+            tools=tools,
+            model_unavailable=model_unavailable,
+        )
+        return f"{copy} {REFUSED_STREAM_ADVICE}"
+    if status_code == 404 or model_unavailable:
+        model_id = _owner._safe_model_id(model)
+        named = (
+            f" Selected model: {_owner.escape_markup(model_id)}." if model_id else ""
+        )
+        return (
+            f"{copy}{named} The provider could not find this model or "
+            "endpoint, or this key cannot use it. Check the model name and "
+            "the key, or choose another model from the model picker "
+            "(Alt+M: Switch model)."
+        )
+    if status_code != 400:
+        return copy
+    tool_copy = _owner._tool_definition_rejection_copy(provider_message, tools)
+    return copy if tool_copy is None else f"{copy} {tool_copy}"
+
+
+def _safe_model_id(_owner: Any, model: str | None) -> str:
+    """The model id fit for user copy, or "" when it is absent or redacted.
+
+    Args:
+        model: The selected model identifier.
+
+    Returns:
+        A printable, bounded model id; empty when it cannot be shown.
+    """
+    model_result = _owner.CredentialSanitizer().sanitize(model or "")
+    if (
+        not model_result.available
+        or model_result.redacted
+        or type(model_result.value) is not str
+    ):
+        return ""
+    return "".join(
+        character for character in model_result.value.strip() if character.isprintable()
+    )[: _owner.PROVIDER_ERROR_MODEL_ID_MAX_CHARS]

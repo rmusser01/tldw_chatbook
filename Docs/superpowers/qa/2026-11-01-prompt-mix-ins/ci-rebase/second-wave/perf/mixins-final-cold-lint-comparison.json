@@ -1,0 +1,32 @@
+[
+  {
+    "file": "tldw_chatbook/UI/Console_Modules/prompts.py",
+    "before": 28,
+    "after": 28,
+    "new": []
+  },
+  {
+    "file": "tldw_chatbook/Tools/character_tool_service.py",
+    "before": 0,
+    "after": 0,
+    "new": []
+  },
+  {
+    "file": "Tests/Tools/test_character_tool_service.py",
+    "before": 0,
+    "after": 0,
+    "new": []
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_first_send_modules.py",
+    "before": 0,
+    "after": 0,
+    "new": []
+  },
+  {
+    "file": "Tests/Performance/test_ui_ready_module_census.py",
+    "before": 0,
+    "after": 0,
+    "new": []
+  }
+]

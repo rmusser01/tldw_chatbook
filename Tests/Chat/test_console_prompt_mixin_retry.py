@@ -1978,3 +1978,46 @@ async def test_current_choice_routes_publish_accepted_layout(
     assert facts.revision == before.revision + 1
     assert facts.entries[0].placement == "after"
     assert facts.entries[0].last_used_version == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_preference_waiter_keeps_real_database_drain_owned(
+    trace_harness, monkeypatch
+):
+    import asyncio
+    from threading import Event
+
+    h = trace_harness
+    service, _scope = select(h, monkeypatch)
+    entered, release, finished = Event(), Event(), Event()
+    original = h.store.persistence.save_conversation_mixin_preferences
+
+    def held(**kwargs):
+        entered.set()
+        assert release.wait(5)
+        try:
+            return original(**kwargs)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(
+        h.store.persistence, "save_conversation_mixin_preferences", held
+    )
+    waiter = asyncio.create_task(h.store.persist_prompt_mixin_preferences("session-1"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert not finished.is_set()
+        release.set()
+        outcome = await h.store.persist_prompt_mixin_preferences("session-1")
+        assert not outcome.failed_components and not outcome.stale_components
+        assert finished.is_set()
+        saved = h.store.persistence.get_conversation_mixin_preferences(
+            h.store._sessions["session-1"].persisted_conversation_id
+        ).preferences
+        assert saved.entries == service.preferences("session-1").entries
+    finally:
+        release.set()
+        await asyncio.gather(waiter, return_exceptions=True)

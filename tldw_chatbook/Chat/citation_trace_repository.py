@@ -3762,60 +3762,12 @@ class CitationTraceRepository:
         trace_id: str,
     ) -> bool:
         """Match every persisted governed identity to the sealed aggregate."""
-
         connection = self.db.get_connection()
-        run_rows = connection.execute(
-            """
-            SELECT run_id, run_ordinal, stage
-            FROM rag_evidence_runs
-            WHERE profile_id = ? AND trace_id = ?
-            """,
-            (profile_id, trace_id),
-        ).fetchall()
-        expected_runs = {
-            (run.run_id, run.run_ordinal, run.stage)
-            for run in summary.trace.evidence_runs
-        }
-        if {tuple(row) for row in run_rows} != expected_runs:
-            return False
-        answer_rows = connection.execute(
-            """
-            SELECT payload_id, attempt_id
-            FROM rag_answer_attempt_payloads
-            WHERE profile_id = ? AND trace_id = ?
-            """,
-            (profile_id, trace_id),
-        ).fetchall()
-        expected_answers = {
-            (attempt.answer_payload_ref, attempt.attempt_id)
-            for attempt in summary.trace.answer_attempts
-            if attempt.answer_payload_ref is not None
-        }
-        if {tuple(row) for row in answer_rows} != expected_answers:
-            return False
-        reference_rows = connection.execute(
-            """
-            SELECT
-                prompt_set_id, evidence_ordinal, run_id,
-                snapshot_payload_id, marker_ordinal, storage_mode
-            FROM rag_trace_evidence_refs
-            WHERE profile_id = ? AND trace_id = ?
-            """,
-            (profile_id, trace_id),
-        ).fetchall()
-        expected_references = {
-            (
-                prompt_set.prompt_set_id,
-                entry.evidence_ordinal,
-                entry.run_id,
-                entry.snapshot_payload_ref,
-                entry.marker_ordinal,
-                entry.storage_mode.value,
-            )
-            for prompt_set in summary.trace.prompt_evidence_sets
-            for entry in prompt_set.entries
-        }
-        return {tuple(row) for row in reference_rows} == expected_references
+        from .citation_artifact_ownership import trace_row_identities_match
+
+        return trace_row_identities_match(
+            connection, summary, profile_id=profile_id, trace_id=trace_id
+        )
 
     def _trace_evidence_revoked(
         self,

@@ -461,7 +461,8 @@ breakpoints are unavailable in the current client capability contract. See
 [provider caching qualification](llm-providers.md#cache-qualification-checked-2026-11-01).
 
 Operational prompt mix-in persistence is defined by ADR-286. Immutable values and
-strict preference codecs live in `Chat/console_prompt_mixins.py`; the frozen
+strict preference codecs live in `Chat/console_prompt_mixin_models.py`;
+`console_prompt_mixins.py` retains the public reexports and composition helpers; the frozen
 `MixinAttemptContribution` lives in `Chat/console_prompt_mixin_service.py` and
 borrows the existing acceptance/promotion transaction. Exact native anchors,
 conversation-owned retry rows and body-free message/checkpoint markers survive
@@ -469,6 +470,16 @@ fork, promotion and terminal metadata writes. The strict fork envelope admits on
 the validated companion marker pair, retaining status, attachment labels and trace
 aliases without authority. Nonobject JSON metadata rewrites normalize to an object
 before restoring the durable marker pair. Current-send composition borrows this seam without activating inherited chat choices.
+The decorated controller entry delegates its agent loop to
+`console_agent_reply.py`, retaining the controller's task/default contracts and
+live defining-module dependencies. `console_settings_persistence.py` holds the
+existing serialized settings drain; its task handles and CAS state remain on the
+store. Fork projections live in `console_chat_fork.py`, sequence primitives in
+`console_trace_models.py`, and memory-banner presentation in
+`console_memory_banner.py`. Legacy maintenance starts through the runtime's
+original readiness/delay gate before loading `console_trace_maintenance_runtime.py`.
+These extractions preserve the existing authority and cancellation owners.
+
 Receipt saves keep memory-backed SQLite on its owning loop, as native turn commits do; file-backed saves use the existing owned DB worker and cancellation retirement. The Subscription hybrid recovery catalog composes the frozen schema-86 lineages and requires their exact embedded stamp.
 
 

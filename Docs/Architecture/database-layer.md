@@ -137,3 +137,11 @@ migration also fixes `conversations_ad` to avoid deleting an already soft-delete
 FTS posting twice. Historical v81–v85 catalogs remain unchanged.
 
 Qualification uses disposable real databases for v85→v86 candidate migration, capture-off restore, temporary promotion, copy/fork and source purge; source candidate bytes remain unchanged during restore validation. The installed-distribution contract checks SQL migration inclusion in both wheel and source archive. These snapshots retain exact instruction content even when diagnostic capture is off: trace deletion alone does not delete operational Retry content. See [QA evidence and limits](../superpowers/qa/2026-11-01-prompt-mix-ins/verification.md).
+
+The migration statement parser and leading-comment scanner live in
+`DB/sql_validation.py`; ChaChaNotes supplies its original schema error type.
+The public `Prompts_DB.export_prompts_formatted` delegates lazily to
+`DB/prompt_export.py`, keeping current DB dependency bindings and legacy export
+formats. Sealed citation row-set comparison lives in
+`Chat/citation_artifact_ownership.py` and uses the repository's already acquired
+connection; transaction and seal ownership remain on the repository.

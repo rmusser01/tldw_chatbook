@@ -44,6 +44,7 @@ from textual.widgets import Button, Static
 from ...Chat.console_display_state import ConsoleAttachmentBlock
 from ...Utils.input_validation import escape_markup
 from ...Widgets.Console import console_composer_bar as composer_module
+from ...Widgets.Console import console_speech_controls as speech_module
 from ...Widgets.Console.console_composer_bar import ConsoleComposerBar
 from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_IMPROVE_CURRENT_DRAFT,
@@ -115,6 +116,19 @@ def sync_dictation_presentation(screen: Any, composer: ConsoleComposerBar) -> No
                 composer_module._load_console_voice_states,
                 *composer_module._IDLE_VOICE_LOADER,
             )
+        )
+        callbacks.extend(
+            (
+                getattr(speech_module, name, None)
+                if function.__globals__ is namespace and function.__closure__ is closure
+                else None,
+                function,
+                code,
+                defaults,
+                kwdefaults,
+                values,
+            )
+            for name, function, code, defaults, kwdefaults, values, namespace, closure in speech_module._IDLE_COMPOSER_PRESENTATION_CALLBACKS
         )
         if all(
             current is function

@@ -1,0 +1,8 @@
+[
+  "tldw_chatbook/Agents/plain_chat_tool_surface.py",
+  "tldw_chatbook/Chat/archive_recovery/operations.py",
+  "tldw_chatbook/Chat/console_chat_controller.py",
+  "tldw_chatbook/Chat/console_received_dispatch.py",
+  "tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events.py",
+  "tldw_chatbook/Widgets/plugin_review_modal.py"
+]

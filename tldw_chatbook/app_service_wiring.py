@@ -582,31 +582,21 @@ def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
 
 
 def _task_ended_without_result(task: "asyncio.Task[None]") -> bool:
-    """True when ``task`` is done and was cancelled or raised (TASK-34000.71 M-2)."""
+    from .Notes.notes_sync_startup import _task_ended_without_result as delegated
 
-    if not task.done():
-        return False
-    if task.cancelled():
-        return True
-    return task.exception() is not None
+    return delegated(task)
 
 
 def _owner_still_starting(owner: Any) -> bool:
-    """True when the owner's projection still reports ``"starting"``."""
+    from .Notes.notes_sync_startup import _owner_still_starting as delegated
 
-    snapshot = getattr(owner, "snapshot", None)
-    if not callable(snapshot):
-        return False
-    try:
-        return getattr(snapshot(), "status", None) == "starting"
-    except Exception:  # noqa: BLE001 - a double's projection must not crash the gate
-        return False
+    return delegated(owner)
 
 
 async def _await_notes_sync_start(pending: Any) -> None:
-    """Await a non-coroutine awaitable ``start()`` result (TASK-34000.71 M-3)."""
+    from .Notes.notes_sync_startup import _await_notes_sync_start as delegated
 
-    await pending
+    return await delegated(pending)
 
 
 def _notes_sync_boot_start_evidence(app: Any) -> bool:

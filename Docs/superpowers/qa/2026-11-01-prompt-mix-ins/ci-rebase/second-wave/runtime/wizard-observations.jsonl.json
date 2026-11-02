@@ -1,0 +1,4 @@
+{
+  "sha256": "11ab712919f93f0d07d252a920fdded11ecb2f46300603302a4fbc3f1fce901e",
+  "raw_text": "{\"function\": \"build_first_run_provider_commit\", \"exception\": \"ValueError\", \"message\": \"Credential setup is invalid.\"}\n"
+}

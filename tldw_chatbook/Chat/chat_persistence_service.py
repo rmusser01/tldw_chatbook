@@ -1,3 +1,8 @@
+import tldw_chatbook.Chat.attachment_core as _attachment_core
+import tldw_chatbook.Chat.console_chat_fork as _fork_contracts
+import tldw_chatbook.Chat.console_chat_models as _chat_models
+import tldw_chatbook.Chat.console_project_instructions as _project_instructions
+import tldw_chatbook.Chat.rag_scope as _rag_scope
 import base64
 import json
 import sqlite3
@@ -27,7 +32,6 @@ if TYPE_CHECKING:
 
 from loguru import logger as _logger
 
-from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES
 from tldw_chatbook.Chat.citation_trace_models import SealedCitationWrite
 from tldw_chatbook.Chat.citation_trace_repository import (
     CitationPersistenceUnavailable,
@@ -42,13 +46,9 @@ from tldw_chatbook.Chat.console_prompt_mixins import (
     MixinReplayRead,
 )
 from tldw_chatbook.Chat.console_chat_fork import (
-    CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
     ConsoleChatForkSnapshot,
     encode_console_fork_message_metadata,
-    fingerprint_console_fork_selected_image,
-    validate_console_fork_image_payload,
 )
-from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from tldw_chatbook.Chat.console_context_repository import (
     ConsoleContextRepository,
     ContextPolicyReadResult,
@@ -99,9 +99,6 @@ if TYPE_CHECKING:
         VoicePromotionIdentitySet,
     )
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
-from tldw_chatbook.Chat.console_project_instructions import (
-    encode_project_context_json,
-)
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
@@ -121,7 +118,6 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 )
 from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
-from tldw_chatbook.Chat.rag_scope import serialize_scope
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
@@ -143,6 +139,22 @@ _FORK_VERIFY_COLUMNS = (
     "id, conversation_id, parent_message_id, sender, content, deleted, version"
 )
 _SQLITE_DEFAULT_VARIABLE_LIMIT = 999
+
+
+# Explicit live dependency exports for the extracted implementation.
+MAX_ATTACHMENT_BYTES = _attachment_core.MAX_ATTACHMENT_BYTES
+CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT = (
+    _fork_contracts.CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+)
+fingerprint_console_fork_selected_image = (
+    _fork_contracts.fingerprint_console_fork_selected_image
+)
+validate_console_fork_image_payload = (
+    _fork_contracts.validate_console_fork_image_payload
+)
+CONSOLE_GLOBAL_WORKSPACE_ID = _chat_models.CONSOLE_GLOBAL_WORKSPACE_ID
+encode_project_context_json = _project_instructions.encode_project_context_json
+serialize_scope = _rag_scope.serialize_scope
 
 
 def _bounded_id_batches(
@@ -2601,57 +2613,12 @@ class ChatPersistenceService:
         snapshot: ConsoleChatForkSnapshot,
         conversation_kwargs: Mapping[str, object],
     ) -> dict[str, object]:
-        configuration = snapshot.configuration
-        global_scope = configuration.workspace_id == CONSOLE_GLOBAL_WORKSPACE_ID
-        prepared: dict[str, object] = {
-            "conversation_title": snapshot.title,
-            "scope_type": "global" if global_scope else "workspace",
-            "workspace_id": None if global_scope else configuration.workspace_id,
-            "system_prompt": configuration.settings.system_prompt,
-            "runtime_backend": configuration.runtime_backend,
-            "assistant_kind": configuration.assistant_kind,
-            "assistant_id": configuration.assistant_id,
-            "assistant_authority_id": configuration.assistant_authority_id,
-            "persona_memory_mode": configuration.persona_memory_mode,
-            "character_id": configuration.character_id,
-            "character_name": configuration.character_name,
-            "speech_preferences": configuration.speech_preferences,
-            "thinking_history_policy": configuration.thinking_history_policy,
-        }
-        if dict(conversation_kwargs) != prepared:
-            raise ValueError("Console fork configuration changed.")
-        metadata: dict[str, object] = {}
-        serialized_settings = asdict(configuration.settings)
-        if configuration.ephemeral_endpoint_policy is not None:
-            serialized_settings.pop("base_url", None)
-        metadata["console_session_settings"] = {
-            "version": 1,
-            **serialized_settings,
-            "pinned_prefill": None,
-        }
-        metadata = merge_console_generation_settings(
-            metadata,
-            snapshot_from_session_settings(configuration.settings),
+        from . import console_chat_fork
+
+        return console_chat_fork._fork_conversation_kwargs(
+            snapshot,
+            conversation_kwargs,
         )
-        if configuration.rag_scope is not None:
-            metadata["rag_scope"] = serialize_scope(configuration.rag_scope)
-        if (
-            configuration.user_display_name_override is not None
-            or configuration.character_system_template is not None
-        ):
-            metadata = json.loads(
-                merge_console_roleplay_context(
-                    metadata,
-                    ConsoleRoleplayContext(
-                        user_name_override=(configuration.user_display_name_override),
-                        character_system_template=(
-                            configuration.character_system_template
-                        ),
-                    ),
-                )
-            )
-        prepared["metadata"] = metadata or None
-        return prepared
 
     @staticmethod
     def _validate_console_fork_persistence_input(
@@ -2660,183 +2627,13 @@ class ChatPersistenceService:
         policy_candidate: ConsoleLibraryPolicyCandidate,
         project_context_json: str,
     ) -> None:
-        if not isinstance(snapshot, ConsoleChatForkSnapshot):
-            raise TypeError("snapshot must be ConsoleChatForkSnapshot")
-        if policy_candidate != snapshot.configuration.library_policy:
-            raise ValueError("Console fork Library policy changed.")
-        if project_context_json != encode_project_context_json(
-            snapshot.configuration.project_instruction_state
-        ):
-            raise ValueError("Console fork project context changed.")
-        if not snapshot.messages:
-            raise ValueError("Console fork must contain a message.")
-        durable_ids = [message.persisted_message_id for message in snapshot.messages]
-        if snapshot.durable:
-            if (
-                not snapshot.fork_conversation_id
-                or any(not message_id for message_id in durable_ids)
-                or len(set(durable_ids)) != len(durable_ids)
-            ):
-                raise ValueError("Console fork durable identities are invalid.")
-        elif snapshot.fork_conversation_id is not None or any(durable_ids):
-            raise ValueError("Temporary fork cannot carry durable identities.")
-        if not snapshot.durable and (
-            snapshot.source_conversation_id is not None
-            or snapshot.source_conversation_version is not None
-            or snapshot.source_active_leaf_persisted_message_id is not None
-            or snapshot.source_boundary_persisted_message_id is not None
-            or snapshot.citation_links
-            or any(
-                message.source_persisted_message_id is not None
-                or message.source_persisted_revision is not None
-                or message.source_persisted_content is not None
-                for message in snapshot.messages
-            )
-        ):
-            raise ValueError("Temporary fork citation identity is invalid.")
-        source_carriers = tuple(
-            (
-                message.source_persisted_message_id,
-                message.source_persisted_revision,
-                message.source_persisted_content,
-            )
-            for message in snapshot.messages
+        from . import console_chat_fork
+
+        return console_chat_fork._validate_console_fork_persistence_input(
+            snapshot,
+            policy_candidate=policy_candidate,
+            project_context_json=project_context_json,
         )
-        if snapshot.source_conversation_id is not None:
-            if (
-                type(snapshot.source_conversation_version) is not int
-                or not snapshot.source_active_leaf_persisted_message_id
-                or not snapshot.source_boundary_persisted_message_id
-                or any(
-                    type(source_id) is not str
-                    or not source_id
-                    or type(revision) is not int
-                    or type(content) is not str
-                    for source_id, revision, content in source_carriers
-                )
-            ):
-                raise ValueError("Console fork durable source fence is invalid.")
-        elif snapshot.durable and (
-            snapshot.source_conversation_version is not None
-            or snapshot.source_active_leaf_persisted_message_id is not None
-            or snapshot.source_boundary_persisted_message_id is not None
-            or any(carrier != (None, None, None) for carrier in source_carriers)
-            or snapshot.citation_links
-        ):
-            raise ValueError(
-                "Unsaved fork source cannot carry durable source identity."
-            )
-        expected_citations = {
-            (
-                message.source_persisted_message_id,
-                message.source_persisted_revision,
-            )
-            for message in snapshot.messages
-            if message.source_persisted_message_id is not None
-        }
-        actual_citations = {
-            (link.source_persisted_message_id, link.source_revision)
-            for link in snapshot.citation_links
-        }
-        if (
-            len(actual_citations) != len(snapshot.citation_links)
-            or actual_citations != expected_citations
-            or any(
-                link.state not in {"active_required", "unavailable", "none"}
-                for link in snapshot.citation_links
-            )
-            or any(
-                (
-                    link.state == "active_required"
-                    and (type(link.trace_id) is not str or not link.trace_id)
-                )
-                or (link.state != "active_required" and link.trace_id is not None)
-                for link in snapshot.citation_links
-            )
-        ):
-            raise ValueError("Console fork citation states are invalid.")
-        prior_native = None
-        prior_persisted = None
-        image_ids: set[str] = set()
-        for message in snapshot.messages:
-            if message.status not in {"complete", "stopped", "failed"}:
-                raise ValueError("Console fork message status is invalid.")
-            if (
-                message.native_parent_id != prior_native
-                or message.persisted_parent_id != prior_persisted
-            ):
-                raise ValueError("Console fork lineage is invalid.")
-            if message.video_tombstone is not None:
-                if (
-                    message.attachments
-                    or message.generation_metadata
-                    or message.status != "complete"
-                    or message.content != CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
-                    or message.video_tombstone.owner_native_message_id
-                    != message.native_message_id
-                    or message.video_tombstone.owner_persisted_message_id
-                    != message.persisted_message_id
-                    or (
-                        message.video_tombstone.source_image_message_id is not None
-                        and message.video_tombstone.source_image_message_id
-                        not in image_ids
-                    )
-                ):
-                    raise ValueError("Console fork video tombstone is invalid.")
-            if message.generation_metadata and len(message.generation_metadata) != len(
-                message.attachments
-            ):
-                raise ValueError("Console fork generation metadata is invalid.")
-            has_image = False
-            for position, attachment in enumerate(message.attachments):
-                if (
-                    attachment.owner_native_message_id != message.native_message_id
-                    or attachment.owner_persisted_message_id
-                    != message.persisted_message_id
-                    or attachment.position != position
-                    or type(attachment.data) is not bytes
-                    or not attachment.data
-                    or len(attachment.data) > MAX_ATTACHMENT_BYTES
-                    or type(attachment.mime_type) is not str
-                    or not attachment.mime_type
-                    or type(attachment.display_name) is not str
-                ):
-                    raise ValueError("Console fork attachment is invalid.")
-                if attachment.mime_type.startswith("image/"):
-                    validate_console_fork_image_payload(
-                        attachment.data,
-                        attachment.mime_type,
-                    )
-                    has_image = True
-            for position, metadata in enumerate(message.generation_metadata):
-                if (
-                    metadata.owner_native_message_id != message.native_message_id
-                    or metadata.owner_persisted_message_id
-                    != message.persisted_message_id
-                    or metadata.position != position
-                    or not has_image
-                ):
-                    raise ValueError("Console fork generation metadata is invalid.")
-                try:
-                    fingerprint_console_fork_selected_image(
-                        message.attachments[position],
-                        metadata,
-                    )
-                except (TypeError, ValueError):
-                    raise ValueError(
-                        "Console fork generation metadata is invalid."
-                    ) from None
-            if has_image:
-                image_id = (
-                    message.persisted_message_id
-                    if snapshot.durable
-                    else message.native_message_id
-                )
-                if image_id is None:
-                    raise ValueError("Console fork image identity is invalid.")
-                image_ids.add(image_id)
-            prior_native = message.native_message_id
-            prior_persisted = message.persisted_message_id
 
     def provision_goal_conversation(self, intent: "GoalProvisioning") -> str:
         """Reconcile one launch's exact conversation and workspace membership.
@@ -4440,4 +4237,3 @@ class ChatPersistenceService:
             are omitted.
         """
         return self.db.get_generation_metadata_for_messages(message_ids)
-

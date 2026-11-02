@@ -146,10 +146,6 @@ from ...Widgets.Console.console_composer_bar import (
     ComposerDraftSnapshot,
     ComposerTransactionValidationError,
 )
-from ...Widgets.Console.prompt_variables_dialog import (
-    PromptVariablesDialog,
-    PromptVariablesDialogRequest,
-)
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import HandoffChannel
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
@@ -2212,6 +2208,11 @@ class ConsolePromptsController:
                 captured_snapshot=target.composer_snapshot,
             )
             return
+
+        from ...Widgets.Console.prompt_variables_dialog import (
+            PromptVariablesDialog,
+            PromptVariablesDialogRequest,
+        )
 
         request = PromptVariablesDialogRequest(
             system_text=system_text,

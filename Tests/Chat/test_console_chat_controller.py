@@ -7540,6 +7540,7 @@ class _ControllerLibraryService:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_run_agent_reply_threads_library_provider_from_factory():
     """The controller resolves the injected `library_provider_factory` exactly
     once per run, on the main loop, and hands the resulting provider to the
@@ -7582,6 +7583,7 @@ async def test_run_agent_reply_threads_library_provider_from_factory():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_run_agent_reply_threads_exact_admitted_trace_request_to_bridge():
     store = ConsoleChatStore()
     gateway = StreamingGateway()
@@ -7715,6 +7717,7 @@ async def _run_remote_session_reply(fixture, **overrides):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("ending", ["completes", "provider_raises", "cancelled"])
+@pytest.mark.bootstrap_profile
 async def test_run_agent_reply_closes_the_runs_remote_sessions_at_run_end(
     monkeypatch, ending
 ):

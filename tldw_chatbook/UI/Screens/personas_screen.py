@@ -2,10 +2,46 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.Widgets.Persona_Widgets.personas_character_tts_widget import _character_tts_availability_map
+from tldw_chatbook.Widgets.Persona_Widgets.personas_character_tts_widget import _character_tts_presentation_from_snapshot
+from tldw_chatbook.Widgets.Persona_Widgets.personas_character_tts_widget import _character_tts_profile_tokens
+from tldw_chatbook.UI.Persona_Modules.character_avatar_helpers import _unbound_persona_shared_visual_identity_metadata
+from tldw_chatbook.UI.Persona_Modules.character_avatar_helpers import _visual_identity_pack_metadata
+from tldw_chatbook.UI.Persona_Modules.character_avatar_helpers import _visual_identity_graph_matches_snapshot
+from tldw_chatbook.UI.Persona_Modules.character_avatar_helpers import _visual_identity_resolution_identity
+from tldw_chatbook.UI.Persona_Modules.character_avatar_helpers import _visual_identity_direction
+from tldw_chatbook.UI.Persona_Modules.character_avatar_helpers import _canonical_visual_identity_assets
+from tldw_chatbook.UI.Persona_Modules.character_avatar_helpers import _actor_pack_portrait_name, _eligible_actor_pack_portraits
+from tldw_chatbook.Widgets.Persona_Widgets.personas_state import (
+    _CharacterTTSControlSnapshot,
+    _ActorPackExportUIAuthority,
+    _CharacterTTSAuthorityUnavailable,
+    _CharacterTTSMixedSnapshot,
+    _CharacterVisualIdentityLoadSnapshot,
+    _VisualIdentityPreviewSnapshot,
+    _VisualIdentityAuthorSnapshot,
+    _VisualIdentityAuthoringState,
+    _PersonaVisualAuthorSnapshot,
+    _PersonaSharedVisualIdentityLoadSnapshot,
+    _PersonaSharedVisualIdentityAuthorSnapshot,
+    _PersonaSharedVisualIdentityAuthoringState,
+    _PersonaVisualAuthoringState,
+    _CharacterSaveAuthority,
+    _ActorPackPortraitChoice,
+    _ActorPackCreateSession,
+)
+from tldw_chatbook.UI.Persona_Modules.personas_preview_coordinator import (
+    _DrainedTaskResult as _DrainedTaskResult,  # noqa: PLC0414 -- preserve the original import seam.
+    _drain_async,
+    _drain_to_thread,
+    _join_task,
+    _persona_visual_ui_lifetime,
+    _visual_identity_ui_lifetime,
+)
+
 import asyncio
-from collections.abc import Coroutine, Mapping
+from collections.abc import Mapping
 import dataclasses
-import hashlib
 import inspect
 import json
 import os
@@ -80,20 +116,18 @@ from ...Character_Chat.persona_visual_identity import (
     resolve_persona_visual_identity,
 )
 from ...Character_Chat.visual_identity import (
-    CANONICAL_EXPRESSION_SLOTS,
     VisualIdentityCandidate,
     VisualIdentityPublicationError,
     VisualIdentityPublicationResult,
     VisualIdentityResolution,
     cleanup_visual_identity_publication_candidate,
     create_visual_identity_candidate,
-    display_label_for_expression_key,
     publish_visual_identity_candidate,
     resolve_visual_identity,
 )
 from ...Character_Chat.world_book_import import normalize_world_book_import
 from ...Character_Chat.world_book_manager import CHARACTER_WORLD_BOOKS_KEY
-from ...Actor_Packs.contracts import ActorPackValidationError, validate_actor_portrait
+from ...Actor_Packs.contracts import validate_actor_portrait
 from ...Actor_Packs.controller import (
     ActorPackExportControllerError,
     ActorPackExportOutcome,
@@ -156,7 +190,6 @@ from ...Persona_Visual.repository import PersonaVisualIdentity, PersonaVisualRep
 from ...Persona_Visual.runtime import PersonaVisualCacheIdentity
 from ...Persona_Buddy import PersonaBuddySelection, PersonaBuddyVisualSnapshot
 from ...TTS import (
-    AssignedTTSProfileSnapshot,
     CharacterRef,
     LoadedCharacterTTSAssignment,
     LoadedTTSProfile,
@@ -164,7 +197,6 @@ from ...TTS import (
     PortableProfileImportPlan,
     PortableProfileImportResult,
     ProfileRepositoryError,
-    TTSProfileAvailability,
     TTSProfileAvailabilitySnapshot,
     TTSProfileDraft,
     TTSProfilePageSnapshot,
@@ -226,7 +258,6 @@ from ...Widgets.Persona_Widgets.personas_visual_identity_pack_widget import (
 )
 from ...Widgets.Persona_Widgets.personas_character_tts_widget import (
     CharacterTTSProfileSuggestion,
-    CharacterTTSProfileOption,
     CharacterTTSPresentationState,
     PersonasCharacterTTSWidget,
 )
@@ -523,50 +554,6 @@ class CharacterConversationLinkOutcome(str, Enum):
     DEFERRED = "deferred"
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class _CharacterTTSControlSnapshot:
-    """Exact service and authority tokens behind one rendered control state."""
-
-    request_generation: int
-    runtime_source: str
-    character_id: str
-    character_ref: CharacterRef
-    repository_generation: int
-    loaded_profiles: tuple[LoadedTTSProfile, ...]
-    availability: tuple[TTSProfileAvailability, ...]
-    current: AssignedTTSProfileSnapshot | None
-    assignment_count: int | None
-    configuration_revision: int
-    catalog_revision: int | None
-    expected_server_id: str | None
-    server_context_capture: object | None = dataclasses.field(
-        repr=False,
-        compare=False,
-    )
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ActorPackExportUIAuthority:
-    """Exact screen and selection authority for one app-owned export."""
-
-    source: str
-    actor_kind: str
-    local_actor_id: str
-    actor_revision: int
-    session_generation: int
-    screen: object = dataclasses.field(repr=False, compare=False)
-    controller: object = dataclasses.field(repr=False, compare=False)
-    service: object = dataclasses.field(repr=False, compare=False)
-
-
-class _CharacterTTSAuthorityUnavailable(RuntimeError):
-    """Stable character authority could not be proved."""
-
-
-class _CharacterTTSMixedSnapshot(RuntimeError):
-    """Repository or capability observations did not form one snapshot."""
-
-
 def _whole_count(value: Any) -> int | None:
     """A book's entry count as a number, or None when the record's value is not one.
 
@@ -670,296 +657,6 @@ class _CenterViewMountUnavailable(RuntimeError):
     """Signal that a restore should retain its intent after a transient mount failure."""
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class _CharacterVisualIdentityLoadSnapshot:
-    """Authority captured before an editor pack-metadata worker starts."""
-
-    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
-    db: object | None
-    character_id: int | None
-    screen_generation: int
-    editor_session_token: int
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _VisualIdentityPreviewSnapshot:
-    """Weak, path-free authority snapshot for one selected preview."""
-
-    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
-    browser_ref: weakref.ReferenceType[PersonasVisualIdentityPackWidget]
-    db: object
-    character_id: int
-    screen_generation: int
-    editor_session_token: int
-    binding_id: int
-    pack_id: int
-    pack_version_id: int
-    source_kind: str
-    asset: VisualIdentityAssetMetadata
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _VisualIdentityAuthorSnapshot:
-    """Exact editor/browser authority for one unpublished candidate."""
-
-    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
-    browser_ref: weakref.ReferenceType[PersonasVisualIdentityPackWidget]
-    db: object
-    character_id: int
-    screen_generation: int
-    editor_session_token: int
-    binding_id: int
-    pack_id: int
-    pack_version_id: int
-
-
-@dataclasses.dataclass(slots=True)
-class _VisualIdentityAuthoringState:
-    """One candidate plus cancellation shared by its provider calls."""
-
-    snapshot: _VisualIdentityAuthorSnapshot
-    candidate: VisualIdentityCandidate
-    cancel_event: threading.Event
-    authoritative_pack: VisualIdentityPackMetadata
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _PersonaVisualAuthorSnapshot:
-    """Exact local Persona editor authority for one isolated visual draft."""
-
-    editor_ref: weakref.ReferenceType[PersonaProfileEditorWidget]
-    browser_ref: weakref.ReferenceType[PersonasPersonaVisualPackWidget]
-    db: object
-    local_service: object
-    persona_id: str
-    persona_revision: int
-    screen_generation: int
-    editor_session_token: int
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _PersonaSharedVisualIdentityLoadSnapshot:
-    """Exact local Persona editor authority for Shared Identity metadata."""
-
-    editor_ref: weakref.ReferenceType[PersonaProfileEditorWidget]
-    db: object
-    local_service: object
-    persona_id: str
-    persona_revision: int
-    screen_generation: int
-    editor_session_token: int
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _PersonaSharedVisualIdentityAuthorSnapshot:
-    """Exact Persona/editor/pack authority for one unpublished reaction draft."""
-
-    editor_ref: weakref.ReferenceType[PersonaProfileEditorWidget]
-    browser_ref: weakref.ReferenceType[PersonasVisualIdentityPackWidget]
-    db: object
-    local_service: object
-    persona_id: str
-    persona_revision: int
-    persona_authority: LocalPersonaVisualIdentityAuthority
-    screen_generation: int
-    editor_session_token: int
-    binding_id: int
-    pack_id: int
-    pack_version_id: int
-
-
-@dataclasses.dataclass(slots=True)
-class _PersonaSharedVisualIdentityAuthoringState:
-    """One Persona reaction candidate plus its cancellation authority."""
-
-    snapshot: _PersonaSharedVisualIdentityAuthorSnapshot
-    candidate: VisualIdentityCandidate
-    cancel_event: threading.Event
-    authoritative_pack: VisualIdentityPackMetadata
-
-
-@dataclasses.dataclass(slots=True)
-class _PersonaVisualAuthoringState:
-    """One unpublished Persona Visual draft plus its private source lease."""
-
-    snapshot: _PersonaVisualAuthorSnapshot
-    draft: PersonaVisualAuthoringDraft
-    source_root: Path = dataclasses.field(repr=False)
-    workspace: PersonaVisualAuthoringWorkspace | None = dataclasses.field(
-        default=None, repr=False
-    )
-    import_review: PersonaVisualImportReview | None = dataclasses.field(
-        default=None, repr=False
-    )
-    dirty: bool = False
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _CharacterSaveAuthority:
-    """Editor identity allowed to reconcile one completed character save."""
-
-    editor_ref: weakref.ReferenceType[PersonasCharacterEditorWidget]
-    selected_id: str | None
-    edit_mode: str
-    screen_generation: int
-    editor_session_token: int
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ActorPackPortraitChoice:
-    """One immutable eligible local portrait option."""
-
-    character_id: int
-    name: str
-    revision: int
-    sha256: str
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ActorPackCreateSession:
-    """Workbench authority for one pack-ready actor draft."""
-
-    generation: int
-    actor_kind: str
-    source: str
-    editor_generation: int
-    editor_session_token: int
-    portrait_choices: tuple[_ActorPackPortraitChoice, ...] = ()
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _DrainedTaskResult:
-    """One task result observed after every outer cancellation is drained."""
-
-    completed: bool = False
-    value: Any = None
-    error: Exception | None = None
-    cancellation: asyncio.CancelledError | None = None
-
-
-async def _drain_async(
-    awaitable: Coroutine[Any, Any, Any], *, task_name: str
-) -> _DrainedTaskResult:
-    """Shield one critical task and report cancellation after it settles."""
-
-    task = asyncio.create_task(awaitable, name=task_name)
-    cancellation: asyncio.CancelledError | None = None
-    while True:
-        try:
-            return _DrainedTaskResult(
-                completed=True,
-                value=await asyncio.shield(task),
-                cancellation=cancellation,
-            )
-        except asyncio.CancelledError as exc:
-            if task.done() and task.cancelled():
-                try:
-                    task.result()
-                except asyncio.CancelledError as child_cancellation:
-                    return _DrainedTaskResult(
-                        cancellation=cancellation or child_cancellation
-                    )
-            if cancellation is None:
-                cancellation = exc
-        except Exception as exc:
-            return _DrainedTaskResult(error=exc, cancellation=cancellation)
-
-
-async def _drain_to_thread(
-    function: Callable[..., Any],
-    /,
-    *args: Any,
-    task_name: str,
-    **kwargs: Any,
-) -> _DrainedTaskResult:
-    """Observe the actual native callback, independently of Task cancellation.
-
-    This is lifetime bookkeeping only; callbacks acquire their own source admission.
-    A cancelled executor Future cannot retire an already-running native callback.
-    """
-
-    loop = asyncio.get_running_loop()
-    completion = loop.create_future()
-    lock = threading.Lock()
-    status = "queued"
-
-    def complete(outcome: _DrainedTaskResult) -> None:
-        if not completion.done():
-            completion.set_result(outcome)
-
-    def work() -> None:
-        nonlocal status
-        with lock:
-            if status != "queued":
-                return
-            status = "running"
-        try:
-            outcome = _DrainedTaskResult(
-                completed=True, value=function(*args, **kwargs)
-            )
-        except asyncio.CancelledError as error:
-            outcome = _DrainedTaskResult(cancellation=error)
-        except BaseException as error:
-            outcome = _DrainedTaskResult(error=error)
-        with lock:
-            status = "finished"
-        loop.call_soon_threadsafe(complete, outcome)
-
-    executor = loop.run_in_executor(None, work)
-
-    def executor_done(future) -> None:
-        nonlocal status
-        error = None if future.cancelled() else future.exception()
-        if not future.cancelled() and error is None:
-            return
-        with lock:
-            if status != "queued":
-                return
-            status = "cancelled"
-        complete(_DrainedTaskResult(error=error, cancellation=asyncio.CancelledError()))
-
-    executor.add_done_callback(executor_done)
-
-    async def observed() -> _DrainedTaskResult:
-        return await asyncio.shield(completion)
-
-    task = asyncio.create_task(observed(), name=task_name)
-    cancellation: asyncio.CancelledError | None = None
-    waiting = task
-    while True:
-        try:
-            outcome = await asyncio.shield(waiting)
-            return dataclasses.replace(
-                outcome, cancellation=cancellation or outcome.cancellation
-            )
-        except asyncio.CancelledError as error:
-            cancellation = cancellation or error
-            with lock:
-                queued = status == "queued"
-                if queued:
-                    status = "cancelled"
-            if queued:
-                executor.cancel()
-                complete(_DrainedTaskResult(cancellation=cancellation))
-            # An independently cancelled named waiter is only an awaiter. The
-            # private completion is signalled by the actual callback after IO.
-            waiting = completion
-
-
-def _actor_pack_portrait_name(data: bytes) -> str:
-    """Infer the only supported bounded raster suffix without exposing a path."""
-
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "portrait.png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "portrait.jpg"
-    if data.startswith((b"GIF87a", b"GIF89a")):
-        return "portrait.gif"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return "portrait.webp"
-    raise ValueError("actor_pack_portrait_invalid")
-
-
 def _normalize_actor_pack_destination(value: object) -> Path:
     """Append the Actor Pack suffix exactly once without resolving authority."""
 
@@ -999,83 +696,6 @@ def _actor_pack_import_error_copy(category: str | None) -> str:
             "There is not enough verified private storage to import this pack."
         ),
     }.get(category, "Actor Pack import failed.")
-
-
-async def _join_task(task: asyncio.Task[Any]) -> Any:
-    """Await an existing task through the shared shield-and-drain boundary."""
-
-    return await task
-
-
-def _persona_visual_ui_lifetime(function):
-    """Keep creator reservation through this exact screen operation's result."""
-    from functools import wraps
-
-    if not asyncio.iscoroutinefunction(function):
-
-        @wraps(function)
-        def selected(screen, *args, **kwargs):
-            from ...Backup_Recovery import storage_admission as storage
-
-            pending = storage._Acquisition()
-            screen._persona_visual_pending += 1
-            try:
-                return function(screen, *args, **kwargs)
-            finally:
-                screen._persona_visual_pending -= 1
-                pending.close()
-
-        return selected
-
-    @wraps(function)
-    async def guarded(screen, *args, **kwargs):
-        from ...Backup_Recovery import storage_admission as storage
-
-        pending = storage._Acquisition()
-        screen._persona_visual_pending += 1
-        try:
-            return await function(screen, *args, **kwargs)
-        finally:
-            screen._persona_visual_pending -= 1
-            pending.close()
-
-    return guarded
-
-
-def _visual_identity_ui_lifetime(function):
-    """Retain this concrete screen task through native result reconciliation."""
-    from contextlib import contextmanager
-    from functools import wraps
-    from ...Backup_Recovery import storage_admission as storage
-
-    @contextmanager
-    def pending(screen):
-        key = (threading.current_thread(), storage._task_identity())
-        previous = screen._visual_identity_pending.get(key)
-        attempt = previous if previous is not None else storage._Acquisition()
-        screen._visual_identity_pending[key] = attempt
-        try:
-            yield
-        finally:
-            if previous is None:
-                screen._visual_identity_pending.pop(key, None)
-                attempt.close()
-
-    if not asyncio.iscoroutinefunction(function):
-
-        @wraps(function)
-        def selected(screen, *args, **kwargs):
-            with pending(screen):
-                return function(screen, *args, **kwargs)
-
-        return selected
-
-    @wraps(function)
-    async def guarded(screen, *args, **kwargs):
-        with pending(screen):
-            return await function(screen, *args, **kwargs)
-
-    return guarded
 
 
 class PersonasScreen(BaseAppScreen):
@@ -2946,16 +2566,7 @@ class PersonasScreen(BaseAppScreen):
             raise RuntimeError("profile service unavailable")
         return service
 
-    @staticmethod
-    def _character_tts_availability_map(
-        page: TTSProfilePageSnapshot,
-        availability: TTSProfileAvailabilitySnapshot,
-    ) -> dict[UUID, TTSProfileAvailability]:
-        if availability.repository_generation != page.repository_generation or {
-            profile.profile_id for profile in page.profiles
-        } != {item.profile_id for item in availability.profiles}:
-            raise _CharacterTTSMixedSnapshot
-        return {item.profile_id: item for item in availability.profiles}
+    _character_tts_availability_map = staticmethod(_character_tts_availability_map)
 
     async def _load_character_tts_snapshot(
         self,
@@ -3149,105 +2760,7 @@ class PersonasScreen(BaseAppScreen):
             return None
         return snapshot
 
-    @staticmethod
-    def _character_tts_presentation_from_snapshot(
-        snapshot: _CharacterTTSControlSnapshot,
-        suggested_profile_id: UUID | None = None,
-    ) -> CharacterTTSPresentationState:
-        availability_by_id = {item.profile_id: item for item in snapshot.availability}
-        profiles = tuple(
-            CharacterTTSProfileOption(
-                profile_id=loaded.profile.profile_id,
-                display_name=loaded.profile.display_name,
-                availability=availability_by_id[loaded.profile.profile_id].state,
-                recovery_action=(
-                    availability_by_id[loaded.profile.profile_id].recovery_action
-                ),
-                dependency=availability_by_id[loaded.profile.profile_id].dependency,
-            )
-            for loaded in snapshot.loaded_profiles
-        )
-        current = snapshot.current
-        if current is None:
-            status = "Using the global speech default."
-            if suggested_profile_id is not None:
-                suggested = next(
-                    profile
-                    for profile in profiles
-                    if profile.profile_id == suggested_profile_id
-                )
-                status = (
-                    f"Suggested: {suggested.display_name}. Choose it from Voice "
-                    "Profile to assign it to this character."
-                )
-            return CharacterTTSPresentationState(
-                profiles=profiles,
-                selected_profile_id=None,
-                suggested_profile_id=suggested_profile_id,
-                status=status,
-                controls_enabled=True,
-            )
-
-        current_availability = availability_by_id[current.profile.profile_id]
-        count = snapshot.assignment_count
-        count_copy = (
-            "Assignment count unavailable"
-            if count is None
-            else f"Used by {count} character{'s' if count != 1 else ''}"
-        )
-        dependency = current_availability.dependency
-        if dependency.display:
-            status = (
-                f"{current.profile.display_name} · {dependency.display} · "
-                f"{count_copy}. Repair the compatible model dependency or remove "
-                "this assignment."
-            )
-        elif current_availability.state == "available":
-            status = f"{current.profile.display_name} · Available · {count_copy}."
-        elif current_availability.state == "unavailable":
-            status = (
-                f"{current.profile.display_name} · Unavailable · {count_copy}. "
-                "Repair the profile or remove this assignment."
-            )
-        elif current_availability.recovery_action == "refresh":
-            # audio.cpp's transient "unverified" -- Refresh is a real
-            # recovery for this provider, so naming it is honest.
-            status = (
-                f"{current.profile.display_name} · Unverified · {count_copy}. "
-                "Refresh or repair the profile; the assignment is preserved."
-            )
-        else:
-            # `recovery_action == "none"` means this provider has no
-            # catalog to preflight, so its "unverified" is permanent, not a
-            # transient glitch Refresh could resolve -- naming Refresh here
-            # would promise a recovery control can never perform (ADR-031).
-            # The state word itself also changes: bare "Unverified" would
-            # still misread as temporary even with an honest tail.
-            status = (
-                f"{current.profile.display_name} · No catalog check · "
-                f"{count_copy}. The exact selection is used as-is; the "
-                "assignment is preserved."
-            )
-        if dependency.advisory_display:
-            status = f"{status} {dependency.advisory_display}."
-        if suggested_profile_id is not None:
-            suggested = next(
-                profile
-                for profile in profiles
-                if profile.profile_id == suggested_profile_id
-            )
-            status = (
-                f"{status} Suggested: {suggested.display_name}. Choose it from "
-                "Voice Profile to replace this character's assignment."
-            )
-        return CharacterTTSPresentationState(
-            profiles=profiles,
-            selected_profile_id=current.profile.profile_id,
-            suggested_profile_id=suggested_profile_id,
-            status=status,
-            controls_enabled=True,
-            assignment_count=count,
-        )
+    _character_tts_presentation_from_snapshot = staticmethod(_character_tts_presentation_from_snapshot)
 
     def _validated_character_tts_suggestion(
         self,
@@ -3378,26 +2891,7 @@ class PersonasScreen(BaseAppScreen):
             exit_on_error=False,
         )
 
-    @staticmethod
-    def _character_tts_profile_tokens(
-        snapshot: _CharacterTTSControlSnapshot,
-        profile_id: UUID,
-    ) -> tuple[LoadedTTSProfile, TTSProfileAvailability] | None:
-        loaded = next(
-            (
-                item
-                for item in snapshot.loaded_profiles
-                if item.profile.profile_id == profile_id
-            ),
-            None,
-        )
-        availability = next(
-            (item for item in snapshot.availability if item.profile_id == profile_id),
-            None,
-        )
-        if loaded is None or availability is None:
-            return None
-        return loaded, availability
+    _character_tts_profile_tokens = staticmethod(_character_tts_profile_tokens)
 
     def _publish_character_tts_action_error(
         self,
@@ -8424,38 +7918,8 @@ class PersonasScreen(BaseAppScreen):
     def _eligible_actor_pack_portraits(
         records: list[object],
     ) -> tuple[_ActorPackPortraitChoice, ...]:
-        choices: list[_ActorPackPortraitChoice] = []
-        for raw in records:
-            if not isinstance(raw, Mapping):
-                continue
-            character_id = raw.get("id")
-            revision = raw.get("version")
-            name = raw.get("name")
-            portrait = raw.get("image")
-            if (
-                type(character_id) is not int
-                or character_id < 1
-                or type(revision) is not int
-                or revision < 1
-                or type(name) is not str
-                or not name.strip()
-                or type(portrait) is not bytes
-            ):
-                continue
-            try:
-                validate_actor_portrait(_actor_pack_portrait_name(portrait), portrait)
-            except (ActorPackValidationError, ValueError):
-                continue
-            choices.append(
-                _ActorPackPortraitChoice(
-                    character_id=character_id,
-                    name=name.strip(),
-                    revision=revision,
-                    sha256=hashlib.sha256(portrait).hexdigest(),
-                )
-            )
-        return tuple(
-            sorted(choices, key=lambda choice: (choice.name, choice.character_id))
+        return _eligible_actor_pack_portraits(
+            records, validate_actor_portrait=validate_actor_portrait
         )
 
     def _invalidate_actor_pack_session(self) -> None:
@@ -9264,31 +8728,7 @@ class PersonasScreen(BaseAppScreen):
             return False
         return True
 
-    @staticmethod
-    def _unbound_persona_shared_visual_identity_metadata() -> (
-        VisualIdentityPackMetadata
-    ):
-        """Return canonical path-free slots for creating a Persona binding."""
-
-        return VisualIdentityPackMetadata(
-            binding_id=0,
-            pack_id=0,
-            pack_version_id=0,
-            title="Shared Visual Identity reactions",
-            source_kind="unbound",
-            default_expression_key="neutral",
-            assets=tuple(
-                VisualIdentityAssetMetadata(
-                    asset_id=-index,
-                    expression_key=key,
-                    original_label=key,
-                    display_label=display_label_for_expression_key(key),
-                    content_type="",
-                    is_animated=False,
-                )
-                for index, key in enumerate(CANONICAL_EXPRESSION_SLOTS, start=1)
-            ),
-        )
+    _unbound_persona_shared_visual_identity_metadata = staticmethod(_unbound_persona_shared_visual_identity_metadata)
 
     async def _configure_persona_shared_visual_identity(
         self, snapshot: _PersonaSharedVisualIdentityLoadSnapshot
@@ -11348,36 +10788,7 @@ class PersonasScreen(BaseAppScreen):
             and self._editor_or_none() is editor
         )
 
-    @staticmethod
-    def _visual_identity_pack_metadata(
-        graph: dict[str, Any] | None,
-    ) -> VisualIdentityPackMetadata | None:
-        """Build the complete path-free identity used for live graph checks."""
-
-        if graph is None:
-            return None
-
-        pack_row = graph["pack"]
-        version_row = graph["version"]
-        return VisualIdentityPackMetadata(
-            binding_id=int(graph["binding"]["id"]),
-            pack_id=int(pack_row["id"]),
-            pack_version_id=int(version_row["id"]),
-            title=str(pack_row["title"]),
-            source_kind=str(pack_row["source_kind"]),
-            default_expression_key=str(version_row["default_expression_key"]),
-            assets=tuple(
-                VisualIdentityAssetMetadata(
-                    asset_id=int(asset["id"]),
-                    expression_key=str(asset["expression_key"]),
-                    original_label=str(asset["original_expression_key"]),
-                    display_label=str(asset["display_label"]),
-                    content_type=str(asset["content_type"]),
-                    is_animated=bool(asset["is_animated"]),
-                )
-                for asset in graph["assets"]
-            ),
-        )
+    _visual_identity_pack_metadata = staticmethod(_visual_identity_pack_metadata)
 
     @on(EditorContentChanged)
     def _handle_editor_content_changed(self, message: EditorContentChanged) -> None:
@@ -12071,61 +11482,9 @@ class PersonasScreen(BaseAppScreen):
             and bool(resolution.image_bytes)
         )
 
-    @staticmethod
-    def _visual_identity_graph_matches_snapshot(
-        snapshot: _VisualIdentityPreviewSnapshot,
-        graph: dict[str, Any] | None,
-    ) -> bool:
-        """Check the live binding graph without reading or decoding asset bytes."""
+    _visual_identity_graph_matches_snapshot = staticmethod(_visual_identity_graph_matches_snapshot)
 
-        if graph is None:
-            return False
-        binding = graph["binding"]
-        pack = graph["pack"]
-        version = graph["version"]
-        asset = next(
-            (
-                row
-                for row in graph["assets"]
-                if str(row["expression_key"]) == snapshot.asset.expression_key
-            ),
-            None,
-        )
-        return bool(
-            asset is not None
-            and int(binding["id"]) == snapshot.binding_id
-            and int(pack["id"]) == snapshot.pack_id
-            and int(version["id"]) == snapshot.pack_version_id
-            and str(pack["source_kind"]) == snapshot.source_kind
-            and int(asset["id"]) == snapshot.asset.asset_id
-            and str(asset["content_type"]) == snapshot.asset.content_type
-            and bool(asset["is_animated"]) == snapshot.asset.is_animated
-        )
-
-    @staticmethod
-    def _visual_identity_resolution_identity(
-        resolution: VisualIdentityResolution,
-    ) -> tuple[object, ...]:
-        """Return every source field that can distinguish selected pixels."""
-
-        return (
-            resolution.actor_kind,
-            resolution.actor_id,
-            resolution.requested_expression_key,
-            resolution.manual_expression_key,
-            resolution.resolved_expression_key,
-            resolution.pack_id,
-            resolution.pack_version_id,
-            resolution.asset_id,
-            resolution.expression_id,
-            resolution.storage_source,
-            resolution.storage_relpath,
-            resolution.content_type,
-            resolution.is_animated,
-            resolution.resolution_source,
-            resolution.fallback_reason,
-            resolution.cache_identity,
-        )
+    _visual_identity_resolution_identity = staticmethod(_visual_identity_resolution_identity)
 
     @_visual_identity_ui_lifetime
     async def _render_visual_identity_pack_preview(
@@ -12540,46 +11899,9 @@ class PersonasScreen(BaseAppScreen):
         finally:
             self._finish_visual_identity_operation(task, browser)
 
-    @staticmethod
-    def _visual_identity_direction(
-        candidate: VisualIdentityCandidate, asset: VisualIdentityAssetMetadata
-    ) -> str:
-        """Read the retained asset's generation direction, with a stable fallback."""
+    _visual_identity_direction = staticmethod(_visual_identity_direction)
 
-        row = next(
-            (
-                stored
-                for stored in candidate.assets
-                if str(stored.get("expression_key")) == asset.expression_key
-            ),
-            {},
-        )
-        context = row.get("source_context_json", row.get("source_context", {}))
-        if isinstance(context, str):
-            try:
-                context = json.loads(context)
-            except (TypeError, ValueError, json.JSONDecodeError):
-                context = {}
-        direction = (
-            context.get("visual_direction") if isinstance(context, dict) else None
-        )
-        return str(direction or asset.display_label)
-
-    @staticmethod
-    def _canonical_visual_identity_assets() -> tuple[VisualIdentityAssetMetadata, ...]:
-        """Build path-free metadata for every approved reaction row."""
-
-        return tuple(
-            VisualIdentityAssetMetadata(
-                asset_id=-(index + 1),
-                expression_key=reaction.expression_key,
-                original_label=reaction.original_label,
-                display_label=reaction.display_label,
-                content_type="image/png",
-                is_animated=False,
-            )
-            for index, reaction in enumerate(canonical_visual_identity_reactions())
-        )
+    _canonical_visual_identity_assets = staticmethod(_canonical_visual_identity_assets)
 
     @staticmethod
     def _restore_candidate_reaction_rows(

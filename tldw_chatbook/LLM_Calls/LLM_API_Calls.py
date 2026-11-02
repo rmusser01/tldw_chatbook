@@ -290,65 +290,10 @@ def _normalize_openai_responses_payload(
 
 
 def _responses_stream_to_chat_sse(response, *, model: str):
-    completion_id = f"chatcmpl-openai-responses-{time.time_ns()}"
-    created_ts = int(time.time())
-    try:
-        for raw_line in response.iter_lines(decode_unicode=True):
-            line = (
-                raw_line.decode("utf-8")
-                if isinstance(raw_line, bytes)
-                else str(raw_line)
-            )
-            line = line.strip()
-            if not line or not line.startswith("data:"):
-                continue
-            payload_text = line.removeprefix("data:").strip()
-            try:
-                event = json.loads(payload_text)
-            except json.JSONDecodeError:
-                continue
-            event_type = event.get("type")
-            if event_type == "response.output_text.delta":
-                chunk = {
-                    "id": completion_id,
-                    "object": "chat.completion.chunk",
-                    "created": created_ts,
-                    "model": model,
-                    "choices": [
-                        {"index": 0, "delta": {"content": event.get("delta", "")}},
-                    ],
-                }
-                yield f"data: {json.dumps(chunk)}\n\n"
-            elif event_type == "response.completed":
-                chunk = {
-                    "id": completion_id,
-                    "object": "chat.completion.chunk",
-                    "created": created_ts,
-                    "model": model,
-                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                }
-                completed_usage = (event.get("response") or {}).get("usage")
-                if isinstance(completed_usage, dict):
-                    chunk["usage"] = completed_usage
-                    _session_ledger().record_provider_payload(
-                        completed_usage, provider="openai", model=model
-                    )
-                yield f"data: {json.dumps(chunk)}\n\n"
-            elif event_type == "error":
-                yield f"data: {payload_text}\n\n"
-    except requests.exceptions.RequestException as exc:
-        logger.opt(exception=True).error(
-            "OpenAI Responses: stream connection error: %s", exc
-        )
-        yield (
-            "data: "
-            + json.dumps({"error": {"message": f"Stream connection error: {exc}"}})
-            + "\n\n"
-        )
-    finally:
-        if response is not None:
-            response.close()
-    yield "data: [DONE]\n\n"
+    """Yield the legacy stream while forwarding close/throw to its adapter."""
+    from .openai_protocol import _responses_stream_to_chat_sse
+
+    yield from _responses_stream_to_chat_sse(response, model=model)
 
 
 def _anthropic_uses_adaptive_thinking(model: object) -> bool:
@@ -1318,26 +1263,10 @@ def _completion_text_from_response(response_data: Any) -> str:
 
 
 def _openai_stream_line_usage(line: str) -> dict | None:
-    """Extract a usage dict from an OpenAI SSE line, best-effort.
+    """Read usage through the existing OpenAI protocol adapter."""
+    from .openai_protocol import _openai_stream_line_usage
 
-    ``stream_options.include_usage`` is requested for chat-completions
-    streams, so the final chunk carries usage; the substring guard at the
-    call site avoids parsing every delta chunk (a false substring hit
-    parses to a payload without a usage dict and returns None). The caller
-    keeps the LAST seen usage and records once at normal loop end --
-    OpenAI-compatible gateways sometimes emit cumulative usage per chunk.
-    """
-    try:
-        data = line.removeprefix("data:").strip()
-        if not data or data == "[DONE]":
-            return None
-        payload = json.loads(data)
-        usage = payload.get("usage")
-        if isinstance(usage, dict) and usage:
-            return usage
-    except Exception:
-        pass
-    return None
+    return _openai_stream_line_usage(line)
 
 
 def _session_ledger():

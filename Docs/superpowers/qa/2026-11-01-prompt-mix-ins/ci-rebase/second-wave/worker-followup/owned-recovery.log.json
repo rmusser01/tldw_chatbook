@@ -1,0 +1,4 @@
+{
+  "sha256": "b5f02fe73096453a068e8d0a905075ab8e16ecb06777e84542ff1aff498b440c",
+  "raw_text": ".....                                                                    [100%]\n- generated xml file: /var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/mixins-worker-final-z7pf1nj1/owned-recovery.xml -\n============================= slowest 25 durations =============================\n1.32s call     Tests/Chat/test_console_agent_project_instructions.py::test_project_instruction_disable_terminalizes_and_allows_retry[False]\n\n(14 durations < 1s hidden.)\n5 passed in 3.75s\n"
+}

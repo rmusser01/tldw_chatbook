@@ -1,0 +1,134 @@
+{
+  "tldw_chatbook/Chat/console_agent_reply.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 1156
+  },
+  "tldw_chatbook/Chat/console_settings_persistence.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 788
+  },
+  "tldw_chatbook/Chat/console_memory_banner.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 207
+  },
+  "tldw_chatbook/Chat/console_trace_maintenance_runtime.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 193
+  },
+  "tldw_chatbook/DB/prompt_export.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 242
+  },
+  "tldw_chatbook/Notes/notes_sync_startup.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 34
+  },
+  "tldw_chatbook/UI/Console_Modules/session_prompt_seed.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 109
+  },
+  "tldw_chatbook/Widgets/Console/console_selection_geometry.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 52
+  },
+  "tldw_chatbook/Widgets/Persona_Widgets/roleplay_item_list.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 620
+  },
+  "tldw_chatbook/app_config_notifications.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 56
+  },
+  "tldw_chatbook/app_idle_warmup.py": {
+    "previous_ceiling": null,
+    "current_exact_ceiling": 25
+  },
+  "tldw_chatbook/Chat/console_display_state.py": {
+    "previous_ceiling": 2908,
+    "current_exact_ceiling": 2875
+  },
+  "tldw_chatbook/app.py": {
+    "previous_ceiling": 5704,
+    "current_exact_ceiling": 5687
+  },
+  "tldw_chatbook/app_service_wiring.py": {
+    "previous_ceiling": 3701,
+    "current_exact_ceiling": 3693
+  },
+  "tldw_chatbook/app_command_providers.py": {
+    "previous_ceiling": 1123,
+    "current_exact_ceiling": 1121
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "previous_ceiling": 29323,
+    "current_exact_ceiling": 29173
+  },
+  "tldw_chatbook/Chat/console_chat_store.py": {
+    "previous_ceiling": 22369,
+    "current_exact_ceiling": 22317
+  },
+  "tldw_chatbook/UI/Screens/personas_screen.py": {
+    "previous_ceiling": 16859,
+    "current_exact_ceiling": 16829
+  },
+  "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": {
+    "previous_ceiling": 855,
+    "current_exact_ceiling": 818
+  },
+  "tldw_chatbook/Widgets/Persona_Widgets/personas_library_pane.py": {
+    "previous_ceiling": 1297,
+    "current_exact_ceiling": 992
+  },
+  "tldw_chatbook/Widgets/Console/console_transcript.py": {
+    "previous_ceiling": 8584,
+    "current_exact_ceiling": 8556
+  },
+  "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+    "previous_ceiling": 25870,
+    "current_exact_ceiling": 25851
+  },
+  "tldw_chatbook/Agents/agent_service.py": {
+    "previous_ceiling": 9715,
+    "current_exact_ceiling": 9714
+  },
+  "tldw_chatbook/UI/Console_Modules/workspace.py": {
+    "previous_ceiling": 8938,
+    "current_exact_ceiling": 8935
+  },
+  "tldw_chatbook/Chat/console_provider_gateway.py": {
+    "previous_ceiling": 8528,
+    "current_exact_ceiling": 8487
+  },
+  "tldw_chatbook/Widgets/Console/console_composer_bar.py": {
+    "previous_ceiling": 7195,
+    "current_exact_ceiling": 7189
+  },
+  "tldw_chatbook/UI/Console_Modules/session.py": {
+    "previous_ceiling": 7005,
+    "current_exact_ceiling": 6990
+  },
+  "tldw_chatbook/Chat/console_runtime.py": {
+    "previous_ceiling": 7091,
+    "current_exact_ceiling": 7069
+  },
+  "tldw_chatbook/Chat/console_trace_service.py": {
+    "previous_ceiling": 6765,
+    "current_exact_ceiling": 6587
+  },
+  "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": {
+    "previous_ceiling": 5176,
+    "current_exact_ceiling": 5167
+  },
+  "tldw_chatbook/DB/Prompts_DB.py": {
+    "previous_ceiling": 4760,
+    "current_exact_ceiling": 4670
+  },
+  "tldw_chatbook/Chat/citation_trace_repository.py": {
+    "previous_ceiling": 4719,
+    "current_exact_ceiling": 4717
+  },
+  "tldw_chatbook/Chat/chat_persistence_service.py": {
+    "previous_ceiling": 4272,
+    "current_exact_ceiling": 4239
+  }
+}
