@@ -502,8 +502,6 @@ def test_dequeued_unadmitted_work_cannot_launch_after_close_or_profile_drift(
 def test_actual_native_initializer_uses_helper_refusing_git(
     native_initializer, monkeypatch, config_line
 ):
-    import subprocess
-
     from tldw_chatbook.Workspaces.change_tracking import ShadowRepo
 
     h = native_initializer
@@ -522,16 +520,16 @@ def test_actual_native_initializer_uses_helper_refusing_git(
             "GIT_CONFIG_NOSYSTEM": "1",
         },
     )
-    run = subprocess.run
+    run = ShadowRepo._run_process
     commands = []
 
-    def guarded(command, **kwargs):
+    def guarded(repo, command, env, **kwargs):
         commands.append(command)
         if "add" in command or "update-index" in command or "cat-file" in command:
             raise AssertionError("helper-capable command entered before native refusal")
-        return run(command, **kwargs)
+        return run(repo, command, env, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", guarded)
+    monkeypatch.setattr(ShadowRepo, "_run_process", guarded)
     h.registry.set_change_review_enabled("init-workspace", True)
     capture_change_review_admission(h.app, "init-workspace")
     wait_until(lambda: h.service._queue.unfinished_tasks == 0)

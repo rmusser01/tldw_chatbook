@@ -956,11 +956,7 @@ class ChangeReviewFinalizationCoordinator:
                     operation.ticket.returned(worker=True)
                     continue
             try:
-                with (
-                    operation.ticket.source.activate(operation.ticket.owner)
-                    if operation.ticket
-                    else nullcontext()
-                ):
+                with operation.ticket.activate() if operation.ticket else nullcontext():
                     if operation.ticket:
                         operation.ticket.source.check()
                     if operation.kind == "discover":
@@ -1108,7 +1104,7 @@ class ChangeReviewFinalizationCoordinator:
                 if result.kind in {"discover", "baseline"}:
                     state.public._baseline_completion.ticket = ticket
         try:
-            with ticket.source.activate(ticket.owner) if ticket else nullcontext():
+            with ticket.activate() if ticket else nullcontext():
                 self._consume_result(result)
         except Exception:  # Scope admission must deliver a terminal handoff.
             if self._native is None:

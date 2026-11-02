@@ -461,7 +461,7 @@ class ChangeReviewConsentService:
             try:
                 if work.source is not None:
                     ticket = work.source.admit()
-                    with work.source.activate(ticket.owner):
+                    with ticket.activate():
                         self._run_work(work)
                 elif self._native_expected:
                     raise ValueError("native initialization source unavailable")

@@ -18,6 +18,15 @@ _current_snapshot: ContextVar[_SnapshotSource | _InitializationSource | None] = 
     ContextVar("native_change_review_snapshot", default=None)
 )
 
+_current_ticket: ContextVar[_SnapshotTicket | None] = ContextVar(
+    "native_change_review_ticket", default=None
+)
+
+
+def native_snapshot_ticket() -> _SnapshotTicket | None:
+    """Return the exact admitted ticket on the original physical callback."""
+    return _current_ticket.get()
+
 
 def native_snapshot_source() -> _SnapshotSource | _InitializationSource | None:
     """Return only the original source active on this physical callback thread."""
@@ -241,6 +250,15 @@ class _SnapshotTicket:
         self.retired = Event()
         self._worker_returned = self._handoff_returned = self._retired = False
 
+    @contextmanager
+    def activate(self):
+        with self.source.activate(self.owner):
+            token = _current_ticket.set(self)
+            try:
+                yield
+            finally:
+                _current_ticket.reset(token)
+
     def returned(self, *, worker=False, handoff=False):
         with self._lock:
             self._worker_returned |= worker
@@ -248,11 +266,11 @@ class _SnapshotTicket:
             if self._retired or not (self._worker_returned and self._handoff_returned):
                 return
             self._retired = True
-        if self.claim is not None:
-            # Pure observation's conclusive handoff is not task/phase settlement.
-            self.claim.settle(durable=True)
-            self.owner.finish_root()
         self.operation.finish()
+        if self.claim is not None:
+            # Availability callbacks inside finish must return before root drain.
+            self.owner.finish_root()
+            self.claim.settle(durable=True)
         self.retired.set()
 
 

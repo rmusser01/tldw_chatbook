@@ -296,6 +296,19 @@ retains admitted workers/storage through physical return, even after a bounded
 join or cancelled waiter. Configuration selection is metadata-only until an
 admitted worker verifies and secures that same selected data path.
 
+Native version/config/command launches share the original ticket and use
+`Notes/git_process_containment.ProcessTreeController` via an asyncio Runner on
+the actual synchronous callback thread. Direct-child return is insufficient:
+stream completion, actual group-empty proof and handle close precede worker/host
+return and operation.finish return, then root/claim retirement. Bounded TERM/KILL
+failure retains that same worker and storage while the controller waits for late
+proof. Genuinely unavailable proof retains cleanup-unproven custody indefinitely,
+which can hold shutdown. Initial native attachment uses the existing platform
+qualification; ordinary unsupported-platform behavior remains available and
+qualified source loss never falls back. No new executor/reaper is involved. A future borrowing producer must keep its
+covering root/source/storage live through the original `ticket.retired`; this
+slice does not qualify premature parent completion.
+
 Task 8D2's ordinary/phase admission remains incomplete. Its ordinary producer
 must borrow the original covering opaque claim and reserve each initializer hold
 before enqueue and parent finish; independent feature admission cannot be carried

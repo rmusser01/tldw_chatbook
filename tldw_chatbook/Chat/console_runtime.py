@@ -2069,8 +2069,13 @@ class ConsoleRuntime:
                 "Change Review initialization owner already bound or closed"
             )
         self._change_review_consent_service = service
-        service._native_expected = True
-        service._native = _NativeInitializationIssuer(self, service, service._registry)
+        from .console_workflow_runs import native_workflow_qualified
+
+        if native_workflow_qualified():
+            service._native_expected = True
+            service._native = _NativeInitializationIssuer(
+                self, service, service._registry
+            )
 
     async def _drain_change_review_initialization(self) -> bool:
         service = self._change_review_consent_service
@@ -5121,7 +5126,10 @@ class ConsoleRuntime:
                 _NativeSnapshotIssuer,
             )
 
-            change_native = _NativeSnapshotIssuer(self)
+            from .console_workflow_runs import native_workflow_qualified
+
+            if native_workflow_qualified():
+                change_native = _NativeSnapshotIssuer(self)
 
             def _publish_change_review(item: Any) -> None:
                 runs_db.record_change_snapshots_batch(

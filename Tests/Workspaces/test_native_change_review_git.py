@@ -151,16 +151,16 @@ def test_real_filter_no_entry_across_capture_paths(private_git, tmp_path, when):
 
 def test_old_git_refuses_before_config_or_risky_entry(private_git, monkeypatch):
     h = private_git
-    original = subprocess.run
+    original = ShadowRepo._run_process
     commands = []
 
-    def old_version(cmd, **kwargs):
+    def old_version(repo, cmd, env, **kwargs):
         commands.append(tuple(cmd))
         if cmd[-1] == "--version":
             return subprocess.CompletedProcess(cmd, 0, "git version 2.35.1\n", "")
-        return original(cmd, **kwargs)
+        return original(repo, cmd, env, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", old_version)
+    monkeypatch.setattr(ShadowRepo, "_run_process", old_version)
     reservation = register(h)
     assert reservation.await_baseline(4)
     h.coordinator.cancel(reservation)
@@ -186,20 +186,20 @@ def test_real_builtin_config_timeout_keeps_original_job_until_process_return(
     (h.git_home / ".gitconfig").write_text(f"[include]\npath = {fifo}\n")
     monkeypatch.setattr(change_tracking, "_GIT_TIMEOUT_SECONDS", 0.4)
     entered, returned = threading.Event(), threading.Event()
-    run = subprocess.run
+    run = ShadowRepo._run_process
     owners = []
 
-    def observe(cmd, **kwargs):
+    def observe(repo, cmd, env, **kwargs):
         if cmd[-1] == "--version":
             owners.append(current_execution_owner())
             entered.set()
             try:
-                return run(cmd, **kwargs)
+                return run(repo, cmd, env, **kwargs)
             finally:
                 returned.set()
-        return run(cmd, **kwargs)
+        return run(repo, cmd, env, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", observe)
+    monkeypatch.setattr(ShadowRepo, "_run_process", observe)
     reservation = register(h)
     assert entered.wait(3)
     assert owners[0] is not None
@@ -258,16 +258,16 @@ def test_promisor_configuration_refuses_before_lazy_fetch_capable_entry(
     (h.git_home / ".gitconfig").write_text(
         f'[remote "private"]\npromisor = true\nurl = file://{tmp_path / "not-a-remote"}\n'
     )
-    original = subprocess.run
+    original = ShadowRepo._run_process
     attempted = []
 
-    def no_fetch_probe(cmd, **kwargs):
+    def no_fetch_probe(repo, cmd, env, **kwargs):
         if "cat-file" in cmd and "-e" in cmd:
             attempted.append(True)
             raise AssertionError("unsafe lazy-fetch-capable entry")
-        return original(cmd, **kwargs)
+        return original(repo, cmd, env, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", no_fetch_probe)
+    monkeypatch.setattr(ShadowRepo, "_run_process", no_fetch_probe)
 
     def check_missing_object(_handle):
         h.tracker.service.repo_for_root(h.root).has_snapshot("f" * 40)

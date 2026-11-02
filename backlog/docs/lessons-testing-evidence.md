@@ -24982,3 +24982,19 @@ proves complete required output. The fix taps bounded sanitized output before
 preview/log truncation and seals it only on both native EOFs and normal consume
 plus cleanup. Real-process tests preserve 40 KB with a zero/tiny diagnostic cap
 and refuse completeness when a stderr EOF is withheld despite exit 0 and cleanup.
+
+
+## Observe the ticket that actually performed the effect (TASK-38531 Git custody)
+
+A selected-wrapper descendant probe initially inspected the first snapshot ticket,
+which belonged to discovery and performed no Git. Its retirement produced an
+invalid RED while a later baseline ticket owned the actual child. The initializer
+had no earlier discovery ticket and genuinely reproduced the same shared
+three-launch bug before implementation. Corrected baseline and final-snapshot
+controls selected their actual Git-bearing tickets and passed while the managed
+child and original publisher were independently held. The wrong-owner receipts
+were retained and were not relabelled as valid snapshot RED or executed BASE.
+
+When one request creates sequential finite jobs, tie the held effect to its actual
+source/operation before asserting retirement. A previously completed sibling is
+neither evidence of premature release nor coverage for the effect-bearing job.

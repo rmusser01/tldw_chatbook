@@ -144,18 +144,16 @@ def test_native_capture_refuses_configured_filters_before_helper_entry(
         },
     )
     # The RED probe intercepts helper-capable entry; never execute an unknown helper.
-    import subprocess
-
-    run = subprocess.run
+    run = ShadowRepo._run_process
     attempted = []
 
-    def guarded_run(cmd, **kwargs):
+    def guarded_run(repo, cmd, env, **kwargs):
         if "add" in cmd or "update-index" in cmd:
             attempted.append(tuple(cmd))
             raise AssertionError("unguarded helper-capable Git entry")
-        return run(cmd, **kwargs)
+        return run(repo, cmd, env, **kwargs)
 
-    monkeypatch.setattr(subprocess, "run", guarded_run)
+    monkeypatch.setattr(ShadowRepo, "_run_process", guarded_run)
     reservation = register(h)
     assert reservation.await_baseline(4)
     h.coordinator.cancel(reservation)
@@ -289,6 +287,9 @@ def test_original_opaque_claim_is_borrowed_and_bounded_claim_refuses(native_revi
         reservation = register(h, owner=owner, claim=claim)
         assert reservation.await_baseline(4)
         assert not reservation._handle.errors
+        ticket = reservation._baseline_completion.ticket
+        assert ticket is not None and ticket.retired.wait(3)
+        assert ticket.owner is owner and ticket.claim is None
         h.coordinator.cancel(reservation)
         assert h.coordinator.wait_idle(3)
         assert owner.is_admitted

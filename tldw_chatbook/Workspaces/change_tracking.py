@@ -31,11 +31,14 @@ with stale-lock takeover so a crashed process cannot starve snapshots.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import locale
 import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -106,6 +109,71 @@ _GIT_TIMEOUT_SECONDS = 120.0
 
 #: Maximum user-visible tracking-error length stored by this module.
 _TRACKING_ERROR_MAX_CHARS = 400
+
+
+async def _run_native_git(ticket, cmd, env, payload):
+    """Join the original worker's streams and managed tree before it may return."""
+    from tldw_chatbook.Notes.git_process_containment import (
+        ProcessTreeAdmissionError,
+        ProcessTreeController,
+    )
+
+    controller = ProcessTreeController()
+    tree = communication = None
+    try:
+        try:
+            tree = await controller.spawn(
+                *cmd,
+                cwd=os.getcwd(),
+                environment=env,
+                stdin=True if payload is not None else None,
+            )
+        except ProcessTreeAdmissionError as error:
+            tree = error.tree
+            raise
+        communication = asyncio.create_task(tree.process.communicate(payload))
+        deadline = asyncio.get_running_loop().time() + _GIT_TIMEOUT_SECONDS
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                asyncio.shield(communication), _GIT_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            raise subprocess.TimeoutExpired(cmd, _GIT_TIMEOUT_SECONDS) from None
+        if not await controller.wait(
+            tree, timeout=max(0, deadline - asyncio.get_running_loop().time())
+        ):
+            raise subprocess.TimeoutExpired(cmd, _GIT_TIMEOUT_SECONDS)
+        controller.close(tree)
+        return tree.process.returncode, stdout, stderr
+    except BaseException:
+        if tree is None:
+            raise
+        ticket.operation.mark_stopping()
+        if communication is None:
+            communication = asyncio.create_task(tree.process.communicate(payload))
+        try:
+            for stop in (controller.terminate, controller.kill):
+                try:
+                    stop(tree)
+                except OSError:
+                    pass  # The same retained tree still needs positive wait proof.
+                if await controller.wait(tree, timeout=0.25):
+                    break
+            else:
+                if not await controller.wait(tree, timeout=float("inf")):
+                    raise OSError("native Git cleanup proof unavailable")
+            await asyncio.shield(asyncio.gather(communication, return_exceptions=True))
+            controller.close(tree)
+        except BaseException:  # noqa: BLE001 -- no proof permits original scopes to return
+            ticket.owner.mark_cleanup_unproven()
+            # No proof mechanism remains: keep this original worker/storage alive.
+            never = asyncio.get_running_loop().create_future()
+            while True:
+                try:
+                    await asyncio.shield(never)
+                except asyncio.CancelledError:
+                    continue
+        raise
 
 
 class ChangeTrackingError(Exception):
@@ -296,14 +364,7 @@ class ShadowRepo:
                 source.validate_root(self.root)
                 cmd = self._native_command(args, env)
             try:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    env=env,
-                    input=input_data,
-                    timeout=_GIT_TIMEOUT_SECONDS,
-                    text=not binary,
-                )
+                proc = self._run_process(cmd, env, input_data=input_data, binary=binary)
             except subprocess.TimeoutExpired as exc:
                 raise ChangeTrackingError(
                     f"git {args[0]} timed out after {_GIT_TIMEOUT_SECONDS:.0f}s"
@@ -330,8 +391,51 @@ class ShadowRepo:
                 )
             return proc
 
+    def _run_process(self, cmd, env, *, input_data=None, binary=False):
+        from tldw_chatbook.Agents.execution_capacity import current_execution_owner
+        from tldw_chatbook.Workspaces.change_review_ownership import (
+            native_snapshot_source,
+            native_snapshot_ticket,
+        )
+
+        source = native_snapshot_source()
+        if source is None:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                env=env,
+                input=input_data,
+                timeout=_GIT_TIMEOUT_SECONDS,
+                text=not binary,
+                check=False,
+            )
+        ticket = native_snapshot_ticket()
+        if (
+            ticket is None
+            or ticket.source is not source
+            or current_execution_owner() is not ticket.owner
+        ):
+            raise ChangeTrackingUnavailableError(
+                "native change-review Git custody unavailable"
+            )
+        encoding = "utf-8" if sys.flags.utf8_mode else locale.getencoding()
+        payload = (
+            input_data.encode(encoding) if isinstance(input_data, str) else input_data
+        )
+        # Only process transport enters this loop; guarded storage stays synchronous.
+        with asyncio.Runner() as runner:
+            returncode, stdout, stderr = runner.run(
+                _run_native_git(ticket, cmd, env, payload)
+            )
+        if not binary:
+            stdout, stderr = (
+                data.decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
+                for data in (stdout, stderr)
+            )
+        return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+
     def _native_command(self, args, env):
-        """Qualify built-in Git before helper-capable entry; never expose config."""
+        """Apply native Git version/config policy without exposing private config."""
         allowed = {
             "init",
             "config",
@@ -373,14 +477,7 @@ class ShadowRepo:
         for pin in pins:
             prefix.extend(("-c", pin))
         try:
-            version = subprocess.run(
-                [self._git, "--version"],
-                capture_output=True,
-                env=env,
-                timeout=_GIT_TIMEOUT_SECONDS,
-                text=True,
-                check=False,
-            )
+            version = self._run_process([self._git, "--version"], env)
             match = re.match(r"git version (\d+)\.(\d+)", version.stdout)
             if (
                 version.returncode
@@ -390,7 +487,7 @@ class ShadowRepo:
                 raise ChangeTrackingUnavailableError(
                     "native change review requires Git >=2.36"
                 )
-            config = subprocess.run(
+            config = self._run_process(
                 [
                     *prefix,
                     "config",
@@ -400,10 +497,8 @@ class ShadowRepo:
                     "--get-regexp",
                     r"^(filter\..*\.(clean|process|smudge)|remote\..*\.promisor|extensions\.partialclone)$",
                 ],
-                capture_output=True,
-                env=env,
-                timeout=_GIT_TIMEOUT_SECONDS,
-                check=False,
+                env,
+                binary=True,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise ChangeTrackingUnavailableError(

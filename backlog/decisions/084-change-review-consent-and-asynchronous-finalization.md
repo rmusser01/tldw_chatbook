@@ -75,6 +75,39 @@ workers, invalidates late generations, disposes the coordinator, and only then
 closes `AgentRunsDB`. A worker that outlives the bound may finish shadow-repo
 filesystem work, but its result cannot persist or touch UI state.
 
+### Native Git physical completion (Task 8D2 Git custody)
+
+Selected Git may be a legitimate delegating wrapper; successful version/config
+output and direct-child exit do not prove descendant completion. All three native
+launches (version, config, command) use the existing low-level process-tree
+controller on the original synchronous worker or publisher thread through a local
+asyncio Runner. The same initially opaque ticket/source/operation remains active;
+no executor, replacement owner, queue or reaper is introduced. Guarded storage and
+SQLite work stays on its original synchronous activation, outside the transport
+coroutine. Existing argv, environment, inherited stdin, byte/text behavior,
+timeouts and helper suppression/refusal remain unchanged.
+
+Completion joins actual stream collection, containment-empty proof and handle
+closure, original worker return, original host acceptance/discard, and the return
+of operation.finish before root completion and claim retirement. Borrowed tickets
+never settle the covering parent's claim. Its future producer must keep that
+parent root/source/storage live until the original ticket.retired; premature
+parent finish is outside this producer's contract. Timeout or exceptional command return
+requests bounded TERM/KILL; a still-observable tree then uses the same controller's
+late wait under the original worker, source/storage scopes and stopping operation.
+Delay alone is not irreversible cleanup uncertainty. If proof itself becomes
+unavailable, cleanup is marked unproven and the original worker/scopes/operation
+remain retained. This can hold disposal indefinitely; leader exit, readiness,
+publication or a cancelled shutdown waiter cannot manufacture proof.
+
+Only initial native Change Review attachment uses the existing
+native_workflow_qualified platform gate. Unsupported platforms retain ordinary
+consent/coordinator/Git behavior, while qualified source loss cannot downgrade.
+Managed groups are the proof boundary, not resistance to OS-level escape; no new
+Windows native qualification is claimed. Costs are process-group/Runner overhead
+and retained finite capacity/storage while cleanup remains unresolved. Historical
+Undo checkout/filter semantics are unchanged and remain separate work.
+
 ### Conservative, bounded pre-dispatch observation gate
 
 Task 8D1 qualifies the app-owned native coordinated path: finite opaque native
