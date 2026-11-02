@@ -342,9 +342,14 @@ async def test_changed_original_provider_callback_refuses_after_enqueue(
     assert "original SSH" in str(h.gateway.payloads[-1])
 
 
-@pytest.mark.parametrize("shared", [False, True], ids=["one_shot", "session"])
 @pytest.mark.parametrize(
-    "replacement", ["manager", "_bundle_payload", "_remote_command"]
+    "replacement,shared",
+    [
+        pytest.param(replacement, shared, id=f"{replacement}-{kind}")
+        for replacement in ("manager", "_bundle_payload", "_remote_command")
+        for shared, kind in ((False, "one_shot"), (True, "session"))
+    ]
+    + [pytest.param("manager_descriptor", True, id="manager_descriptor-session")],
 )
 async def test_changed_receiving_ssh_source_refuses_after_enqueue(
     ssh_console, monkeypatch, shared, replacement
@@ -385,6 +390,25 @@ async def test_changed_receiving_ssh_source_refuses_after_enqueue(
                         ssh_bin=str(replacement_peer), enabled=False
                     ),
                 )
+            elif replacement == "manager_descriptor":
+                manager = transport.SshMasterManager(
+                    ssh_bin=str(replacement_peer), enabled=False
+                )
+
+                class ChangedManagerDescriptor:
+                    def __get__(self, instance, owner=None):
+                        invoked.append("class" if instance is None else "instance")
+                        return (
+                            transport._NATIVE_TRANSPORT_MANAGER
+                            if instance is None
+                            else manager
+                        )
+
+                monkeypatch.setattr(
+                    transport.RemoteWorkspaceTransport,
+                    "master_manager",
+                    ChangedManagerDescriptor(),
+                )
             else:
                 original_builders.append(
                     getattr(session if shared else transport, replacement)
@@ -397,7 +421,10 @@ async def test_changed_receiving_ssh_source_refuses_after_enqueue(
     monkeypatch.setattr(threading.Thread, "start", replace_before_start)
     try:
         assert (await h.submit()).accepted
-        assert not invoked and not peer_entered.exists()
+        assert not invoked and not peer_entered.exists(), {
+            "callback_entries": invoked,
+            "replacement_peer_entered": peer_entered.exists(),
+        }
         assert not h.fake.call_invocations()
         assert h.case.runtime.execution_capacity.snapshot().tool_workers == 0
         assert "original SSH" in str(h.gateway.payloads[-1])

@@ -161,7 +161,7 @@ class _RemoteSource:
             or type(self.cfg.transport) is not transport.RemoteWorkspaceTransport
             or self.cfg.transport._manager is not self.transport_manager
             or self.transport_manager is not self.cfg.masters
-            or type(self.cfg.transport).master_manager
+            or type(self.cfg.transport).__dict__.get("master_manager")
             is not transport._NATIVE_TRANSPORT_MANAGER
             or not _original_methods(
                 self.cfg.transport, transport._NATIVE_TRANSPORT_METHODS
