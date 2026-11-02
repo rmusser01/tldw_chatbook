@@ -18,14 +18,23 @@ _NEW = "tldw_chatbook.UI.Splash_Screens"
 class _AliasLoader(importlib.abc.Loader):
     def __init__(self, target):
         self._target = target
+        self._real_spec = None
 
     def create_module(self, spec):
-        return importlib.import_module(self._target)
+        module = importlib.import_module(self._target)
+        self._real_spec = module.__spec__
+        return module
 
     def exec_module(self, module):
-        pass  # already executed under its real name
+        # Already executed under its real name. The import system just stamped the
+        # alias spec onto the shared module; put the real one back so the UI
+        # module keeps its identity and importlib.reload still works.
+        module.__spec__ = self._real_spec
 
 
+# Dated exception (TASK-36953.2, see Docs/Architecture/layer-map.md): this finder
+# reaches tldw_chatbook.UI.Splash_Screens.* by a computed name, which the AST
+# layer guard cannot see. It goes when this shim is retired.
 class _AliasFinder(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if not fullname.startswith(_OLD + "."):

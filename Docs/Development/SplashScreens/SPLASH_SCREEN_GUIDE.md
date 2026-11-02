@@ -31,9 +31,10 @@ The TLDW CLI splash screen system provides a customizable, animated startup expe
 tldw_chatbook/
 ├── Widgets/
 │   └── splash_screen.py         # Main SplashScreen widget
+├── UI/
+│   └── Splash_Screens/         # Animation effect classes (by category)
 ├── Utils/
-│   ├── Splash.py               # ASCII art and card configs
-│   └── splash_animations.py    # Animation effect classes
+│   └── Splash.py               # ASCII art and card configs
 ├── css/features/
 │   └── _splash.tcss           # Splash screen styles
 └── app.py                     # Integration point
@@ -237,7 +238,7 @@ RetroTerminalEffect(
 ### Creating Custom Animation Effects
 
 ```python
-# In splash_animations.py
+# In UI/Splash_Screens/<category>/wave.py
 class WaveEffect(BaseEffect):
     """Creates a wave animation across text."""
     

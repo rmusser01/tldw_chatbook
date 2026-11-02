@@ -183,3 +183,13 @@ async def test_keypress_skips_splash():
         await pilot.press("space")
         await pilot.pause()
         assert app.closed, "keypress should skip the splash screen"
+
+
+def test_old_import_path_keeps_ui_module_spec_so_reload_works():
+    import importlib
+
+    importlib.import_module("tldw_chatbook.Utils.Splash_Screens.base_effect")
+    ui = importlib.import_module("tldw_chatbook.UI.Splash_Screens.base_effect")
+    assert ui.__spec__.name == "tldw_chatbook.UI.Splash_Screens.base_effect"
+    importlib.reload(ui)
+    assert ui.__spec__.name == "tldw_chatbook.UI.Splash_Screens.base_effect"
