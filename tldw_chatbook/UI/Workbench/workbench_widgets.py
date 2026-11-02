@@ -11,6 +11,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.message import Message
+from textual.message_pump import NoActiveAppError
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -61,24 +62,41 @@ def _record_mount_churn(
         return
 
 
+_STATUS_NAMES = ("ready", "running", "blocked", "error", "paused", "empty", "loading")
+
+
 def _sync_status_classes(widget: Widget, status: WorkbenchStatus) -> None:
-    """Apply one status class while clearing the rest."""
-    for candidate in (
-        "ready",
-        "running",
-        "blocked",
-        "error",
-        "paused",
-        "empty",
-        "loading",
-    ):
-        widget.set_class(candidate == status, f"status-{candidate}")
+    """Apply one status class while clearing the rest, restyling ``widget`` once.
+
+    TASK-36571 (measured live 2026-10-30): a Console run start flips the
+    Workbench header from ``ready`` to ``running``. Removing one class and
+    adding the other restyled the header's whole subtree twice, speech
+    controls included: 4.4 ms of the send window's first projection. No rule
+    styles a descendant from a status class (every rule keys the node that
+    carries it), and the status rules set only ``border-title-color``, which
+    the node paints itself, never a colour, background or text style its
+    children read from it (``Tests/UI/test_console_projection_restyles.py``
+    scans every loaded and built sheet for both), so the flip restyles that
+    node alone, once.
+    """
+    wanted = {f"status-{name}": name == status for name in _STATUS_NAMES}
+    if all(widget.has_class(name) == on for name, on in wanted.items()):
+        return
+    widget.update_classes(wanted, update=False)
+    try:
+        widget.app.stylesheet.update_nodes([widget], animate=True)
+    except NoActiveAppError:
+        pass
 
 
 def _sync_density_classes(widget: Widget, density: str) -> None:
-    """Apply one density class while clearing the rest."""
-    widget.set_class(density == "normal", "density-normal")
-    widget.set_class(density == "compact", "density-compact")
+    """Apply one density class while clearing the rest, in one restyle.
+
+    Rules key descendants on these classes, so the restyle keeps the subtree.
+    """
+    widget.update_classes(
+        {"density-normal": density == "normal", "density-compact": density == "compact"}
+    )
 
 
 def _state_children_in_desired_order(
@@ -373,9 +391,14 @@ class CommandStrip(Horizontal):
         button.disabled = action.disabled
         button.tooltip = action.tooltip
         setattr(button, "_workbench_action_id", action.id)
-        button.set_class(action.primary, "is-primary")
-        button.set_class(action.disabled, "is-disabled")
-        button.set_class(True, "workbench-action")
+        # TASK-36571: one restyle for the three classes, not one per change.
+        button.update_classes(
+            {
+                "is-primary": action.primary,
+                "is-disabled": action.disabled,
+                "workbench-action": True,
+            }
+        )
 
     def compose(self) -> ComposeResult:
         for action in self.actions:
