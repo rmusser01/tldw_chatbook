@@ -52,7 +52,7 @@ A local paired probe found no difference that #3225 caused:
 - The test passed 4 of 4 runs on both trees with all 18 CPUs loaded.
 - The branch's UI (25) shard ran 600 s, inside the 528-814 s of other runs.
 
-The owner finished #3225 with three more commits (retained rail seeds: b787009712, d02046bf61, edd6260383) and merged it on 2026-10-31. The final code ran twice in CI: 41224394415 on edd6260383 failed, and the merge-time run passed. No run on dev since then has been checked. If it fails again, instrument it in CI: log the save thread's executor wait and lock wait from a temporary debug commit. Local runs have not reproduced it.
+The owner finished #3225 with three more commits (retained rail seeds: b787009712, d02046bf61 and edd6260383, which are 3098e0705c, 71ddbecdbb and d3dc1c99b0 on dev) and merged it on 2026-10-31. The final code ran twice in CI: 41224394415 on edd6260383 failed, and the merge-time run passed. No run on dev since then has been checked. If it fails again, instrument it in CI: log the save thread's executor wait and lock wait from a temporary debug commit. Local runs have not reproduced it.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
