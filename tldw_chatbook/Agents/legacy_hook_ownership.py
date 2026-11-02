@@ -21,42 +21,13 @@ def current_target() -> _TargetCustody | None:
     return _target_operation.get()
 
 
-class _NativeLegacyHookSource:
-    """Sticky original runtime attachment; construction performs no config I/O."""
+class _EventCustodyRegistry:
+    """Shared finite event drain; concrete issuers own their separate sources."""
 
-    def __init__(self, runtime, engine, permissions):
-        self.runtime, self.engine, self.permissions = runtime, engine, permissions
-        self.app = runtime._app
-        self.capacity = runtime._execution_capacity
-        self.activity = runtime._worktree_activity
-        self.callbacks = (
-            engine._target_provider,
-            engine._notification_targets,
-            engine._launch_guard,
-            engine._cwd_provider,
-        )
+    def __init__(self):
         self._condition = Condition()
         self._admissions = 0
         self._events = set()
-
-    @contextmanager
-    def capture(self, session_id):
-        with self._condition:
-            self._admissions += 1
-        try:
-            # Pin resources created since attachment before any external read.
-            if self.capacity is None:
-                self.capacity = self.runtime._execution_capacity
-            if self.activity is None:
-                self.activity = self.runtime._worktree_activity
-            source = _EventSource(self, session_id)
-            source.check()
-            with execution(sources=source.sources):
-                yield source
-        finally:
-            with self._condition:
-                self._admissions -= 1
-                self._condition.notify_all()
 
     def returned(self, event):
         with self._condition:
@@ -90,6 +61,42 @@ class _NativeLegacyHookSource:
     def cleanup_pending(self):
         with self._condition:
             return bool(self._admissions or self._events)
+
+
+class _NativeLegacyHookSource(_EventCustodyRegistry):
+    """Sticky original runtime attachment; construction performs no config I/O."""
+
+    def __init__(self, runtime, engine, permissions):
+        self.runtime, self.engine, self.permissions = runtime, engine, permissions
+        self.app = runtime._app
+        self.capacity = runtime._execution_capacity
+        self.activity = runtime._worktree_activity
+        self.callbacks = (
+            engine._target_provider,
+            engine._notification_targets,
+            engine._launch_guard,
+            engine._cwd_provider,
+        )
+        super().__init__()
+
+    @contextmanager
+    def capture(self, session_id):
+        with self._condition:
+            self._admissions += 1
+        try:
+            # Pin resources created since attachment before any external read.
+            if self.capacity is None:
+                self.capacity = self.runtime._execution_capacity
+            if self.activity is None:
+                self.activity = self.runtime._worktree_activity
+            source = _EventSource(self, session_id)
+            source.check()
+            with execution(sources=source.sources):
+                yield source
+        finally:
+            with self._condition:
+                self._admissions -= 1
+                self._condition.notify_all()
 
 
 class _EventSource:
@@ -296,6 +303,7 @@ class _TargetCustody:
         self.event, self.operation = event, operation
         self.started = self.returned = self.releasing = self.released = False
         self.future = None
+        self._callbacks = 0
         self.proven = True  # No process attempted; launch invalidates this first.
 
     def cancel_before_start(self):
@@ -313,11 +321,24 @@ class _TargetCustody:
             self.operation.mark_stopping()
             self.event.owner.mark_cleanup_unproven()
 
-    def invoke(self, callback, *args):
+    def retain_callback(self):
+        with self.event._lock:
+            self._callbacks += 1
+            self.returned = False
+
+    def callback_returned(self):
+        with self.event._lock:
+            self._callbacks -= 1
+            self.returned = not self._callbacks
+        self.event.reconcile()
+
+    @contextmanager
+    def activate(self):
         with self.event._lock:
             if self.returned:
                 raise RuntimeError("hook target cancelled before start")
             self.started = True
+            self._callbacks += 1
         token = _target_operation.set(self)
         try:
             with (
@@ -325,12 +346,14 @@ class _TargetCustody:
                 self.event.owner.activate(),
             ):
                 self.event.source.check()
-                return callback(*args)
+                yield
         finally:
             _target_operation.reset(token)
-            with self.event._lock:
-                self.returned = True
-            self.event.reconcile()
+            self.callback_returned()
+
+    def invoke(self, callback, *args):
+        with self.activate():
+            return callback(*args)
 
 
 class _PromptHandoff:

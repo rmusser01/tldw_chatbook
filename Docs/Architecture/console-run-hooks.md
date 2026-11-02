@@ -86,10 +86,9 @@ workflow history/storage stays available. Future public planning, Start and Resu
 must reuse it before billable preparation; Task 9 will surface the reason. Policy
 simulation tests do not qualify Windows physical cleanup.
 
-This is Task 8D2B1's legacy-only boundary. V2 planned/MCP/nested/SessionEnd native
-custody remains the mandatory D2B2b integration, and ordinary covering-tree
-borrowing must replace independent event admission before outer execution is
-enabled. Workflow capture/planning/coordinator admission remains closed. Runtime
+This is Task 8D2B1's legacy boundary. The command-only v2 integration below
+extends finite event custody; MCP-containing events and ordinary covering-tree
+borrowing remain mandatory before outer execution is enabled. Workflow capture/planning/coordinator admission remains closed. Runtime
 coordination does not exclude unrelated ordinary orphaned effects across restart.
 
 ## Native plugin hook preparation (Task 8D2B2a)
@@ -113,9 +112,53 @@ their existing drains wait for those callbacks before disposing shared storage.
 The shared `native_workflow_qualified()` predicate preserves the existing ordinary
 path on unqualified platforms; it provides no Windows workflow qualification.
 
-This preparation boundary does not qualify v2 handler, command/MCP, nested causal,
-host-effect or SessionEnd execution. Those remain D2B2b. Outer ordinary-tree
-borrowing and workflow capture/planning/coordinator admission are still pending.
+Preparation retires before the event owner below begins. MCP event custody and
+outer ordinary-tree borrowing remain pending; workflow capture/planning/coordinator
+admission stays closed.
+
+## Native command-only v2 events (Task 8D2B2b1)
+
+`hooks_v2.native_commands.NativeCommandEvents` pins the actual runtime, engine,
+session incarnation/binding, permissions, published NativeHooks and service
+infrastructure. `HookEngine.begin_event()` freezes the complete event definition
+maximum and matcher values. Any matching MCP target keeps the entire event on its
+existing path. Nested command events inherit this uncovered decision only from the
+live original delivery, source and private causal chain; an independent later event
+gets its own native admission. Event IDs and input labels cannot select coverage.
+Source replacement, matcher changes or definition widening refuse covered dispatch.
+
+Before sync/async individual or notification queue publication, a covered event
+acquires one opaque claim/non-child owner and reserves its original command targets.
+The actual engine lock rechecks the concrete source before publishing each delivery.
+Original permissions, activation guards, plugin admission and hook budgets still
+run. No-target/disabled events remain cold, and standalone/unqualified engines keep
+their existing path. Actual manual initialization and UserPromptSubmit carry the
+validated submission origin; public event labels grant no reserved capacity.
+
+`CommandExecutor` retains native target callbacks through its original process exit,
+managed-group absence and required `HookProcessOwner.settle_process()` return.
+Cancelling a job joins original threaded callbacks before consuming their resources;
+unknown cleanup and failed settlement retain stopping capacity and opaque protection.
+The existing reaper may later establish positive terminal proof. No journal payload
+is added. Shared `_EventCustody` joins the original operation-release callback too.
+
+`HookSessionLifecycle` retains host custody through actual publish or discard.
+`ToolHookRun` keeps it through transformations and checkpoint acceptance; compaction
+keeps it through its separate ContextLedger and provider candidate preparation.
+The original Stop proposal consumer retains the same event through its existing
+queue acceptance/discard; it releases before later ordinary durable admission.
+Stopping during a native commit pauses the exact session's machine queue before
+cancelling the commit wrapper, invalidating a pending continuation receipt gate.
+Each acceptance checks the original source after host callbacks. Closing the event
+scope alone cannot retire these holds. Authorized SessionEnd targets are retained
+by the original lifecycle seal while capacity remains open. Runtime/session drains
+join actual callbacks and host handoffs through repeated waiter cancellation before
+removing the session or disposing its storage.
+
+D2B2b2 must retain exact MCP worker/nested Pre/Post/Failure operations before capacity
+closes, then join existing bridges, plugin requests and reapers. There is no partial
+native claim for MCP-containing events or post-close reservation exception. Full
+ordinary-tree borrowing and public workflow capture/coordinator remain closed.
 
 ## Consent layer (ADR-197)
 

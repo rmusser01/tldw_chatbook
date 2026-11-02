@@ -59,6 +59,7 @@ class PreparedHookCall:
     dependency_requirements: tuple[str, ...] = ()
     pending_scope: object | None = field(default=None, compare=False, repr=False)
     pending_context: tuple[str, ...] = ()
+    host_scope: object | None = field(default=None, compare=False, repr=False)
 
 
 class HookPreparationError(RuntimeError):
@@ -85,6 +86,7 @@ def _prepare_steps(event, engine, definition, *, defer_context=False):
     original_bytes = freeze_candidate(original)
     identity = definition_digest(engine)
     scope = engine.begin_event(event)
+    scope.retain_host()
     outcomes = []
     effect_events = []
     candidate = original
@@ -150,12 +152,14 @@ def _prepare_steps(event, engine, definition, *, defer_context=False):
                 if defer_context
                 else ()
             ),
+            scope if defer_context else None,
         )
         retained = defer_context
         return prepared
     finally:
         if not retained:
             scope.close()
+            scope.host_done()
 
 
 async def prepare_tool(
@@ -349,6 +353,10 @@ class ToolHookRun:
                 current=lambda: self._current(event),
                 additional_rows=self._accepted_rows + rows,
             )
+        from .engine import native_outcome_current
+
+        if not native_outcome_current(event, outcome):
+            raise HookPreparationError("tool hook source changed during acceptance")
         self._accepted_rows.extend(rows)
         self._rendered[event.event_id] = tuple(rows)
 
@@ -535,11 +543,21 @@ class ToolHookRun:
                 stage_context=self._stage_context,
             )
             self.checkpoints.accept(token, prepared.outcome)
+            if not self.engine.effects_current(prepared.event, prepared.outcome):
+                raise HookPreparationError("tool hook source changed during checkpoint")
             self._preaccepted.add(prepared.event.event_id)
             self.checkpoints.assert_next_input_allowed(
                 self.run_id,
                 required_handler_ids=self.requirements_for(prepared.definition),
             )
+            if prepared.host_scope is not None:
+                prepared.host_scope.host_done()
+                for key, (retained_call, value) in tuple(self._prepared.items()):
+                    if value.host_scope is prepared.host_scope:
+                        self._prepared[key] = (
+                            retained_call,
+                            replace(value, host_scope=None),
+                        )
         return prepared.definition
 
     def install_result(self, call, result):
@@ -690,9 +708,15 @@ class ToolHookRun:
                 self.run_id, terminal=True, should_cancel=self.should_cancel
             )
         finally:
+            hosts = set()
             for _call, prepared in self._prepared.values():
                 if prepared.pending_scope is not None:
                     prepared.pending_scope.close()
+                if prepared.host_scope is not None:
+                    hosts.add(prepared.host_scope)
+            for scope in hosts:
+                scope.host_done()
+            self._prepared.clear()
             if self.lifecycle is not None:
                 self.lifecycle.close_scope(self.run_id)
             else:

@@ -409,10 +409,16 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
                     ("Interrupt", parent_turn_id)
                 ]
             else:
-                assert notification_failures in (
-                    {"event_deadline": 1},
-                    {"cancelled": 1},
-                )
+                if notification_failures:
+                    assert notification_failures in (
+                        {"event_deadline": 1},
+                        {"cancelled": 1},
+                    )
+                else:
+                    # Stop still owns the opaque native event when Interrupt
+                    # arrives; the best-effort observer is omitted pre-enqueue.
+                    assert engine._native_commands is not None
+                    assert engine.notification_omissions == 1
             assert settlement.hook_cancel_event is None
             assert settlement.pending_stop_task is None
             assert settlement.pending_stop_key is None

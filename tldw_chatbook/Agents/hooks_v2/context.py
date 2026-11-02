@@ -7,7 +7,7 @@ from collections.abc import Callable
 from threading import RLock
 
 from ..agent_models import HookContextOrigin, PluginContextText, check_host_context
-from .engine import HookEventOutcome
+from .engine import HookEventOutcome, native_outcome_current
 from .models import ContextBlock, HookEvent
 
 
@@ -93,6 +93,8 @@ class ContextLedger:
                 for row in value
             ]
             check_host_context(existing + rows, strip=False)
+            if not native_outcome_current(event, result):
+                raise ValueError("hook source changed during context acceptance")
             self._rows[event.event_id] = tuple(rows)
             self._accepted[event.event_id] = (event, result)
             try:

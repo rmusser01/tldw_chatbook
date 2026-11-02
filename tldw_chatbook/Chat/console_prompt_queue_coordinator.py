@@ -313,10 +313,15 @@ class ConsolePromptQueueCoordinator:
         self._stop_parents[key] = (session_id, parent)
         chain.pending_stop_key = key
         self._changed(session_id)
+        execution = None
         try:
             if not lifecycle.live or not lifecycle.current():
                 return
-            stop_task = asyncio.create_task(lifecycle.engine.fire_async(event))
+            execution = lifecycle.engine.begin_event(event)
+            execution.retain_host()
+            stop_task = asyncio.create_task(
+                lifecycle.engine.fire_async(event, _execution=execution)
+            )
             chain.pending_stop_task = stop_task
             try:
                 outcome = await stop_task
@@ -342,15 +347,20 @@ class ConsolePromptQueueCoordinator:
                     tuple(result for _, result in outcome.accepted),
                 )
         finally:
-            chain.pending_stop_key = None
-            chain.hook_cancel_event = None
-            chain.pending_stop_task = None
-            chain.pending_stop_cancelled = False
-            self._stop_parents.pop(key, None)
-            self._stop_outcomes.pop(key, None)
-            lifecycle.terminal_budgets.pop(request.turn_id, None)
-            lifecycle.terminal_budget_times.pop(request.turn_id, None)
-            self._changed(session_id)
+            try:
+                chain.pending_stop_key = None
+                chain.hook_cancel_event = None
+                chain.pending_stop_task = None
+                chain.pending_stop_cancelled = False
+                self._stop_parents.pop(key, None)
+                self._stop_outcomes.pop(key, None)
+                lifecycle.terminal_budgets.pop(request.turn_id, None)
+                lifecycle.terminal_budget_times.pop(request.turn_id, None)
+                self._changed(session_id)
+            finally:
+                if execution is not None:
+                    execution.close()
+                    execution.host_done()
 
     async def schedule_continuation(
         self, parent_turn_id: str, event_id: str, proposals: tuple[HookResult, ...]

@@ -315,11 +315,15 @@ async def submission_hook_input(
     )
     if hook_owner is None or hook_owner[0] is None:
         return []
-    lifecycle, scope, _session_key = hook_owner
+    lifecycle, scope, session_key = hook_owner
     if origin is ConsoleSubmissionOrigin.MANUAL:
-        await lifecycle.fire(
-            lifecycle.event("UserPromptSubmit", data={"prompt": draft}), scope
-        )
+        from .console_plugin_hook_preparation import submission_origin
+
+        session = controller.store._sessions[session_key]
+        with submission_origin(controller, session, None, origin):
+            await lifecycle.fire(
+                lifecycle.event("UserPromptSubmit", data={"prompt": draft}), scope
+            )
     await lifecycle.wait(scope)
     rows = lifecycle.context.blocks(scope, "model")
     from tldw_chatbook.Agents.agent_models import check_host_context

@@ -589,6 +589,23 @@ affected operation while unrelated tools remain eligible. Manual preparation ret
 an unchanged native configuration; changing workspace requires fresh configuration.
 
 
+### Native command event custody (Task 8D2B2b1)
+
+ADR-285 adds finite native custody to complete command-only events at their actual
+planned/individual/notification producers. Coverage is frozen by the original host
+from the complete potential handler set before effects; any reachable MCP target
+keeps the whole event on its existing path until D2B2b2. Covered events cannot
+downgrade on source loss or grow their target maximum later. Original permissions,
+matching, dependency and required/best-effort decisions remain authoritative.
+
+Existing command process/group evidence and plugin process settlement join the
+actual lifecycle publish, tool checkpoint/transform and compaction ledger/prepare
+consumer. Closing an execution scope is separate from host acceptance. Shutdown
+retains authorized terminal holds before native capacity closes and joins actual
+workers, host consumers and operation-release callbacks under cancellation.
+No hook journal, new process owner, executor, queue or permission store is added.
+MCP nested preselection and full ordinary borrowing remain mandatory next gates.
+
 ### I2 foreign hook qualification boundary
 
 Pinned Codex/Cursor event correspondences are proposals, not HookHandlers. Native

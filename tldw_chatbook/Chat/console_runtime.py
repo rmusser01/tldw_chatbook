@@ -4050,6 +4050,17 @@ class ConsoleRuntime:
                     budget,
                     **owner_options,
                 )
+                from .console_workflow_runs import native_workflow_qualified
+
+                if native_workflow_qualified():
+                    from tldw_chatbook.Agents.hooks_v2.native_commands import (
+                        NativeCommandEvents,
+                    )
+
+                    engine._native_commands_required = True
+                    engine._native_commands = NativeCommandEvents(
+                        self, engine, session_id
+                    )
             if _native_preparation is not None:
                 _native_preparation.check_memory(_native_preparation.service)
             if _native_plugins is not None:
@@ -4578,6 +4589,19 @@ class ConsoleRuntime:
                 drain(), name="console-v2-hook-cleanup"
             )
         await asyncio.shield(self._hooks_v2_cleanup_task)
+
+    async def _drain_v2_command_hooks(self) -> bool:
+        """Join the original hook owner despite repeated cancellation of its waiter."""
+        if not self._hooks_v2_engines:
+            return False
+        task = asyncio.create_task(self.close_hooks_v2())
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(task)
+                return cancelled
+            except asyncio.CancelledError:
+                cancelled = True
 
     def start_async_lifecycles(self) -> None:
         """Start loop-bound runtime work after the Textual loop is running.
@@ -6523,6 +6547,7 @@ class ConsoleRuntime:
         except BaseException:
             abort_provisional_fences()
             raise
+        self._seal_hooks_v2()
         with self._execution_capacity_lock:
             with self._canvas_native_lock:
                 self._disposed = True
@@ -6616,6 +6641,7 @@ class ConsoleRuntime:
                 )
                 if callable(retire):
                     retire()
+            cancelled |= await self._drain_v2_command_hooks()
             cancelled |= await self._drain_legacy_hooks()
             from .console_preparation_reads import drain_preparation_reads
 
@@ -6922,7 +6948,7 @@ class ConsoleRuntime:
         self._activity_hydration_task = None
         if _recovery_owner is not None:
             cancel_requested |= await _recovery_owner.drain_recovery()
-        await self.close_hooks_v2()
+        cancel_requested |= await self._drain_v2_command_hooks()
         # A bounded/cancelled controller shutdown may not have reached its
         # permanent continuation retirement; no original hook retry survives quit.
         retire = getattr(controller, "_retire_all_live_recovery_continuations", None)

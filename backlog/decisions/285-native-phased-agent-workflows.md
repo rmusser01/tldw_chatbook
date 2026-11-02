@@ -254,6 +254,35 @@ Planned v2 handler/MCP/nested/host/SessionEnd ownership remains mandatory D2B2b;
 ordinary-tree borrowing and workflow capture/planning/coordinator stay closed.
 
 
+### Native command-only v2 event qualification (Task 8D2B2b1)
+
+The next finite event boundary covers complete command-only v2 events, including
+planned, individual, notification, lifecycle, tool and compaction consumers.
+Before effects, the original host freezes the complete potential handler maximum.
+An event with any reachable MCP handler keeps its entire existing execution path;
+it has no partial native claim. This temporary coverage decision is private and
+immutable: event IDs, source loss or later matcher changes cannot downgrade a
+covered event or widen its maximum. Existing platform qualification still applies.
+
+Each covered event retains one opaque non-child native owner and the original
+operation for each actual command target before existing queue acceptance.
+NativeHooks' published selection identifies plugin targets; their original
+admission and process-owner callbacks execute under that custody. Original
+process exit, group absence and required plugin settlement must join actual host
+publish/checkpoint/transform/compaction acceptance or conclusive discard. The
+original Stop proposal consumer retains this hold through its existing queue
+acceptance/discard; later ordinary durable admission remains its original owner. A scope
+close, timeout or cancelled waiter is not that join. Empty event journal
+obligations remain explicit; no ordinary journal or new execution framework exists.
+
+Authorized SessionEnd work retains its operations while capacity is open, then
+ordinary ingress seals and shutdown drains the original workers and host handoffs.
+Unknown cleanup or failed required writes retain protection. D2B2b2 must close
+the remaining MCP event/nested preselection boundary, including exact nested holds
+before capacity closure; there is no post-close reserve exception. This extra gate
+temporarily leaves MCP-containing events without native coordination. Full ordinary
+borrowing and workflow capture/coordinator execution remain incomplete and closed.
+
 ## Task 7 producer and storage contracts
 
 Task 7 uses additive AgentRuns schema v27 for immutable required checkpoint

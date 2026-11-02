@@ -18278,6 +18278,7 @@ class ConsoleChatController:
                     if owner.session.id == session_id:
                         owner.explicit_stop = True
             self._signal_stop(session_id=session_id)
+            self.prompt_queue_coordinator.pause_for_stop(session_id)
             for task in native_tasks:
                 if task is not asyncio.current_task():
                     task.cancel()

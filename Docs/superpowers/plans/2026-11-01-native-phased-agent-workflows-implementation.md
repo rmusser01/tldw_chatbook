@@ -323,6 +323,23 @@ def test_model_done_is_not_a_passed_check():
 <a id="task-8"></a>
 ## Task 8: Native phase scheduling and runtime-wide admission
 
+D2B2b1 (approved complete command-only split): freeze the host-issued complete
+potential event maximum before effects; any reachable MCP target preserves the
+entire existing event path without a native claim. Covered source loss or maximum
+change refuses before enqueue. Reuse finite event/target custody, original command
+terminal evidence and plugin settlement; retain actual lifecycle publish, tool
+checkpoint/transform and compaction ledger/prepare handoffs. Pre-retain authorized
+SessionEnd operations while capacity is open, then seal and join original workers,
+host acceptance/discard and operation-release return through repeated cancellation.
+Verify actual Runtime/SQLite/commands with held source/publication/cleanup/host seams,
+then one named affected selection and final-byte/static/preservation checks before
+the exact source/test/docs/task commit. Local evidence stays ignored.
+ADR required: no new ADR. ADR paths: backlog/decisions/285-native-phased-agent-workflows.md
+and backlog/decisions/163-expanded-console-hook-runtime.md.
+Reason: qualify the existing finite source/physical/host contract. D2B2b2 must
+complete MCP/nested preselection before capacity closure; full ordinary borrowing
+and public workflow capture/coordinator remain closed. Parent AC stay unchecked.
+
 **Task:** TASK-38531. **Coverage:** spec 2/4–8/11; A1–A11 native integration.
 
 **Files:** Extend `Chat/console_workflow_runs.py`; modify `Chat/console_runtime.py`, `Chat/console_chat_controller.py`, `Chat/console_agent_bridge.py`, `Chat/console_automatic_submission.py`, `Chat/console_chat_models.py`, `Chat/console_fleet_wake.py`, relevant received-dispatch/lifecycle seams, and existing `Agents/agent_service.py` wiring. Create `Tests/Chat/workflow_rig.py`, `Tests/Chat/test_console_workflow_dispatch.py`, `Tests/Chat/test_console_workflow_scheduling.py`, `Tests/Chat/test_workflow_activity_admission.py`, `Tests/Chat/test_workflow_settlement_delivery.py`.
