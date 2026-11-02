@@ -648,7 +648,7 @@ async def test_real_saved_grant_revocation_before_enqueue_refuses_command(
     await until(lambda: not opaque_busy(case.runtime))
 
 
-async def test_actual_mcp_event_preserves_whole_uncovered_chain_and_independent_command(
+async def test_actual_mcp_event_owns_whole_nested_chain_and_independent_command(
     event_case, tmp_path, monkeypatch
 ):
     from Tests.MCP.test_typed_tool_results import (
@@ -716,7 +716,7 @@ async def test_actual_mcp_event_preserves_whole_uncovered_chain_and_independent_
         )
         assert result.accepted, result
         assert service.execution_log.read_recent(), "actual MCP peer was not invoked"
-        assert ("command", 0) in entries and ("sibling", 0) in entries
+        assert ("command", 3) in entries and ("sibling", 3) in entries
         assert (
             case.runtime._execution_capacity is None
             or case.runtime.execution_capacity.snapshot().tool_workers == 0
@@ -727,7 +727,7 @@ async def test_actual_mcp_event_preserves_whole_uncovered_chain_and_independent_
             lifecycle.scope_id,
         )
         assert ("independent", 1) in entries, (
-            "private uncovered context escaped its original delivery"
+            "independent event did not acquire its own operation"
         )
         await until(lambda: not engine.cleanup_pending)
 

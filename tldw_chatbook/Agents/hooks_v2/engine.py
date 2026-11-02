@@ -731,8 +731,13 @@ class HookEngine:
 
     async def _deliver(self, delivery, handler, event, execution, value):
         target = delivery.native_target
+        from ..activation import _guard
+
         try:
             with (
+                _guard.worker_isolation()
+                if target is not None
+                else contextlib.nullcontext(),
                 self._continuation_scope(execution),
                 target.activate() if target is not None else contextlib.nullcontext(),
             ):
@@ -750,6 +755,8 @@ class HookEngine:
             )
         finally:
             if delivery.job is None:
+                if target is not None:
+                    execution.native.plans[handler.id].producer_returned()
                 delivery.ticket.release()
             with self._lock:
                 self._deliveries.discard(delivery)

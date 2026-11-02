@@ -1,15 +1,18 @@
-"""Original app source and finite custody for complete command-only events."""
+"""Original app source and finite custody for complete native hook events."""
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from threading import Lock
+from types import SimpleNamespace
 
 from tldw_chatbook.Workspaces.worktree_activity import WorktreeFootprint
 
 from ..activation import _guard, execution
 from ..execution_capacity import CapacityRefused, WorkOrigin, current_execution_owner
 from ..legacy_hook_ownership import _EventCustody, _EventCustodyRegistry
+from .causality import current_chain
 from .matching import UnsupportedEventField, matches_handler
 
 
@@ -28,6 +31,36 @@ class NativeCommandEvents(_EventCustodyRegistry):
             self.capacity = self.runtime._execution_capacity
         if self.activity is None:
             self.activity = self.runtime._worktree_activity
+        from .engine import _current_delivery
+
+        delivery = _current_delivery.get()
+        if delivery is not None and delivery[0] is self.engine:
+            _, parent, state, original, projected = delivery
+            if state.native is not None:
+                job = parent.job
+                with self.engine._lock:
+                    if (
+                        parent not in self.engine._deliveries
+                        or parent.cancel.is_set()
+                        or state.closed
+                        or state.issuer is not self.engine._scope_issuer
+                        or state.native.issuer is not self
+                        or state.native.event is not original
+                        or getattr(job, "event", None) is not projected
+                        or getattr(job, "execution", None) is not state
+                        or getattr(job, "native_plan", None) is None
+                        or not current_chain().visits
+                        or current_chain().visits[-1][:2]
+                        != (projected.event_id, job.handler.id)
+                    ):
+                        raise PermissionError(
+                            "Original nested event source unavailable."
+                        )
+                    state.native.root._check_registration()
+                    previous = job.native_plan.issued.get(event.event)
+                    if previous is not None and previous.event is event:
+                        return previous
+                    return _NestedEvent(state.native.root, job, event)
         return _CommandEvent(self, event, teardown=teardown)
 
 
@@ -84,38 +117,10 @@ class _CommandEvent:
                     matched.append(handler)
             except UnsupportedEventField:
                 pass
-        from .engine import _current_delivery
-
-        parent_delivery = _current_delivery.get()
-        parent_source = None
-        if parent_delivery is not None and parent_delivery[0] is engine:
-            from .causality import current_chain
-
-            _, delivery, state, source_event, projected_event = parent_delivery
-            job = delivery.job
-            chain = current_chain()
-            with engine._lock:
-                if (
-                    delivery in engine._deliveries
-                    and not delivery.cancel.is_set()
-                    and not state.closed
-                    and state.issuer is engine._scope_issuer
-                    and state.native is not None
-                    and state.native.issuer is issuer
-                    and engine._native_commands is issuer
-                    and state.native.event is source_event
-                    and getattr(job, "event", None) is projected_event
-                    and getattr(job, "execution", None) is state
-                    and chain.visits
-                    and chain.visits[-1][:2]
-                    == (projected_event.event_id, job.handler.id)
-                ):
-                    parent_source = state.native
-        self._coverage = (
-            all(h.type == "command" for h in matched)
-            and not (parent_source is not None and not parent_source.covered),
-            tuple(matched),
-        )
+        self._coverage = (True, tuple(matched))
+        self.root = self
+        self.plans = {}
+        self.all_plans = ()
         self.targets = {}
         self.custody = None
         self.closed = False
@@ -182,6 +187,7 @@ class _CommandEvent:
             engine.processes,
             engine.processes.owner,
             engine.processes._launch_guard,
+            engine.mcp_executor,
         )
 
     def check_memory(self, event=None):
@@ -273,10 +279,25 @@ class _CommandEvent:
                 and self.permissions._closed.is_set()
             ):
                 raise PermissionError("Command event configuration changed.")
+        for plan in self.all_plans:
+            if plan.mcp is not None:
+                plan.mcp.check_memory()
+        # Accepted context outlives its input registration, never its sources.
+        if not (
+            self.custody is not None
+            and self.custody.retired
+            and self.custody.owner._drain_outcome is True
+        ):
+            self._check_registration()
         if self.custody is not None and not all(
             self._reachable(h) for h in self.selected if h.id in self.targets
         ):
             raise PermissionError("Command event target changed.")
+
+    def _check_registration(self):
+        for plan in self.all_plans:
+            if plan.mcp is not None:
+                plan.mcp.check_registration()
 
     def check(self):
         self.check_memory()
@@ -303,13 +324,14 @@ class _CommandEvent:
         )
 
     def admit(self, handler_ids=None):
+        self._check_registration()
         with self._lock:
+            if self.closed:
+                raise RuntimeError("Command event closed.")
             if self.admitted:
                 if not self.ready or self.admission_failed:
                     raise RuntimeError("Command event admission unavailable.")
                 return
-            if self.closed:
-                raise RuntimeError("Command event closed.")
             self.admitted = True
         issuer = self.issuer
         with issuer._condition:
@@ -352,20 +374,44 @@ class _CommandEvent:
                     )
                     operations = []
                     try:
-                        for _ in targets:
-                            operations.append(owner.reserve_tool())
+                        plans = []
+                        context = None
+                        if any(h.type == "mcp_tool" for h in targets):
+                            try:
+                                context = issuer.engine.mcp_executor._context(
+                                    self.event
+                                )
+                            except PermissionError:
+                                pass
+                        for handler in targets:
+                            plan = self._select(
+                                handler, context, current_chain(), owner, operations
+                            )
+                            if plan is not None:
+                                plans.append(plan)
+                        self.plans = {p.handler.id: p for p in plans}
+                        self.all_plans = tuple(p for plan in plans for p in plan.walk())
                         self.check()
                         if not all(self._reachable(h) for h in targets):
                             raise PermissionError("Command target revoked.")
-                        claim.bind_owner(owner)
+                        if operations:
+                            claim.bind_owner(owner)
                     except BaseException:
                         for operation in operations:
                             operation.finish()
                         owner.finish_root()
                         raise
+                    if not operations:
+                        owner.finish_root()
+                        return
                     custody = _CommandCustody(self, claim, owner, operations)
                     self.custody = custody
-                    self.targets = dict(zip((h.id for h in targets), custody.targets))
+                    by_operation = dict(zip(operations, custody.targets))
+                    for plan in self.all_plans:
+                        plan.target = by_operation[plan.operation]
+                    self.targets = {
+                        key: plan.target for key, plan in self.plans.items()
+                    }
                     with issuer._condition:
                         issuer._events.add(custody)
                     if self.closed:
@@ -378,6 +424,54 @@ class _CommandEvent:
             with issuer._condition:
                 issuer._admissions -= 1
                 issuer._condition.notify_all()
+
+    def _select(self, handler, context, chain, owner, operations):
+        if not self._reachable(handler):
+            return None
+        mcp = None
+        if handler.type == "mcp_tool":
+            if context is None:
+                return None
+            from .mcp_executor import MCPHookSelection
+
+            try:
+                mcp = MCPHookSelection.capture(context, handler, chain)
+            except (ValueError, PermissionError):
+                return None
+        operation = owner.reserve_tool()
+        operations.append(operation)
+        children = {}
+        if mcp is not None:
+            for name in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
+                selected = []
+                for child in self.definitions:
+                    reasons = (
+                        ("execution_failed", "timeout", "cancelled")
+                        if name == "PostToolUseFailure"
+                        else (None,)
+                    )
+                    matched = False
+                    for reason in reasons:
+                        data = {
+                            "tool_id": mcp.definition.tool_id,
+                            "provider": mcp.definition.provider,
+                        }
+                        if reason is not None:
+                            data["reason"] = reason
+                        try:
+                            matched |= matches_handler(
+                                child, SimpleNamespace(event=name, data=data)
+                            )
+                        except UnsupportedEventField:
+                            pass
+                    if matched:
+                        node = self._select(
+                            child, context, mcp.chain, owner, operations
+                        )
+                        if node is not None:
+                            selected.append(node)
+                children[name] = tuple(selected)
+        return _HeldHandler(handler, operation, mcp, children)
 
     def retain_host(self):
         with self._lock:
@@ -395,7 +489,112 @@ class _CommandEvent:
             self.closed = True
             done = not self.hosts
         if self.custody is not None:
-            for target in self.custody.targets:
-                target.cancel_before_start()
+            for plan in self.plans.values():
+                plan.discard()
             if done:
                 self.custody.host_done()
+
+
+@dataclass(eq=False)
+class _HeldHandler:
+    handler: object
+    operation: object
+    mcp: object | None
+    children: dict
+    target: object | None = None
+    issued: dict = field(default_factory=dict)
+
+    def walk(self):
+        yield self
+        for candidates in self.children.values():
+            for child in candidates:
+                yield from child.walk()
+
+    def discard(self):
+        if self.target is not None and not self.target.started:
+            self.target.cancel_before_start()
+            self.producer_returned()
+
+    def producer_returned(self):
+        for phase, candidates in self.children.items():
+            if phase not in self.issued:
+                for child in candidates:
+                    child.discard()
+
+
+class _NestedEvent:
+    covered = True
+
+    def __init__(self, root, job, event):
+        self.root, self.job, self.event = root, job, event
+        self.issuer = root.issuer
+        plan, hook_run = job.native_plan, job.hook_run
+        if (
+            hook_run is None
+            or hook_run._event_definitions.get(event.event_id) != plan.mcp.definition
+            or event.run_id != hook_run.run_id
+            or event.event not in plan.children
+            or current_chain().visits != job.chain.visits
+        ):
+            raise PermissionError("Original nested event identity changed.")
+        previous = plan.issued.get(event.event)
+        if previous is not None and previous.event is not event:
+            raise PermissionError("Nested event already issued.")
+        self.plans = {p.handler.id: p for p in plan.children[event.event]}
+        self.targets = {key: p.target for key, p in self.plans.items()}
+        self.match_values = tuple(
+            (key, event.data.get(key))
+            for key in sorted(
+                {k for p in self.plans.values() for k in p.handler.match or ()}
+            )
+        )
+        self.closed, self.hosts = False, 0
+        self._lock = Lock()
+        self.check_memory(event)
+        root.retain_host()
+        plan.issued[event.event] = self
+
+    @property
+    def selected(self):
+        return tuple(p.handler for p in self.plans.values())
+
+    def check_memory(self, event=None):
+        self.root.check_memory()
+        event = event or self.event
+        if (
+            tuple((key, event.data.get(key)) for key, _ in self.match_values)
+            != self.match_values
+        ):
+            raise PermissionError("Nested matcher source changed.")
+        if not all(self.root._reachable(p.handler) for p in self.plans.values()):
+            raise PermissionError("Nested target revoked.")
+
+    def check(self):
+        self.root.check()
+        self.check_memory()
+
+    def admit(self, handler_ids=None):
+        self.root._check_registration()
+        self.check()
+
+    def retain_host(self):
+        with self._lock:
+            self.hosts += 1
+
+    def host_done(self):
+        with self._lock:
+            self.hosts -= 1
+            done = self.closed and not self.hosts
+        if done:
+            self.root.host_done()
+
+    def close(self):
+        with self._lock:
+            if self.closed:
+                return
+            self.closed = True
+            done = not self.hosts
+        for plan in self.plans.values():
+            plan.discard()
+        if done:
+            self.root.host_done()

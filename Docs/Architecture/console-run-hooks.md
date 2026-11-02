@@ -86,9 +86,9 @@ workflow history/storage stays available. Future public planning, Start and Resu
 must reuse it before billable preparation; Task 9 will surface the reason. Policy
 simulation tests do not qualify Windows physical cleanup.
 
-This is Task 8D2B1's legacy boundary. The command-only v2 integration below
-extends finite event custody; MCP-containing events and ordinary covering-tree
-borrowing remain mandatory before outer execution is enabled. Workflow capture/planning/coordinator admission remains closed. Runtime
+This is Task 8D2B1's legacy boundary. The v2 integration below extends finite
+event custody through native command and MCP workers; ordinary covering-tree
+borrowing remains mandatory before outer execution is enabled. Workflow capture/planning/coordinator admission remains closed. Runtime
 coordination does not exclude unrelated ordinary orphaned effects across restart.
 
 ## Native plugin hook preparation (Task 8D2B2a)
@@ -112,23 +112,31 @@ their existing drains wait for those callbacks before disposing shared storage.
 The shared `native_workflow_qualified()` predicate preserves the existing ordinary
 path on unqualified platforms; it provides no Windows workflow qualification.
 
-Preparation retires before the event owner below begins. MCP event custody and
-outer ordinary-tree borrowing remain pending; workflow capture/planning/coordinator
-admission stays closed.
+Preparation retires before the event owner below begins. Outer ordinary-tree
+borrowing remains pending; workflow capture/planning/coordinator admission stays closed.
 
-## Native command-only v2 events (Task 8D2B2b1)
+## Native v2 command and MCP events (Task 8D2B2b1/b2)
 
 `hooks_v2.native_commands.NativeCommandEvents` pins the actual runtime, engine,
 session incarnation/binding, permissions, published NativeHooks and service
 infrastructure. `HookEngine.begin_event()` freezes the complete event definition
-maximum and matcher values. Any matching MCP target keeps the entire event on its
-existing path. Nested command events inherit this uncovered decision only from the
-live original delivery, source and private causal chain; an independent later event
-gets its own native admission. Event IDs and input labels cannot select coverage.
-Source replacement, matcher changes or definition widening refuse covered dispatch.
+maximum and matcher values. `MCPHookSelection` pins the original context registration,
+registry definition, provider entry/maximum, service infrastructure and owned plugin
+snapshot. Replacement, revocation or definition widening refuses covered dispatch.
+Nested events inherit only the live original delivery, ToolHookRun definition and
+private causal chain. Event IDs and input labels cannot select coverage or a fallback.
+Accepted context may outlive its spent input registration only after actual host
+custody retirement and the existing native owner's positive drain observation.
+It still checks the original provider/schema/catalog, plugin/permission and host
+sources. Every admission/start/currentness/nested borrow requires original live
+registration; closed scopes and returned operations never authorize dispatch.
 
 Before sync/async individual or notification queue publication, a covered event
-acquires one opaque claim/non-child owner and reserves its original command targets.
+acquires one opaque claim/non-child owner and reserves its complete reachable worker
+union. Metadata-only traversal captures PreToolUse, PostToolUse and failure candidates
+under existing matching, dependency/cycle and capacity bounds. Selected DENY, disabled
+and impossible branches are excluded; ASK remains subject to ordinary review. Input
+and result transformations cannot widen immutable tool/provider matcher metadata.
 The actual engine lock rechecks the concrete source before publishing each delivery.
 Original permissions, activation guards, plugin admission and hook budgets still
 run. No-target/disabled events remain cold, and standalone/unqualified engines keep
@@ -155,10 +163,22 @@ by the original lifecycle seal while capacity remains open. Runtime/session drai
 join actual callbacks and host handoffs through repeated waiter cancellation before
 removing the session or disposing its storage.
 
-D2B2b2 must retain exact MCP worker/nested Pre/Post/Failure operations before capacity
-closes, then join existing bridges, plugin requests and reapers. There is no partial
-native claim for MCP-containing events or post-close reservation exception. Full
-ordinary-tree borrowing and public workflow capture/coordinator remain closed.
+`MCPHookExecutor` enters each actual thread through the existing worker isolation and
+reacquires the exact original activation sources and native owner. The sequential
+result validator shares the original operation; distinct nested workers each retain
+one. Callback return, bridge completion/settled dispatch, original plugin request
+`completed` proof and the existing reaper all precede native release. A failed required
+plugin settlement retains custody until the original request is actually settled;
+logical timeout/cancellation/result alone cannot clear it. The persistent plugin
+runtime is not claimed drained by one request's completion. Never-issued conditional
+branches are discarded only when their original producer returns; nested host scopes
+join the root through transformations/checkpoint acceptance and actual host return.
+
+The live authorized lifecycle seal retains exact MCP/nested operations before capacity
+close, so later nested work consumes those holds without a reserve exception. Existing
+configured disposed-runtime policy still refuses MCP SessionEnd; custody does not
+extend teardown permission or currentness. Full ordinary-tree borrowing and public
+workflow capture/coordinator remain closed. There are no new event journal writes.
 
 ## Consent layer (ADR-197)
 

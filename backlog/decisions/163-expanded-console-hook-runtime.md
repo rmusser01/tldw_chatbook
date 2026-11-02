@@ -813,3 +813,47 @@ Legacy schema-v1 resume retains zero plugin authority. Only its existing service
 MCP delivery currentness uses the existing nonblocking effect-authority callback only on the exact owning HookEngine loop. Other threads/loops retain full worker authority. Full admission/use/acceptance, context/dependency, cancellation/deadline/inherited-policy, definition, permissions, audit, provenance and terminal resource checks remain. The ordinary provider keeps its sanitized failure boundary. A disconnected definition refuses before approval; a test cannot reconnect or acquire authority by expecting an approval.
 
 Native hook worker authority validates actual scratch physical identity with the existing is_live owner, including result acceptance. Effects consult only a new private published-current query under the existing scratch manager lock: exact issued snapshot/record, alive and not tombstoned/disposed, with no filesystem IO or resource acquisition. This memory check detects logical close/disposal; external filesystem replacement still requires the existing worker physical checks. Process/root custody remains until terminal and reap. Resumed attempts preserve the original frozen ceiling in an attempt-local context with a fresh pending ID. Input-hook failure abandons only the exact preaccept preparation through the existing store owner, which protects accepted commit custody. No new authority owner, persistent state, schema or public API is introduced.
+
+### Native MCP event and nested teardown custody (Task 8D2B2b2)
+
+Extend the original complete event owner to its metadata-selected reachable MCP
+workers and conditional nested PreToolUse/PostToolUse/PostToolUseFailure workers.
+Retain exact original context, registry/provider, schema, permission and causal
+selection before queue publication; arguments/results cannot widen this maximum.
+Each distinct reachable worker reserves its existing native operation while
+capacity remains open; the same worker and sequential validator share one. The
+existing causal/dependency limits and native capacity bound whole admission,
+including conditional candidates. Disabled, impossible and selected DENY targets
+create no holds; ASK remains subject to normal approval. Nested consumers borrow
+only the exact original live branch, never a fresh opaque claim or returned hold.
+
+Original MCP worker return, actual dispatch bridge finally, original plugin request
+terminal/reaper and required settlement return join the existing host handoffs and
+native operation.finish return. Persistent plugin infrastructure retains its own
+owner; one request cannot prove it drained. Never-issued descendants settle only
+after original refusal/discard or producer return. Unknown cleanup and failed
+required writes retain stopping capacity/source/activity protection. No journal,
+executor, queue, poller, permission store or budget ledger is introduced.
+
+SessionEnd retains the full authorized prospective tree before capacity close.
+Later nested execution uses those holds without post-close reservation. Existing
+configured runtime disposal still revokes MCP currentness; custody supplies no new
+terminal permission. Positive live-lifecycle execution after capacity close is
+qualified separately from actual disposed-runtime refusal and physical drain.
+Conservative conditional reservations may refuse events that previously ran
+without native coordination. Standalone/unqualified behavior and shared platform
+qualification remain unchanged; no Windows physical proof is claimed. Outer
+ordinary-tree borrowing and public workflow capture/coordinator stay incomplete.
+
+
+Accepted-result lifetime qualification (Task 8D2B2b2): exact original live context
+registration remains mandatory for capture, admission, worker start/currentness
+and nested borrowing. After actual host return, operation release and positive
+native owner drain have conclusively retired the original custody, passive
+accepted-context revalidation may use its retained original selection without
+requiring the normally spent per-input registration. A retired custody flag alone
+is insufficient: the existing owner drain observation must be positive. Provider,
+schema/catalog maximum, plugin/permission/runtime/store and activation checks stay
+in force. Closed scopes and returned operations cannot dispatch or be borrowed;
+no caller flag or replacement context grants authority. This preserves legitimate
+later Send reuse of accepted runtime context without reviving launch permission.

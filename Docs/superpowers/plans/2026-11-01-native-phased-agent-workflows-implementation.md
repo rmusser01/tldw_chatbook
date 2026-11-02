@@ -323,6 +323,8 @@ def test_model_done_is_not_a_passed_check():
 <a id="task-8"></a>
 ## Task 8: Native phase scheduling and runtime-wide admission
 
+D2B2b2 (approved source contract): extend original finite event custody to the complete metadata-selected reachable MCP/nested Pre/Post/Failure worker union. Retain exact original context/registry/provider/schema/permission/causal maximum before existing enqueue and capacity close; nested consumers borrow only their original live branch. Same-worker sequential validators share one operation; distinct workers retain separate holds, disabled/impossible/DENY targets none. Join actual worker, bridge finally, plugin required settlement/reaper, original host acceptance/discard and operation.finish RETURN. Never-issued candidates settle only on original conclusive refusal or producer return. Preserve configured disposed-runtime MCP refusal and ordinary standalone/unqualified behavior. Genuine connected MCP/plugin RED/GREEN; positive live-lifecycle closed-capacity nesting separately from actual disposal refusal/drain; one named affected selection; final-byte/static/116+C106+c5 preservation; exact source-only commit. ADR required: no new ADR. ADR paths: backlog/decisions/285-native-phased-agent-workflows.md; backlog/decisions/163-expanded-console-hook-runtime.md. Reason: complete the approved finite physical/source/host contract without a new permission grant or framework. Parent In Progress/AC unchecked; outer borrowing/public workflow remain closed.
+
 D2B2b1 (approved complete command-only split): freeze the host-issued complete
 potential event maximum before effects; any reachable MCP target preserves the
 entire existing event path without a native claim. Covered source loss or maximum
@@ -489,3 +491,16 @@ next instruction. Offer either task-by-task inline execution using executing-pla
 or, if explicitly chosen, subagent-driven execution with review gates. Preserve
 the shared worktree in either case and never start implementation simply because
 the plan exists.
+
+
+Accepted-result lifetime qualification (Task 8D2B2b2): exact original live context
+registration remains mandatory for capture, admission, worker start/currentness
+and nested borrowing. After actual host return, operation release and positive
+native owner drain have conclusively retired the original custody, passive
+accepted-context revalidation may use its retained original selection without
+requiring the normally spent per-input registration. A retired custody flag alone
+is insufficient: the existing owner drain observation must be positive. Provider,
+schema/catalog maximum, plugin/permission/runtime/store and activation checks stay
+in force. Closed scopes and returned operations cannot dispatch or be borrowed;
+no caller flag or replacement context grants authority. This preserves legitimate
+later Send reuse of accepted runtime context without reviving launch permission.
