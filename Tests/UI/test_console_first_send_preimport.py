@@ -31,16 +31,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT = REPO_ROOT / "Tests/Performance/boot_budget_snapshots/ui_ready_modules.txt"
 
 #: The live first-send record (origin/dev 4de437a5c5, 2026-10-19): the modules
-#: the send imported on the UI loop between Enter and the provider call.
+#: the send imported on the UI loop between Enter and the provider call,
+#: reconciled with current send seams. console_received_dispatch is now
+#: resident through console_spend_projection and is no longer a lazy step.
 LIVE_FIRST_SEND_IMPORTS = (
     "UI.Console_Modules.send_acknowledgement",
     "UI.Console_Modules.sent_draft",
     "Chat.console_configuration_preparation",
     "UI.Console_Modules.turn_admission",
     "MCP.console_snapshot",
-    "Chat.console_received_dispatch",
     "Chat.console_send_diagnostics",
+    "Chat.console_plugin_context",  # current native invocation projection
     "Chat.console_hook_preparation",
+    "Agents.hook_permissions",  # current prepare_hooks_v2 lazy consent owner
     "Agents.automatic_work_runtime",
     "Chat.console_references",
     "Agents.hooks_v2.lifecycle",
@@ -61,6 +64,7 @@ LIVE_FIRST_SEND_IMPORTS = (
     # Added after that record (TASK-35582): begin_generation_attempt's lazy
     # continuation-binding import, deferred off first paint.
     "Chat.console_continuation_binding",
+    "Chat.console_pre_provider_stop",  # current durable-postcommit owner
     "Chat.console_trace_row_sources",
     "Chat.response_rules.generation",
     "Chat.response_rules.builder",
@@ -366,6 +370,9 @@ class _PassApp:
         self.events: list[tuple[str, object]] = []
         self._stop_after = stop_after
 
+    def call_from_thread(self, callback, *args):
+        self.events.append(("callback", (callback, args)))
+
     def _screen_preimport_pacing(self) -> tuple[float, float]:
         return (2.0, 0.5)
 
@@ -374,6 +381,73 @@ class _PassApp:
         self.events.append(("pause", gap_seconds))
         if self._stop_after is not None and len(self.pauses) >= self._stop_after:
             self._shutting_down = True
+
+
+@pytest.mark.parametrize("manifest_fault", [False, True])
+def test_real_import_completion_queues_one_ui_request_without_boot_freezes(
+    monkeypatch, tmp_path, manifest_fault
+):
+    """A completed pass requests runtime maintenance, even after manifest failure."""
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+    from tldw_chatbook.MCP import server
+    from tldw_chatbook.Utils import ui_responsiveness
+
+    app = _PassApp()
+    (tmp_path / "_real_first_send_step.py").write_text("IMPORTED = True\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "_real_first_send_step", raising=False)
+    monkeypatch.setattr(
+        warm, "FIRST_SEND_MODULES", ("_real_first_send_step", "_missing_optional_step")
+    )
+    monkeypatch.setattr(warm, "seconds_since_user_input", lambda: float("inf"))
+    freezes = []
+    # Both the old imported alias and the shared helper would expose an
+    # accidental direct freeze. Real reclamation is tested in fresh children.
+    monkeypatch.setattr(warm, "freeze_long_lived_heap", freezes.append, raising=False)
+    monkeypatch.setattr(ui_responsiveness, "freeze_long_lived_heap", freezes.append)
+
+    def prime():
+        if manifest_fault:
+            raise ValueError("optional source parse failed")
+
+    monkeypatch.setattr(server, "prime_local_manifest_source", prime)
+    try:
+        warm.preimport_first_send_modules(app)
+        assert sys.modules["_real_first_send_step"].IMPORTED
+        assert "_missing_optional_step" not in sys.modules
+        assert freezes == []
+        assert [event for event in app.events if event[0] == "callback"] == [
+            ("callback", (warm._request_idle_heap_refreeze, (app,)))
+        ]
+    finally:
+        sys.modules.pop("_real_first_send_step", None)
+
+
+@pytest.mark.parametrize("state", ["replaced", "detached", "shutdown", "no-runtime"])
+def test_completion_callback_resolves_current_attachment_on_ui_loop(monkeypatch, state):
+    """Queued callbacks never retain the worker's former view."""
+    from types import SimpleNamespace
+    from tldw_chatbook.Chat import console_first_send_modules as warm
+    from tldw_chatbook.UI.Console_Modules import transcript
+
+    old, current = object(), object()
+    runtime = SimpleNamespace(view=old)
+    app = SimpleNamespace(console_runtime=runtime, _shutting_down=False)
+    queued = (warm._request_idle_heap_refreeze, (app,))
+    runtime.view = current if state == "replaced" else None
+    if state == "shutdown":
+        runtime.view = current
+        app._shutting_down = True
+    elif state == "no-runtime":
+        del app.console_runtime
+    requests = []
+    monkeypatch.setattr(
+        transcript, "request_console_heap_refreeze", lambda *args: requests.append(args)
+    )
+    queued[0](*queued[1])
+    assert requests == (
+        [(current, "first_send_preimport")] if state == "replaced" else []
+    )
 
 
 def test_the_warm_up_stops_on_quit_and_swallows_a_failed_import(monkeypatch):
@@ -440,7 +514,10 @@ def test_the_warm_up_parks_before_every_import_and_paces_each_gap(monkeypatch):
     # before every later import and before the manifest parse.
     assert app.pauses == [0.0] + [pytest.approx(0.2)] * len(warm.FIRST_SEND_MODULES)
     assert app.events[:2] == [("pause", 0.0), ("import", warm.FIRST_SEND_MODULES[0])]
-    assert app.events[-2:] == [("prime", None), ("freeze", "first_send_preimport")]
+    assert app.events[-2:] == [
+        ("prime", None),
+        ("callback", (warm._request_idle_heap_refreeze, (app,))),
+    ]
 
 
 def test_the_warm_up_waits_out_recent_input_then_parks_again(monkeypatch):
@@ -544,56 +621,6 @@ def test_quit_stops_the_warm_up_while_it_waits_out_input(monkeypatch):
         ("pause", 0.0),
     ], "the warm-up did not stop waiting when the app quit"
     assert imported == [] and frozen == []
-
-
-def test_each_step_that_loads_modules_freezes_them_before_the_next(monkeypatch):
-    """The warm-up's objects never wait unfrozen for a UI-loop pass (TASK-33620.15.18).
-
-    Live (head 8e9e9c3409, 160x45, idle host), a Library click at a random
-    moment of the warm-up's window ran a generation-2 collection on the UI
-    loop in 9 of 10 launches (median 5.6 ms) against 0 of 10 without the
-    warm-up, and drew Library's first frame a paired median +10.5 ms later,
-    with no import running when the click arrived in 7 of them. The modules
-    already imported sat unfrozen until the warm-up's last step, so the
-    navigation's allocations made a full pass over them due. A boot freeze
-    no longer walks the frozen set (typically under 1 ms), so each step
-    that loads modules now freezes them at once.
-
-    Negative control: a step that loads nothing freezes nothing.
-    """
-    from tldw_chatbook.Chat import console_first_send_modules as warm
-    from tldw_chatbook.MCP import server as mcp_server
-
-    app = _PassApp()
-    monkeypatch.setattr(warm, "seconds_since_user_input", lambda: float("inf"))
-    first, second = warm.FIRST_SEND_MODULES[:2]
-
-    def fake_import(name):
-        app.events.append(("import", name))
-        if name == first:  # loads a module; the second step finds it loaded
-            monkeypatch.setitem(sys.modules, "_m18_fake_first_send_module", object())
-
-    monkeypatch.setattr(warm.importlib, "import_module", fake_import)
-    monkeypatch.setattr(mcp_server, "prime_local_manifest_source", lambda: None)
-    monkeypatch.setattr(
-        warm,
-        "freeze_long_lived_heap",
-        lambda reason: app.events.append(("freeze", reason)),
-        raising=False,
-    )
-
-    warm.preimport_first_send_modules(app)
-
-    freezes = [i for i, event in enumerate(app.events) if event[0] == "freeze"]
-    assert app.events[:4] == [
-        ("pause", 0.0),
-        ("import", first),
-        ("freeze", "first_send_step"),
-        ("pause", app.pauses[1]),
-    ], "the first step's modules stayed unfrozen into the next step"
-    assert app.events[4] == ("import", second)
-    assert len(freezes) == 2, "a step that loaded nothing froze the heap"
-    assert app.events[-1] == ("freeze", "first_send_preimport")
 
 
 def _raise(*_args, **_kwargs):
@@ -767,6 +794,17 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome)
             await ready_console(host, pilot, gateway)
             builtins.__import__ = recording
             try:
+
+                def _start_send():
+                    from tldw_chatbook.Chat import console_voice_input
+
+                    return console_voice_input
+
+                # Exercise this installed recorder's fromlist expansion in a
+                # send frame; the real send need not perform dictation sync.
+                _start_send()
+                assert "tldw_chatbook.Chat.console_voice_input" in seen
+                seen.clear()
                 press(host, "enter", "\r")
                 await until(gateway.validation_started.is_set)
                 gateway.validation_release.set()
@@ -777,9 +815,3 @@ async def test_a_harness_send_imports_nothing_lazy_beyond_the_list(pass_outcome)
     lazy = _not_warmed(seen, ready, covered)
     assert not lazy, f"imported on the UI loop by the send, not warmed: {lazy}"
     assert "tldw_chatbook.Agents.hooks_v2.lifecycle" in seen, "the send never ran hooks"
-    # The composer's ``from ...Chat import console_voice_input`` (its
-    # dictation-state sync) is a fromlist submodule import every harness send
-    # makes; seeing it keeps that path of the guard non-vacuous.
-    assert "tldw_chatbook.Chat.console_voice_input" in seen, (
-        "the guard no longer records `from package import submodule`"
-    )

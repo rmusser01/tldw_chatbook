@@ -16,7 +16,7 @@ The app's post-UI-ready pre-import pass (``TldwCli._preimport_heavy_screens``,
 a daemon thread behind the same on/off switch, off in the census) imports them
 after the speculative screen routes, paced like them, then parses the built-in
 MCP manifest's source once (every send's configuration capture reads that
-manifest) and freezes the heap again (ADR-198). Nothing moves before UI-ready.
+manifest) and requests Console idle heap maintenance (ADR-198). Nothing moves before UI-ready.
 TASK-33620.15.14: run first, the warm-up pushed every screen import back by
 its own time, so a Library click one second after the Console's first frame
 found Library cold in 8 of 8 launches (0 of 8 on origin/dev) and imported
@@ -50,16 +50,12 @@ not name.
 from __future__ import annotations
 
 import importlib
-import sys
 import time
 from typing import Any
 
 from loguru import logger
 
-from tldw_chatbook.Utils.ui_responsiveness import (
-    freeze_long_lived_heap,
-    seconds_since_user_input,
-)
+from tldw_chatbook.Utils.ui_responsiveness import seconds_since_user_input
 
 #: In first-send order. Before acceptance: the acknowledgement, the received
 #: intent and admission. After it, run start: hook preparation, compaction
@@ -74,12 +70,13 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.console_configuration_capture",
     "tldw_chatbook.UI.Console_Modules.turn_admission",
     "tldw_chatbook.MCP.console_snapshot",
-    "tldw_chatbook.Chat.console_received_dispatch",
     "tldw_chatbook.Chat.console_received_turn",
     "tldw_chatbook.Chat.console_send_diagnostics",
     "tldw_chatbook.Chat.console_automatic_submission",
+    "tldw_chatbook.Chat.console_plugin_context",
     "tldw_chatbook.Chat.console_hook_preparation",
     "tldw_chatbook.Agents.run_hooks",
+    "tldw_chatbook.Agents.hook_permissions",
     "tldw_chatbook.Agents.automatic_work_runtime",
     "tldw_chatbook.Chat.console_references",
     "tldw_chatbook.Agents.hooks_v2.lifecycle",
@@ -98,6 +95,7 @@ FIRST_SEND_MODULES: tuple[str, ...] = (
     "tldw_chatbook.Chat.console_predispatch_block",
     "tldw_chatbook.Chat.console_native_commit",
     "tldw_chatbook.Chat.console_continuation_binding",
+    "tldw_chatbook.Chat.console_pre_provider_stop",
     "tldw_chatbook.Chat.console_trace_row_sources",
     "tldw_chatbook.Chat.response_rules.generation",
     "tldw_chatbook.Chat.response_rules.builder",
@@ -189,9 +187,9 @@ def preimport_first_send_modules(app: Any) -> None:
     ``INPUT_QUIET_SECONDS`` and parks again, so a click's navigation finds
     no new step started under it. A module that fails to import is left to fail
     again, identically, where the send imports it (a failed import is never
-    cached). Each step that loaded modules freezes the heap, and so does the
-    end, as the routes' pass did before it (ADR-198: these modules live as
-    long as the app).
+    cached). Completion requests the existing Console idle owner on the UI
+    loop. Imports can overlap foreground work, so their additions use runtime
+    full collection and growth accounting rather than exempt boot freezes.
 
     Args:
         app: The running ``TldwCli``. Its ``_shutting_down`` stops the
@@ -223,7 +221,6 @@ def _warm_first_send(app: Any) -> None:
         if getattr(app, "_shutting_down", False):
             return
         started = time.monotonic()
-        loaded = len(sys.modules)
         try:
             importlib.import_module(name)
         except Exception as exc:  # noqa: BLE001 -- a speculative warm-up
@@ -232,12 +229,6 @@ def _warm_first_send(app: Any) -> None:
                 name,
                 type(exc).__name__,
             )
-        if len(sys.modules) != loaded:
-            # Left unfrozen until the last step, what the steps loaded made a
-            # generation-2 pass due, and a navigation's allocations ran it on
-            # the UI loop (TASK-33620.15.18). A boot freeze is typically under
-            # 1 ms now.
-            freeze_long_lived_heap("first_send_step")
         previous = time.monotonic() - started
     _pause(app, min(previous * ratio, cap))
     if getattr(app, "_shutting_down", False):
@@ -250,4 +241,19 @@ def _warm_first_send(app: Any) -> None:
         logger.debug(
             "First-send manifest warm-up failed (error_type={})", type(exc).__name__
         )
-    freeze_long_lived_heap("first_send_preimport")
+    app.call_from_thread(_request_idle_heap_refreeze, app)
+
+
+def _request_idle_heap_refreeze(app: Any) -> None:
+    """Request existing runtime maintenance for the current UI-loop attachment."""
+    if getattr(app, "_shutting_down", False):
+        return
+    runtime = getattr(app, "console_runtime", None)
+    view = runtime.view if runtime is not None else None
+    if view is None:
+        return
+    from tldw_chatbook.UI.Console_Modules.transcript import (
+        request_console_heap_refreeze,
+    )
+
+    request_console_heap_refreeze(view, "first_send_preimport")

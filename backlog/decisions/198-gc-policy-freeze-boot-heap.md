@@ -57,6 +57,34 @@ TASK-31966 requires an ADR before any global GC policy change.
 5. **Be observable.** The helper logs the freeze count at DEBUG, so a stall
    investigation can see what was frozen and when.
 
+## Amendment (2026-11-01, PR3336 / TASK-33620.15.50): first-send imports use runtime idle maintenance
+
+The coordinator chose the existing idle owner before this repair. First-send
+imports can overlap foreground navigation or early received-turn custody after
+their pre-import park. Their per-step and closing young-collection boot freezes
+can capture live foreground cycles or old-generation garbage and exempt it from
+growth accounting, including before the first baseline measurement. Re-parking
+or a post-import idle snapshot cannot prove those objects are boot-only.
+
+Remove those first-send boot freezes. After source priming completes, queue one
+UI-loop callback that resolves the current attached Console and requests its
+existing idle maintenance. No attached view or shutdown means no request. The
+existing busy predicate also observes navigation admission/FIFO ownership and
+global runtime custody before controller creation. Busy requests may drop;
+painted/settled events provide later opportunities. No new ownership state,
+lock, retry scheduler or debt reset is introduced. Original boot freezes and
+their count-without-permanent-walk optimization remain unchanged. ADR-097 and
+ADR-230 continue to apply.
+
+First-send additions now use runtime full collection, measured growth, input
+quiet times and stranded-debt/CollectorBusy policy. This can restore automatic
+generation-2 work during navigation; the historical +10.5 ms observation is a
+risk signal, not a measurement of repaired source. Native navigation/provider
+latency, memory-byte bounds and continuous-input progress remain unqualified.
+TASK-33620.15.18 AC2, .49 and unmeasured .50 criteria remain open; .51's narrow
+historical acceptance does not transfer. Functional real-GC controls will be
+recorded separately from those performance limits.
+
 ## Measured result
 
 All runs used a scratch profile at 235x52: boot, then a 24-visit tour of 8
