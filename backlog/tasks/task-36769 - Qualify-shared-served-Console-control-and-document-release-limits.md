@@ -17,7 +17,7 @@ documentation:
 - backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
 assignee:
 - '@codex'
-updated_date: 2026-11-02 17:38
+updated_date: 2026-11-02 20:21
 ---
 
 ## Description
@@ -28,8 +28,8 @@ Demonstrate the full phone-to-existing-Console workflow through real served proc
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A real served child with isolated SQLite and a controlled agent/tool sequence keeps the same process, session and run across terminal closure, phone reconnection and terminal reattachment; mouse, multiline paste and resize work afterward.
-- [ ] #2 Cold explicit Create/Open selection and immediate Send, multi-chat and multi-subagent correction, background decisions, command acknowledgement loss, expiry, stale attachment races and projection overflow are verified through production routes with honest outcomes.
+- [x] #1 A real served child with isolated SQLite and a controlled agent/tool sequence keeps the same process, session and run across terminal closure, phone reconnection and terminal reattachment; mouse, multiline paste and resize work afterward.
+- [x] #2 Cold explicit Create/Open selection and immediate Send, multi-chat and multi-subagent correction, background decisions, command acknowledgement loss, expiry, stale attachment races and projection overflow are verified through production routes with honest outcomes.
 - [ ] #3 Migration crash/retry, populated conflicts, cross-config source claims and completed-result quarantine have current targeted evidence; retired mobile engine constructors are absent from the shared path.
 - [x] #4 Authentication, revocation, Canvas-disabled operation, same-origin protections and inert content hold in real browser journeys without granting authority from VPN access.
 - [x] #5 User and architecture documentation describe actual shared behavior, migration/recovery instructions and the native-attachment limit; automated/emulated evidence is distinct from an actual phone/VPN receipt and unavailable checks remain explicitly open.
@@ -150,19 +150,23 @@ Fresh user-requested UAT on8491688b000f2f12aa9fb55ffe183f016983ba5f closed13P1F7
 Fresh UAT evidence complete at8491688b: full targeted14-case run13P1F783.26s; one passive diagnostic1P69.15s; unchanged original-source confirmation1P70.59s. All8655 release bindings restored/current and300 artifact hashes verified by root; original prior packets preserved. The first reattachment mouse assertion failure remains UNCLASSIFIED and the overall fresh UAT is not green; no production repair was justified or made. Follow-ups reached original mouse/paste/Canvas-off/exact4rows with physical child exit0. Keep task In Progress/AC1 open for stability triage; draft PR may be reviewed with this limitation and current-dev integration conflicts explicitly disclosed.
 Mouse continuation R167 verified before dev integration: bounded original-assertion reproduction1F59.83 identifies mixed native grid/layout causing an off-terminal click. Meaningful real-native width-only RED1F1.70, final coherent-layout regression plus actual retention2P72.94, child52551exit0/sameThread/mouse/paste/Canvas-off/provider2/exact4rows. Root independently verified99artifacts/all8655current source bindings. Only2testfiles changed; no production mouse repair/guard change. Task remains In Progress with all AC reopened for current-dev integration and final UAT. Existing source-bound original packets remain intact.
 
-Final current-source qualification (2026-11-02):
+Historical publication qualification (epoch141, 2026-11-02):
 
 Tested source46f0800 on native dev88a completed the original whole15 UAT: 14 passed, one failed in 784.03 seconds, with no skips or retries. Pytest5805 was reaped with exit1; all38,286 tracked hashes and index entries matched. Retention/mouse/paste/resize/Canvas-off, proxy cold Create/Send, full fleet, lost-ACK/security and all four lifecycle cases passed. The direct cold case returned host-bootstrap503 before any ticket/Create command; its original30-second disabled-composer assertion failed. The underlying503reason remains unknown. AC2 stays open, with no second correction wave or synthetic passing total. AC3 also stays open as an aggregate reopened migration criterion; targeted storage receipts remain separate.
 
 Source-bound Canvas and native cancellation/automatic-handle controls qualify AC7/8. Native inventory and living/user/QA documentation qualify AC5/6. Independent scoped review closed FI001/FI002 and R179/R180 through95b48a09. Later R181 received source advice and root actual-code/test review, without fresh independent post-implementation whole-head review. Current-head GitHub review/CI and actual phone/VPN/live-provider checks remain open.
 
 All limits stay unchanged:24 size-pin violations and UI-ready1044/1031 fail; app import683/686 passes with warning. Inherited lint debt remains. Existing ADR244 applies; the publication commit changes documentation only. Task stays In Progress; authorized publication is draftPR3345/base dev/noauto.
+
+Current qualification after R184/R186/R189 (epoch 159): source `91b5ae17` on native dev `88af9f93` passed all 15 original served-browser cases in 727.72s, with unchanged assertions/deadlines/no retry or diagnostic. Both runners reaped with status 0; root gated 38,287 tracked hashes, unchanged index/HEAD, 750 bindings and 1,451 private entries, 8 symlinks and 11 fixtures. Actual reconnect/mouse/paste/coherent resize, both cold single-host POST returning 200+Send, full fleet exact corrections/decisions/thread retirement, lost-ACK/security and all four physical lifecycle cases pass. AC1/2 qualify; aggregate migrationAC3 remains open.
+
+Epoch 155 Ping/Pong RED and epoch 156: 12 passed / 158: 1 passed qualify the startup-before-heartbeat repair with malformed/auth/owner/cancellation/shutdown controls; epoch 157 teardown oracle and all older failures remain separate. R184/R186/R189 focused independent reviews accepted no actionable findings; R181/current-wholehead review limitations remain explicit. Existing ADR244 amendments govern. Publication changes only four metadata files, retaining all 9,742 executable/test/script snapshot hashes. 24 size pins/UI 1044/1031, app 683/686 warning and CI/review/physical-phone/VPN/live providers/real profiles/full suite limitations remain. Task stays In Progress; draft PR #3345/base dev/noauto is authorized.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Source46f0800 is rebased onto dev88a. Final UAT:14 passed, one failed in784.03 seconds. Direct cold host-bootstrap503 before Create remains a functional draft blocker. Mouse, fleet and all four lifecycle cases pass. Unwaived size/UI-ready failures, current-head GitHub review/CI and actual phone/VPN qualification remain open. AC2/3 stay unchecked; status In Progress. DraftPR3345 update is authorized; no merge or auto-merge.
+Source `91b5ae17` is based on dev `88af9f93`. Original full UAT: 15 passed in 727.72s, with native cleanup/source/index verified. Cold startup, reconnect/mouse/paste/resize, fleet/decisions/lost-ACK/security and all four lifecycle cases pass. AC1/2 qualify; AC3 remains open. All 24 size-pin/UI 1044/1031 blockers and CI/review/hardware limitations stay explicit; status In Progress. Publish draft PR #3345/base dev/noauto with unchanged 9,742 executable/test/script hashes; no merge.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
