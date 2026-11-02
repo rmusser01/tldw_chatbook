@@ -4007,38 +4007,58 @@ class ConsoleRuntime:
         session_id: str,
         definitions: tuple,
         authority_check: Callable,
+        *,
+        _native_preparation: Any = None,
+        _native_plugins: Any = None,
+        _configured_signature: tuple | None = None,
         **owner_options: Any,
     ) -> Any:
         """Bind an immutable hook session on the application's running loop.
 
         The admitted H4 session owner supplies definitions and captured current
         authority. Re-entry reuses that snapshot; replacement is explicit close
-        and a new session identity. This does not publish lifecycle events.
+        and a new session identity. Native preparation, result and signature
+        publish together after a memory-only source check inside the lock.
+        This does not publish lifecycle events.
         """
         from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
         from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
 
         self._raise_if_disposed_or_session_fenced(session_id)
+        if _native_preparation is not None:
+            _native_preparation.check(_native_preparation.service)
         loop = asyncio.get_running_loop()
         with self._run_hooks_lock:
+            if _native_preparation is not None:
+                _native_preparation.check_memory(_native_preparation.service)
             if self._disposed:
                 raise RuntimeError("Console runtime is disposed.")
-            if self._hooks_v2_budget_owner is None:
-                self._hooks_v2_budget_owner = HookBudgetOwner()
-            elif self._hooks_v2_budget_owner.loop is not loop:
+            budget = self._hooks_v2_budget_owner
+            if budget is None:
+                budget = HookBudgetOwner()
+            elif budget.loop is not loop:
                 raise RuntimeError("Console hooks belong to the application loop.")
             existing = self._hooks_v2_engines.get(session_id)
             if existing is not None:
                 if existing.definitions != tuple(definitions):
                     raise RuntimeError("Hook session definitions are immutable.")
-                return existing
-            engine = HookEngine(
-                tuple(definitions),
-                authority_check,
-                self._hooks_v2_budget_owner,
-                **owner_options,
-            )
+                engine = existing
+            else:
+                engine = HookEngine(
+                    tuple(definitions),
+                    authority_check,
+                    budget,
+                    **owner_options,
+                )
+            if _native_preparation is not None:
+                _native_preparation.check_memory(_native_preparation.service)
+            if _native_plugins is not None:
+                _native_plugins.engine = engine
+                engine.native_plugins = _native_plugins
+            self._hooks_v2_budget_owner = budget
             self._hooks_v2_engines[session_id] = engine
+            if _configured_signature is not None:
+                self._hooks_v2_configured[session_id] = _configured_signature
             return engine
 
     def _capture_hook_preparation_source(self, session_id, permissions):
@@ -4291,6 +4311,7 @@ class ConsoleRuntime:
                         session_id,
                         engine.definitions,
                         engine.authority_check,
+                        _native_preparation=plugin_request,
                         enabled=engine.enabled,
                         invalid_admissions=engine.invalid_admissions,
                         process_owner=engine.processes.owner,
@@ -4396,6 +4417,9 @@ class ConsoleRuntime:
                     (configured.v2_handlers if configured.enabled else ())
                     + (native.definitions if native is not None else ()),
                     authority,
+                    _native_preparation=plugin_request,
+                    _native_plugins=native,
+                    _configured_signature=signature,
                     process_owner=native,
                     process_owner_for=native.process_owner if native is not None else None,
                     host_environment=native.host_environment
@@ -4418,10 +4442,6 @@ class ConsoleRuntime:
                     if created is None:
                         created = self._plugin_test_created_engines = {}
                     created[asyncio.current_task()] = engine
-                if native is not None:
-                    native.engine = engine
-                    engine.native_plugins = native
-                self._hooks_v2_configured[session_id] = signature
         lifecycle = self._hooks_v2_lifecycles.get(session_id)
         if lifecycle is None:
 

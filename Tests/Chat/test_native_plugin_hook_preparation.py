@@ -565,15 +565,10 @@ async def test_blocked_installed_components_alone_create_no_preparation_effect(
     assert rig.runtime._worktree_activity is None
 
 
-@pytest.mark.parametrize("outcome", ["install", "revoke", "cancel"])
-async def test_actual_engine_install_keeps_preparation_through_host_context_read(
-    preparation, native_package, monkeypatch, outcome
-):
+async def install_stop_hook(rig, native_package):
     import json
     import sys
 
-    rig = preparation
-    rig.release.set()
     member = "io.github.rmusser01.chatbook/hooks.json"
     package = native_package(extension={"version": 1, "hooks": member})
     (package / member).parent.mkdir(parents=True, exist_ok=True)
@@ -603,6 +598,16 @@ async def test_actual_engine_install_keeps_preparation_through_host_context_read
         install.installation_id, workspace_id="workspace-a", intent="enabled"
     )
     await rig.service.commit(enable, enable.operation_id)
+    return install
+
+
+@pytest.mark.parametrize("outcome", ["install", "revoke", "cancel"])
+async def test_actual_engine_install_keeps_preparation_through_host_context_read(
+    preparation, native_package, monkeypatch, outcome
+):
+    rig = preparation
+    rig.release.set()
+    install = await install_stop_hook(rig, native_package)
     entered, release = threading.Event(), threading.Event()
     original_key = rig.runtime._hooks_v2_context_key
     original_install = rig.runtime.ensure_hooks_v2
@@ -661,3 +666,116 @@ async def test_actual_engine_install_keeps_preparation_through_host_context_read
     assert installed == [lifecycle.engine]
     assert installed[0].native_plugins.service is rig.service
     assert not opaque_busy(rig.runtime)
+
+
+@pytest.mark.parametrize("changed", ["capacity", "activity", "session", "revision"])
+async def test_source_change_during_actual_engine_publication_lock_wait(
+    preparation, native_package, monkeypatch, changed
+):
+    import inspect
+    import sys
+    import time
+
+    from tldw_chatbook.Chat.console_plugin_hook_preparation import _Preparation
+
+    rig = preparation
+    rig.release.set()
+    install = await install_stop_hook(rig, native_package)
+    rig.controller._hooks_v2_submissions = {}
+    original = rig.runtime.ensure_hooks_v2
+    lines, first = inspect.getsourcelines(original)
+    lock_line = first + next(
+        index
+        for index, line in enumerate(lines)
+        if "with self._run_hooks_lock:" in line
+    )
+    host_thread = threading.get_ident()
+    armed, held = threading.Event(), threading.Event()
+    observation = {}
+    capacity = rig.runtime.execution_capacity
+    activity = rig.runtime.worktree_activity
+    workspace = rig.session.workspace_id
+    revision = rig.service._published_revisions[install.installation_id]
+    engines = dict(rig.runtime._hooks_v2_engines)
+    configured = dict(rig.runtime._hooks_v2_configured)
+    lifecycles = dict(rig.runtime._hooks_v2_lifecycles)
+    budget = rig.runtime._hooks_v2_budget_owner
+    check = _Preparation.check
+
+    def external_check(request, service):
+        assert not rig.runtime._run_hooks_lock._is_owned(), (
+            "external source validation ran under publication lock"
+        )
+        return check(request, service)
+
+    monkeypatch.setattr(_Preparation, "check", external_check)
+
+    def contender():
+        try:
+            assert armed.wait(10)
+            with rig.runtime._run_hooks_lock:
+                held.set()
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    frame = sys._current_frames()[host_thread]
+                    if (
+                        frame.f_code.co_name == "ensure_hooks_v2"
+                        and frame.f_lineno == lock_line
+                    ):
+                        observation["actual_lock_wait"] = lock_line
+                        observation["tool_workers"] = capacity.snapshot().tool_workers
+                        if changed == "capacity":
+                            rig.runtime._execution_capacity = RuntimeCapacity()
+                        elif changed == "activity":
+                            rig.runtime._worktree_activity = WorktreeActivity()
+                        elif changed == "session":
+                            rig.session.workspace_id = "replaced"
+                        else:
+                            rig.service._published_revisions[
+                                install.installation_id
+                            ] = "replaced"
+                        return
+                    time.sleep(0.001)
+                raise AssertionError(
+                    "actual engine publication lock wait not witnessed"
+                )
+        except BaseException as error:  # noqa: BLE001 - relay contender failure.
+            observation["error"] = error
+            held.set()
+
+    thread = threading.Thread(target=contender, daemon=True)
+    thread.start()
+
+    def contested_install(*args, **kwargs):
+        armed.set()
+        assert held.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(rig.runtime, "ensure_hooks_v2", contested_install)
+    try:
+        with pytest.raises((RuntimeError, PermissionError)):
+            await rig.runtime.prepare_hooks_v2(
+                rig.session.id, configuration=configuration_for(rig)
+            )
+        thread.join(5)
+        assert not thread.is_alive()
+        assert "error" not in observation, observation
+        assert observation["actual_lock_wait"] == lock_line
+        assert observation["tool_workers"] == 1
+        assert rig.runtime._hooks_v2_engines == engines, "stale engine published"
+        assert rig.runtime._hooks_v2_configured == configured, (
+            "stale signature published"
+        )
+        assert rig.runtime._hooks_v2_lifecycles == lifecycles
+        assert rig.runtime._hooks_v2_budget_owner is budget
+        assert capacity.snapshot().tool_workers == 0
+        assert not rig.runtime._preparation_reads
+        with activity.prelaunch(footprint=WorktreeFootprint(opaque=True)) as claim:
+            assert claim is not None
+    finally:
+        armed.set()
+        thread.join(6)
+        rig.runtime._execution_capacity = capacity
+        rig.runtime._worktree_activity = activity
+        rig.session.workspace_id = workspace
+        rig.service._published_revisions[install.installation_id] = revision
