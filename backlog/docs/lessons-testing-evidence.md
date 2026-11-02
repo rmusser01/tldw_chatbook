@@ -1,5 +1,22 @@
 # Lessons: what counts as evidence a change works
 
+## Observe Hub bytes before assuming a completed blob survives (PR3332, 2026-11-01)
+
+The Windows integration's tiny real Hub download completed correctly, but an
+after-return blob-size assertion failed: Hub0.32.3 moves a new blob into its
+snapshot when symlinks are unavailable. A gated32785-byte loopback body exposed
+another fixture assumption: with4096-byte client chunks, only8192 of the server's
+16384-byte prefix had reached disk. The corrected positive measures actual
+in-flight bytes while the server is gated, excludes an unrelated500000-byte
+artifact, and treats a missing final blob as unknown. Transport proof does not
+qualify native model loading. This installed Hub also lacks the newer Xet
+constant; package environment preservation is the version-independent boundary.
+
+The same integration caught cleanup escaping the model daemon when native return
+beat Cancel processing. Recording the cleanup thread identity failed directly;
+an explicit nonjoining handoff kept disposal on the retained daemon in both
+orderings. A caller returning is not proof that its native resources were retired.
+
 ## Crop a padded widget's painted outer region (PR3330,2026-11-01)
 
 The PR3330 long-model strip test initially cropped `Static.render_lines()` to

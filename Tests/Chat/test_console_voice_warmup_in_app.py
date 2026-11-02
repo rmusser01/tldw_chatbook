@@ -212,21 +212,65 @@ async def test_a_hub_download_in_the_warm_up_completes_inside_the_app(
     (macOS's spawn start method). The fixture forces spawn, so this fails on
     the pre-fix code on Linux CI as well, where fork is the default.
     """
-    body = json.dumps({"model": "tiny"}).encode()
+    body = json.dumps({"model": "tiny"}).encode() + b" " * 32768
     model_host.files = {"config.json": body}
+    model_host.body_gate = threading.Event()
     transcriber = _HubFetchingTranscriber()
     microphone = _Microphone(transcriber)
     controller, events = _controller(monkeypatch, "faster-whisper", microphone)
+    from huggingface_hub import constants
+    from tldw_chatbook.Utils.model_download_guard import HubDownloadProgress
+
+    # This host controls the selected ETag and transport. Real native adapters
+    # do not provide that attribution and cannot use this test-only seam.
+    target = (
+        Path(constants.HF_HUB_CACHE)
+        / "models--tldw-test--speech-model"
+        / "blobs"
+        / f"config.json-{len(body)}.incomplete"
+    )
+    progress = HubDownloadProgress(artifacts=(target,))
+    monkeypatch.setattr(cvi, "download_progress_probe", lambda: progress)
+    monkeypatch.setattr(constants, "DOWNLOAD_CHUNK_SIZE", 4096)
+    monkeypatch.setattr(controller, "WARMUP_PROGRESS_POLL_SECONDS", 0.02)
+    unrelated = (
+        Path(constants.HF_HUB_CACHE) / "models--other--repo/blobs/other.incomplete"
+    )
+    unrelated.parent.mkdir(parents=True)
+    unrelated.write_bytes(b"x" * 500_000)
 
     async with _Host().run_test():
         assert sys.stderr.fileno() == -1, "Textual's stderr capture is not active"
-        await _attempt(controller)
-        assert transcriber.error is None, (
-            f"the in-app download failed: {transcriber.error!r}"
-        )
+        attempt = asyncio.create_task(_attempt(controller))
+        try:
+            deadline = time.monotonic() + 5
+            while not any(
+                isinstance(e, cvi.VoiceModelPreparing) and "Downloading" in e.message
+                for e in events
+            ):
+                assert (
+                    time.monotonic() < deadline
+                ), "the exact in-flight artifact was never observed"
+                await asyncio.sleep(0.02)
+            observed = progress.downloaded_bytes()
+            assert (
+                0 < observed <= 16384
+            )  # client buffering need not flush the whole prefix
+            assert progress.active
+        finally:
+            model_host.body_gate.set()
+        await attempt
+        assert (
+            transcriber.error is None
+        ), f"the in-app download failed: {transcriber.error!r}"
         assert transcriber.downloaded is not None
         assert transcriber.downloaded.read_bytes() == body
         assert [e for e in events if isinstance(e, cvi.VoiceFailed)] == []
         assert controller.state == cvi.STATE_LISTENING
         assert microphone.start_calls == 1
+        # Windows Hub may move the final blob into its snapshot when symlinks
+        # are unavailable. Only bytes actually observed earn credit.
+        assert observed <= progress.downloaded_bytes() <= len(body)
+        assert progress.active is False
         assert _tqdm_lock_is_free()
+        controller.abandon()

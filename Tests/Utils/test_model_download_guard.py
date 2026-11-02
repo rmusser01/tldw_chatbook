@@ -178,7 +178,9 @@ def test_progress_counts_in_flight_and_new_blobs_but_not_the_existing_cache(
     blobs = tmp_path / "models--org--speech" / "blobs"
     _write(blobs / "cached-before", 9_000_000, mtime=started - 3600)
     _write(blobs / "abc.incomplete", 0)
-    progress = guard.HubDownloadProgress(root=tmp_path, started_at=started)
+    # Only this exact artifact belongs to the attempt. Repository membership
+    # alone is insufficient, including for another blob in the same repo.
+    progress = guard.HubDownloadProgress(artifacts=(blobs / "abc.incomplete",))
 
     assert progress.downloaded_bytes() == 0
 
@@ -188,12 +190,46 @@ def test_progress_counts_in_flight_and_new_blobs_but_not_the_existing_cache(
     # The finished file is renamed to its blob; it keeps counting.
     (blobs / "abc.incomplete").rename(blobs / "abc")
     _write(tmp_path / "models--org--other" / "blobs" / "def.incomplete", 500_000)
-    assert progress.downloaded_bytes() == 3_000_000
+    assert progress.downloaded_bytes() == 2_500_000
+
+
+def test_target_deltas_survive_unrelated_truncation(tmp_path):
+    target = tmp_path / "models--org--speech/blobs/abc.incomplete"
+    other = tmp_path / "models--org--other/blobs/def.incomplete"
+    _write(target, 0)
+    _write(other, 1000)
+    progress = guard.HubDownloadProgress(artifacts=(target,))
+    assert progress.downloaded_bytes() == 0
+    _write(target, 20)
+    _write(other, 0)
+    assert progress.downloaded_bytes() == 20
+    other.unlink()
+    _write(target, 35)
+    assert progress.downloaded_bytes() == 35
+    _write(target, 5)
+    assert progress.downloaded_bytes() == 35
+    _write(target, 15)
+    assert progress.downloaded_bytes() == 45
+
+
+def test_temporarily_unreadable_artifact_does_not_earn_bytes_twice(tmp_path):
+    target = tmp_path / "target.incomplete"
+    target.write_bytes(b"")
+    progress = guard.HubDownloadProgress(artifacts=(target,))
+    target.write_bytes(b"once")
+    assert progress.downloaded_bytes() == 4
+    hidden = target.rename(tmp_path / "temporarily-unavailable")
+    assert progress.downloaded_bytes() == 4
+    assert not progress.active
+    hidden.rename(target.with_suffix(""))
+    assert progress.downloaded_bytes() == 4
 
 
 def test_progress_without_a_cache_reports_nothing(tmp_path: Path):
-    assert guard.HubDownloadProgress(root=None).downloaded_bytes() == 0
-    missing = guard.HubDownloadProgress(root=tmp_path / "not-created-yet")
+    assert guard.HubDownloadProgress().downloaded_bytes() == 0
+    missing = guard.HubDownloadProgress(
+        artifacts=(tmp_path / "not-created-yet.incomplete",)
+    )
     assert missing.downloaded_bytes() == 0
 
 
@@ -212,26 +248,18 @@ def test_download_size_reads_like_a_download(num_bytes: int, shown: str):
 
 
 _XET_PROBE = (
-    "import tldw_chatbook, huggingface_hub.constants as c; print(c.HF_HUB_DISABLE_XET)"
+    "import os, tldw_chatbook, huggingface_hub; "
+    "print(os.environ.get('HF_HUB_DISABLE_XET', '<unset>'))"
 )
 
 
 @pytest.mark.parametrize(
     ("configured", "disabled"),
-    [(None, "True"), ("0", "False")],
-    ids=["default", "user-opted-in"],
+    [(None, "<unset>"), ("0", "0"), ("1", "1")],
+    ids=["default", "user-opted-in", "user-opted-out"],
 )
-def test_hub_downloads_stream_to_disk_unless_the_user_opts_into_xet(
-    configured, disabled
-):
-    """In-app model downloads write progressively, so progress can be shown.
-
-    Live, TASK-33621.21: with hf_xet the 2.4 GB parakeet download kept its
-    cache file at 0 bytes while the app's memory grew from 1.1 to 1.7 GB in
-    70 s, so no progress could be measured and a cancel lost everything. The
-    hub's plain HTTP path streams into ``.incomplete`` and resumes. A user who
-    sets ``HF_HUB_DISABLE_XET`` keeps their choice.
-    """
+def test_package_preserves_the_users_hub_transport_choice(configured, disabled):
+    """Importing the app must not change transport for unrelated Hub clients."""
     import subprocess
 
     pytest.importorskip("huggingface_hub")

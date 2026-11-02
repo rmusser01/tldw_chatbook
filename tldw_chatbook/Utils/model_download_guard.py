@@ -20,18 +20,15 @@ This module holds the two pieces the Console needs around a model download:
 * `allow_tqdm_without_stderr_descriptor` gives tqdm the thread-only lock it
   already falls back to when a multiprocessing lock cannot be built, before
   anything downloads. Nothing in a TUI shares progress bars across processes.
-* `HubDownloadProgress` measures how many bytes have landed in the Hugging Face
-  cache since a load began, so the Console can show a download that is really
-  running and tell a stalled one apart from a slow one.
+* `HubDownloadProgress` counts only explicitly attributed HTTP artifacts.
+  Current legacy speech adapters cannot supply that attribution and stay opaque.
 
 Stdlib-only at import; tqdm and huggingface_hub are imported inside the calls.
 """
 
 from __future__ import annotations
 
-import os
 import threading
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -121,73 +118,53 @@ def format_download_size(num_bytes: int) -> str:
     return f"{max(num_bytes, 0) // 1000} KB"
 
 
-def _default_hub_cache() -> Path | None:
-    """Return the Hugging Face hub cache directory, or None when unknown."""
-    try:
-        from huggingface_hub import constants
-    except Exception:  # noqa: BLE001 - no hub, no measurable progress
-        return None
-    cache = getattr(constants, "HF_HUB_CACHE", None)
-    return Path(cache) if cache else None
-
-
 @dataclass
 class HubDownloadProgress:
-    """Bytes that have reached the Hugging Face cache since a load began.
+    """Observe explicitly owned plain-HTTP Hub artifacts, never a cache scan.
 
-    Counts every in-flight ``blobs/*.incomplete`` file plus every blob written
-    since `started_at`, across all repositories in the cache. A download that
-    is running makes the total grow; a stalled one (the original defect left a
-    0-byte ``.incomplete``) does not. Blobs that were already cached before
-    the load began are not counted.
+    The caller must supply the exact ``.incomplete`` paths belonging to its
+    download and establish plain-HTTP transport. A repo id, mtime, Xet cache,
+    or start-only provider callback does not establish that contract. Current
+    Console legacy adapters cannot supply it and therefore use no observer.
+    The loopback transport control exercises this seam with known ETags.
 
-    Attributes:
-        root: The hub cache directory; None when it cannot be determined, in
-            which case no progress is ever reported.
-        started_at: Wall-clock time the load began (blob mtimes are wall-clock).
+    Positive deltas are accumulated per artifact. Completion renames retain
+    the same identity; truncation/deletion of any other file cannot erase
+    activity. ``active`` is true only while an owned incomplete file exists.
+    Absence or an unreadable artifact is unknown/loading, never a stall.
     """
 
-    root: Path | None
-    started_at: float = field(default_factory=time.time)
+    artifacts: tuple[Path, ...] = ()
+    active: bool = field(default=False, init=False)
+    _sizes: dict[Path, int] = field(default_factory=dict, init=False)
+    _total: int = field(default=0, init=False)
 
-    @classmethod
-    def for_default_cache(cls) -> "HubDownloadProgress":
-        """Measure the cache `huggingface_hub` downloads into by default."""
-        return cls(root=_default_hub_cache())
+    def __post_init__(self) -> None:
+        self.artifacts = tuple(dict.fromkeys(self.artifacts))
+        if any(not p.name.endswith(".incomplete") for p in self.artifacts):
+            raise ValueError("exact incomplete artifact paths required")
+        for path in self.artifacts:
+            size, _ = self._artifact_size(path)
+            self._sizes[path] = size or 0
 
     def downloaded_bytes(self) -> int:
-        """Return the bytes downloaded so far. Never raises.
+        """Return cumulative positive byte deltas and refresh active status."""
+        self.active = False
+        for path in self.artifacts:
+            size, active = self._artifact_size(path)
+            self.active |= active
+            if size is None:
+                continue  # Unknown is not truncation; retain rename credit.
+            self._total += max(0, size - self._sizes[path])
+            self._sizes[path] = size
+        return self._total
 
-        Returns:
-            The total size of in-flight and newly written blobs, 0 when the
-            cache does not exist yet or cannot be read.
-        """
-        if self.root is None:
-            return 0
-        total = 0
-        try:
-            repos = os.scandir(self.root)
-        except OSError:
-            return 0
-        with repos:
-            for repo in repos:
-                total += self._repo_bytes(Path(repo.path) / "blobs")
-        return total
-
-    def _repo_bytes(self, blobs: Path) -> int:
-        try:
-            entries = os.scandir(blobs)
-        except OSError:
-            return 0
-        total = 0
-        with entries:
-            for entry in entries:
-                try:
-                    stat = entry.stat()
-                except OSError:
-                    continue
-                if entry.name.endswith(".incomplete") or (
-                    stat.st_mtime >= self.started_at
-                ):
-                    total += stat.st_size
-        return total
+    @staticmethod
+    def _artifact_size(path: Path) -> tuple[int | None, bool]:
+        for candidate, active in ((path, True), (path.with_suffix(""), False)):
+            try:
+                if not candidate.is_symlink():
+                    return candidate.stat().st_size, active
+            except OSError:
+                pass
+        return None, False

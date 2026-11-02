@@ -511,6 +511,9 @@ class ConsoleStreamingDictationSession:
     @property
     def maintenance_ready(self) -> bool:
         """Retain installed processors even after the voice owner releases them."""
+        controller = self._controller_impl
+        if controller is not None and not controller.maintenance_ready:
+            return False
         with self._lock:
             self._maintenance_services = [
                 service
@@ -2247,6 +2250,7 @@ class ConsoleDictationController:
                 )
             return
         session = self._console_dictation_session
+        preparing = self._console_dictation_state == "starting"
         self._cancel_console_dictation_timer()
         self._cancel_console_dictation_elapsed_timer()
         self._console_dictation_session = None
@@ -2263,7 +2267,12 @@ class ConsoleDictationController:
             )
         if not announce:
             return
-        self.app_instance.notify("Dictation cancelled.", severity="information")
+        message = "Dictation cancelled."
+        if preparing:
+            message += (
+                " Model preparation may continue in the background. Quit to stop it."
+            )
+        self.app_instance.notify(message, severity="information", markup=False)
         if session is None:
             # Nothing to release, so nothing to wait for.
             self._speak_status("Discarded.")

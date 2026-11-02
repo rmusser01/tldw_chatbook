@@ -190,26 +190,28 @@ is never sent automatically, so you can edit before pressing Enter.
 
 - **First run:** "Preparing the speech model for the first time. The first
   run downloads it and can take several minutes. Nothing is being recorded
-  yet — the microphone opens once the model is ready." While the download
-  runs, the chip counts it: "◐ Downloading speech model… 412 MB". The
-  download streams into the Hugging Face cache, so one interrupted by
-  quitting resumes on the next press (set `HF_HUB_DISABLE_XET=0` to use
-  hf_xet instead; it shows no progress). **Cancel** stops the attempt, not
-  the download: it keeps running in the background until it finishes or you
-  quit, and a later press uses what it fetched.
+  yet — the microphone opens once the model is ready." Current adapters
+  show **Loading speech model…**: they do not expose an exact download
+  artifact or a native-load heartbeat. **Cancel** ends the recording attempt
+  promptly; preparation continues in the background until it finishes or you
+  quit. Another press cannot start a second preparation while that work or its
+  cleanup is still running, even after leaving and returning to Console.
+  Completed disk-cache bytes remain available to the provider on a later try;
+  resumability depends on that provider and transport. If cleanup fails, quit
+  and restart before trying again.
 - **Model download or load fails:** the attempt ends with one message —
   "Dictation failed: The 'parakeet-mlx' speech model could not be downloaded
   or loaded. Nothing was recorded. Check your network connection and try
   again, or choose another model in Settings ▸ Speech & TTS. The log has the
   details." The microphone never opens, the chip clears and the button reads
   **Dictate** again; pressing it is the retry.
-- **No download progress for 2 minutes:** the attempt ends the same way
-  ("…showed no download progress for 120 seconds."), and the message names
-  `dictation.model_prepare_stall_seconds`. Only bytes landing in the Hugging
-  Face cache count as progress, so a provider that downloads elsewhere
-  (lightning-whisper-mlx), or a model that takes longer than that to load
-  once downloaded, can end here while still working; raise the setting in
-  config.toml for it.
+- **Download inactivity:** `dictation.model_prepare_stall_seconds` defaults
+  to 120 seconds, but applies only when an adapter identifies an exact active
+  download artifact. Current legacy speech adapters do not supply this, so
+  they have no automatic inactivity bound. Quiet cache files cannot establish
+  that a native load is stuck. Use **Cancel** to leave Loading; quitting ends
+  remaining background work. Byte progress is not qualified for Xet,
+  Lightning Whisper, NeMo or opaque post-download loading.
 - **Length cap:** a capture stops itself at 60 seconds — "Dictation limit
   reached; transcribing the captured audio."
 - **Requires optional extras.** Without a microphone backend: "Microphone

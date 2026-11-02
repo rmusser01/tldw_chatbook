@@ -182,9 +182,11 @@ each fully-silent reply says so.
   loaded."** — nothing was recorded and Hands-free turns Off. Check the
   network and turn Hands-free on (or press **Dictate**) to try again, or
   choose another model in Settings ▸ Speech & TTS; the app log names the
-  underlying error. "…showed no download progress for 120 seconds" means the
-  load went two minutes without a byte landing in the Hugging Face cache;
-  raise `dictation.model_prepare_stall_seconds` if your model needs longer.
+  underlying error. Current speech adapters have no exact download observer,
+  so quiet native loading is not reported as a stalled download. **Cancel**
+  leaves the attempt while background preparation finishes. Retry waits for
+  that physical work and cleanup; a cleanup failure requires quitting and
+  restarting. No automatic timeout is promised for opaque native loading.
 - **Turns send too early / too late** — adjust **Send delay** in Settings
   (or `dictation.handsfree_send_delay_seconds`).
 

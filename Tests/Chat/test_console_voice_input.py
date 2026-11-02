@@ -2102,6 +2102,7 @@ class _ScriptedProgress:
     """Stands in for the Hugging Face cache probe, returning queued byte counts."""
 
     def __init__(self, values, then=None):
+        self.active = True
         self._values = list(values)
         self._then = then
         self.reads = 0
@@ -2129,6 +2130,236 @@ def _threaded_controller(monkeypatch, service, *, stall_seconds, progress):
         service=service,
         spawn=lambda thunk: threading.Thread(target=thunk, daemon=True).start(),
     )
+
+
+@pytest.mark.bootstrap_profile
+def test_opaque_loading_is_not_a_download_stall(monkeypatch):
+    gate, entered = threading.Event(), threading.Event()
+    service = _WarmableService(transcriber=_Transcriber(gate=gate, entered=entered))
+    progress = _ScriptedProgress([0])
+    progress.active = False
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=0.05, progress=progress
+    )
+    try:
+        controller.start()
+        assert entered.wait(5)
+        time.sleep(0.2)
+        assert controller.state == cvi.STATE_PREPARING
+        assert not any(isinstance(e, cvi.VoiceFailed) for e in events)
+    finally:
+        controller.abandon()
+        gate.set()
+        time.sleep(0.1)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("late_error", [None, RuntimeError("late private failure")])
+@pytest.mark.parametrize("ending", ["cancel", "timeout"])
+def test_cancel_retains_physical_work_across_controller_replacement(
+    monkeypatch, late_error, ending
+):
+    gate, entered = threading.Event(), threading.Event()
+    first = _WarmableService(
+        transcriber=_Transcriber(gate=gate, entered=entered, error=late_error)
+    )
+    controller, events, _ = _threaded_controller(
+        monkeypatch,
+        first,
+        stall_seconds=0.1,
+        progress=_ScriptedProgress([0]) if ending == "timeout" else None,
+    )
+    second = _WarmableService()
+    try:
+        controller.start()
+        assert entered.wait(5)
+        if ending == "cancel":
+            controller.abandon()
+        else:
+            assert _wait_for_state(controller, cvi.STATE_IDLE, 3) == cvi.STATE_IDLE
+        assert not controller.maintenance_ready
+        replacement, newer_events, _ = _controller(monkeypatch, service=second)
+        replacement.start()
+        assert (
+            second._transcriber.buffer_calls == []
+        ), "retry overlapped retained native work"
+        assert second.started is False
+        assert "still finishing" in _failure_text(newer_events)
+        frozen = list(events)
+    finally:
+        gate.set()
+        time.sleep(0.2)
+    assert events == frozen
+    assert first.started is False
+    retry, _, _ = _controller(monkeypatch, service=_WarmableService())
+    retry.start()
+    assert retry.state == cvi.STATE_LISTENING
+    retry.abandon()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_abandoned_cleanup_retains_admission_until_disposal(monkeypatch, cleanup_fails):
+    # A failed cleanup intentionally holds this process's admission until exit;
+    # give this terminal control its own admission owner.
+    monkeypatch.setattr(cvi, "_MODEL_PREPARATION_ADMISSION", threading.Lock())
+    monkeypatch.setattr(cvi, "_ACTIVE_MODEL_PREPARATION", None)
+    gate, entered = threading.Event(), threading.Event()
+    cleaning, dispose, disposed = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    cleanup_threads = []
+
+    class ResourceTranscriber(_Transcriber):
+        def cleanup(self):
+            cleanup_threads.append(threading.current_thread())
+            cleaning.set()
+            assert dispose.wait(5)
+            if cleanup_fails:
+                raise RuntimeError("private cleanup detail")
+            disposed.set()
+
+    service = _WarmableService(
+        transcriber=ResourceTranscriber(gate=gate, entered=entered)
+    )
+    controller, _, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=1, progress=None
+    )
+    try:
+        controller.start()
+        assert entered.wait(5)
+        controller.abandon()
+        gate.set()
+        assert cleaning.wait(5)
+        assert cleanup_threads == [
+            controller._model_preparation.thread
+        ], "cleanup escaped the retained daemon"
+        assert not controller.maintenance_ready
+        replacement_service = _WarmableService()
+        replacement, _, _ = _controller(monkeypatch, service=replacement_service)
+        replacement.start()
+        assert replacement_service._transcriber.buffer_calls == []
+        dispose.set()
+        work = controller._model_preparation
+        work.thread.join(3)
+        assert not work.thread.is_alive()
+        assert controller.maintenance_ready is not cleanup_fails
+        retry_service = _WarmableService()
+        retry, notices, _ = _controller(monkeypatch, service=retry_service)
+        retry.start()
+        if cleanup_fails:
+            assert retry_service._transcriber.buffer_calls == []
+            assert "restart" in _failure_text(notices)
+            assert not disposed.is_set()
+        else:
+            assert disposed.is_set()
+            assert work.released and work.transcriber is None
+            assert retry.state == cvi.STATE_LISTENING
+            retry.abandon()
+    finally:
+        gate.set()
+        dispose.set()
+
+
+@pytest.mark.bootstrap_profile
+def test_completed_artifact_does_not_time_out_native_loading(monkeypatch, tmp_path):
+    from tldw_chatbook.Utils.model_download_guard import HubDownloadProgress
+
+    target = tmp_path / "speech.incomplete"
+    target.write_bytes(b"")
+    progress = HubDownloadProgress(artifacts=(target,))
+    gate, entered = threading.Event(), threading.Event()
+    service = _WarmableService(transcriber=_Transcriber(gate=gate, entered=entered))
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=0.15, progress=progress
+    )
+    try:
+        controller.start()
+        assert entered.wait(5)
+        target.write_bytes(b"downloaded")
+        target.rename(target.with_suffix(""))
+        time.sleep(0.35)
+        assert controller.state == cvi.STATE_PREPARING
+        assert any(
+            isinstance(e, cvi.VoiceModelPreparing) and e.message == cvi.WARMUP_MESSAGE
+            for e in events
+        )
+    finally:
+        controller.abandon()
+        gate.set()
+        assert controller._model_preparation.done.wait(3)
+
+
+@pytest.mark.bootstrap_profile
+def test_cancel_after_native_return_retires_without_waiting_for_handoff(monkeypatch):
+    returned, handoff = threading.Event(), threading.Event()
+    original = cvi.ConsoleVoiceInputController._run_warmup_off_the_executor
+    cleanup, releases = [], []
+
+    class ResourceTranscriber(_Transcriber):
+        def cleanup(self):
+            cleanup.append(threading.current_thread())
+
+    def delayed_result(self, *args):
+        result = original(self, *args)
+        returned.set()
+        assert handoff.wait(5)
+        return result
+
+    monkeypatch.setattr(
+        cvi.ConsoleVoiceInputController, "_run_warmup_off_the_executor", delayed_result
+    )
+    service = _WarmableService(transcriber=ResourceTranscriber())
+    service.abandon = lambda: releases.append("released")
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=1, progress=None
+    )
+    try:
+        controller.start()
+        assert returned.wait(5)
+        work = controller._model_preparation
+        controller.abandon()
+        frozen = list(events)
+        assert work.done.wait(3), "Cancel left the daemon waiting for the caller"
+        assert cleanup == [work.thread]
+        assert releases == ["released"]
+        handoff.set()
+        time.sleep(0.1)
+        assert service.started is False
+        assert events == frozen
+        assert releases == ["released"], "late logical return disposed twice"
+    finally:
+        handoff.set()
+
+
+@pytest.mark.bootstrap_profile
+def test_unrelated_download_cannot_keep_an_owned_artifact_alive(monkeypatch, tmp_path):
+    from tldw_chatbook.Utils.model_download_guard import HubDownloadProgress
+
+    target, other = tmp_path / "target.incomplete", tmp_path / "other.incomplete"
+    target.write_bytes(b"")
+    progress = HubDownloadProgress(artifacts=(target,))
+    gate, entered = threading.Event(), threading.Event()
+    service = _WarmableService(transcriber=_Transcriber(gate=gate, entered=entered))
+    controller, events, _ = _threaded_controller(
+        monkeypatch, service, stall_seconds=0.15, progress=progress
+    )
+    try:
+        controller.start()
+        assert entered.wait(5)
+        for count in range(30):
+            other.write_bytes(b"x" * (count + 1))
+            if controller.state == cvi.STATE_IDLE:
+                break
+            time.sleep(0.02)
+        assert controller.state == cvi.STATE_IDLE
+        assert "no download progress" in _failure_text(events)
+        assert progress.downloaded_bytes() == 0
+    finally:
+        gate.set()
+        assert controller._model_preparation.done.wait(3)
 
 
 def _wait_for_state(controller, state, timeout):
@@ -2167,7 +2398,7 @@ def test_a_load_that_stops_making_progress_fails_within_the_bound(monkeypatch):
         # download, can reach this too: say what was measured, and name the
         # setting that gives it longer.
         assert "no download progress" in text.lower()
-        assert "dictation.model_prepare_stall_seconds" in text
+        assert "background preparation may still be finishing" in text.lower()
         assert service.started is False
     finally:
         gate.set()

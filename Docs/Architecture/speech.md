@@ -4,6 +4,16 @@ This document describes the speech stack: the TTS service and its lease-based ad
 
 ## Authoritative files
 
+Console legacy preparation follows [ADR-284](../../backlog/decisions/284-console-model-preparation-physical-ownership.md).
+`ConsoleVoiceInputController` retains each daemon's exact service/transcriber
+and completion; one process-local admission lock fences replacement sessions
+and screens. Cancel is logical and nonjoining. Abandoned work calls the existing
+transcriber cleanup after native completion; failure keeps admission closed
+until restart. `ConsoleStreamingDictationSession.maintenance_ready` observes the
+same work record alongside its existing processor retention. Current legacy
+providers expose no exact download artifact, so `download_progress_probe()` is
+unobservable: Loading remains cancellable without a guessed inactivity timeout.
+
 | Concern | File | Key symbols |
 | --- | --- | --- |
 | TTS service | `TTS/TTS_Generation.py` | `TTSService` — async generation coordinator; admission, settings publication, audio.cpp lifecycle; max 4 concurrent operations |

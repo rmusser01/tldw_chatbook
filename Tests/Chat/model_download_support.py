@@ -31,6 +31,7 @@ class _ModelHost(http.server.BaseHTTPRequestHandler):
 
     files: dict[str, bytes] = {}
     requests: list[str] = []
+    body_gate: threading.Event | None = None
 
     def log_message(self, *_args) -> None:
         return
@@ -50,7 +51,13 @@ class _ModelHost(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if include_body:
-            self.wfile.write(body)
+            if type(self).body_gate is not None:
+                self.wfile.write(body[:16384])
+                self.wfile.flush()
+                type(self).body_gate.wait(10)
+                self.wfile.write(body[16384:])
+            else:
+                self.wfile.write(body)
 
     def do_HEAD(self) -> None:  # noqa: N802 - http.server naming
         self._reply(include_body=False)
@@ -72,6 +79,7 @@ def model_host(tmp_path: Path):
 
     _ModelHost.files = {}
     _ModelHost.requests = []
+    _ModelHost.body_gate = None
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _ModelHost)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     endpoint = f"http://127.0.0.1:{server.server_address[1]}"
@@ -85,13 +93,18 @@ def model_host(tmp_path: Path):
         )
         patch.setattr(constants, "HF_HUB_CACHE", str(tmp_path / "hub"))
         # A client another test closed would refuse every request.
-        patch.setattr(hub_http, "_GLOBAL_CLIENT", None)
+        if hasattr(hub_http, "_GLOBAL_CLIENT"):
+            patch.setattr(hub_http, "_GLOBAL_CLIENT", None)
+        else:
+            hub_http.reset_sessions()  # requests-based Hub 0.x
         try:
             yield _ModelHost
         finally:
-            client = hub_http._GLOBAL_CLIENT
+            client = getattr(hub_http, "_GLOBAL_CLIENT", None)
             if client is not None:
                 client.close()
+            elif hasattr(hub_http, "reset_sessions"):
+                hub_http.reset_sessions()
     server.shutdown()
     server.server_close()
 

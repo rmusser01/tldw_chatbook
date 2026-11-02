@@ -337,11 +337,75 @@ def test_the_model_is_warmed_before_capture_starts_at_the_session_boundary(
     assert service.calls == ["start_dictation"]
 
 
+def test_retired_session_keeps_preparation_in_maintenance(monkeypatch):
+    _patch_availability(monkeypatch)
+    gate = threading.Event()
+    service = _WarmableDictationService(transcriber=_Transcriber(gate=gate))
+    session = _session(service)
+    errors = []
+
+    def start():
+        try:
+            session.start()
+        except RuntimeError as error:
+            errors.append(type(error).__name__)
+
+    worker = threading.Thread(target=start, daemon=True)
+    worker.start()
+    try:
+        assert service.transcriber.entered.wait(5)
+        session.discard()
+        worker.join(2)
+        assert not worker.is_alive(), "logical Cancel joined native preparation"
+        assert not session.maintenance_ready
+        newer_service = _WarmableDictationService()
+        with pytest.raises(RuntimeError, match="still finishing"):
+            _session(newer_service).start()
+        assert newer_service.transcriber.buffer_calls == []
+    finally:
+        gate.set()
+        assert session._controller._model_preparation.done.wait(3)
+    assert session.maintenance_ready
+    assert service.calls == []
+    assert errors == ["RuntimeError"]
+
+
 async def _wait_for_painted(chip, pilot, expected: str, timeout: float = 4.0) -> str:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline and expected not in _painted(chip):
         await pilot.pause(0.01)
     return _painted(chip)
+
+
+@pytest.mark.asyncio
+async def test_screen_teardown_retains_preparation_without_joining(monkeypatch):
+    gate = threading.Event()
+    service = _WarmableDictationService(transcriber=_Transcriber(gate=gate))
+    _patch_availability(monkeypatch)
+    sessions = _install_session(monkeypatch, service)
+    _, host = _ready_host()
+    try:
+        async with host.run_test(size=(140, 42)) as pilot:
+            console = await _mounted_console(host, pilot)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            chip = composer.query_one("#console-voice-status", Static)
+            await pilot.click("#console-dictation")
+            await _wait_for_painted(chip, pilot, "speech model")
+            assert service.transcriber.entered.is_set()
+            old = sessions[-1]
+            await console._dictation.teardown()
+            assert not gate.is_set()
+            assert not old.maintenance_ready
+            replacement_service = _WarmableDictationService()
+            with pytest.raises(RuntimeError, match="still finishing"):
+                _session(replacement_service).start()
+            assert replacement_service.transcriber.buffer_calls == []
+            assert service.calls == []
+        assert not old.maintenance_ready, "screen exit joined or forgot native work"
+    finally:
+        gate.set()
+        if sessions:
+            assert sessions[-1]._controller._model_preparation.done.wait(3)
 
 
 @pytest.mark.asyncio
@@ -489,6 +553,11 @@ async def test_cancelling_a_long_first_run_returns_to_idle_without_an_error(
             assert any(
                 "cancel" in str(call.args[0]).lower() for call in notify.call_args_list
             )
+            assert any(
+                "background" in str(call.args[0]).lower()
+                and "quit" in str(call.args[0]).lower()
+                for call in notify.call_args_list
+            ), "Cancel must disclose retained preparation and how to end it"
 
             # Releasing the model load afterwards must not resurrect anything.
             gate.set()
@@ -644,6 +713,7 @@ async def test_a_failure_toast_paints_its_remedy_exactly(monkeypatch):
 
 
 class _GrowingDownload:
+    active = True
     """The Hugging Face cache probe, reporting a download that keeps landing."""
 
     def __init__(self, step: int) -> None:
