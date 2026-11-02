@@ -1393,3 +1393,24 @@ Reason: Documentation-only publication of the existing R168–R181 implementatio
 Tested source `46f0800c` is properly rebased onto native dev `88af9f93`. The complete original 15-case served acceptance ran without `-x`: 14 passed, one failed in 784.03 seconds. The process was reaped with exit status 1; all 38,286 tracked before/after hashes and index entries matched. Root independently checked the report, raw output, 740 manifest bindings, 1,444 private entries and physical receipts. The direct cold failure is localized to host-bootstrap 503 before Create; its underlying cause remains unknown. It remains a functional draft blocker under R182. No retry or second correction/review wave replaces the failed result.
 
 Native dependency, populated rollback/edited SafetyCopy, Canvas and cancellation controls retain separate source-bound receipts. Independent scoped review closes through `95b48a09`; later R181 has source-design advice and root actual-code/test review, not independent post-implementation current-head review. Numeric limits remain unchanged: 24 size-pin violations and UI-ready count 1044/1031 fail; app import 683/686 passes with warning. Tasks stay In Progress. The final documentation-only commit must retain all 9,742 tested executable/test/script hashes. Authorized publication is draft PR #3345 against dev, with auto-merge off. No merge, full sweep, real-profile operation or cleanup. See the [current QA receipt](../qa/2026-10-25-shared-console-mobile-supervision/uat-2026-11-02.md).
+
+
+## User-requested cold bootstrap correction (R183; before implementation)
+
+ADR required: no new ADR for investigation; amend existing ADR244 before any necessary bootstrap contract change
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Correct the existing explicit first-host Create/Send behavior; retain execution admission, exact identity and no-replay rules.
+
+1. Preserve failed141 and capture the actual native pre-sanitization exception/stage in one isolated original cold direct journey, with original assertions, deadlines and guards and exact source/physical receipts.
+2. Trace the observed native failure to its owner, compare existing lifecycle/readiness semantics and write a meaningful deterministic failing regression before the smallest production correction. Root records any service-contract amendment before production edits.
+3. Qualify positive cold admission and negative unavailable/replaced/closed/read-only-discovery paths, then original direct and proxy cold UAT and necessary connected retained/fleet/lifecycle controls. No timeout-only mask, mutation replay, admission bypass or full sweep.
+4. Independently review the scoped correction, update QA/task/PR3345 with actual new evidence while preserving failed141, keep numeric limits unchanged and leave draft/noauto while other blockers remain.
+
+
+### R184 cold-bootstrap repair contract (before production)
+
+ADR required: yes, amend existing ADR244
+ADR path: backlog/decisions/244-shared-console-ownership-and-mobile-supervision.md
+Reason: Explicit first-use startup must allow native child initialization while steady-state discovery/request deadlines remain unchanged.
+
+Native142 proves connection_deadline_exceeded after5.327826 seconds; source shows textual-serve start returns at process spawn while control authentication begins at native App.on_mount. Implement one named fixed20-second wait only for explicit `_owner(start=True)`, retaining ordinary5-second waits and the original30-second UI assertion. Pin and revalidate the actual host/child/broker identity around awaits; successor/disposed/unadmitted owners refuse without effects. No mutation replay, polling, permission/guard/schema/config/dependency or numeric-governance change. Use meaningful delayed native broker/client+App regression RED before production, then positive and exact refusal/lifetime controls, original direct/proxy cold UAT and committed whole15. One scoped independent review and actual PR/QA update follow; no full suite or real profile.
