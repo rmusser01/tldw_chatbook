@@ -2437,3 +2437,6 @@ Tests/UI/test_library_file_notes_workspace.py::test_file_notes_hidden_work_pane_
 # and the Files grip from the narrow editor (3-7 s each). Appended at the tail.
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[offline-back]
 Tests/UI/test_library_file_notes_workspace.py::test_file_notes_narrow_navigator_choice_wins_on_the_library_screen[grip-from-editor]
+
+# Shared mobile integration: real native phone trace Retry/Cancel preservation.
+Tests/UI/test_console_phone_trace_recovery.py

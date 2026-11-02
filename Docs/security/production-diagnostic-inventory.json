@@ -575,8 +575,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 21,
-      "diagnostic_digest": "fc40670918741bd4486d",
+      "call_count": 22,
+      "diagnostic_digest": "dfadbcf8e374bcb9ea92",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -4432,8 +4432,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 36,
-      "diagnostic_digest": "7406222a9babff6f90cb",
+      "call_count": 1,
+      "diagnostic_digest": "c22a8d858003af753d5b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Server/mobile_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4446,8 +4446,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 6,
-      "diagnostic_digest": "1d50037687d77d447205",
+      "call_count": 4,
+      "diagnostic_digest": "6ab202cd11556e761de5",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Server/served_relay_publisher.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -11240,38 +11240,6 @@
         }
       ],
       "path": "tldw_chatbook/Web_Scraping/Article_Scraper/importers.py"
-    },
-    {
-      "candidates": [
-        {
-          "call_digest": "4fac6a95cc27042e",
-          "method": "info",
-          "path_expressions": [
-            "self._data_dir"
-          ],
-          "scope": "MobileChatService._build_engine",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "071f58ddfab5b11e",
-          "method": "info",
-          "path_expressions": [
-            "notes_path"
-          ],
-          "scope": "MobileChatService._ensure_reading_dbs",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "0a06eb12cff6d466",
-          "method": "info",
-          "path_expressions": [
-            "media_path"
-          ],
-          "scope": "MobileChatService._ensure_reading_dbs",
-          "status": "legacy_unreviewed"
-        }
-      ],
-      "path": "tldw_chatbook/Web_Server/mobile_service.py"
     },
     {
       "candidates": [

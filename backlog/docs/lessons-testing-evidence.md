@@ -24872,3 +24872,15 @@ the actual reviewed scope, then retain every strict check on selected members.
 Include unrelated nonempty same-owner siblings in controls. The fresh unobserved
 original rollback94 and actual edited-row/SafetyCopy97 passed after this correction;
 all failed epochs remain retained.
+
+
+### Trace recovery needs one real gateway continuation check
+
+During PR3345 dev integration, the native missing-request tests replaced the
+whole response stream and passed Retry, while the saved-workspace phone case
+(epoch102) rebuilt its request and immediately paused again at the real gateway.
+The controller had passed its pre-reservation failure marker as an owned gateway
+boundary. Epoch109's actual gateway/controlled-adapter continuation passed after
+exact marker consumption; stale/unknown marker controls still refused. Keep a
+real gateway continuation case when testing recovery across that boundary: a
+stream double cannot establish reservation ownership or provider entry.
