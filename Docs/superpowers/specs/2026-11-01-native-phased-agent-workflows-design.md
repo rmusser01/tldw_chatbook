@@ -514,3 +514,30 @@ including Console interaction, failure handling, verification and delivery.
 The user authorized implementation planning after finalizing the written design.
 Planning is separate from execution: no product implementation, schema migration,
 provider execution or full test sweep is represented as complete by this spec.
+# Ordinary source composition qualification (Task8D2)
+
+Before original SessionStart effects, the actual Console submit must capture the
+complete prospective agent storage tuple, including original DB/permission
+sources and selected run-log confinement root. Private custody stays with the
+original issuing submit and actual worker handoffs, never in detached serialized
+configuration or an ID lookup. The real bridge consumes that root; stock writer
+bind validates the exact original descendant without changing the source tuple.
+Custom/replaced writers, root changes and late unrepresented sources refuse.
+Retained MCP context must reach a genuine child model call with unchanged strict
+source and permission checks. This source partition alone does not implement
+before-reference/initializer physical admission, ordinary borrowing, canonical
+child settlement, SSH proof or late-event lifetime; the full ordinary integration
+remains mandatory under ADR285/163.
+
+
+
+Task8D2 A effective project-authority qualification: for the original stock
+capture, hook context identity is workspace, enabled state, the full selected
+binding snapshot and complete options. Keep every binding/root/locator identity,
+write flag and exclusion. Persisted choice/fingerprint and consent-notice
+bookkeeping are redundant with that authority and do not invalidate unchanged
+accepted context when normal first-folder adoption and independently validated
+project consent record them. Custom/unknown readers retain their complete values.
+Changed selection, disable and retarget still revoke; activation storage tuple
+matching remains strict. This is not a new consent grant or ordinary physical
+admission.

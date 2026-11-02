@@ -99,6 +99,27 @@ reader receives that admitted root explicitly. Custom readers retain their
 one-argument contract. No admission result is cached (ADR-126/ADR-230,
 TASK-34406.2).
 
+For an original Console agent submit, `Chat/console_agent_sources.py` observes
+the original bridge, Chat and Workspace databases, MCP permission store and
+authorized log root before SessionStart. Its private submit carrier is captured
+before the existing bridge worker enqueue; workers reacquire storage admission
+in their own task/thread. The stock writer retains that confinement root as its
+source after binding, with a receipt for the exact bound directory identity.
+Changed writers, roots, databases and late permission sources cannot inherit
+the original admission. Native hook admission workers and the MCP dispatch
+coroutine preserve the same tuple through their existing worker guards.
+
+Retained context checks original references without I/O under bookkeeping
+locks; passive permission refresh and real writer operations validate filesystem
+identities outside those locks. Strict event source equality and registration
+checks remain in force. Detailed logging is still optional: disabling it leaves
+the required parent/child rows and accepted context intact. This source repair
+uses the full effective project authority for hook identity: normal validated
+folder adoption and consent bookkeeping do not change the selected binding or
+options. Custom readers retain their complete values. This source repair does
+not supply the earlier ordinary physical execution owner or its borrowers
+(ADR-285/163, Task8D2 partition A).
+
 ## Failure behavior summary
 
 | Case | Behavior |

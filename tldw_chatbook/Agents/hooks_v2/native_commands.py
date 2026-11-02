@@ -102,6 +102,9 @@ class _CommandEvent:
             getattr(self.service, key, None)
             for key in ("_thread", "_loop", "_coordinator", "_admission", "fences")
         )
+        from tldw_chatbook.Chat.console_agent_sources import current_agent_sources
+
+        self.agent_sources = current_agent_sources(self.controller)
         self.sources = _guard.captured_sources(None)
         self.maximum = tuple(h for h in self.definitions if h.event == event.event)
         # Match fields cannot be rewritten by input transformations. Retain every
@@ -197,6 +200,8 @@ class _CommandEvent:
                 plan.permission.check_memory()
 
     def _check_sources(self, event=None):
+        if self.agent_sources is not None:
+            self.agent_sources.check_memory()
         issuer, runtime = self.issuer, self.issuer.runtime
         engine = issuer.engine
         event = event or self.event
@@ -316,6 +321,8 @@ class _CommandEvent:
         self._check_sources()
         if _guard.captured_sources(None) != self.sources:
             raise RuntimeError("Command event activation source changed.")
+        if self.agent_sources is not None:
+            self.agent_sources.check_storage()
         for plan in self.all_plans:
             if plan.permission is not None:
                 plan.permission.refresh()

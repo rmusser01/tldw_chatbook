@@ -1184,6 +1184,17 @@ def capture_project_instruction_authority(
     )
 
 
+# Hook identity projects only this original effective-authority capture.
+_HOOK_PROJECT_AUTHORITY_ORIGINAL = (
+    ConsoleProjectAuthoritySnapshot,
+    capture_project_instruction_authority,
+    capture_project_instruction_authority.__code__,
+    capture_project_instruction_authority.__defaults__,
+    capture_project_instruction_authority.__kwdefaults__,
+    capture_project_instruction_authority.__closure__,
+)
+
+
 def capture_mcp_tool_maximum(app: Any) -> frozenset[str]:
     """Capture exact eligible MCP raw identities before turn acceptance."""
     return frozenset(capture_mcp_definition_maximum(app))
@@ -6090,6 +6101,16 @@ class ConsoleChatController:
         from tldw_chatbook.Agents.activation import worker_guard
 
         owned_call = functools.partial(self._run_owned_chat_db_operation, function)
+        from .console_agent_sources import current_agent_sources
+
+        sources = current_agent_sources(self)
+        if sources is not None:
+            original_call = owned_call
+
+            def owned_call(**kwargs):
+                with sources.activate():
+                    return original_call(**kwargs)
+
         worker = worker_guard(self._agent_bridge)(owned_call)
         task = self._retain_maintenance_task(asyncio.to_thread(worker, **kwargs))
         return await asyncio.shield(task)
@@ -9571,8 +9592,10 @@ class ConsoleChatController:
         from .console_automatic_submission import submission_scope
 
         scope = submission_scope(self, origin, session_id)
+        from .console_agent_sources import issuing_agent_sources
+
         try:
-            with scope:
+            with scope, issuing_agent_sources(self):
                 result = await self._submit_draft_body(
                     draft,
                     session_id=session_id,
@@ -10086,6 +10109,9 @@ class ConsoleChatController:
             return self._block(
                 session.id, turn_selection.workspace_context.recovery_copy
             )
+        from .console_agent_sources import prepare_agent_sources
+
+        await prepare_agent_sources(self, session, configuration)
         hook_refusal = await self._prepare_submission_hooks(
             session, configuration, origin, queue_authorization,
             chat_start_authorization=chat_start_authorization,

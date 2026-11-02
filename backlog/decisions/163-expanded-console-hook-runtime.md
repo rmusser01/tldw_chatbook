@@ -873,3 +873,27 @@ and the positively observed token. No new permission store/ledger or passive-mod
 flag. Cost is bounded original-policy reads per passive preparation and
 conservative refusal during concurrent mutation. ADR required: no new ADR;
 existing ADR-285/163 source-revocation qualification governs this correction.
+
+Task8D2 source-composition qualification: before original SessionStart effects,
+the actual Console submit captures the complete prospective agent storage tuple,
+including its original DB/permission sources and run-log confinement root. The
+real bridge and child workers reacquire that same selection. A recognized stock
+writer's later bind validates its exact original descendant without introducing
+a new source; replaced writers/roots and unrepresented late sources refuse.
+Live dispatch and settled passive-context checks retain exact tuple equality,
+original registration rules and fresh permission provenance. No guard reset,
+subset fallback or spent owner activation is introduced. The required positive
+is accepted MCP context in the actual child model input, not child-row creation.
+Broader ordinary physical ownership remains a separate mandatory integration.
+
+
+Task8D2 A effective project-authority qualification: for the original stock
+capture, hook context identity is workspace, enabled state, the full selected
+binding snapshot and complete options. Keep every binding/root/locator identity,
+write flag and exclusion. Persisted choice/fingerprint and consent-notice
+bookkeeping are redundant with that authority and do not invalidate unchanged
+accepted context when normal first-folder adoption and independently validated
+project consent record them. Custom/unknown readers retain their complete values.
+Changed selection, disable and retarget still revoke; activation storage tuple
+matching remains strict. This is not a new consent grant or ordinary physical
+admission.

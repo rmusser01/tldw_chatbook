@@ -323,6 +323,20 @@ def test_model_done_is_not_a_passed_check():
 <a id="task-8"></a>
 ## Task 8: Native phase scheduling and runtime-wide admission
 
+Complete internal partition A (ordinary source composition): capture original
+agent storage selection in the existing issuing-submit scope before SessionStart;
+retain a private carrier through actual native worker enqueue and reuse the exact
+selected run-log root at the real bridge writer. Qualify the stock writer and
+bound descendant, preserving strict source equality through actual child MODEL.
+First reproduce with real ConsoleRuntime/bridge/AgentService/SQLite/MCP; then
+cover original permission revocation, unrelated edits, replaced DB/writer/root,
+late sources and closed/negative-drain context. Pin tested bytes, run one named
+affected selection and scoped static/preservation checks, then exact-path commit.
+ADR required: no new ADR. ADR paths: backlog/decisions/285-native-phased-agent-workflows.md
+and backlog/decisions/163-expanded-console-hook-runtime.md. Reason: direct precise
+source qualification. Earlier references/initializer admission, the full ordinary
+owner and borrowers, child writes, SSH and late events remain required next.
+
 D2C finite explicit-reference producer/consumer: freeze the exact existing explicit registry/workspace/run-scope/sandbox roots, cwd and exclusions before expansion. Missing sandbox adds no root and is never created; existing authorized folders remain. Use complete READ coverage for stock file/folder callbacks and initially OPAQUE for reachable Git or unknown callbacks. Own the existing run_preparation_read worker and original controller assignment/discard through operation.finish RETURN, original source/storage and runtime close. Extract the gated Git qualification/managed-tree transport over explicit executable/repository prefix; validate captured cwd and actual repo top-level within the same maximum before output, rebase existing exclusion pathspecs at the repo root, retain unknown cleanup honestly. Add real RED/GREEN worker/process/source/host/cancellation/route tests, targeted affected tests, final-byte/static/protection and exact-path commit. No model/child/workflow row, new executor or unused future borrow API; later ordinary integration must consume its original covering claim before enqueue. ADR required: no new ADR. ADR paths: backlog/decisions/285-native-phased-agent-workflows.md; backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md. Reason: bounded completion of the existing source/physical/host contract. Costs: metadata checks, Git qualification/containment overhead, coarse Git contention and potentially indefinite original-read/storage/disposal retention on unavailable proof. Parent remains In Progress/all AC unchecked.
 
 D2 Git custody (approved source contract): keep all three native Git launches under the same initially OPAQUE ticket on the existing worker/publisher thread, adapting the existing low-level ProcessTreeController with a local asyncio Runner. Join real streams, containment-empty/close, original worker and host return, then operation.finish RETURN before root/claim retirement. Bounded cleanup failure retains original scopes/operation for the same controller late wait; genuinely unavailable proof retains cleanup-unproven original worker/storage indefinitely, including possible indefinite disposal. Gate only initial native attachments using native_workflow_qualified; preserve ordinary unsupported-platform behavior, bool stdin callers, qualified source checks, Git helper policy, privacy/history and timeouts. Genuine wrapper initializer/snapshot RED/GREEN and targeted timeout/late-proof/unknown/host/finish-return/parity evidence, final hashes and protected116+C106+c5 preservation. ADR required: no new ADR. ADR paths: backlog/decisions/285-native-phased-agent-workflows.md; backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md. Reason: complete existing physical/source/host contract. Parent remains In Progress/all AC unchecked; references, ordinary-tree borrowing and workflow coordinator remain closed.
@@ -528,3 +542,15 @@ and the positively observed token. No new permission store/ledger or passive-mod
 flag. Cost is bounded original-policy reads per passive preparation and
 conservative refusal during concurrent mutation. ADR required: no new ADR;
 existing ADR-285/163 source-revocation qualification governs this correction.
+
+
+Task8D2 A effective project-authority qualification: for the original stock
+capture, hook context identity is workspace, enabled state, the full selected
+binding snapshot and complete options. Keep every binding/root/locator identity,
+write flag and exclusion. Persisted choice/fingerprint and consent-notice
+bookkeeping are redundant with that authority and do not invalidate unchanged
+accepted context when normal first-folder adoption and independently validated
+project consent record them. Custom/unknown readers retain their complete values.
+Changed selection, disable and retarget still revoke; activation storage tuple
+matching remains strict. This is not a new consent grant or ordinary physical
+admission.

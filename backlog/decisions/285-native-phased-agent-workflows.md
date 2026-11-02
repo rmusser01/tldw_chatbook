@@ -466,3 +466,36 @@ Historical checkout/filter and snapshot semantics use the existing native Git pr
 The original host accepts results or conclusively discards stale presentation before operation.finish RETURN; original worker activation, DB handles, shadow storage and any actual scratch-generation lease survive that return. Existing scratch lookup is metadata-only and cannot allocate: tombstoned/lost previously recognized generations refuse instead of becoming unmanaged. Admission/start fences seal unstarted work during disposal; already-started original obligations may finish on their original retained source, without new confirmation, replacement-source permission or liveness inferred from a cancelled waiter. Costs are coarse contention, exact source/readback checks and potentially indefinite disposal retention after unprovable cleanup or settlement. This qualifies only the existing confirmed Undo feature; ordinary tree, wave and public workflows remain pending.
 
 A started thread whose original activation cannot enter may retire as unused only after all partial scopes close normally and the same thread observes operation.finish return. The effect callback has not entered; no required mutation exists. The same distinction covers sealed unstarted tickets. Callback-body failures, uncertain scope unwind and unknown finish return retain custody. No replacement-source retry is permitted. The existing preparation-read hop performs only source/DB/capacity admission before original effect-worker enqueue; its extra pool handoff is an explicit cost.
+
+### Prospective ordinary agent storage sources (Task 8D2 partition A)
+
+The original issuing submit selects its agent storage sources before SessionStart
+effects. A private live carrier retains original runtime, bridge, DB, permission,
+registry and scratch identities; copied configuration carries no live custody.
+The existing preparation and native worker handoffs reacquire the same source
+tuple in their actual task/thread, including the selected run-log confinement
+root. The bridge consumes that root instead of selecting it again. A recognized
+stock writer observes the same source before and after bind, and validates its
+actual bound descendant against the original writer/root/bind identity. A changed
+writer, root or late source refuses; path containment alone does not qualify it.
+
+Retained MCP context still requires exact original source equality, fresh original
+permission checks, and positive original event drain for passive use. No guard
+reset, tuple-subset fallback or spent execution revival is allowed. This repairs
+the complete Console-to-child-model source path; it does not provide early
+physical admission before references/initializers, ordinary-tree borrowing,
+child write settlement, SSH ownership or late-event retirement. Those remain
+required. Cost is prospective metadata selection, retained original storage and
+conservative refusal when original sources change; no new owner or queue exists.
+
+
+Task8D2 A effective project-authority qualification: for the original stock
+capture, hook context identity is workspace, enabled state, the full selected
+binding snapshot and complete options. Keep every binding/root/locator identity,
+write flag and exclusion. Persisted choice/fingerprint and consent-notice
+bookkeeping are redundant with that authority and do not invalidate unchanged
+accepted context when normal first-folder adoption and independently validated
+project consent record them. Custom/unknown readers retain their complete values.
+Changed selection, disable and retarget still revoke; activation storage tuple
+matching remains strict. This is not a new consent grant or ordinary physical
+admission.

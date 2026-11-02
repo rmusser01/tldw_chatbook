@@ -358,6 +358,38 @@ def hooks_v2_context_key(self, session_id: str):
             )
         )
 
+    def project_key(values):
+        authority = values["project_authority"]
+        (
+            snapshot_type,
+            capture,
+            capture_code,
+            capture_defaults,
+            capture_kwdefaults,
+            capture_closure,
+        ) = controller_module._HOOK_PROJECT_AUTHORITY_ORIGINAL
+        if (
+            type(controller) is controller_class
+            and controller._turn_context_provider is None
+            and type(registry) is registry_class
+            and bindings_current()
+            and controller_module.capture_project_instruction_authority is capture
+            and capture.__code__ is capture_code
+            and capture.__defaults__ is capture_defaults
+            and capture.__kwdefaults__ is capture_kwdefaults
+            and capture.__closure__ is capture_closure
+            and type(authority) is snapshot_type
+        ):
+            # Validated first-folder adoption and consent record these existing
+            # choices later. Full effective authority still revokes on change.
+            return (
+                authority.workspace_id,
+                authority.enabled,
+                authority.selected,
+                authority.options,
+            )
+        return authority
+
     stock = (
         type(self) is _HOOK_CONTEXT_KEY_ORIGINAL_OWNER
         and ConsoleRuntime is _HOOK_CONTEXT_KEY_ORIGINAL_OWNER
@@ -392,7 +424,7 @@ def hooks_v2_context_key(self, session_id: str):
             return (
                 session.workspace_id,
                 values["workspace_roots"],
-                values["project_authority"],
+                project_key(values),
             )
 
     chat_database = getattr(store.persistence, "db", None)
@@ -446,7 +478,7 @@ def hooks_v2_context_key(self, session_id: str):
         result = (
             workspace_id,
             values["workspace_roots"],
-            values["project_authority"],
+            project_key(values),
         )
     # Retirement can run callbacks; refuse a redirected result afterwards too.
     require_current()

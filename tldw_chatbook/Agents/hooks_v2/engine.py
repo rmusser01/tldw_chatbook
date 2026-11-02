@@ -530,7 +530,10 @@ class HookEngine:
         if asyncio.get_running_loop() is not self.loop:
             try:
                 if execution._state.native is not None:
-                    await asyncio.to_thread(execution._state.native.admit)
+                    from ..activation import worker_guard
+
+                    admit = worker_guard()(execution._state.native.admit)
+                    await asyncio.to_thread(admit)
                 return await asyncio.wrap_future(
                     asyncio.run_coroutine_threadsafe(
                         self._fire(event, teardown=teardown, execution=execution),
@@ -586,7 +589,10 @@ class HookEngine:
                 if state.closed or state.busy:
                     raise RuntimeError("event closed or busy")
                 state.native.check_memory(event)
-                await asyncio.to_thread(state.native.admit)
+                from ..activation import worker_guard
+
+                admit = worker_guard()(state.native.admit)
+                await asyncio.to_thread(admit)
             except Exception:  # noqa: BLE001 - host admission fails with a fixed code
                 handler = next(
                     (h for h in self.definitions if h.id == handler_id), None

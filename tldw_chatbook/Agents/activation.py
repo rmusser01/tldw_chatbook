@@ -53,7 +53,12 @@ def _sources(service):
     paths.append(("agents.history", sandbox or data / "tool_sandbox"))
     writer = getattr(service, "run_log_writer", None)
     log_dir = getattr(writer, "log_dir", None)
-    if log_dir is not None:
+    from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+
+    source = console_writer_source(writer)
+    if source is not None:
+        paths.append(("agents.history", source.root))
+    elif log_dir is not None:
         paths.append(("agents.history", log_dir))
     catalog = getattr(service, "registry", getattr(service, "_registry", None))
     for provider in getattr(catalog, "_providers", ()):
@@ -108,7 +113,7 @@ def _explicit_writer_root(service):
         type(AgentService) is not type
         or type(writer_class) is not type
         or type(methods) is not tuple
-        or len(methods) != 3
+        or len(methods) != 5
         or not all(
             type(row) is tuple
             and len(row) == 4
@@ -187,8 +192,14 @@ def guarded(function):
             for name in ("builtin_gate", "mcp_provider")
             for source in _permission_sources(kwargs.get(name))
         )
-        log_dir = getattr(kwargs.get("run_log_writer"), "log_dir", None)
-        if log_dir is not None:
+        writer = kwargs.get("run_log_writer")
+        from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+
+        source = console_writer_source(writer)
+        log_dir = getattr(writer, "log_dir", None)
+        if source is not None:
+            sources += (("agents.history", source.root),)
+        elif log_dir is not None:
             sources += (("agents.history", profile_paths.lexical_path(log_dir)),)
         # Passive stock-source observation joins the initial fresh admission;
         # custom writers still resolve global history inside the admitted scope.

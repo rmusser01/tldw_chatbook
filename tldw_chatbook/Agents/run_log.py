@@ -565,6 +565,13 @@ class RunLogWriter:
             return
         try:
             with self._access_scope():
+                from tldw_chatbook.Chat.console_agent_sources import (
+                    console_writer_source,
+                )
+
+                source = console_writer_source(self)
+                if source is not None:
+                    source.check_storage()
                 self._bind_under_scope(run_id)
         except Exception as exc:
             logger.warning(
@@ -674,6 +681,11 @@ class RunLogWriter:
                 self._active = False
                 return
             run_dir.mkdir(parents=True, exist_ok=True)
+            from tldw_chatbook.Chat.console_agent_sources import console_writer_source
+
+            source = console_writer_source(self)
+            if source is not None:
+                source.writer_bound(self, run_id, root, run_dir)
             self.log_dir = run_dir
             self._active = True
             if self._on_bound is not None:
@@ -847,6 +859,13 @@ class RunLogWriter:
             return None
         try:
             with self._access_scope():
+                from tldw_chatbook.Chat.console_agent_sources import (
+                    console_writer_source,
+                )
+
+                source = console_writer_source(self)
+                if source is not None:
+                    source.check_storage()
                 return self._append_under_scope(
                     run_id=run_id,
                     kind=kind,
@@ -955,6 +974,13 @@ class RunLogWriter:
             return
         try:
             with self._access_scope():
+                from tldw_chatbook.Chat.console_agent_sources import (
+                    console_writer_source,
+                )
+
+                source = console_writer_source(self)
+                if source is not None:
+                    source.check_storage()
                 self._write_manifest_under_scope(metadata)
         except Exception as exc:
             logger.warning(
@@ -1000,6 +1026,13 @@ class RunLogWriter:
             return
         try:
             with self._access_scope():
+                from tldw_chatbook.Chat.console_agent_sources import (
+                    console_writer_source,
+                )
+
+                source = console_writer_source(self)
+                if source is not None:
+                    source.check_storage()
                 self._close_under_scope()
         except Exception as exc:
             logger.warning(
@@ -1026,7 +1059,13 @@ _RUN_LOG_PATH_WRITER_ORIGINAL = (
     RunLogWriter,
     tuple(
         (name, function, function.__code__, function.__defaults__)
-        for name in ("bind", "_bind_under_scope", "_migrate_legacy_dir")
+        for name in (
+            "__init__",
+            "bind",
+            "_bind_under_scope",
+            "_migrate_legacy_dir",
+            "append",
+        )
         for function in (RunLogWriter.__dict__[name],)
     ),
 )

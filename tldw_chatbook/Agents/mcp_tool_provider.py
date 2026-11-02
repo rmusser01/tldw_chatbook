@@ -2126,7 +2126,12 @@ class MCPToolProvider:
             policies = current_mcp_invocation_policies()
             # Ordinary submissions retain their exact original coroutine and
             # transfer/close contract. Only hooks need this completion observer.
-            execution_factory = execute_observed if policies else create_execution
+            if policies:
+                from .activation import async_worker_guard
+
+                execution_factory = async_worker_guard()(execute_observed)
+            else:
+                execution_factory = create_execution
 
             if task_authorization is not None:
                 prior_factory = execution_factory

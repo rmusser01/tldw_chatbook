@@ -8078,15 +8078,24 @@ class ConsoleAgentBridge:
         if scratch_root is not None and scratch_lease is not None:
             from tldw_chatbook.Agents.run_log import RunLogWriter, resolve_log_root
 
+            from .console_agent_sources import current_agent_sources
+
             run_log_root: Path | None = None
-            try:
-                with scratch_lease():
-                    run_log_root = resolve_log_root(
-                        sandbox_root=scratch_root,
-                        workspace_id=run_workspace_id,
-                    )
-            except Exception:  # noqa: BLE001 -- writer will fail closed on lease
-                run_log_root = None
+            original_sources = current_agent_sources()
+            if original_sources is not None:
+                original_sources.check_memory()
+                if original_sources.bridge is not self:
+                    raise RuntimeError("original agent bridge changed")
+                run_log_root = original_sources.root
+            else:
+                try:
+                    with scratch_lease():
+                        run_log_root = resolve_log_root(
+                            sandbox_root=scratch_root,
+                            workspace_id=run_workspace_id,
+                        )
+                except Exception:  # noqa: BLE001 -- writer will fail closed on lease
+                    run_log_root = None
             run_log_writer = RunLogWriter(
                 root=run_log_root or scratch_root,
                 access_scope=scratch_lease,
@@ -8097,17 +8106,23 @@ class ConsoleAgentBridge:
                     access_scope=scratch_lease,
                 ),
             )
+            if original_sources is not None:
+                original_sources.bind_writer(run_log_writer)
 
         def on_child_settled(run_id: str | None, status: str) -> None:
             try:
                 engine = (
                     run_hooks_engine
                     if _workflow_preparation is not None
-                    else self._ensure_run_hooks() if self._ensure_run_hooks else None
+                    else self._ensure_run_hooks()
+                    if self._ensure_run_hooks
+                    else None
                 )
                 if engine is not None:
                     engine.notify(
-                        "SubagentStop", session_id=session_id, run_id=run_id,
+                        "SubagentStop",
+                        session_id=session_id,
+                        run_id=run_id,
                         data={"child_run_id": run_id, "status": status},
                     )
             except Exception:  # noqa: BLE001 -- observation cannot prevent settlement
