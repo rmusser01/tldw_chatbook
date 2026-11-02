@@ -54,7 +54,7 @@ async def test_pane_renders_search_toolbar_and_empty_state():
         assert pilot.app.query_one("#personas-library-search", Input)
         assert pilot.app.query_one("#personas-library-new", Button)
         assert pilot.app.query_one("#personas-library-import", Button)
-        await pane.update_rows((), total=0, noun="characters")
+        await pane.update_rows((), total=0)
         await pilot.pause()
         empty = pilot.app.query_one("#personas-library-empty", Static)
         assert "No characters yet" in str(empty.renderable)
@@ -68,7 +68,7 @@ async def test_update_rows_renders_rows_and_count():
             LibraryRow(item_id="1", kind="character", name="Detective Sam"),
             LibraryRow(item_id="2", kind="character", name="Tutor"),
         )
-        await pane.update_rows(rows, total=2, noun="characters")
+        await pane.update_rows(rows, total=2)
         await pilot.pause()
         assert len(visible_item_ids(pilot.app.screen)) == 2
         # OBSOLETE (D14-A): spec 1.5.3 (R24) drops the list's unsaved marker;
@@ -87,7 +87,6 @@ async def test_unfiltered_count_line_stays_empty():
         await pane.update_rows(
             (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
             total=1,
-            noun="characters",
         )
         await pilot.pause()
         assert str(pane.border_title) == "Characters 1"
@@ -103,7 +102,6 @@ async def test_singular_filtered_count_uses_singular_noun():
         await pane.update_rows(
             (LibraryRow(item_id="1", kind="character", name="Only One"),),
             total=1,
-            noun="dictionaries",
             filtered=True,
         )
         await pilot.pause()
@@ -118,7 +116,6 @@ async def test_filtered_count_shows_n_of_m():
         await pane.update_rows(
             (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
             total=12,
-            noun="characters",
             filtered=True,
         )
         await pilot.pause()
@@ -140,7 +137,6 @@ async def test_row_press_posts_persona_entity_selected():
         await pane.update_rows(
             (LibraryRow(item_id="7", kind="character", name="Detective Sam"),),
             total=1,
-            noun="characters",
         )
         await pilot.pause()
         await select_roleplay_item(pilot, pilot.app.screen, "character:7", via="click")
@@ -169,7 +165,8 @@ async def test_search_input_posts_search_changed_and_new_posts_create_action():
         await pilot.click("#personas-library-import")
         await pilot.pause()
     assert searches[-1] == "sam"
-    assert actions == ["create", "import"]
+    # Frame slice B2b: New opens the New chooser ("create" on dev).
+    assert actions == ["new", "import"]
 
 
 async def test_mark_active_row_applies_is_active_to_selected_only():
@@ -182,7 +179,6 @@ async def test_mark_active_row_applies_is_active_to_selected_only():
                 LibraryRow(item_id="2", kind="character", name="Tutor"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         pane.mark_active_row("character", "2")
@@ -206,7 +202,6 @@ async def test_toolbar_and_rows_carry_shared_flat_button_classes():
         await pane.update_rows(
             (LibraryRow(item_id="1", kind="character", name="Detective Sam"),),
             total=1,
-            noun="characters",
         )
         await pilot.pause()
         # SEMANTIC (D14-A): rows are option lines styled by the list's
@@ -234,7 +229,6 @@ async def test_active_row_keeps_subdued_and_is_active_markers():
                 LibraryRow(item_id="2", kind="character", name="Tutor"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         pane.mark_active_row("character", "1")
@@ -249,22 +243,28 @@ async def test_active_row_keeps_subdued_and_is_active_markers():
         assert not item_at(pilot.app.screen, "character:2").active
 
 
-async def test_set_mode_toggles_import_button_and_empty_copy():
+async def test_import_is_shown_in_every_mode_and_the_empty_copy_names_it():
+    """Frame slice B2b: one Import picker for every kind. On dev Personas hid
+    Import (task-443) and its empty copy said "use New"."""
     app = LibraryPaneApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)
         import_button = pilot.app.query_one("#personas-library-import", Button)
+        for mode in ("personas", "characters", "lore", "dictionaries"):
+            pane.set_mode(mode)
+            assert import_button.display is True, mode
+        assert not pilot.app.query("#personas-library-import-actor-pack")
+        # AC#10 and AC#11: Duplicate (Task 1) and New Actor Pack (Task 2)
+        # left the toolbar as well.
+        assert not pilot.app.query("#personas-library-duplicate")
+        assert not pilot.app.query("#personas-library-new-actor-pack")
         pane.set_mode("personas")
-        assert import_button.display is False
-        pane.set_mode("characters")
-        assert import_button.display is True
-        pane.set_mode("personas")
-        await pane.update_rows((), total=0, noun="personas")
+        await pane.update_rows((), total=0)
         await pilot.pause()
         empty = pilot.app.query_one("#personas-library-empty", Static)
-        copy = str(empty.renderable)
-        assert "No personas yet" in copy
-        assert "Import" not in copy
+        assert (
+            str(empty.renderable) == "No personas yet - use New or Import to add one."
+        )
 
 
 async def test_update_rows_twice_in_same_tick_does_not_crash():
@@ -273,8 +273,8 @@ async def test_update_rows_twice_in_same_tick_does_not_crash():
         pane = pilot.app.query_one(PersonasLibraryPane)
         rows_a = (LibraryRow(item_id="1", kind="character", name="First"),)
         rows_b = (LibraryRow(item_id="2", kind="character", name="Second"),)
-        await pane.update_rows(rows_a, total=1, noun="characters")
-        await pane.update_rows(rows_b, total=1, noun="characters")
+        await pane.update_rows(rows_a, total=1)
+        await pane.update_rows(rows_b, total=1)
         await pilot.pause()
         assert visible_item_ids(pilot.app.screen) == ("character:2",)
         assert item_at(pilot.app.screen, 0).name == "Second"
@@ -300,7 +300,6 @@ async def test_arrow_navigation_and_enter_selects():
                 LibraryRow(item_id="3", kind="character", name="Navigator"),
             ),
             total=3,
-            noun="characters",
         )
         await pilot.pause()
         pilot.app.query_one("#personas-library-rows").focus()
@@ -341,7 +340,6 @@ async def test_search_enter_jumps_to_results():
                 LibraryRow(item_id="2", kind="character", name="Tutor"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         search = pilot.app.query_one("#personas-library-search", Input)
@@ -365,7 +363,7 @@ async def test_search_enter_with_no_rows_does_not_crash():
     app = LibraryPaneApp()
     async with app.run_test() as pilot:
         pane = pilot.app.query_one(PersonasLibraryPane)
-        await pane.update_rows((), total=0, noun="characters")
+        await pane.update_rows((), total=0)
         await pilot.pause()
         search = pilot.app.query_one("#personas-library-search", Input)
         search.focus()
@@ -393,7 +391,6 @@ async def test_highlighted_row_carries_textual_highlight_class():
                 LibraryRow(item_id="2", kind="character", name="Beta"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         pilot.app.query_one("#personas-library-rows").focus()
@@ -425,7 +422,6 @@ async def test_is_active_and_highlight_can_coexist():
                 LibraryRow(item_id="2", kind="character", name="Beta"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         pilot.app.query_one("#personas-library-rows").focus()
@@ -458,7 +454,6 @@ async def test_colliding_item_ids_render_without_crash():
                 LibraryRow(item_id="a b", kind="character", name="Spaced"),
             ),
             total=2,
-            noun="characters",
         )
         await pilot.pause()
         ids = visible_item_ids(pilot.app.screen)
@@ -479,7 +474,6 @@ async def _two_character_rows(pane: PersonasLibraryPane) -> None:
             LibraryRow(item_id="2", kind="character", name="Lab Assistant"),
         ),
         total=2,
-        noun="characters",
     )
 
 
@@ -541,7 +535,6 @@ async def test_marks_survive_rows_vanishing_on_refresh():
         await pane.update_rows(
             (LibraryRow(item_id="2", kind="character", name="Lab Assistant"),),
             total=1,
-            noun="characters",
         )
         await pilot.pause()
         assert received[-1] == (("character", "1", "Detective Sam"),)
@@ -608,32 +601,3 @@ async def test_s_key_cycles_sort_only_when_sort_applies():
         assert "(s)" in str(
             pilot.app.query_one("#personas-library-sort", Button).tooltip
         )
-
-
-async def test_sync_control_layout_logs_and_keeps_state_on_failure(monkeypatch):
-    """Qodo review: a toolbar width-measurement failure must be logged (not
-    silently swallowed) and must leave the previous layout in place."""
-    from unittest.mock import Mock
-
-    from loguru import logger as loguru_logger
-
-    app = LibraryPaneApp()
-    async with app.run_test() as pilot:
-        pane = pilot.app.query_one(PersonasLibraryPane)
-        pane.set_class(True, "personas-library-stacked-controls")
-        records: list[str] = []
-        sink = loguru_logger.add(lambda m: records.append(str(m)), level="DEBUG")
-        try:
-            monkeypatch.setattr(
-                pane,
-                "_required_toolbar_row_width",
-                Mock(side_effect=RuntimeError("boom")),
-            )
-            pane._sync_control_layout()  # must not raise
-            # Fallback: the previous layout class is untouched.
-            assert pane.has_class("personas-library-stacked-controls")
-        finally:
-            loguru_logger.remove(sink)
-    assert any("toolbar" in record.lower() for record in records), (
-        f"expected a debug/warning log about the toolbar layout failure; got {records}"
-    )

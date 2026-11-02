@@ -129,6 +129,20 @@ MAX_PASS_ADDED_MODULES = 558
 #: 2026-10-29; re-measured after the rebase onto dev 38c9d2edcf (paired arms: dev
 #: 425,011 -> head 426,199, the same +1,188): 425,347 -> 426,199; ADR-097 ledger.
 MAX_PASS_ADDED_LOC = 426_199
+#: Historical B2b source pin only (TASK-33910.4): 425,347 -> 440,410;
+#: integration retains current dev 426,199 above. The old measurement at
+#: B2b's Task 5 (425,410) plus ADR-097's standard 15,000-line slack, modules
+#: unchanged (558). Task 5 is B2b's first commit over the ceiling, so the
+#: re-pin lands there (controller ruling, 2026-10-29: dev's own growth to
+#: 38c9d2edcf moved the first breach from the plan's Task 10 to Task 5).
+#: Dev 38c9d2edcf measured 425,011; B2b's glue to Task 5 adds 399 LOC
+#: (Roleplay route 57,676 -> 58,076, Settings -1) in personas_screen,
+#: roleplay_frame_state, roleplay_list_window_state and the Inspector pane,
+#: net of the library pane's and the file picker's cuts; its two new modules
+#: (the import sniff, the choice modal) stay lazy. Owner decisions D6,
+#: 2026-10-26 ("Pre-authorise LOC (Rec.)": a LOC-only re-pin; a new
+#: pre-imported module stays a STOP) and D6a, 2026-10-29 ("Pin + 15,000
+#: slack (Rec.)"); ADR-097 ledger.
 
 #: TASK-31552 pinned 123,319 (Library 113,319 + 10,000 slack). TASK-33260
 #: re-pin: Library 125,111 measured + 10,000 slack; TASK-33276 pays it down.

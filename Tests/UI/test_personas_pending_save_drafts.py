@@ -10,6 +10,7 @@ from Tests.private_profile import private_profile_test
 from Tests.UI.test_personas_dictionaries import PersonasTestApp
 from Tests.UI import test_personas_editor_save_in_place as save_in_place
 from Tests.UI.test_personas_editor_save_in_place import _enter_personas_mode
+from Tests.UI.roleplay_frame_harness import start_new
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.CCP_Modules import ccp_character_handler as character_handler
 from tldw_chatbook.UI.Navigation.character_conversation_navigation import (
@@ -50,11 +51,11 @@ async def _until(predicate):
 async def _open(pilot, kind):
     if kind == "persona":
         screen = await _enter_personas_mode(pilot)
-        screen.query_one("#personas-library-new", Button).press()
+        await start_new(pilot, via="press")
     else:
         await pilot.pause()
         screen = pilot.app.screen
-        await pilot.press("ctrl+n")
+        await start_new(pilot, via="ctrl+n")
     await pilot.pause()
     editor_type = (
         PersonaProfileEditorWidget
@@ -127,7 +128,7 @@ async def _stay_through_guards(pilot, screen, name):
     app = pilot.app
     draft = name.value
     # Actual New action must use the incumbent unsaved-changes modal.
-    screen.query_one("#personas-library-new", Button).press()
+    await start_new(pilot, via="press")
     await _until(lambda: isinstance(app.screen, UnsavedChangesDialog))
     await _until(lambda: bool(app.screen.query("#cancel-button")))
     app.screen.query_one("#cancel-button", Button).press()

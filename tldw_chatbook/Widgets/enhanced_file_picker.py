@@ -1500,9 +1500,10 @@ class EnhancedFileDialog(BaseFileDialog):
                             variant="primary",
                         )
                         if self.context == "character_import":
-                            select_button.tooltip = (
-                                "Import the selected character card."
-                            )
+                            # Roleplay's one Import picker takes every
+                            # Roleplay format (frame slice B2b), so the copy
+                            # names no kind.
+                            select_button.tooltip = "Import the selected file."
                         yield select_button
                         cancel_button = Button(
                             self._label(self._cancel_button, "Cancel"),
@@ -1510,9 +1511,7 @@ class EnhancedFileDialog(BaseFileDialog):
                             variant="default",
                         )
                         if self.context == "character_import":
-                            cancel_button.tooltip = (
-                                "Close without importing a character card."
-                            )
+                            cancel_button.tooltip = "Close without importing."
                         yield cancel_button
 
         # task-32606 deliberately does NOT yield a `Footer` here, although

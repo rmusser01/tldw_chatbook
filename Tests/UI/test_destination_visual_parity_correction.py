@@ -1785,7 +1785,9 @@ async def test_personas_workbench_exposes_approved_three_column_ia():
         assert "Column 1:" not in visible_text
         assert "Column 2:" not in visible_text
         assert "Column 3:" not in visible_text
-        assert {"Characters", "Personas", "New", "Chat now"}.issubset(buttons)
+        # Frame slice B2b (spec 1.5.1): the toolbar's create control reads
+        # "+ New" (dev "New").
+        assert {"Characters", "Personas", "+ New", "Chat now"}.issubset(buttons)
 
 
 @pytest.mark.asyncio

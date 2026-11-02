@@ -1,0 +1,36 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃0 ACP  F2 Lab    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Roleplay  Characters › Both Kinds                                               No chat provider · Settings ›   Local
+Characters — who the AI plays · 29
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                      │
+│ ╭─ Characters 29 ──────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+│ │  Library              <  ││           ▸ Try a test chat (nothing saved)            ││                            │ │
+│ │  Search...               ││ Character                                              ││  Inspector             >   │ │
+│ │           New            ││  Name: Both Kinds                                      ││ Selected: Both Kinds       │ │
+│ │      New Actor Pack      ││                                                        ││ Type: character            │ │
+│ │          Import          ││ Tags: none                                             ││ Validation: OK             │ │
+│ │    Import Actor Pack     ││ Alternate greetings: 0                                 ││ Conversations (0)          │ │
+│ │        Duplicate         ││ │                                                   │  ││   Search this              │ │
+│ │        Sort: Name        ││  Voice & Speech                                        ││  No saved conversations.   │ │
+│ │         Tag: All         ││  Use global default                               ▼    ││                            │ │
+│ │     Ada (Debu…Partner)   ││  Using the global speech default.                      ││ Readiness                  │ │
+│ │     ARIA-7               ││    Create                                              ││ Chat now blocked: openai   │ │
+│ │  ▸  Both Kinds           ││ Avatar: none                                           ││ is not ready: Missing API  │ │
+│ │     Brother Anselm       ││ │                                                   │  ││ key. Set OPENAI_API_KEY    │ │
+│ │     Captain I…de Varga   ││ │                                                   │  ││ or add api_key under       │ │
+│ │     Chef Auguste         ││ │                                                   │  ││ [api_settings.openai].     │ │
+│ │     Coach Pemberton   ▁▁ ││ │                                                   │  ││         Chat now           │ │
+│ │     Default Assistant    ││ │                                                   │  ││   Send to Console draft    │ │
+│ │     Detective…Calderón   ││ │                                                   │  ││        Export JSON         │ │
+│ │     Dungeon Master Vex   ││ │                                                   │  ││        Export PNG          │ │
+│ │     Grumpy Barista Bot   ││ │                                                   │  ││     Export Actor Pack    ▅ │ │
+│ │     Hana Kobayashi       ││ │                                                   │▅ ││          Delete            │ │
+│ │     Kestrel              ││ └───────────────────────────────────────────────────┘  ││       Manage Buddy         │ │
+│ │     Lady Evan…hornwood   ││    Edit     Conversations (0)                          ││                            │ │
+│ ╰─────────────── #3 of 29 ─╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | F1 · Ctrl+P · Ctrl+Q

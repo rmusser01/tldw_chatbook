@@ -211,8 +211,16 @@ async def main(out: Path, scratch: Path) -> None:
     mock.chachanotes_db = db
 
     class QAApp(App):
-        # The real generated bundle: gives the QA captures production styling.
-        CSS_PATH = str(REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss")
+        # The real generated bundle plus Roleplay's feature sheet, which the
+        # real app parses on first navigation to Roleplay
+        # (``TldwCli._SCREEN_OWNED_ROUTE_CSS``): together they give the QA
+        # captures production styling. Without the feature sheet the items
+        # toolbar (Roleplay frame slice B2b) lays out unstyled and + New
+        # cannot be clicked.
+        CSS_PATH = [
+            str(REPO_ROOT / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"),
+            str(REPO_ROOT / "tldw_chatbook" / "css" / "screen_feature_roleplay.tcss"),
+        ]
         # Outside the real app's shell the nav bar resolves to `1fr` and takes
         # ~22 of 50 rows (measured 2026-10-24), squeezing the workbench to one
         # row per pane; pin it to the strip the user sees.
@@ -271,7 +279,17 @@ async def _capture(app, OUT: Path, sam_id: int, conversation_id: str) -> None:
 
         # 3. Editor with a validation error (Advanced section open).
         screen.query_one("#personas-preview-body").display = False
+        # + New opens the New chooser (Roleplay frame slice B2b); Enter picks
+        # the current kind's Blank, dev's one-step create.
         await pilot.click("#personas-library-new")
+        for _ in range(100):
+            focused = pilot.app.focused
+            if focused is not None and focused.id == "roleplay-items-chooser-options":
+                break
+            await pilot.pause(0.05)
+        else:
+            raise RuntimeError("the New chooser did not open")
+        await pilot.press("enter")
         await pilot.pause()
         # The editor scrolls: bring the toggle on screen before clicking it.
         screen.query_one("#personas-char-editor-advanced-toggle").scroll_visible(

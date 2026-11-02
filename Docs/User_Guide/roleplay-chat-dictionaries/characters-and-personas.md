@@ -30,9 +30,10 @@ centre, which shows either **the character card** (read-only, with a single
 **Edit** button; "No character loaded. Select one from the library." before
 you pick one) or **the character editor**, headed "Character Editor". Below
 either sit two docked panels, **"Dictionaries (copied into this character)"**
-and **"World Books (copied into this character)"**. The rail's **New**,
-**Import** and **Duplicate** act on the current mode; the Inspector's
-**Attach to Console**, **Start Chat**, **Export JSON**, **Export PNG** and
+and **"World Books (copied into this character)"**. The rail's **+ New**
+opens the New chooser and its **Import…** the one Import picker (both
+described on the parent page); the Inspector's **Attach to Console**,
+**Start Chat**, **Export JSON**, **Export PNG**, **Duplicate** and
 **Delete** act on the current selection: the open item, never the marked
 rows. To export or delete several items at once, mark them in the list and
 use the marks bar (see [Marks and the marks bar](../roleplay-chat-dictionaries.md#marks-and-the-marks-bar)).
@@ -282,11 +283,12 @@ working. **Cancel** leaves it. Either way, unsaved edits raise the
 **"Unsaved Changes"** dialog — 'The tab "{name}" has unsaved changes. Are you
 sure you want to close it?' with **Close Without Saving** / **Keep Open**.
 
-**Creating, duplicating, deleting.** **New** in the Library rail (or
-**Ctrl+N**) opens a blank editor with the cursor in Name. **Duplicate** copies
-the selection — description, personality, scenario, greetings, tags, avatar
-and all — as **"{name} (copy)"**, then "(copy 2)", "(copy 3)"…, with **no
-confirmation**. **Delete** (Inspector) confirms with **"Delete {name}? This
+**Creating, duplicating, deleting.** **+ New** in the Library rail (or
+**Ctrl+N**), then **Enter** on "Character · Blank", opens a blank editor
+with the cursor in Name. **Duplicate** (in the Inspector, beside
+**Delete**) copies the selection — description, personality, scenario,
+greetings, tags, avatar and all — as **"{name} (copy)"**, then "(copy 2)",
+"(copy 3)"…, with **no confirmation**. **Delete** (Inspector) confirms with **"Delete {name}? This
 cannot be undone here."** (**Delete** / **Cancel**) and reports "Deleted."
 To delete several characters, mark them and press **Delete…** in the marks
 bar: the same dialog lists up to five names, then "and N more", and its
@@ -294,23 +296,31 @@ button reads **Delete N marked**.
 
 ### Importing and exporting a card
 
-**Import** in the Library rail opens **"Import Character Card"** with filter
-groups "Character Cards", "JSON Files", "Card Images (PNG/WebP)", "Markdown
-Files" and "All Files". What actually reads: **PNG cards** carrying the
-standard embedded card data (older and v3 flavours), **WebP cards** carrying
-it in their EXIF comment, and **text cards** — `.json`, `.yaml`, `.md` — as
-raw JSON, as front matter, or as a fenced JSON block; common exports from
-other apps are converted on the way in, and other image types are refused
-("Use PNG or WebP cards."). A file that parses but holds no card is refused
-with **"Import failed: the file did not contain a valid character card."**;
-anything else that goes wrong gives one deliberately plain message:
-**"Character import failed; verify the file and retry."**
+**Import…**, on the Library rail's header row, opens the one Import picker
+(its filters and refusals are on the parent page); a card becomes a
+character whatever mode is showing. What reads as a card: **PNG cards**
+carrying the standard embedded card data (older and v3 flavours), **WebP
+cards** carrying it in their EXIF comment, and **text cards** — `.json` and
+`.md`, or `.yaml` and `.txt` under **All Files** — as raw JSON, as front
+matter, or as a fenced JSON block; common exports from other apps are
+converted on the way in. Other image types, and files with no Roleplay
+shape, are refused before they are read in full ("{file} is not a Roleplay
+file; nothing was imported."). A JSON or Markdown file that could also be a
+lore book or a chat dictionary asks "Import {file} as:" first. A file that
+parses but holds no card is refused with **"Import failed: the file did not
+contain a valid character card."**; anything else that goes wrong gives one
+deliberately plain message: **"Character import failed; verify the file and
+retry."**
 
-On success: **"Character imported."**, and the list jumps to the new row; if
-the card carried a lorebook the toast gains **" Lorebook '{name}' attached
-(N entries)."** If that name already existed you get **"Character already
-existed; selected it. Re-importing does not update an existing character."**
-— delete the old character first, or import under a different name.
+On success, when nothing is unsaved and you have not moved on since you
+picked the file: **"Character imported."**, and the list jumps to the new
+row (switching to Characters if another mode is showing); if the card
+carried a lorebook the toast gains **" Lorebook '{name}' attached (N
+entries)."** Otherwise the open draft and the list stay as they are and the
+toast names where it went: "Imported Wren · in Characters". If that name
+already existed you get **"Character already existed; selected it.
+Re-importing does not update an existing character."** — delete the old
+character first, or import under a different name.
 
 If the card also carries a voice profile, importing can ask you two
 questions: **"Imported voice profile conflict"** (Cancel / Reuse / Create
@@ -375,9 +385,11 @@ prompt** with an **Edit** button. The **"Persona Editor"** holds **Name**
 persona, but nothing in the app reads it today — and an **Enabled** switch
 that starts on, over **Save** / **Cancel**. Save toasts "Persona saved.", and
 the unsaved-changes dialog behaves as it does for characters. What is
-*missing* compared to characters: **no Import**, **no Duplicate** (both hidden
-in this mode) and **no Export PNG** — only Export JSON. Attach to Console and
-Start Chat stage the persona's Description and System prompt the same way.
+*missing* compared to characters: **no Duplicate** (hidden for personas)
+and **no Export PNG** — only Export JSON. **Import…** is offered in this
+mode too; a file lands in its own kind (a card in Characters). Attach to
+Console and Start Chat stage the persona's Description and System prompt
+the same way.
 
 ### Placeholders in your text
 
@@ -394,8 +406,8 @@ previews on this screen, `{{user}}` comes out as the literal word "User".
 
 ## Common tasks
 
-1. **Write a character from a one-line concept.** Library rail **New** (or
-   **Ctrl+N**) → **"Generate whole character…"** → type the concept, e.g. a
+1. **Write a character from a one-line concept.** Library rail **+ New** (or
+   **Ctrl+N**) → **"Character · From a concept"** → type the concept, e.g. a
    drowned-library archivist → **Draft**. Read what landed in each field, fix
    what you dislike, **Save**.
 2. **Add an alternate greeting.** **Edit** → **Advanced ▸** → type it into the
@@ -404,20 +416,22 @@ previews on this screen, `{{user}}` comes out as the literal word "User".
 3. **Give the character a picture.** **Edit** → **Upload** on the avatar row →
    pick a PNG/JPG/WEBP/GIF under 5 MB → **Save** (nothing is stored until you
    do). Or **✨ Generate**, once the Description is written.
-4. **Import a character card.** Characters mode → **Import** → choose a PNG,
-   WebP or JSON card. The new character is selected for you; if a lorebook
-   came with it, the toast says so.
+4. **Import a character card.** **Import…** on the Library rail's header
+   row → choose a PNG, WebP or JSON card. The new character is selected for
+   you (unless you have unsaved edits or moved on meanwhile: then the toast
+   says where it went); if a lorebook came with it, the toast says so.
 5. **Start a chat as the character.** Select it, then Inspector →
    **Start Chat** ("Chat staged in Console."). If it is blocked, read the
    readiness line and fix the model — or use **Attach to Console** instead.
-6. **Make a persona.** **Personas** chip (**Ctrl+2**) → **New** → fill in
-   Name, Description and System prompt → **Save**.
+6. **Make a persona.** **Personas** chip (or **p**) → **+ New** →
+   **Enter** on "Persona · Blank" → fill in Name, Description and System
+   prompt → **Save**.
 
 ## Keyboard & commands
 
 | Key | Action |
 |---|---|
-| Ctrl+N | New character (or new persona, in Personas mode) |
+| Ctrl+N | Open the **New** chooser on the current mode's Blank (Enter creates it) |
 | Ctrl+F | Jump to the Library rail's search box |
 | Ctrl+S | Save — works in both the character editor and the persona editor |
 | Escape | Cancel the open editor (the **Cancel** path, unsaved guard included) |
@@ -454,15 +468,20 @@ nav label, press **Ctrl+P**, or use any Ctrl+digit chord.
 - **Re-importing does not update an existing character** — the import is
   skipped with "Character already existed; selected it." Delete the old one
   first, or rename before importing.
-- **Import failures are deliberately vague** — check the file is a PNG/WebP
-  card with embedded data, or valid JSON/YAML.
+- **Card import failures are deliberately vague** — check the file is a
+  PNG/WebP card with embedded data, or valid JSON/YAML. The refusals before
+  that point do name the file and the reason (too large, not a Roleplay
+  file).
 - **Expression buttons need a saved character** ("Save the character to add
   expressions."); the avatar buttons do not.
 - **Blank greetings warn but don't block** — the save goes through, and an
   empty greeting simply does nothing in a chat.
-- **Connected to a server, the character actions go quiet.** New, Import,
-  Duplicate, Edit, Export and Delete disable themselves with no explanation
-  on screen. Nothing is broken — those actions are local-only.
+- **Connected to a server, the character actions go quiet.** + New, Tag,
+  Duplicate, Edit, Export and Delete disable themselves (the Inspector's
+  buttons say why in their tooltips), and **Ctrl+N** does nothing in
+  Characters mode there: no chooser opens and nothing is created. Import stays on, but a character card or a Buddy
+  pack is refused ("Server characters are read-only here. {file} was not
+  imported."). Nothing is broken — those actions are local-only.
 - **Alternate greetings are a list, not a text box** — several typed in at
   once become *one* greeting; press **Add** for each.
 

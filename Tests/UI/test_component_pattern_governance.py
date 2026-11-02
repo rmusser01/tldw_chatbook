@@ -88,7 +88,9 @@ def _sheet_sources() -> dict[str, str]:
     for sub in ("core", "layout", "components", "features", "utilities"):
         sources.update((CSS / sub).glob("*.tcss"))
     return {
-        str(path.relative_to(CSS)): _COMMENT.sub("", path.read_text(encoding="utf-8"))
+        path.relative_to(CSS).as_posix(): _COMMENT.sub(
+            "", path.read_text(encoding="utf-8")
+        )
         for path in sorted(sources)
     }
 

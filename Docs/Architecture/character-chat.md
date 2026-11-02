@@ -22,6 +22,8 @@ This document describes the roleplay stack: character card import (PNG/WebP/JPEG
 ## Card import (dataflow)
 
 1. **Entry**: the Personas screen opens a file via an app-owned import worker (so import survives screen unmount); the Console also offers a character switcher.
+The Roleplay one-picker preflight (`UI/Persona_Modules/roleplay_import_sniff.py`) routes packs by extension without opening them. Other regular files are stat-checked against the 10 MiB cap before one read of at most 65,536 bytes. The stat size versus actual bytes read distinguishes complete negative text from an incomplete readable prefix; inconclusive evidence asks for an import kind. The sniff never opens an archive or decodes pixels; malformed/deep JSON and binary refusals remain bounded.
+
 2. **Container decode** (`extract_json_from_image_file`):
    - PNG: card JSON in `tEXt`/`zTXt`/`iTXt` chunks under keys `chara` / `ccv3`. SillyTavern writes these chunks **after IDAT**, so a forced `img_obj.load()` re-probe is required; decode is pixel-bounded against decode bombs.
    - WebP/JPEG: base64 card JSON in the EXIF `UserComment` tag.

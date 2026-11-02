@@ -4,10 +4,16 @@ Mirrors ``ConversationAttachPicker`` (P2e): a ``ModalScreen[str | None]``
 with a search ``Input`` filtering a ``ListView``, and the selected value
 recovered by index (not by re-parsing the rendered label, which is lossy
 for tags containing markup-sensitive characters).
+
+A combobox since frame slice B2b (RP-095): focus stays in the box, Down and
+Up move the list's highlight, a search highlights its first matching tag
+(never "All"), and Enter picks the highlighted row. On dev Enter and Down did
+nothing in the box.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from textual import on
@@ -54,6 +60,12 @@ class TagFilterPicker(ModalScreen[str | None]):
         self._current = current
         self._row_tags: list[str | None] = []
         self._filter_debounce_timer: Timer | None = None
+        # One rebuild at a time, and a pick waits for the one in flight, so
+        # it always reads the rows the list shows.
+        self._rows_lock = asyncio.Lock()
+        # The box holds a query no tag matches: the list shows "All" alone
+        # with nothing highlighted, and the arrows must not reach it.
+        self._no_match = False
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -62,27 +74,35 @@ class TagFilterPicker(ModalScreen[str | None]):
             yield ListView(id="tag-filter-list")
             yield Static("Enter to pick - Esc to cancel", classes="destination-purpose")
 
-    def on_mount(self) -> None:
-        self._populate(self._tags)
+    async def on_mount(self) -> None:
+        await self._populate(self._tags, searching=False)
 
-    def _populate(self, tags: list[str]) -> None:
-        listing = self.query_one("#tag-filter-list", ListView)
-        listing.clear()
-        self._row_tags = [None]
-        listing.append(ListItem(Static("All (clear filter)", markup=False)))
-        current_index = 0 if self._current is None else None
-        for index, tag in enumerate(tags, start=1):
-            listing.append(ListItem(Static(tag, markup=False)))
-            self._row_tags.append(tag)
-            if tag == self._current:
-                current_index = index
-        # Highlight the currently-active tag (or "All" if none) whenever it
-        # appears in the row set being shown - this runs on every populate,
-        # including each search keystroke, not just the initial mount. If
-        # the active tag has been filtered out, current_index stays None and
-        # nothing is pre-highlighted, so a filter change never silently
-        # carries over a stale index onto a rebuilt, differently-ordered set.
-        listing.index = current_index
+    async def _populate(self, tags: list[str], *, searching: bool) -> None:
+        rows: list[str | None] = [None, *tags]
+        if searching:
+            # A search narrows to tags: its first match is highlighted, never
+            # "All (clear filter)", so Enter never clears the filter the user
+            # is narrowing to (RP-095); with no match nothing is highlighted.
+            current_index = 1 if tags else None
+        else:
+            # The active tag (or "All" if none); None when it is not listed,
+            # so a rebuilt row set never carries over a stale index.
+            current_index = rows.index(self._current) if self._current in rows else None
+        async with self._rows_lock:
+            listing = self.query_one("#tag-filter-list", ListView)
+            # Awaited before the new rows go in: the index set on a list still
+            # holding its old rows highlighted a row being removed, so a
+            # filtered list painted no highlight (dev's rebuild did this).
+            await listing.clear()
+            await listing.extend(
+                ListItem(
+                    Static("All (clear filter)" if tag is None else tag, markup=False)
+                )
+                for tag in rows
+            )
+            self._row_tags = rows
+            listing.index = current_index
+            self._no_match = searching and not tags
 
     @on(Input.Changed, "#tag-filter-search")
     def _filter(self, event: Input.Changed) -> None:
@@ -94,25 +114,59 @@ class TagFilterPicker(ModalScreen[str | None]):
             SEARCH_DEBOUNCE_SECONDS, lambda: self._apply_filter_debounced(needle)
         )
 
-    def _apply_filter_debounced(self, raw_value: str) -> None:
+    async def _apply_filter_debounced(self, raw_value: str) -> None:
         self._filter_debounce_timer = None
         needle = raw_value.strip().lower()
         tags = [t for t in self._tags if needle in t.lower()] if needle else self._tags
-        self._populate(tags)
+        await self._populate(tags, searching=bool(needle))
+
+    @on(Input.Submitted, "#tag-filter-search")
+    async def _submitted(self, event: Input.Submitted) -> None:
+        """Enter in the box picks the highlighted row (RP-095).
+
+        A filter still inside its debounce is applied first, so the pick is
+        from what was typed, never from the list before it (the race
+        TASK-33910.35 fixed for the items search).
+        """
+        event.stop()
+        if self._filter_debounce_timer is not None:
+            self._filter_debounce_timer.stop()
+            await self._apply_filter_debounced(event.value)
+        await self._pick()
 
     @on(ListView.Selected, "#tag-filter-list")
-    def _selected(self, event: ListView.Selected) -> None:
+    async def _selected(self, event: ListView.Selected) -> None:
         event.stop()
-        listing = self.query_one("#tag-filter-list", ListView)
-        index = listing.index
-        if index is None or not 0 <= index < len(self._row_tags):
-            return
-        self.dismiss(self._row_tags[index])
+        await self._pick()
+
+    async def _pick(self) -> None:
+        """Answer with the highlighted row's tag (None for "All"); no highlight, no answer."""
+        async with self._rows_lock:
+            index = self.query_one("#tag-filter-list", ListView).index
+            if index is None or not 0 <= index < len(self._row_tags):
+                return
+            self.dismiss(self._row_tags[index])
 
     def on_key(self, event) -> None:
         if event.key == "escape":
             event.stop()
             self.dismiss(self.CANCEL)
+        elif event.key in ("down", "up") and self.focused is self.query_one(
+            "#tag-filter-search", Input
+        ):
+            # The box keeps focus (and the typing); the arrows move the list.
+            event.stop()
+            if self._no_match:
+                # Nothing matches: Textual's cursor_down would go from no
+                # highlight to row 0, "All (clear filter)", so Enter would
+                # clear the filter being narrowed to (new with B2b's
+                # combobox, closed in its final fix wave).
+                return
+            listing = self.query_one("#tag-filter-list", ListView)
+            if event.key == "down":
+                listing.action_cursor_down()
+            else:
+                listing.action_cursor_up()
 
 
 __all__ = ["TagFilterPicker"]

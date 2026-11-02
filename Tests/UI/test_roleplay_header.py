@@ -39,9 +39,6 @@ from Tests.UI.test_personas_workbench import (
 )
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Persona_Modules import roleplay_frame_state as fs
-from tldw_chatbook.UI.Screens.personas_screen import (
-    PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH,
-)
 from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader, FittedText
 from tldw_chatbook.Widgets.glyph_fallback import (
     ASCII_GLYPH_FALLBACKS,
@@ -65,7 +62,7 @@ CHARACTERS = [
     for index in range(1, 13)
 ]
 
-#: Twenty characters: more than a 120x36 list shows (B2a AC#2 needs 13 on screen).
+#: Twenty characters: more than a 120x36 list shows (B2b AC#2 needs 19 on screen).
 MANY_CHARACTERS = [
     {
         "id": index,
@@ -131,30 +128,35 @@ async def test_header_is_one_row_and_the_kind_stays_visible(
 
 @styled_tiers
 @size_matrix
-async def test_first_list_item_sits_right_under_the_unchanged_band(
+async def test_first_list_item_sits_right_under_the_one_row_toolbar(
     styled_tier, roleplay_size, mock_app_instance, roleplay_data
 ):
-    """AC#2: B1 moves only the header. The purpose line, the mode strip and
-    the workbench chrome keep their rows, so the first item sits a fixed
-    number of rows under the header: with today's 3-row nav that is row 19
-    at the design centre (y 18) and row 18 at 80x24, whose compact workbench
-    has one row less chrome."""
+    """B2b AC#2 (spec 5.3's interim geometry): the first item sits on row 13
+    at 120 columns and row 12 at 160 and wider, measured from the header
+    (spec 5.7.2 item 1). The rail title row carries Import (owner decision
+    D2), then the toolbar: the search with the controls under it at 120 (2
+    rows), beside it at 160 and wider (1 row). At 80x24, whose compact
+    workbench has one row less chrome, each control takes its own row under
+    the search (4 rows): row 14. On dev the stacked toolbar put the first
+    item on row 19 at every design size and row 18 at 80x24."""
     async with open_styled_roleplay(
         styled_tier, mock_app_instance, size=roleplay_size
     ) as pilot:
         screen = pilot.app.screen
         nav_bottom, header_bottom = chrome_bottoms(screen)
         assert header_bottom == nav_bottom + 1
-        band = 13 if roleplay_size[0] <= PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH else 14
+        width = roleplay_size[0]
+        band = {80: 9, 120: 8}.get(width, 7)
         assert first_list_item(screen).region.y == header_bottom + band
 
 
 @styled_tiers
-async def test_thirteen_characters_show_at_120x36(
+async def test_nineteen_characters_show_at_120x36(
     styled_tier, mock_app_instance, monkeypatch
 ):
-    """B2a AC#2: 1-line rows at 120x36 (the list is under 40 cells wide there,
-    spec 1.5.2), so at least 13 characters show (B1 pinned 7 two-line rows)."""
+    """B2b AC#2 (spec 5.3): 1-line rows at 120x36 (the list is under 40 cells
+    wide there, spec 1.5.2) under a 2-row toolbar, so at least 19 characters
+    show. B2a's stacked toolbar left room for 14 (it pinned 13)."""
     seed_mock_characters(monkeypatch, MANY_CHARACTERS)
     monkeypatch.setattr(
         character_handler_module, "_default_character_db", lambda: object()
@@ -168,7 +170,7 @@ async def test_thirteen_characters_show_at_120x36(
         assert item_list.density == 1
         rows = painted_option_rows(item_list)
         assert all(len(lines) == 1 for lines in rows.values())
-        assert len(rows) >= 13, rows
+        assert len(rows) >= 19, rows
 
 
 @styled_tiers
