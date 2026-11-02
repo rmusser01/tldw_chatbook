@@ -1,11 +1,11 @@
 ---
 id: TASK-36512
 title: UI Fast Lane shards 3 and 11 time out at the 20-minute cap on PR runs
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-23 22:46
-updated_date: 2026-10-30 03:58
+updated_date: 2026-11-02 21:52
 labels:
 - follow-up
 - ci
@@ -83,4 +83,5 @@ Files: `scripts/ui_pr_gate_census.txt`, `scripts/check_ui_pr_gate_census.py` (fl
   - Run 40100579406: within 14.4-18.7 min.
   - Run 40107677135, attempt 2 (PR #3230's run after the queue rebased it onto dev; job 120912663464): UI Fast Lane (8) was cancelled at the 20-min cap. Its pytest took 18.4 min, because the untimed `test_roleplay_item_list.py` (swapped in by #3229) cost 83 s and `test_settings_advanced_disclosures.py` cost 439 s.
   - The 13-shard lane this task measured no longer exists. #3228 moved it to 17 shards, and dev now runs 28, so AC#3 can no longer be measured as written. Left unticked; closing this task is the owner's call.
+- **Closed 2026-11-02 by owner decision.** The re-deal shipped in #3231, and AC#1-#2 are met. AC#3 stays unticked, because it was measured on the 13-shard lane, which no longer exists: dev 88af9f9379 runs the UI Fast Lane on 32 shards, with far more headroom than this task asked for. The owner ruled it superseded.
 <!-- SECTION:NOTES:END -->
